@@ -629,6 +629,13 @@ jobs:
           # database. Skipping in CI would restore the exact blind spot this
           # stage closes.
           REQUIRE_AIRFLOW_SCHEMA: "1"
+          # Same reasoning one fixture over. 55 of this suite's tests read the
+          # DuckDB file the dbt build above produced; if it were missing they
+          # would skip and this step would still pass, hiding a quarter of
+          # Layer 2. REQUIRE_LAYER_2_EXECUTION is the general form: any skip in
+          # this suite is a broken job, not a local convenience.
+          REQUIRE_DUCKDB: "1"
+          REQUIRE_LAYER_2_EXECUTION: "1"
 
       - name: Run Airflow integration tests
         run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration

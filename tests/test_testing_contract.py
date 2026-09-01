@@ -1173,6 +1173,141 @@ def test_no_production_module_holds_sql_at_its_execute_call_site():
 
 
 # ---------------------------------------------------------------------------
+# Rule 5c -- no production module keeps a SQL statement in a Python literal.
+# ---------------------------------------------------------------------------
+SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G15", owner=162)
+    for subject in (
+        "archiver/processors/delete_packed_source_html.py:304",
+        "archiver/processors/lake_snapshot_cohort.py:109",
+        "archiver/processors/lake_snapshot_cohort.py:156",
+        "archiver/processors/lake_snapshot_cohort.py:354",
+        "archiver/processors/lake_snapshot_cohort.py:502",
+        "archiver/processors/lake_snapshot_cohort.py:535",
+        "archiver/processors/lake_snapshot_cohort.py:560",
+        "archiver/processors/lake_snapshot_cohort.py:594",
+        "archiver/processors/lake_snapshot_cohort.py:627",
+        "archiver/processors/lake_snapshot_export.py:130",
+        "archiver/processors/lake_snapshot_selectors.py:129",
+        "archiver/processors/lake_source_audit.py:113",
+        "archiver/processors/pack_bronze_html.py:440",
+        "ops/coordination_drain.py:93",
+        "ops/routers/admin.py:311",
+        "ops/routers/admin.py:396",
+        "ops/routers/admin.py:492",
+        "ops/routers/admin.py:522",
+        "ops/routers/admin.py:543",
+        "ops/routers/admin.py:69",
+        "ops/routers/maintenance.py:36",
+        "processing/writers/silver_writer.py:38",
+        "shared/deploy_intent.py:25",
+    )
+)
+
+
+def _sql_literal_bindings(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers where a SQL statement is bound to a Python name.
+
+    Rule 5b catches SQL *at* an ``.execute()`` call site, where it cannot be
+    imported at all. This catches the shape one step back: assigned to a name
+    first, then executed. That statement **is** importable, so the paraphrase
+    hazard is gone -- which is exactly why it is easy to miss, and why it
+    needs its own rule rather than a wider version of 5b's.
+
+    A ``return`` is included because a function that hands back a statement is
+    the same binding with a different keyword, and scoping this to the
+    assignments that happen to exist today is the mistake this plan has now
+    made twice in its own instruments.
+    """
+    tree = ast.parse(source, filename=filename)
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            candidates = [node.value]
+        elif isinstance(node, ast.Return):
+            candidates = [node.value]
+        else:
+            continue
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            text = _leading_sql_literal(candidate)
+            if text is None:
+                continue
+            match = _SQL_VERB.match(text)
+            if match and match.group(1).upper() not in _SESSION_SETUP_VERBS:
+                found.add(node.lineno)
+    return found
+
+
+def test_the_sql_literal_rule_sees_a_statement_bound_to_a_name():
+    """The rule below, canaried on the shapes it exists to catch."""
+    caught = _sql_literal_bindings(
+        'SQL = "SELECT 1"\n'                                  # 1  module constant
+        'def f():\n'
+        '    sql = "SELECT * FROM t WHERE a = %s"\n'          # 3  function local
+        '    return sql\n'
+        'def g(where):\n'
+        '    return "SELECT * FROM t WHERE " + where\n'       # 6  returned, concatenated
+        'TEMPLATE: str = f"SELECT {cols} FROM t"\n'           # 7  annotated f-string
+    )
+    assert caught == {1, 3, 6, 7}, (
+        f"the SQL-literal rule no longer sees every shape: caught {sorted(caught)}"
+    )
+
+    clean = _sql_literal_bindings(
+        'CLAIM_ARTIFACTS = _q("claim_artifacts")\n'   # loaded from a .sql file: the fix
+        'name = "select_user_role"\n'                 # a filename, not a statement
+        'mode = "SETTINGS"\n'                         # not a SQL verb, despite the prefix
+        'PRAGMA_SQL = "PRAGMA threads=4"\n'           # session setup, exempt
+    )
+    assert not clean, (
+        f"the SQL-literal rule fires on bindings that are already correct: "
+        f"{sorted(clean)}"
+    )
+
+
+def test_no_production_module_keeps_a_sql_statement_in_a_python_literal():
+    """G15, the gap that closing G5 revealed.
+
+    Stage 7 extracted six of these by hand -- three module-level constants in
+    ``ops/routers/coordination.py``, three function-local ``sql = \"\"\"...\"\"\"``
+    variables in ``ops/routers/deploy.py`` -- and only because a human happened
+    to read the files while doing something else. **Neither instrument could
+    see them.** Rule 5b does not fire, because the literal is not at the call
+    site. Rule 5 does not fire, because there is no ``.sql`` file to be
+    uncovered. They satisfied the letter of both while sitting outside both,
+    and the sweep that found them was not repeatable.
+
+    The measured cost of that blind spot was 21 more, in modules nobody had
+    looked at: six in ``ops/routers/admin.py`` alone, a router Stage 7 never
+    touched because every one of its statements is assigned before it is
+    executed.
+
+    **What this rule is not.** It is not a claim that a statement in a Python
+    string is untestable -- it is importable, so a test can execute the real
+    text, which is the whole point of the other two rules. It is a claim that
+    this repository decided its SQL lives in ``.sql`` files, and a statement
+    that does not is invisible to the census that counts them. Rule 5's
+    denominator is ``production_sql_files()``; anything held in Python is
+    outside it and can never be reported as uncovered.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for package in sorted(service_packages())
+        for path in sorted((REPO_ROOT / package).rglob("*.py"))
+        if "__pycache__" not in path.parts
+        for line in _sql_literal_bindings(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        SQL_LITERAL_WAIVERS,
+        "these production modules keep a SQL statement in a Python literal, so "
+        "it is in no .sql file and the Layer 2 census cannot count it:",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------
 # Empty since Plan 162 Stage 5 (CAR-49) swept all 16 on 2026-09-01. The rule
@@ -1765,6 +1900,7 @@ ALL_WAIVERS = (
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
     + INLINE_SQL_WAIVERS
+    + SQL_LITERAL_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -1865,6 +2001,7 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("route coverage", ROUTE_WAIVERS),
         ("Layer 2 SQL", LAYER_2_WAIVERS),
         ("inline SQL", INLINE_SQL_WAIVERS),
+        ("SQL literal", SQL_LITERAL_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )
