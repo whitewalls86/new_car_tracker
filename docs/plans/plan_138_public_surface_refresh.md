@@ -14,19 +14,23 @@ reconciled overviews and the assigned replacement claims.
 | Stage 1 slice | State |
 |---|---|
 | **1a** README rewrite (CAR-38, PR #320) | Merged to `master` at `a458877`, **soaking** — merged is not closed, per the truth contract's §4 |
-| **1b** Landing-page structure (CAR-39) | In review |
-| **1c** Cross-surface consistency | Not started; 1b was built to meet it by construction rather than leave it to a later check |
+| **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
+| **1c** Cross-surface consistency (CAR-56) | **In progress**; 1b was built to meet it by construction rather than leave it to a later check, so this slice records and enforces that agreement |
 | **1d** Public roadmap projection | Not started. The landing page carries the section and its list ids; the generator and `project-updates.json` do not exist yet |
 | **1e** Weekly recap projection | Not started |
 | **1f** Reconcile against the published writings | **Audit done 2026-08-31**, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open |
 
 **The two public surfaces are now in different states, and the distinction
 matters.** The repository is public, so 1a's README changed a public surface the
-moment it merged. The landing page has not: 1b is unmerged, nothing has
-deployed, and `https://cartracker.info/info` still serves the pre-plan copy the
-Stage 0 baseline screenshotted. Until 1b deploys, **the README and the live page
-disagree** — which is the drift this plan exists to remove, temporarily widened
-by fixing one surface before the other. Stage 6 is what closes it.
+moment it merged. The landing page has not: 1b merged to `master` on
+2026-08-31, but the ops service has not been redeployed from it, so
+`https://cartracker.info/info` still serves the pre-plan copy the Stage 0
+baseline screenshotted. A fetch on 2026-08-31 returned 54,343 bytes still
+carrying "without manual intervention" and the hardcoded make/model counts —
+two of the phrases Stage 0 disposed of. **Merging fixed the template, not the
+surface.** Until that deploy lands, **the README and the live page disagree** —
+which is the drift this plan exists to remove, temporarily widened by fixing one
+surface before the other. Stage 6 is what closes it.
 
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
