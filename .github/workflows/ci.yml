@@ -72,6 +72,18 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install pytest
+      # Plan 138 Stage 1d. The public roadmap projection is generated from
+      # docs/PLANS.md and docs/planning/completed_plans.md, so a roadmap edit is
+      # exactly the change that can leave it stale -- and it is also the change
+      # that takes this docs-only path, which skips the unit job where the same
+      # assertion lives. Without this step the landing page would keep serving
+      # the previous roadmap and nothing would say so.
+      #
+      # --check rebuilds in memory and writes nothing, so it also runs the
+      # generator's own validations on the edited tables: unique build order,
+      # priority within 0-100, newest-first completion dates, and a resolvable
+      # local document behind every published link.
+      - run: python scripts/build_public_roadmap.py --check
       - run: pytest --noconftest tests/test_planning_docs.py -q
         env:
           # The repo root carries an __init__.py, so pytest's package-root walk

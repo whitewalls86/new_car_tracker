@@ -1,5 +1,12 @@
 # Plan 161: The Testing Strategy Is A Description, Not A Contract
 
+## Public summary
+
+**The testing contract** — The rules for how this project tests itself used
+to be a paragraph of documentation that slowly went out of date. They are now
+a contract the suite checks on every change, so the description cannot quietly
+stop matching the code.
+
 ## Status
 
 **ARCHIVED 2026-08-31 (CAR-33 and CAR-34).** All five success criteria are

@@ -1116,10 +1116,15 @@
 
         <!-- ── 6. Recent work ── -->
         <!--
-            The two lists are structural. Stage 1d generates project-updates.json and
-            renders into #work-planned / #work-completed; until that artifact exists,
-            fetching it would 404 on every public page load, so the columns carry a
-            static pointer to the real source instead.
+            The two lists are structural. Stage 1d's build-time generator
+            (scripts/build_public_roadmap.py) writes /static_ops/project-updates.json
+            from docs/PLANS.md and docs/planning/completed_plans.md, and the script at
+            the end of this section renders it into #work-planned / #work-completed.
+
+            The static pointers below are not placeholders any more — they are the
+            fallback. Every failure mode leaves them exactly as authored: no artifact,
+            a non-200, unparseable JSON, an unknown schema_version, or an empty list.
+            The page is correct without JavaScript and correct when the fetch fails.
         -->
         <section>
             <h2>Recent work</h2>
@@ -1165,6 +1170,107 @@
                 revised to match a later truth.
             </p>
         </section>
+
+        <script>
+            // Stage 1d: render /static_ops/project-updates.json into the two lists
+            // above. Every string goes in through textContent — the source is a
+            // build-time artifact rather than user input, but this is a public page
+            // and the summaries are lifted verbatim out of Markdown, so the rule is
+            // "no markup path" rather than "no markup we expect".
+            (function () {
+                var SOURCE = '/static_ops/project-updates.json';
+                var SCHEMA_VERSION = 1;
+                // The generator emits only blob links into this repository. Anything
+                // else in an href is a payload, not a link, so it is not rendered.
+                var HREF_PREFIX = 'https://github.com/whitewalls86/new_car_tracker/blob/';
+
+                function isNonEmptyString(value) {
+                    return typeof value === 'string' && value.trim() !== '';
+                }
+
+                function isRenderable(item) {
+                    return item
+                        && isNonEmptyString(item.title)
+                        && isNonEmptyString(item.summary)
+                        && isNonEmptyString(item.plan)
+                        && isNonEmptyString(item.href)
+                        && item.href.indexOf(HREF_PREFIX) === 0;
+                }
+
+                function meta(item) {
+                    // Planned rows carry priority and effort; completed rows carry a
+                    // date and neither, because the archive has no such columns.
+                    if (item.state === 'completed') {
+                        return isNonEmptyString(item.date) ? 'Completed ' + item.date : '';
+                    }
+                    var parts = [];
+                    if (typeof item.priority === 'number') parts.push('Priority ' + item.priority);
+                    if (isNonEmptyString(item.effort)) parts.push('Effort ' + item.effort);
+                    return parts.join(' · ');
+                }
+
+                function listItem(item) {
+                    var li = document.createElement('li');
+
+                    var title = document.createElement('span');
+                    title.className = 'work-title';
+                    title.textContent = item.title;
+                    li.appendChild(title);
+
+                    var summary = document.createElement('span');
+                    summary.className = 'work-summary';
+                    summary.textContent = item.summary;
+                    li.appendChild(summary);
+
+                    var metaSpan = document.createElement('span');
+                    metaSpan.className = 'work-meta';
+                    var text = meta(item);
+                    if (text) metaSpan.appendChild(document.createTextNode(text + ' · '));
+
+                    var link = document.createElement('a');
+                    link.href = item.href;
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    link.textContent = 'Plan ' + item.plan + ' →';
+                    metaSpan.appendChild(link);
+                    li.appendChild(metaSpan);
+
+                    return li;
+                }
+
+                function render(list, items) {
+                    // Built off-document and swapped in one go, so a throw partway
+                    // through leaves the authored fallback standing rather than half
+                    // a list.
+                    var fragment = document.createDocumentFragment();
+                    items.forEach(function (item) { fragment.appendChild(listItem(item)); });
+                    list.textContent = '';
+                    list.appendChild(fragment);
+                }
+
+                fetch(SOURCE, { credentials: 'omit' })
+                    .then(function (response) {
+                        if (!response.ok) throw new Error('status ' + response.status);
+                        return response.json();
+                    })
+                    .then(function (data) {
+                        if (!data || data.schema_version !== SCHEMA_VERSION) return;
+
+                        ['planned', 'completed'].forEach(function (key) {
+                            var list = document.getElementById('work-' + key);
+                            var items = data[key];
+                            if (!list || !Array.isArray(items) || items.length === 0) return;
+                            if (!items.every(isRenderable)) return;
+                            render(list, items);
+                        });
+                    })
+                    .catch(function () {
+                        // No artifact, a non-200, or unparseable JSON. The authored
+                        // pointers below the headings are the fallback and are already
+                        // on the page, so there is nothing to do and nothing to log.
+                    });
+            })();
+        </script>
 
         <!-- ── 7. Decision stories ── -->
         <section>

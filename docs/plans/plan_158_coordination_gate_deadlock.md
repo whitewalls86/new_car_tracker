@@ -1,5 +1,12 @@
 # Plan 158: The Coordination Drain Waits For An Observation That Cannot Be Written
 
+## Public summary
+
+**Coordination gate deadlock** — A deploy could wait forever on a signal that
+was never sent, and looked like it was working while it hung. The signal is now
+recorded correctly, and a wait that cannot finish fails with the reason named
+instead of hanging.
+
 ## Status
 
 In the build order, written 2026-08-30, found while deploying

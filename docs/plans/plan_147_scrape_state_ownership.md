@@ -1,5 +1,11 @@
 # Plan 147: Scrape State Ownership — Separating Fetch From Enrichment
 
+## Public summary
+
+**Scrape state ownership** — Split one timestamp into two: when a listing was
+last fetched, and when it was last understood. A backlog in one stage no longer
+causes the same pages to be fetched over and over.
+
 ## Status
 
 **COMPLETE — 2026-08-30. All four stages are deployed and every success

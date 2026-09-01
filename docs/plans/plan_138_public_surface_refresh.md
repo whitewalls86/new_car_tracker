@@ -825,6 +825,34 @@ completed item is assembled differently from a planned one.
   rows is a cheap review; the alternative — a new column in an archive Plan 146
   owns — is a change to someone else's file for a four-row problem.
 
+**Revised 2026-09-01, during Stage 1d's build.** The paragraph above is kept as
+written because its reasoning still holds and the mechanism it describes is
+still the fallback. What it missed is a third option it did not consider: not a
+column in Plan 146's archive, but a **`## Public summary` section in the plan's
+own document**, which is nobody else's file. The generator prefers that section
+and falls back to extraction where there is none.
+
+The change is worth more than the four rows that prompted it, for two reasons.
+
+- **It moves the writing to the moment the writer is already there.** The
+  archive Description is authored at the `closeout → archive` transition, by a
+  person with the whole plan in their head. Asking for a second, shorter,
+  outward-facing sentence at that moment costs almost nothing. Asking a
+  generator to manufacture one later, from prose written for a different
+  reader, is where §4 was going to be breached.
+- **It makes Gate 1d self-extinguishing.** The generator prints the plans it had
+  to extract, and that list is the gate's worklist. Under the original design
+  the same four rows needed re-reading on every build, forever; under this one
+  the gate shrinks each time a plan archives with its section written, and a
+  build where every published plan authored its own copy needs no read at all.
+
+`.claude/skills/close-out/SKILL.md` carries the rules for writing one, and the
+generator caps a published summary at 320 characters — which fails the build
+rather than publishing a paragraph, and points at writing the section as the
+fix. The 118 plans archived before this existed have no section and are not
+being backfilled; they reach the feed through extraction if they reach it at
+all, and the gate names them when they do.
+
 The script supports `--check`: regenerate in memory, compare with the committed
 JSON, and exit non-zero on drift. CI runs that mode and also validates unique
 build order, score range 0-100, newest-first completion dates, local plan-link
