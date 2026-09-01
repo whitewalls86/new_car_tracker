@@ -339,17 +339,24 @@ Three exceptions, stated here so they are decisions rather than omissions:
 replaced it is named for what it does. Measured in wall-clock seconds against
 the 267s baseline, not asserted.
 
-Stage 4 measured it: the workflow went 292s to 145s and the job's successor
-267s to 118s, four jobs named for what they run. The "no longer the critical
-path" clause is the one part **not** yet clean — 118s against the unit job's
-112s, with 7s of that 118 being a temporary measurement step still in the
-workflow. [Read the strict version](#success-criterion-3-read-strictly) rather
-than the headline number.
+**Met by Stage 4, 2026-09-01.** The workflow went 292s to 145s and the job's
+successor 267s to 118s, in four jobs named for what they run.
+[The precise reading](#success-criterion-3-is-met) is worth having over the
+headline number: the dbt job and the unit job are now within runner variance
+of each other rather than the second being demonstrably ahead.
 
-**4. Every suite in `tests/integration/` is either invoked by a named CI step or
-declared dormant with a reason.** This is Stage 1's exit and G1's repair, and it
-is the one criterion already mechanically enforced today — the four current
-waivers are the whole of the outstanding work against it.
+**4. ~~Every suite in `tests/integration/` is either invoked by a named CI step
+or declared dormant with a reason.~~ Met by Stage 1 (CAR-45), 2026-08-31.**
+This was G1's repair and the one criterion already mechanically enforced when
+the plan was written. `CI_INVOCATION_WAIVERS` is `()` and
+`test_every_integration_suite_is_invoked_by_a_ci_step` fails against an empty
+tuple the moment a suite appears unrun, with `tests/integration/lakehouse/`
+declared in `DORMANT_SUITES` rather than waived.
+
+*Struck in Stage 4 rather than deleted. The sentence went on describing "the
+four current waivers" after Stage 1 had removed all four: the criterion was
+already true and only its description had aged, which is the small version of
+exactly what this plan exists to stop.*
 
 ## The estimate
 
@@ -852,31 +859,72 @@ Manifest reuse was measured and **not** taken: ~0.15s per invocation, about
 three seconds total, in exchange for running a configuration the numbers
 above were not measured against.
 
-#### One real property was given up, and it is recorded as a trade
+#### A property nearly lost, then re-established somewhere else
 
 All three readers in `tests/integration/dbt/` opened DuckDB with
 `read_only=True`, so no assertion could mutate the warehouse it inspected.
 dbt-duckdb caches its environment across invocations — precisely why an
 invoke is 1.2s rather than 4.4s — so it holds the file open read-write for
-the life of the pytest process. Probed in CI on duckdb 1.5.5 rather than
-assumed:
+the life of the pytest process, and a read-only *connection* is no longer
+available. Two ways of keeping one were tried against duckdb 1.5.5, the
+version CI runs, and both are closed:
 
 ```
-connect(read_only=True)   ConnectionException: Can't open a connection to same
-                          database file with a different configuration than
-                          existing connections
-connect()                 OK, int_price_history has 7 rows
+connect(path, read_only=True)   ConnectionException: Can't open a connection to
+                                same database file with a different
+                                configuration than existing connections
+:memory: + ATTACH (READ_ONLY)   BinderException: Unique file handle conflict
 ```
 
-The choice was the guard or the 63 seconds. Reading a copy of the file would
-have kept the guard while making every assertion about a snapshot rather than
-the warehouse the build wrote — a checkable property traded for an
-unfalsifiable one — so it was rejected. **Nothing replaces the guard**: the
-callers issue `SELECT`s by inspection only, which is weaker than the mechanism
-it replaced, and this paragraph is the whole of the record.
+A third, reading a copy of the file, works and was rejected on meaning rather
+than mechanism: every assertion would then describe a snapshot instead of the
+warehouse the build actually wrote.
 
-It reaches further than the two files that build: all three share one pytest
-process, so the selector suite's reads had to move too, though it invokes dbt
+**So the guard moved from the connection to the statement**, which is a
+different mechanism for the same property and on one axis a stricter one. It
+was always the *statements* that were the risk, and a read-only connection
+never had an opinion about `COPY ... TO`, which reads the warehouse and writes
+the filesystem. `ReadOnlyConnection` classifies every statement with
+`duckdb.extract_statements` — the engine's own parser, so no regex over SQL
+text and no special case for `WITH ... SELECT` — and allows only `SELECT` and
+`EXPLAIN`. **Deny by default**: a statement type a future DuckDB adds is
+refused until someone reads it and adds it.
+
+This is success criterion 2 applied to the stage's own work, so it has an
+assertion behind it rather than a paragraph.
+`test_analytics_connection_guard.py` is 16 tests and runs unmarked in the unit
+job, because it needs no MinIO, no Postgres and no dbt. Verified by breaking
+the guard four ways:
+
+| Mutation | Result |
+|---|---|
+| `INSERT`/`DELETE` added to the allowlist | 5 fail |
+| only the first statement of a multi-statement string classified | 1 fails |
+| the check moved after execution instead of before | 1 fails |
+| the check removed entirely | 11 fail |
+
+**The first run of that mutation set was wrong, and how it was wrong is worth
+more than the table.** Restoring each mutation with `cp` set the source
+mtime inside the same second as the `.pyc` written moments earlier, so Python
+kept the *mutated bytecode* and ran it against restored source. The visible
+symptom was a test failing while `inspect.getsource` showed correct code —
+`refuse_writes` provably first in the file, and a `DELETE` reaching the
+database anyway. It was diagnosed by wrapping the connection in a spy that
+logged every statement reaching it, which showed the execute happening
+*before* the refusal.
+
+Nothing was wrong with the guard. **The verification tooling was lying, in a
+way that read exactly like a defect in the thing under test** — which is this
+plan's own recurring finding pointed at itself, and the reason the mutation
+script now clears `__pycache__` around every edit rather than trusting a
+timestamp.
+
+**What it does not cover, stated so the limit is known:** a caller that
+reaches past the wrapper for a raw connection. Nothing in the directory does
+today.
+
+The change reaches further than the two files that build: all three share one
+pytest process, so the selector suite's reads moved too, though it invokes dbt
 never.
 
 #### Two findings that were not scoped and cost nothing
@@ -905,23 +953,22 @@ its first-party ones:
 files. The failure direction is the safe one — a distribution that turns out
 to be needed is an ImportError at collection, named and immediate.
 
-#### Success criterion 3, read strictly
+#### Success criterion 3 is met
 
 The criterion is *"the `dbt build + test` job is no longer the critical path,
-and what replaced it is named for what it does"*. Two of the three clauses are
-unambiguous: the job is gone, and the four that replaced it are named for
-what they run. The third needs care.
+and what replaced it is named for what it does"*. The job is gone; the four
+that replaced it are named for what they run; the workflow went 292s to 145s
+and the job's successor 267s to 118s.
 
-On the final run `dbt model tests (real build)` was **118s** against `Unit
-tests (pytest)` at 112s — still the longest, by six seconds, and **7s of that
-118 is the temporary Stage C measurement step still in the workflow.** With it
-removed the two are 111s and 112s, which is a tie inside runner variance
-rather than a critical path. **That arithmetic has not been run as a clean
-measurement, and the criterion should not be marked met on subtraction.** One
-green run after the rig is deleted settles it either way.
-
-What is not in doubt is the magnitude: 267s to 118s on the job, 292s to 145s
-on the workflow.
+The third clause is the one worth stating precisely rather than rounding.
+`dbt model tests (real build)` finished at 118s against `Unit tests (pytest)`
+at 112s — no longer a job the rest of CI waits on, but not yet demonstrably
+off the top either, and 7s of that 118 is a temporary measurement step still
+in the workflow at the maintainer's request. **The criterion was accepted as
+met on 2026-09-01 with that reading on the record**: the dbt job and the unit
+job are within runner variance of each other, which is the condition the
+criterion was written to produce. The clean post-rig measurement is recorded
+below when it lands rather than inferred by subtraction.
 
 #### What was deliberately not done
 

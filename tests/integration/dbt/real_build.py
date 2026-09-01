@@ -87,32 +87,102 @@ def run_dbt(*args):
     return result
 
 
-def analytics_con():
-    """Open the DuckDB file the build writes, for reading.
+# DuckDB's own parser decides what a statement is; this list decides which
+# kinds may run. Deny by default -- a statement type added by a future DuckDB
+# is refused until someone reads it and adds it here, which is the direction
+# that cannot quietly widen. COPY is the reason the allowlist is worth having
+# beyond the obvious four: `COPY t TO 'file'` reads the warehouse and writes
+# the filesystem, and no read-only *connection* would have stopped it either.
+_READ_ONLY_STATEMENTS = frozenset({
+    duckdb.StatementType.SELECT,
+    duckdb.StatementType.EXPLAIN,
+})
 
-    **This deliberately does not pass ``read_only=True``, and that is a real
-    property given up rather than an oversight.** Every one of these
-    connections was read-only until 2026-09-01, which guaranteed no assertion
-    could mutate the warehouse it was inspecting.
 
-    In-process dbt makes that impossible. dbt-duckdb caches its environment
-    across invocations -- which is exactly why an invoke costs 1.2s instead of
-    4.4s -- so the adapter holds this same file open read-write for the life
-    of the pytest process, and DuckDB refuses a second connection to one file
-    under a different configuration. Measured in CI rather than reasoned
-    about, on duckdb 1.5.5:
+class ReadOnlyConnection:
+    """A DuckDB connection that refuses to run anything but a read.
 
-        connect(read_only=True)   ConnectionException: Can't open a connection
-                                  to same database file with a different
-                                  configuration than existing connections
-        connect()                 OK
+    **Why the guard is here and not on the connection.** Until 2026-09-01
+    every reader in this directory opened the warehouse with
+    ``read_only=True``, so no assertion could mutate what it inspected. Moving
+    dbt in-process took that away: dbt-duckdb caches its environment across
+    invocations -- exactly why an invoke costs 1.2s instead of 4.4s -- so the
+    adapter holds this file open read-write for the life of the pytest
+    process, and DuckDB will not open a second connection to one file under a
+    different configuration.
 
-    So the choice was the read-only guard or the 63 seconds, and it is
-    recorded here in those terms. Nothing replaces the guard: these callers
-    issue SELECTs by inspection only, which is weaker than the mechanism it
-    replaced. The alternative considered and rejected was reading a copy of
-    the file -- it restores the guard, but every assertion would then be made
-    against a snapshot rather than the warehouse the build actually wrote,
-    which trades a checkable property for an unfalsifiable one.
+    Two ways of keeping a read-only *connection* were tried against duckdb
+    1.5.5, the version CI runs, and both are closed:
+
+        connect(path, read_only=True)     ConnectionException: Can't open a
+                                          connection to same database file
+                                          with a different configuration
+        :memory: + ATTACH (READ_ONLY)     BinderException: Unique file handle
+                                          conflict
+
+    A third, reading a copy of the file, works and was rejected on meaning
+    rather than mechanism: every assertion would then describe a snapshot
+    instead of the warehouse the build actually wrote.
+
+    So the guard moved from the connection to the statement, which is a
+    different mechanism for the same property and, on one axis, a stricter
+    one -- it is the *statements* that were ever the risk, and a read-only
+    connection never had an opinion about ``COPY ... TO``. Classification is
+    ``duckdb.extract_statements``, the engine's own parser, so it is not a
+    regex over SQL text and ``WITH ... SELECT`` needs no special case.
+
+    What it does not cover, stated so the limit is known: a caller that
+    reaches past this wrapper for a raw connection. Nothing in this directory
+    does, and ``test_analytics_connection_guard.py`` is what notices if that
+    changes.
     """
-    return duckdb.connect(os.environ["DUCKDB_PATH"])
+
+    def __init__(self, con):
+        self._con = con
+
+    def execute(self, sql, parameters=None):
+        refuse_writes(sql)
+        if parameters is None:
+            self._con.execute(sql)
+        else:
+            self._con.execute(sql, parameters)
+        return self
+
+    def fetchall(self):
+        return self._con.fetchall()
+
+    def fetchone(self):
+        return self._con.fetchone()
+
+    @property
+    def description(self):
+        return self._con.description
+
+    def close(self):
+        self._con.close()
+
+
+def refuse_writes(sql: str) -> None:
+    """Raise unless every statement in ``sql`` is a read.
+
+    Parsing here and again in ``execute`` costs microseconds on the queries
+    this suite runs, and buys a refusal that names the statement type rather
+    than a DuckDB error after the write has already landed.
+    """
+    offending = sorted(
+        str(statement.type).removeprefix("StatementType.")
+        for statement in duckdb.extract_statements(sql)
+        if statement.type not in _READ_ONLY_STATEMENTS
+    )
+    if offending:
+        raise AssertionError(
+            f"the analytics connection is for reading: refused {offending} in "
+            f"{sql.strip()[:120]!r}. These tests assert against the warehouse "
+            f"dbt built; a statement that changes it makes every later "
+            f"assertion in the session describe something else."
+        )
+
+
+def analytics_con() -> ReadOnlyConnection:
+    """Open the DuckDB file the build writes, for reading only."""
+    return ReadOnlyConnection(duckdb.connect(os.environ["DUCKDB_PATH"]))
