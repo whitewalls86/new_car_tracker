@@ -200,11 +200,11 @@ def test_the_main_document_wins_over_stage_handoffs(tmp_path, mocker):
     plans = tmp_path / brm.PLANS_DIR
     plans.mkdir(parents=True)
     (plans / "plan_145_april_cutover_reconciliation.md").write_text(
-        "# Plan 145: Recover April Detail Artifacts\n"
+        "# Plan 145: Recover April Detail Artifacts\n", encoding="utf-8"
     )
     for stage in (3, 4, 6):
         (plans / f"plan_145_stage_{stage}_handoff.md").write_text(
-            f"# Plan 145 Stage {stage} — implementation prompt\n"
+            f"# Plan 145 Stage {stage} — implementation prompt\n", encoding="utf-8"
         )
     mocker.patch.object(brm, "REPO_ROOT", tmp_path)
 
@@ -219,8 +219,8 @@ def test_a_plan_with_no_document_fails_rather_than_publishing_a_dead_link():
 def test_ambiguity_the_title_rule_cannot_settle_is_a_build_failure(tmp_path, mocker):
     plans = tmp_path / brm.PLANS_DIR
     plans.mkdir(parents=True)
-    (plans / "plan_900_one.md").write_text("# Plan 900: One\n")
-    (plans / "plan_900_two.md").write_text("# Plan 900: Two\n")
+    (plans / "plan_900_one.md").write_text("# Plan 900: One\n", encoding="utf-8")
+    (plans / "plan_900_two.md").write_text("# Plan 900: Two\n", encoding="utf-8")
     mocker.patch.object(brm, "REPO_ROOT", tmp_path)
 
     with pytest.raises(RoadmapBuildError, match="ambiguous"):
