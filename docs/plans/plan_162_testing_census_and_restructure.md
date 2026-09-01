@@ -1212,26 +1212,74 @@ wrong tool for all three and the rule already says so —
 `_MONKEYPATCH_ALLOWED` lists `setenv`, `setitem` and the rest, so the checker
 agrees.
 
-#### A suite that was invoked and still ran nothing
+#### A unit test filed as an integration test, and two wrong answers before the right one
 
-**`tests/integration/airflow/test_scrape_listings.py` carried no `integration`
-marker, so CI's step collected it and deselected all 7 of its tests.** The step
-is `pytest tests/integration/airflow/ -v -m integration`; the file had no
-`pytestmark` and no per-test marker. Its sibling
-`test_hourly_analytics_refresh.py` sets `pytestmark` and runs.
+`tests/integration/airflow/test_scrape_listings.py` carried no `integration`
+marker, so `pytest tests/integration/airflow/ -m integration` collected it and
+deselected all 7 of its tests. Its sibling `test_hourly_analytics_refresh.py`
+sets `pytestmark` and runs.
 
-This is Stage 1's G1 one level down. `test_every_integration_suite_is_invoked_by_a_ci_step`
-asks whether a *directory* appears in a CI step's arguments, and this one does —
-so the suite was credited as invoked, and the marker filter then dropped every
-test in it. **A directory is not a suite.** The rule is one word away from the
-thing it means to assert, and closing that distance is a real check nobody has
-written: no assertion here can currently tell "this file runs in CI" from "the
-directory containing this file is named in a `run:` line".
+**The first reading of that was wrong, and worth recording because it was wrong
+in a specific way.** It was read as "the suite is credited as invoked and runs
+nothing" — G1 one level down. The tests were in fact running the whole time, in
+the **unit** job, because the unit selector is `pytest tests/ -m "not
+integration"` and it walks every directory under `tests/`. The layer section of
+[`docs/TESTING.md`](../TESTING.md) states exactly this, and it had already been
+read once during this stage:
 
-The marker is added, with a comment saying what it is for; all 7 pass under it.
-The missing assertion is not written — it needs to run collection against each
-step's real arguments and marker expression, which is a mechanism rather than a
-line, and Stage 10 is where CI selection is already being reasoned about.
+> it collects **every** directory under `tests/` and runs whatever is not
+> marked `integration`, so a file's location does not decide whether it runs
+> here. The marker does.
+
+So the finding was an inference from one job's log rather than a measurement,
+and the measurement was one grep away.
+
+**The second answer was also wrong.** Adding the marker made the file match its
+directory — and the directory was the thing that was wrong.
+`airflow/dags/scrape_listings.py` imports only `logging`, `time` and `requests`
+at module level and guards its DAG construction behind `except ImportError`, so
+the 7 tests mock `requests` and `time.sleep` and need no Airflow, no database
+and no MinIO. That is a Layer 1 unit test by this contract's own definition, and
+`tests/airflow/` is the row that describes it: *"Unit tests of DAG modules.
+Runs in the main venv, so it must not import `airflow`."*
+
+**The file is now in `tests/airflow/`**, beside `test_notifications.py` and
+`test_coordination_admission.py`, which avoid importing Airflow by the same
+discipline. No marker, and `parents[3]` becomes `parents[2]`. It runs where it
+already ran, now for a stated reason rather than by accident, and
+`tests/integration/airflow/` collects 59 with zero deselections.
+
+**What caught it was the coverage number, and only the coverage number.** The
+marker moved the 7 tests out of the one job that runs `--cov`:
+
+| | master `b80ae88` | with the marker |
+|---|---:|---:|
+| `airflow/dags/scrape_listings.py` | 76% | **23%** |
+| total | 75.82% | 75.64% |
+
+Nothing failed. The tests passed in the Airflow venv, the step went green, and
+0.18 percentage points was the entire signal that a dependency-free test had
+been moved into the heaviest interpreter in CI. Stage 2 unblinded that
+instrument five stages ago; this is the first time it has caught something on
+its own.
+
+**The root cause of both wrong answers is one bad default: the directory was
+treated as ground truth and the file adjusted to match it.** The two flush files
+above came out right for a reason that does not generalise — their waiver said
+`"1, not 4"`, so the mechanism supplied the answer. `scrape_listings.py` makes
+no `Layer N` claim, so no waiver named it, so nothing prompted the same
+question, and unprompted judgement picked the wrong invariant twice in a row.
+That is this plan's own thesis about itself: where a mechanism exists the answer
+is right, and where one does not the answer is whatever someone assumed.
+
+**The mechanism that would have caught it is not written.**
+`test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+*directory* appears in a step's arguments. A directory is not a suite, and no
+assertion here can currently distinguish "this file runs in CI" from "the
+directory containing this file is named in a `run:` line" — nor "this file is in
+`tests/integration/` and needs nothing that makes it one". Both need collection
+run against each step's real arguments and marker expression. Stage 10 already
+owns CI selection and is the place for it.
 
 #### The instrument was weaker than its own docstring
 
@@ -1269,3 +1317,48 @@ never happened.
 rule the plan states is that a waiver may not be *deleted* without a repair;
 nothing forbids the instrument getting more accurate and finding more. What
 would be forbidden is quietly keeping 54.
+
+#### Coverage is a unit-test instrument, and the integration answer is already built
+
+The `scrape_listings` refile raised a question worth settling once, because
+Stage 6 will ask it again: the 7 tests lost their coverage measurement by moving
+into an integration job, so should the integration jobs run `--cov` and
+`coverage combine` into one number?
+
+**No.** Combining answers *"was this line executed by any test"*, which fuses
+two claims of very different strength — a line pinned by a fast isolated test,
+and a line that happened to execute while a request flowed past it. A logging
+call or an unasserted error branch touched incidentally by a `TestClient`
+request would read identically to a line with a dedicated unit test behind it.
+The number would go up and the average evidence behind it would go down, which
+is the same defect as the substring match [two sections up](#the-instrument-was-weaker-than-its-own-docstring)
+and the same one this contract already names about paraphrased SQL: an
+instrument that gets easier to satisfy as it gets less meaningful.
+
+The contract settled this before the question was asked:
+
+> **Not a coverage percentage.** The floor is: every route reached through the
+> app, every production statement executed against a real engine, and every
+> failure branch that another service's behaviour depends on. Coverage
+> percentage is an instrument for finding gaps, not the definition of one.
+
+**So "fully covered" for integration is not a percentage of lines — it is a
+complete enumeration of the surfaces that must be exercised, and this repository
+has already built three of them.** They are this plan's own waiver tuples:
+
+| Instrument | Denominator | Standing after Stage 5 |
+|---|---|---:|
+| `CI_INVOCATION_WAIVERS` | every integration suite | **0** — closed by Stage 1 |
+| `ROUTE_WAIVERS` | every route in each app's schema | 12 unreached |
+| `LAYER_2_WAIVERS` | every production `.sql` file | 56 unexecuted |
+
+Each has a real denominator derived from the repository, cannot be satisfied by
+touching a line, and is *complete* when its tuple is empty. That is the
+integration coverage number, and Stages 6 and 7 are what move it. Line coverage
+stays what it is good at — unit tests, where the question genuinely is whether
+the line was exercised — measured on the one job that runs them.
+
+Which inverts the reading of the `scrape_listings` incident above. The 0.18
+points were not an instrument gap to be engineered away. **The instrument was
+working**: it complained because a unit test had been moved out of the job that
+measures unit tests, and it was right to.

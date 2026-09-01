@@ -9,25 +9,26 @@ dict stored in search_configs.params.
 This is the gap that previously allowed a payload mismatch to go undetected:
 unit tests for scrape_results() used the correct nested format, but nothing
 verified that the DAG was constructing the same format when calling the API.
+
+**Layer 1, and this file spent its life in the wrong directory.** It mocks
+`requests` and `time.sleep` and needs no database, no MinIO and no Airflow:
+`scrape_listings.py` imports only logging, time and requests at module level and
+guards its DAG construction behind `except ImportError`. It sat in
+`tests/integration/airflow/` unmarked, so the Airflow step deselected all 7 and
+the unit job ran them anyway -- the right result by accident. Moved here by Plan
+162 Stage 5 (CAR-49), beside the other DAG-module unit tests that avoid
+importing airflow by the same discipline.
 """
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 # Ensure airflow/dags/ is importable so the DAG module loads cleanly.
-DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
+DAGS_DIR = Path(__file__).parents[2] / "airflow" / "dags"
 if str(DAGS_DIR) not in sys.path:
     sys.path.insert(0, str(DAGS_DIR))
 
 from scrape_listings import _run_scrapes  # noqa: E402
-
-# Without this the CI step -- `pytest tests/integration/airflow/ -m integration`
-# -- collects this file and deselects every test in it, so the suite counts as
-# invoked and runs nothing. Plan 162 Stage 5 (CAR-49) found it while converting
-# the file to `mocker`.
-pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # Helpers
