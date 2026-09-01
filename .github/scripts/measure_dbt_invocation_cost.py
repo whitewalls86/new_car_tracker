@@ -64,6 +64,42 @@ def main() -> None:
         "\nCompare against the subprocess baseline in the same job: the "
         "--durations table above reports 21 invocations totalling 93.25s."
     )
+    probe_duckdb_coexistence()
+
+
+def probe_duckdb_coexistence() -> None:
+    """The one thing that stands between the measurement and the change.
+
+    Every real-build test reads its result with
+    ``duckdb.connect(DUCKDB_PATH, read_only=True)``. Today that happens after
+    a subprocess has exited, so nothing else holds the file. In-process,
+    dbt-duckdb caches its environment so repeated invokes stay fast -- which
+    means the adapter may still hold the same database open read-write when
+    the test's read-only connect runs, and DuckDB refuses a second connection
+    to one file under a different configuration.
+
+    If read_only=True raises here, the change needs the read side adjusted;
+    if it succeeds, `_run_dbt` can move to dbtRunner with no other edit.
+    """
+    import duckdb
+
+    path = os.environ["DUCKDB_PATH"]
+    print("\n--- DuckDB coexistence with dbt's in-process connection ---")
+    print(f"  duckdb {duckdb.__version__}, path {path}")
+
+    for label, kwargs in (
+        ("connect(read_only=True)", {"read_only": True}),
+        ("connect() read-write", {}),
+    ):
+        try:
+            con = duckdb.connect(path, **kwargs)
+            rows = con.execute(
+                "select count(*) from main.int_price_history"
+            ).fetchone()[0]
+            con.close()
+            print(f"  {label:<28} OK, int_price_history has {rows} rows")
+        except Exception as exc:  # noqa: BLE001 - the failure mode is the finding
+            print(f"  {label:<28} RAISED {type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":
