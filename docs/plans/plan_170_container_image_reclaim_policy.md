@@ -99,18 +99,38 @@ two multi-gigabyte images and rebuilds them on an ARM64 host — where rebuilds 
 slow — wants its reclaim rule decided beforehand. Deciding it afterwards means
 deciding it while `/` is filling.
 
-## The open question Stage 0 must resolve
+## The trend, resolved 2026-09-01
 
 The storage runbook recorded `/` at **72% with `/var/lib/containerd` at 29 GB** on
-2026-08-29. The reading above, three days later, is **53% and 20 GB**. Roughly
-9 GB was reclaimed in between and this plan does not know by what. The 2026-08-31
-maintenance window is the obvious candidate and has not been checked.
+2026-08-29. The reading above, three days later, is **53% and 20 GB**. The ~9 GB
+reclaimed in between was **a manual `docker builder prune`**, confirmed by the
+maintainer and corroborated in `~/.bash_history`:
 
-This matters more than the number. If containerd growth is **monotonic**, the
-policy is a retention rule. If it is a **sawtooth** that maintenance windows
-already flatten, the policy is a smaller thing — a documented step in an existing
-procedure — and this plan should shrink accordingly. Writing a retention rule
-against an unexplained 9 GB drop is how a plan solves the wrong problem.
+```
+cd /opt/cartracker
+sudo docker builder prune          # after `tmux attach -t plan145-stage-6`
+sudo docker builder prune -a       # near the plan158-decoy work, before `tmux new -s plan147`
+```
+
+The history file carries no timestamps, but Plan 147 landed 2026-08-30 and the
+decoy work is the 2026-08-29 deploy hang, which brackets the `-a` to 2026-08-29
+or 08-30. **No `docker image prune` or `docker system prune` appears anywhere in
+the file.**
+
+Two conclusions, and the second was not anticipated when this plan was drafted.
+
+**The trend is monotonic, not sawtooth.** Nothing scheduled reclaims this space.
+The apparent drop was a person intervening by hand, which is precisely the toil a
+scheduled policy replaces — and it means the Stage 0 escape hatch that would have
+shrunk this plan into a step in Plan 142's procedure is **closed**.
+
+**There are two monotonic pools and build cache is the faster one.** BuildKit
+cache lives in the same containerd snapshotter, which is why `/var/lib/containerd`
+fell 9 GB without a single image being deleted. It has regrown from approximately
+zero to **2.04 GB in about two days** — roughly 1 GB/day, against images that only
+shrink when somebody removes them explicitly. Build cache was scoped out of this
+plan's first draft on the assumption it was small; the measurement says otherwise
+and it is in scope.
 
 ## Design
 
@@ -144,19 +164,29 @@ are the instruments that work.
 
 ## Stages
 
-### Stage 0 — Resolve the trend before writing a rule
+### Stage 0 — Decide the two retention rules
 
-Establish what actually happened between 2026-08-29 and 2026-09-01, and whether
-`/var/lib/containerd` growth is monotonic or window-sawtooth. Check the
-2026-08-31 window's records first; it is the cheapest candidate and it either
-explains the 9 GB or eliminates itself.
+**The trend half of this stage is already answered** — see "The trend, resolved
+2026-09-01" above. Growth is monotonic in both pools, nothing scheduled reclaims
+either, and the plan does not shrink.
 
-Then decide the retention rule and the rollback window it buys, and record both
-with the measurement they came from.
+What remains is the rule, and there are two of them because the pools have
+different rollback consequences:
 
-**Exit:** a written trend verdict, a retention rule, and — if the trend turns out
-to be a sawtooth that windows already flatten — an explicit decision to stop here
-and fold the remainder into the maintenance procedure instead.
+- **Images.** Keep enough history to roll back a bad deploy without a rebuild,
+  which on this ARM64 host is slow. Name the rollback window the rule buys.
+- **Build cache.** Nothing rolls back to a build cache entry; the cost of
+  discarding it is a slower next build, not a blocked recovery. It can therefore
+  be far more aggressive than the image rule, and the two should not share a
+  threshold merely because they share a directory.
+
+Measure the build-cache regrowth curve over at least one week before fixing its
+threshold. The ~1 GB/day figure is derived from two endpoints and an undated
+history entry; it is enough to put build cache in scope and not enough to size a
+rule.
+
+**Exit:** two retention rules, each with the measurement it came from, and — for
+the image rule — the rollback window it buys.
 
 ### Stage 1 — Derive the keep-set, and report without deleting
 
@@ -207,14 +237,14 @@ legible without an SSH session.
 - **`docker volume prune`, in any form.** `/var/lib/docker/volumes` is a symlink
   to `/mnt/data/docker-volumes` (Plan 105) and volumes are 51.78 GB with 69 MB
   reclaimable. The runbook's prohibition stands and this plan does not touch it.
-- **Build cache policy.** 530 MB reclaimable with zero active is a real but
-  separate pool with different rollback consequences; fold it in only if Stage 0
-  shows it growing.
+- **Rebuilding the build cache deliberately.** This plan discards cache; warming
+  it, or deciding a build should be cached differently, is not its business.
 
 ## Success criteria
 
-1. The retention rule is written down with the rollback window it buys and the
-   measurement it came from.
+1. Both retention rules — images and build cache — are written down with the
+   measurement each came from, and the image rule names the rollback window it
+   buys.
 2. The keep-set is derived from `maintenance-running-set.txt`, and adding a
    Compose service protects its image without editing the reclaim job.
 3. A scheduled run reclaims image content without deleting any image the manifest
