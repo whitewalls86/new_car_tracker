@@ -29,7 +29,7 @@
       "priority": 84,
       "effort": "L",
       "state": "planned",
-      "summary": "Stage 1f reconcile against the published writings — audit done 2026-08-31, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open",
+      "summary": "Stage 1f reconcile against the published writings — audit done 2026-08-31, copy pass built 2026-09-01 and in review (CAR-59). The surface scope question is answered: the published articles are out of scope as point-in-time artifacts, so this plan owns the README and the landing page only. That answer raised Stage 1g — the landing page links the corpus under a list of immutable facts only (title, date, URL), since a per-article annotation would rot every time the tree moves. Its weight is the add-an-article procedure: a two-way reconciliation against both surfaces, held by Stage 1c's commit gate. Stage 1h closes the last direction: 1c fires only when a surface is staged, so a plan that changes the system and edits no prose never reaches it — the close-out skill gains one cheap question that proposes and never writes",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
     },
     {

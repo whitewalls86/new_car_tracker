@@ -242,6 +242,30 @@ three packed months turned **2.7 million bronze objects into 222**, and inodes
 stopped being the binding constraint — bytes are again, which is where a storage
 problem should end up.
 
+The reversal is easiest to see in a design that was built and then thrown away.
+Section-level deduplication splits each page into named sections and stores each
+distinct section once. It was implemented, and it is lossless — the audit
+reconstructs artifacts byte-identically. On bytes alone it looked like a win. On
+the real backend it measured **223% worse** than simply compressing each page,
+because this single-drive object store costs roughly 8 KB per object in
+directory and block padding, and 60 artifacts became 556 section objects.
+Splitting more finely only made it worse: content-defined chunking at 256 B
+reaches 70.5% gross deduplication and nets −622.9%. The redundancy was real and
+reachable; collecting it cost far more than it saved. The code survives in
+`processing/html_sections.py`, where reprocessing — not storage — is what it is
+good for.
+
+**One larger win is deliberately not taken.** Storing only the page regions the
+parser actually reads would cut stored HTML by roughly 96% stacked on the
+dictionary, which is the biggest reduction measured here. It is also
+irreversible, and it is refused on what bronze is *for*. Bronze is what arrived;
+silver and mart are opinions about what it means. An optimization that keeps
+only what today's parser understands quietly turns bronze into another opinion —
+and the probe showed that concretely: the projection is parser-equivalent on
+60 of 60 active listings, and it silently rewrites a blocked page and an
+unlisted page to `active`, discarding the fields that said otherwise. A delisted
+vehicle reappearing as available is the worst direction that error can run.
+
 ### Health that a green dashboard cannot fake
 
 The lesson that shaped the observability design came from an outage where
@@ -309,6 +333,22 @@ the health collector cannot prove every Compose service has a healthcheck; a dbt
 model test cannot prove the archiver's separately maintained selector returns
 the same cohort. Those need repository-level assertions, which is why
 configuration and equivalence tests are first-class rather than an afterthought.
+
+The fixture underneath that fourth layer is built with its arrow reversed. The
+usual approach takes some production rows and hopes they exercise the code. Here
+the branches come first: each dbt branch or guard worth protecting is named as a
+coverage selector, and the selector is a SQL query that goes and finds
+production entities exhibiting that behavior. There are more than twenty,
+registered in `archiver/config/lake_snapshot_selectors.yml` — gaps-and-islands state runs,
+price-drop and price-increase lags, source-priority ties where a detail row
+outranks an SRP row, sparse benchmark groups that must not silently disappear,
+each 403 cooldown bucket boundary. The selected entities are then closed over
+VINs, listings, and artifacts, so rows arrive with everything they need to join.
+What the snapshot asserts is coverage itself: a named behavior with no
+representative is a reported shortfall rather than a branch nobody noticed was
+untested. This does not replace dbt unit tests, which pin exact branch behavior
+on tiny synthetic inputs. It protects the part synthetic inputs cannot — real
+composition, with its joins, nulls, duplicates, and ordering.
 
 CI builds a miniature production data plane: it applies the real migrations to a
 real Postgres, creates the bucket, installs the same pinned dbt adapters and
