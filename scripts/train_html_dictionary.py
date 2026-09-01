@@ -18,6 +18,10 @@ from scripts.estimate_dictionary_savings import (
     fetch_available_months,
     fetch_corpus_sample,
 )
+from shared.queries import (
+    INSERT_COMPRESSION_DICTIONARY,
+    SELECT_COMPRESSION_DICTIONARY_REGISTRATION,
+)
 
 LOG = logging.getLogger("train_html_dictionary")
 DEFAULT_DICTIONARY_SIZE_KB = 768
@@ -131,9 +135,7 @@ def register_dictionary(
     # must never replace bytes needed by frames already written against it.
     with db_cursor(error_context="Check compression dictionary", dict_cursor=True) as cur:
         cur.execute(
-            "SELECT dict_id, version FROM ops.compression_dictionaries "
-            "WHERE dict_id = %s OR version = %s",
-            (dict_id, version),
+            SELECT_COMPRESSION_DICTIONARY_REGISTRATION, (dict_id, version)
         )
         if cur.fetchone() is not None:
             raise RuntimeError(
@@ -165,13 +167,7 @@ def register_dictionary(
     try:
         with db_cursor(error_context="Register compression dictionary") as cur:
             cur.execute(
-                """
-                INSERT INTO ops.compression_dictionaries (
-                    dict_id, version, minio_path, dictionary_bytes,
-                    dictionary_size_bytes, zstd_level, training_parameters,
-                    sample_keys, sample_sha256
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
-                """,
+                INSERT_COMPRESSION_DICTIONARY,
                 (
                     dict_id,
                     version,

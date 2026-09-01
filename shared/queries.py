@@ -23,3 +23,11 @@ def _q(name: str) -> str:
 
 # Plan 129: trained zstd dictionaries
 SELECT_COMPRESSION_DICTIONARY = _q("select_compression_dictionary")
+# The registration pair, used by scripts/train_html_dictionary.py. They live
+# here rather than in the script because the table is shared/compression.py's:
+# a second statement against it, written at a call site, is the drift this
+# arrangement exists to prevent.
+SELECT_COMPRESSION_DICTIONARY_REGISTRATION = _q(
+    "select_compression_dictionary_registration"
+)
+INSERT_COMPRESSION_DICTIONARY = _q("insert_compression_dictionary")

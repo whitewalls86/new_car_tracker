@@ -5,7 +5,6 @@ Every query the ops service runs against Postgres is executed here against a rea
 DB with Flyway migrations applied. The goal is to catch schema breakage (column
 renames, dropped tables, type mismatches) — not to validate business logic.
 """
-import ast
 import json
 import uuid
 from pathlib import Path
@@ -66,25 +65,16 @@ from ops.routers.deploy import STALE_LOCK_MINUTES
 pytestmark = pytest.mark.integration
 
 
-def _sensor_constant(name: str) -> str:
-    """Read a module-level constant out of airflow/dags/sensors.py.
-
-    This suite runs in the main venv, which has no Airflow, so sensors.py
-    cannot be imported here -- but the statement under test is the sensor's
-    own, verbatim, not a copy that can drift away from it.
-    """
-    source = (
-        Path(__file__).parents[3] / "airflow" / "dags" / "sensors.py"
-    ).read_text(encoding="utf-8")
-    return next(
-        node.value.value
-        for node in ast.parse(source).body
-        if isinstance(node, ast.Assign)
-        and any(t.id == name for t in node.targets if isinstance(t, ast.Name))
-    )
-
-
-GATE_OBSERVATION_SQL = _sensor_constant("GATE_OBSERVATION_SQL")
+# The sensor's own statement, read from the file the sensor reads.
+#
+# This was an AST scrape of a module-level constant in sensors.py until Plan
+# 162 Stage 7 moved the statement into airflow/sql/, which is what the scrape
+# was working around: this suite runs in the main venv and cannot import
+# Airflow. Reading the .sql file is the same guarantee -- one copy, executed
+# here -- without parsing Python to get at a string.
+GATE_OBSERVATION_SQL = (
+    Path(__file__).parents[3] / "airflow" / "sql" / "record_gate_observation.sql"
+).read_text(encoding="utf-8")
 
 # The surfaces a full-fleet deploy expands to; see ops/coordination_contract.py.
 DEPLOY_SCOPE = frozenset(

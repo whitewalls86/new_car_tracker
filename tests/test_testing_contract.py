@@ -853,7 +853,6 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 LAYER_2_WAIVERS = tuple(
     Waiver(subject, gap="G14", owner=162)
     for subject in (
-        "airflow/sql/delete_stale_emails.sql",
         "archiver/sql/lake_snapshot_selectors/active_to_unlisted.sql",
         "archiver/sql/lake_snapshot_selectors/benchmark_dense_make_model.sql",
         "archiver/sql/lake_snapshot_selectors/benchmark_sparse_make_model.sql",
@@ -1070,17 +1069,10 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
         "scripts/estimate_dictionary_savings.py:164",
         "scripts/export_volatility_features_to_iceberg.py:123",
         "scripts/export_volatility_features_to_iceberg.py:134",
-        "scripts/export_volatility_features_to_iceberg.py:151",
         "scripts/export_volatility_features_to_iceberg.py:155",
-        "scripts/export_volatility_features_to_iceberg.py:214",
         "scripts/preflight_local_lakehouse_snapshot.py:301",
-        "scripts/run_dbt_spark.py:115",
         "scripts/run_dbt_spark.py:158",
-        "scripts/spike_iceberg_lakehouse.py:110",
         "scripts/spike_iceberg_lakehouse.py:133",
-        "scripts/spike_iceberg_lakehouse.py:174",
-        "scripts/train_html_dictionary.py:133",
-        "scripts/train_html_dictionary.py:167",
         "scripts/verify_dialect_datediff.py:128",
     )
 )
@@ -1126,6 +1118,23 @@ _SQL_VERB = re.compile(
 # particular no production module runs ``SET search_path`` through a cursor,
 # which would be a schema statement wearing this shape and is not exempt.
 _SESSION_SETUP_VERBS = frozenset({"INSTALL", "LOAD", "SET", "ATTACH", "DETACH", "PRAGMA"})
+
+# DDL, which Plan 161 question 4 exempts by name: "DDL and one-shot
+# maintenance, which Flyway and ``scripts/`` own". That exemption was written
+# when nothing scanned ``scripts/`` and became load-bearing on 2026-09-01 when
+# something did -- ``CREATE NAMESPACE IF NOT EXISTS`` and ``DROP TABLE IF
+# EXISTS`` against a scratch Iceberg namespace are exactly the shape it
+# describes.
+#
+# It is narrower than it looks. A ``.sql`` file earns its keep because a test
+# can execute the statement production runs; this DDL creates and tears down
+# the very namespace its script is about, so there is no production schema for
+# it to drift from -- the same argument as session setup above.
+# **Flyway's DDL is not covered by this.** ``db/migrations/`` is exempt one
+# level up, in ``_SQL_EXEMPT_ROOTS``, and Flyway applies and checksums it.
+_DDL_VERBS = frozenset({"CREATE", "DROP", "ALTER", "TRUNCATE"})
+
+_EXEMPT_VERBS = _SESSION_SETUP_VERBS | _DDL_VERBS
 
 
 def _leading_sql_literal(node: ast.AST) -> str | None:
@@ -1178,7 +1187,7 @@ def _inline_sql_sites(source: str, filename: str = "<canary>") -> set[int]:
             if text is None:
                 continue
             match = _SQL_VERB.match(text)
-            if match and match.group(1).upper() not in _SESSION_SETUP_VERBS:
+            if match and match.group(1).upper() not in _EXEMPT_VERBS:
                 found.add(node.lineno)
                 break
     return found
@@ -1259,7 +1268,6 @@ def test_no_production_module_holds_sql_at_its_execute_call_site():
 SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G15", owner=162)
     for subject in (
-        "airflow/dags/sensors.py:49",
         "archiver/processors/delete_packed_source_html.py:304",
         "archiver/processors/lake_snapshot_cohort.py:109",
         "archiver/processors/lake_snapshot_cohort.py:156",
@@ -1320,7 +1328,7 @@ def _sql_literal_bindings(source: str, filename: str = "<canary>") -> set[int]:
             if text is None:
                 continue
             match = _SQL_VERB.match(text)
-            if match and match.group(1).upper() not in _SESSION_SETUP_VERBS:
+            if match and match.group(1).upper() not in _EXEMPT_VERBS:
                 found.add(node.lineno)
     return found
 

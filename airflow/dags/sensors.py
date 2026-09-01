@@ -28,6 +28,7 @@ Usage in a DAG:
 """
 import logging
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Dict
 
 import requests
@@ -46,11 +47,12 @@ class JsonPostError(requests.HTTPError):
         self.result = result
 
 
-GATE_OBSERVATION_SQL = """INSERT INTO coordination_gate_observations
-           (generation, dag_id, run_id, observed_at)
-    VALUES (%s, %s, %s, now())
-    ON CONFLICT (generation, dag_id, run_id)
-    DO UPDATE SET observed_at = EXCLUDED.observed_at"""
+# Loaded from airflow/sql/ the way delete_stale_emails.py does, by path rather
+# than through shared.query_loader: nothing under airflow/dags may import
+# shared (G12), so the DAG tree reads its own .sql files directly.
+GATE_OBSERVATION_SQL = (
+    Path(__file__).parent.parent / "sql" / "record_gate_observation.sql"
+).read_text(encoding="utf-8")
 
 
 def _record_observation(hook, generation: int, dag_id: str, context) -> None:
