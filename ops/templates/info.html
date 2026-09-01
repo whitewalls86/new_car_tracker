@@ -1117,7 +1117,7 @@
         <!-- ── 6. Recent work ── -->
         <!--
             The two lists are structural. Stage 1d's build-time generator
-            (scripts/build_public_roadmap.py) writes /static_ops/project-updates.json
+            (scripts/build_public_roadmap.py) writes /static_ops/generated/project-updates.json
             from docs/PLANS.md and docs/planning/completed_plans.md, and the script at
             the end of this section renders it into #work-planned / #work-completed.
 
@@ -1172,13 +1172,13 @@
         </section>
 
         <script>
-            // Stage 1d: render /static_ops/project-updates.json into the two lists
+            // Stage 1d: render /static_ops/generated/project-updates.json into the two lists
             // above. Every string goes in through textContent — the source is a
             // build-time artifact rather than user input, but this is a public page
             // and the summaries are lifted verbatim out of Markdown, so the rule is
             // "no markup path" rather than "no markup we expect".
             (function () {
-                var SOURCE = '/static_ops/project-updates.json';
+                var SOURCE = '/static_ops/generated/project-updates.json';
                 var SCHEMA_VERSION = 1;
                 // The generator emits only blob links into this repository. Anything
                 // else in an href is a payload, not a link, so it is not rendered.

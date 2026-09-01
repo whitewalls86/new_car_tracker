@@ -300,9 +300,11 @@ git diff
 **Both of this skill's files are generator input, and the test above cannot
 see it.** Plan 138 Stage 1d publishes `docs/PLANS.md`'s build order and
 `docs/planning/completed_plans.md` to the landing page through
-`ops/static_ops/project-updates.json`. The build order's **Next executable
+`ops/static_ops/generated/project-updates.json`. The build order's **Next executable
 slice** cell *is* the published `summary` for a planned plan, so a one-cell
-edit changes public copy.
+edit changes public copy — and since Plan 138 Stage 7 mounts that directory into
+`ops` from the checkout, the copy goes live on the next `git pull`, with no
+deploy standing between the edit and the public page.
 
 If `--check` reports the artifact stale, run
 `python scripts/build_public_roadmap.py` and leave its output in the diff.

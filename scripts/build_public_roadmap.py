@@ -1,6 +1,6 @@
 """Plan 138 Stage 1d: project the roadmap onto the public page, at build time.
 
-Emits ``ops/static_ops/project-updates.json`` from **two explicitly named
+Emits ``ops/static_ops/generated/project-updates.json`` from **two explicitly named
 tables in two different files** -- the **Default build order** in
 ``docs/PLANS.md``, and the archive table in ``docs/planning/completed_plans.md``.
 The landing page renders that file; nothing parses Markdown or calls GitHub on a
@@ -85,7 +85,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 INDEX = "docs/PLANS.md"
 ARCHIVE = "docs/planning/completed_plans.md"
 PLANS_DIR = "docs/plans"
-OUTPUT = "ops/static_ops/project-updates.json"
+OUTPUT = "ops/static_ops/generated/project-updates.json"
 
 # Links resolve to GitHub rather than to a first-party page. Plan 138's
 # non-goals bar publishing plan documents themselves, and the repository is

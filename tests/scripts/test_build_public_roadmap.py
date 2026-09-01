@@ -409,7 +409,7 @@ def test_no_summary_carries_markup_the_page_would_show_literally(snapshot):
 def test_the_landing_page_fetches_this_artifact_into_both_lists():
     """The generator and its only consumer are asserted together, not by hand."""
     page = (brm.REPO_ROOT / "ops/templates/info.html").read_text(encoding="utf-8")
-    assert "/static_ops/project-updates.json" in page
+    assert "/static_ops/generated/project-updates.json" in page
     for element_id in ("work-planned", "work-completed"):
         assert f'id="{element_id}"' in page
 
@@ -462,7 +462,7 @@ def test_a_source_that_does_not_parse_exits_two_rather_than_writing(tmp_path, mo
 
 
 def test_the_artifact_is_written_where_the_public_route_serves_it():
-    assert brm.OUTPUT.startswith("ops/static_ops/")
+    assert brm.OUTPUT.startswith("ops/static_ops/generated/")
     assert (Path(brm.REPO_ROOT) / "Caddyfile").read_text(encoding="utf-8").count(
         "handle /static_ops/*"
     ) == 1

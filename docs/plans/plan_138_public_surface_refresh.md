@@ -2,7 +2,8 @@
 
 ## Status
 
-**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. Stages 2 through 7 not started.**
+**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. STAGE 7 BUILT AND UNDEPLOYED.**
+**Stages 2 through 6 not started.**
 Written 2026-08-17 after comparing the live `https://cartracker.info/info` page
 and `README.md` against `master` at `6f6a2ba`.
 
@@ -2166,6 +2167,62 @@ site after `git pull` alone, with no image build and no container recreate,
 confirmed by fetching its public URL; the Compose contract test fails if the
 mount is removed, made writable, narrowed to a single file, or left behind by a
 new generator output path.
+
+#### Stage 7 evidence — 2026-09-01 (CAR-65)
+
+**Built 2026-09-01.** `ops/static_ops/generated/` now holds both artifacts, the
+`ops` service mounts it read-only from the checkout, and
+`tests/test_ops_content_mount.py` is 7 tests.
+
+| Gate 7 check | State |
+|---|---|
+| The mount is a read-only directory bind of the generated content | Met — `./ops/static_ops/generated:/app/ops/static_ops/generated:ro` |
+| The test fails if the mount is **removed** | Met — 3 tests fail |
+| …if it is **made writable** | Met — 2 tests fail |
+| …if it is **narrowed to a single file** | Met — 4 tests fail, including the one named for the inode trap |
+| …if a **new generator writes outside it** | Met — 1 test fails |
+| A regenerated recap goes live on `git pull` alone, confirmed by fetching its public URL | **Owed.** Nothing is deployed yet |
+
+**The four failure modes were verified by mutation, not by the suite passing.**
+Each was applied to the tree in turn, the suite run, and the file restored; the
+table above records which tests caught which. A contract test that has only ever
+been seen green is an assertion about nothing, and this stage exists precisely
+because every way the mount can fail is silent.
+
+**The generators' output is byte-identical across the move.** Both were
+re-run after the paths changed and `git status` reported renames only, with no
+content modification — so the relocation moved files and changed nothing about
+what is served.
+
+**Gate 7's runtime half is owed and its blocker is not what it looks like.** It
+needs a deploy, and this one deploy is a *recreate* — `docker compose restart
+ops` does not apply a volume change and would report success anyway. It does
+**not** need Stage 2: `handle /static_ops/*` is already public in the Caddyfile,
+so `/static_ops/generated/project-updates.json` can demonstrate the whole
+mechanism as soon as `ops` is recreated, without a single route change.
+
+**One consequence Stage 2 should know about.** That same public `/static_ops/*`
+handler means the 20 recap pages become fetchable at
+`/static_ops/generated/recaps/YYYY-MM-DD.html` the moment this deploys — before
+Stage 2 gives them their canonical `/recaps/YYYY-MM-DD` route. This is not a
+disclosure change; the truth contract's §5 already records that the recaps are
+public in the repository. It is a **canonicalisation** problem: one page reachable
+at two URLs, and Stage 2's sitemap and canonical links have to name only one.
+Stage 2 item 3 already builds the `/recaps` handler; what it gains here is the
+requirement that the static path not become a second published URL for the same
+content.
+
+**The publish procedure is written where the author stands**, not in a runbook
+nobody opens: `plan-week`'s "After writing" section now says a merged recap
+publishes on `git pull` and that `redeploy.sh ops` is the wrong tool for it, and
+the `plans` skill's note on the slice cell — already the one place that knew the
+cell is published copy — now says the edit reaches the page on the next pull.
+
+**Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.** The move is internal; `/static_ops/project-updates.json`
+became `/static_ops/generated/project-updates.json`, which is a fetch URL inside
+the page rather than a claim the page makes.
+
 
 ---
 

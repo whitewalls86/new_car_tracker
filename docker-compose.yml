@@ -134,6 +134,14 @@ services:
     volumes:
       - ops_logs:/usr/app/logs
       - analytics_snapshot:/data/analytics_snapshot:ro
+      # Plan 138 Stage 7: generated public content is served from the checkout,
+      # not the image, so `git pull` publishes a recap or a roadmap update with
+      # no build, no recreate and no coordination drain. The image `COPY` stays,
+      # so this only overlays it and a host with no checkout still serves.
+      # It must stay a DIRECTORY mount: a single-file mount pins the inode and
+      # `git pull` replaces the file, leaving the container serving a deleted
+      # copy while reporting success (redeploy.sh decision 4).
+      - ./ops/static_ops/generated:/app/ops/static_ops/generated:ro
     environment:
       PGHOST: postgres
       PGPORT: 5432
