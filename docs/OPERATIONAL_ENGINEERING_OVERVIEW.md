@@ -339,13 +339,20 @@ For application changes, [`.github/workflows/ci.yml`](../.github/workflows/ci.ym
 - the non-integration pytest suite with coverage reporting;
 - a build of every Compose image;
 - Promtail syntax validation and fixture replay through the real production image;
-- a dbt/integration job backed by real Postgres, MinIO, and Loki service containers.
+- four parallel integration jobs backed by real Postgres and MinIO service containers.
 
-The dbt job applies the actual Flyway migrations with CI-specific credentials, creates the MinIO bucket, installs the same pinned dbt adapters used by the runtime, and installs DuckDB's `httpfs` and `postgres_scanner` extensions. It seeds empty Parquet schemas so model compilation exercises the real external-source shape, then uploads a production-shaped shared lake fixture under a reserved partition.
+Every one of those four applies the actual Flyway migrations with CI-specific credentials, and each declares only the services its own suites need. They are cut by prerequisite rather than by service name, because the prerequisite is the only thing the suites ever shared:
 
-The job runs a real DuckDB dbt build and follows it with separate integration suites for SQL, the ops API, recovery scripts, Airflow DAGs, the archiver, selector/dbt equivalence, and dbt-runner.
+| Job | Prerequisite it pays for | Suites |
+|---|---|---|
+| `dbt model tests (real build)` | a real `dbt build --target duckdb` | `tests/integration/dbt/` |
+| `SQL + Airflow metadata contracts` | that build **and** the `airflow` schema `airflow db migrate` creates | `tests/integration/sql/`, `tests/integration/airflow/` |
+| `Service integration tests (Postgres)` | a migrated Postgres, nothing else | ops, recovery scripts, processing, scraper, dbt_runner |
+| `Lake integration tests (MinIO)` | the Plan 120 lake-snapshot fixture in object storage | shared, archiver |
 
-Airflow is installed in an isolated virtual environment because its FastAPI/Starlette dependency constraints conflict with the application's FastAPI services. This mirrors production's container boundary instead of forcing incompatible dependencies into one CI environment.
+The two dbt-building jobs create the MinIO bucket, install the same pinned dbt adapters used by the runtime, and install DuckDB's `httpfs` and `postgres_scanner` extensions. They seed empty Parquet schemas so model compilation exercises the real external-source shape, then upload a production-shaped shared lake fixture under a reserved partition.
+
+Airflow is installed in an isolated virtual environment because its FastAPI/Starlette dependency constraints conflict with the application's FastAPI services. This mirrors production's container boundary instead of forcing incompatible dependencies into one CI environment. That install lives in the one job whose suites need it; until [Plan 162](plans/plan_162_testing_census_and_restructure.md) Stage 4 split these jobs apart, it ran ahead of all eight suites, six of which never import Airflow.
 
 ### 5.3 Shared fixtures test semantics, not hand-written imitations
 
