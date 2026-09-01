@@ -2,7 +2,7 @@
 
 ## Status
 
-**Stages 0–6b are complete. Stage 7 is next.** The census enumerated
+**Stages 0–7 are complete. Stage 8 is next.** The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
