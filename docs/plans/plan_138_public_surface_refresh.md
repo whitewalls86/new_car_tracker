@@ -2,9 +2,15 @@
 
 ## Status
 
-**DRAFT — audit complete; implementation has not started.** Written 2026-08-17
-after comparing the live `https://cartracker.info/info` page and `README.md`
-against `master` at `6f6a2ba`.
+**STAGE 0 COMPLETE — Stages 1 through 6 not started.** Written 2026-08-17 after
+comparing the live `https://cartracker.info/info` page and `README.md` against
+`master` at `6f6a2ba`.
+
+Both Stage 0 gates closed on 2026-08-31: **Gate 0b** reconciled the internal
+overviews (CAR-37, PR #313) and **Gate 0** recorded the baseline and gave every
+drift-table row a disposition (CAR-44, PR #315). Stage 1 may now draw copy from
+the reconciled overviews and the assigned replacement claims. No public surface
+has changed yet.
 
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
@@ -128,10 +134,18 @@ bare domain sees a login screen before seeing what the project is.
   blog-platform feature. The recap surface is a generated index plus generated
   pages.
 - Publishing secrets, production infrastructure identifiers, private metrics, or
-  operational endpoints that are not already intentionally public. This now has a
-  named instance: the internal overviews recorded under Stage 0 document the
-  anti-detection path and production object prefixes, and neither may reach a
-  public surface.
+  operational endpoints that are not already intentionally public.
+- Lifting the Stage 0 overviews' prose onto the README or landing page. This is
+  a **register** rule, not a disclosure one, and the distinction was corrected
+  on 2026-08-31: the repository is public, so those documents are already a
+  public surface, and the earlier wording — that they "may not reach a public
+  surface" — described a boundary that does not exist. The anti-detection path
+  is documented in `scraper/processors/cf_session.py`, which is public;
+  `ARCHITECTURAL_OVERVIEW` §1 narrates the same mechanism in prose. Neither is
+  secret and neither can be made secret by a label. What the front door does
+  not get is the deep dive's register: the README and landing page describe the
+  scrape path in neutral terms, and production object prefixes stay out of
+  authored entry-point copy because they serve no reader there.
 
 ---
 
@@ -258,7 +272,7 @@ an explicit decision to remove the claim.
 
 #### Gate 0 evidence — 2026-08-31 (CAR-44)
 
-The baseline this gate asks for is
+**Gate 0 closed on 2026-08-31.** The baseline it asks for is
 [`docs/evidence/plan_138_stage_0_baseline_2026-08-31.md`](../evidence/plan_138_stage_0_baseline_2026-08-31.md),
 with screenshots alongside it. Every row of the drift table above carries a
 disposition there, plus three further rows of the same class found while
@@ -305,14 +319,16 @@ Two findings recorded rather than fixed, both outside this gate: `/info` is
 served uncompressed (a Stage 3c number, captured here as the before-state), and
 the stats tile's `(stale)` marker is Plan 143's contract, not this plan's. The
 two Gate 0b findings — `.env.example:49-57` and the missing internal-only
-markers — remain open and are untouched by this gate.
+markers — remain open and are untouched by this gate. *(Both closed later the
+same day; see the Gate 0b section below.)*
 
-### Internal source documents
+### Source documents for Stage 1a
 
 Two current-state overviews were written on 2026-08-28, after this plan's
 2026-08-17 audit and against a later tree. They are the strongest material this
-plan has for Stage 1a, and they are **internal engineering references, not
-public copy**.
+plan has for Stage 1a, and they are **long-form narrative, not front-door
+copy** — public documents like the rest of the repository, written at a
+register the README and landing page do not use.
 
 | document | what Stage 1 draws from it |
 |---|---|
@@ -367,6 +383,27 @@ gate:
 - Neither overview carries an internal-only marker, even though Stage 0 treats
   them as internal references and §1 documents the anti-detection path. The
   boundary currently lives only in this plan document.
+
+**Both findings closed 2026-08-31**, and the second one closed differently than
+it was written. The bullets above are left as the dated record of what the gate
+found.
+
+The first is [Plan 167](plan_167_solver_config_default_truth.md) Stage 0, which
+also found that `docker-compose.yml:267` carries the identical stale default —
+the finding named one line and there were two.
+
+The second was recorded on the wrong axis. It asks for an "internal-only
+marker", but the repository is public (`gh repo view` reports visibility
+PUBLIC), so both overviews already *are* a public surface and no label can
+change that. `scraper/processors/cf_session.py` is public too, which means §1
+narrates in prose a mechanism the source documents in code. The real
+distinction is **register, not disclosure**, and the non-goal above was
+rewritten to say so. Both documents now carry a marker on that axis. Two
+corrections fell out of the re-reading: the finding says "both documents print
+production object prefixes" and only `ARCHITECTURAL_OVERVIEW` does (`:50-52`,
+`:338`, `:365`, `:384`); and §5's concern that recaps name `trawl` is the same
+category error, so Stage 1e inherits a narrower question than the one written
+there.
 
 The staleness against Plan 145 Stage 5/6 noted above is **not** addressed here;
 this gate covered the scraper section only.

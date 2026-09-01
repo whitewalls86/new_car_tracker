@@ -1,172 +1,360 @@
 # CarTracker
 
-CarTracker scrapes Cars.com every 15 minutes across 40+ make/model pairs and runs raw HTML through a bronze → silver → mart data pipeline backed by Postgres, MinIO, and DuckDB. Built as a portfolio piece to show how a real data pipeline handles the messy middle — anti-detection, idempotent writes, event sourcing, schema migrations, and observability — not just the happy path.
+![CarTracker — bronze to mart data pipeline](docs/reference/cover-image.svg)
 
-**Live site:** https://cartracker.info — dashboard, ops admin, and project info page. Access is gated by Google OAuth2 + DB-backed role authorization. Request access at https://cartracker.info/request-access.
+CarTracker continuously collects new-car listings from Cars.com and turns them
+into an analytical product, moving each listing through a replayable bronze →
+silver → mart pipeline built on Airflow, Postgres, MinIO, DuckDB, and dbt. It
+exists to show how a real data platform handles the messy middle — resumable
+ingestion, idempotent writes, event history, schema evolution, storage
+economics, and observability designed around failure — not just the happy path.
+
+[![CI](https://github.com/whitewalls86/new_car_tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/whitewalls86/new_car_tracker/actions/workflows/ci.yml)
+
+**Live site:** <https://cartracker.info> — public project page with live
+pipeline statistics. The dashboard and admin surfaces sit behind Google OAuth2
+plus DB-backed role authorization. Request access at
+<https://cartracker.info/request-access>.
+
+---
+
+## What this demonstrates
+
+- **Replayable ingestion.** Every fetched page is preserved as an immutable,
+  compressed object before anything parses it, so a parser change can be re-run
+  against history instead of requiring a re-scrape.
+- **Current state and event history are separate concerns.** Postgres holds one
+  current row per entity and a short-lived append-only buffer beside it; the
+  durable history lives in columnar object storage.
+- **Orchestration that stays thin.** Airflow schedules and sequences work;
+  business logic lives in service endpoints and SQL models that can be tested
+  without an orchestrator running.
+- **Schema evolution as reviewed code.** Every schema change is a versioned
+  migration applied automatically on deploy, including expand/contract
+  sequences that let readers and writers change in separate releases.
+- **Testing across engines, not just functions.** Contracts are asserted over
+  Python, Compose configuration, real Postgres and MinIO, and the dbt/DuckDB
+  models themselves.
+- **Storage economics treated as an engineering problem.** Compression and
+  object packing were adopted against measured byte, object, and inode costs
+  rather than as defaults.
+- **Observability designed around failure modes.** Signals are chosen so that
+  missing success is detectable, not only visible errors.
 
 ---
 
 ## How data flows
 
 ```
-Scraper ──► MinIO (raw HTML)
-                │
-           artifacts_queue
-                │
-           Processing ──► Postgres staging events
-                                  │
-                             Archiver ──► MinIO Parquet (silver)
-                                                │
-                                           dbt + DuckDB (mart)
-                                                │
-                                           Dashboard (Streamlit)
+                        Cars.com
+                            │
+                            ▼
+                         Scraper
+                            │
+        ┌───────────────────┴───────────────────┐
+        ▼                                       ▼
+  Bronze: compressed                    Artifact pointer
+  HTML objects (MinIO)                  + state (Postgres ops)
+        │                                       │
+        └───────────────────┬───────────────────┘
+                            ▼
+                        Processing
+                            │
+        ┌───────────────────┴───────────────────┐
+        ▼                                       ▼
+  HOT state: listing, VIN                Event buffer + typed
+  mapping, claim, cooldown               observations
+  (Postgres ops)                         (Postgres staging)
+        │                                       │
+        │                                       ▼
+        │                                   Archiver
+        │                                       │
+        │                                       ▼
+        │                       Operational history + silver
+        │                       observations (MinIO Parquet)
+        │                                       │
+        └───────────────────┬───────────────────┘
+                            ▼
+                 dbt + DuckDB → mart tables
+                            │
+                            ▼
+        Dashboard, metrics, and the public project page
 ```
 
-| Layer | Storage | What lives here |
-|-------|---------|-----------------|
-| **Bronze / Ingest** | MinIO | Compressed raw HTML artifacts, partitioned by date and type |
-| **Operational** | Postgres | Queue state, price observations, VIN mappings, claims, cooldowns |
-| **Silver** | MinIO (Parquet) | Bulk-flushed observation events partitioned by source/date |
-| **Mart** | DuckDB | dbt-transformed analytics tables — deal scores, price history, benchmarks |
+| Layer | Physical home | Grain | Why it exists |
+|---|---|---|---|
+| **Bronze** | MinIO | One compressed HTML object per fetched results or detail page | Preserves exactly what the site returned, so parser changes are replayable |
+| **Operational** | Postgres `ops` | One current row per artifact, listing, VIN mapping, claim, or cooldown | Low-latency point lookups, transactions, leases, and conflict handling |
+| **Staging buffers** | Postgres `staging` | Append-only mutations and typed observations awaiting bulk export | Decouples small transactional writes from columnar object-store writes |
+| **Silver** | MinIO (Parquet) | One typed observation per listing appearance, partitioned by source and date | Durable analytical history, cheap and scan-friendly |
+| **Mart** | DuckDB, built by dbt | VIN-, listing-, hour-, cohort-, and benchmark-grain products | Turns history into dashboard-ready business meaning |
+
+The write pattern is the part most often described wrongly: **processing updates
+the HOT row and appends its event in the same Postgres transaction.** The
+archiver does not populate HOT tables — it later exports the event buffer to
+Parquet and deletes the exported buffer rows. Postgres therefore owns live
+application decisions, while Parquet and dbt own history and its analytical
+interpretation.
+
+The same distinction governs the 403 cooldown. The **executable** backoff that
+decides whether a listing can be claimed lives in the Postgres
+`ops.ops_detail_scrape_queue` view, where the scrape queue can read it
+transactionally. dbt consumes the same event stream for cohort, funnel, and
+block-rate analysis — history and interpretation, not the control decision.
+
+### Scheduled work
+
+More than a dozen Airflow DAGs are defined. `hourly_analytics_refresh` owns the
+scheduled flush-and-build sequence, which is why several component DAGs are
+deliberately manual-only rather than running on their own timers.
+
+| DAG | Schedule | What it does |
+|---|---|---|
+| `scrape_listings` | Every 30 min | Advances the rotation slot, explodes configs × scopes, triggers results-page scrapes |
+| `scrape_detail_pages` | Every 15 min | Reads the detail queue, atomically claims a batch, fetches and stores detail artifacts |
+| `results_processing` | Every 5 min | Claims unprocessed artifacts and hands them to the processing service |
+| `orphan_checker` | Every 5 min | Expires stale detail claims left behind by crashed containers |
+| `hourly_analytics_refresh` | Hourly | Owns the scheduled sequence: flush staging events, flush silver observations, then build the dbt models in order |
+| `cleanup_queue` | Hourly | Removes fully processed queue rows |
+| `delete_stale_emails` | Every 2 hours | Nulls opt-in notification emails on access requests older than 48 hours |
+| `disk_usage` | Daily | Records disk, object, and inode usage as metrics |
+| `compact_silver` | Daily | Compacts silver Parquet partitions so readers never double-count |
+| `prune_task_logs` | Weekly | Deletes closed Airflow task-log trees past retention |
+| `pack_bronze_html` | Monthly | Packs a closed monthly bucket of bronze objects, verifies it, and prunes the sources |
+| `dbt_build` | Manual | Full or selective dbt build; the hourly refresh owns the scheduled run |
+| `flush_staging_events` | Manual | Operational event flush; the hourly refresh owns the scheduled run |
+| `flush_silver_observations` | Manual | Silver observation flush; the hourly refresh owns the scheduled run |
+| `export_ci_lake_snapshot` | Manual | Exports a production-shaped lake snapshot for CI |
 
 ---
 
-## Services
+## Production services and access boundaries
 
-| Service | Description |
-|---------|-------------|
-| **scraper** | FastAPI — fetches SRP and detail pages with curl_cffi Chrome TLS fingerprinting. FlareSolverr bootstraps `cf_clearance` cookies shared via a process-wide credential cache (25-min TTL). Writes compressed HTML artifacts to MinIO. |
-| **processing** | FastAPI — claims artifacts from `artifacts_queue`, parses HTML, writes price observations and VIN mappings via staging event tables. |
-| **archiver** | FastAPI — bulk-flushes staging event buffers to MinIO Parquet on a schedule. Sweeps completed queue rows and expired Parquet months. |
-| **dbt_runner** | FastAPI — runs dbt transformations against DuckDB on demand or on schedule. Reads Parquet directly from MinIO via the httpfs extension — no separate data warehouse needed. |
-| **ops** | FastAPI — admin UI, deploy coordination, claim management, and the `/auth/check` forward-proxy endpoint used by Caddy. |
-| **dashboard** | Streamlit — price history, deal scores, inventory coverage, and pipeline health views backed by the DuckDB mart layer. |
-| **airflow** | Schedules all DAGs — scrape rotation, artifact processing, staging flush, Parquet cleanup, queue cleanup, and orphan checks. |
-| **postgres** | PostgreSQL 16 — operational tables (queue, claims, observations, auth). Airflow metadata lives in its own `airflow` schema. |
-| **minio** | S3-compatible object store for raw HTML artifacts and Parquet silver observations. Queryable directly by DuckDB via httpfs. |
-| **caddy** | Reverse proxy — TLS termination, OAuth2 Google auth via oauth2-proxy, and DB-backed role enforcement via `/auth/check`. |
-| **grafana** | Observability stack — Prometheus metrics (Airflow, Postgres, MinIO, node, service latency), Loki log aggregation via Promtail, and Telegram alerting with 9 provisioned alert rules. |
-| **flaresolverr** | Solves Cloudflare JS challenges and provides `cf_clearance` cookies to the scraper. |
-| **trawl** | Optional FlareSolverr-compatible solver sidecar behind the `trawl` Compose profile. Used for browser-backed session-cache trials when cookie replay through `curl_cffi` is unreliable. |
+The platform runs as more than two dozen long-running services on a single
+Compose host, alongside a few profile-gated and one-shot services.
 
----
+| Service | Role |
+|---|---|
+| **scraper** | FastAPI — fetches results and detail pages using an HTTP client whose TLS behavior matches a mainstream browser, and stores compressed HTML artifacts. Bounded retries and an adaptive cooldown govern refusals. |
+| **solver sidecar** | Browser-assisted session bootstrap for pages that require it, addressed over a FlareSolverr-compatible v1 API. The live container is `trawl`; the older `flaresolverr` container is retained but vestigial, and the environment variable kept its original name, `FLARESOLVERR_URL`. |
+| **processing** | FastAPI — claims artifact pointers, parses HTML, and writes current state and its event in one transaction. |
+| **archiver** | FastAPI — exports staging event buffers and observations to Parquet, compacts silver partitions, and sweeps completed queue rows and expired months. |
+| **pack-worker** | Packs closed monthly buckets of bronze objects, on its own service so a month-scale operation cannot starve the archiver's short requests. |
+| **dbt_runner** | FastAPI — runs dbt against DuckDB, which reads Parquet directly from MinIO via `httpfs`. No separate warehouse cluster. |
+| **ops** | FastAPI — admin UI, deploy coordination, claim management, the public project page, and the `/auth/check` forward-auth endpoint Caddy calls. |
+| **dashboard** | Streamlit — price history, deal scores, inventory coverage, and pipeline health over the DuckDB marts. |
+| **airflow** (apiserver, scheduler, dag-processor, triggerer) | Schedules and sequences the DAGs above. |
+| **postgres** | Operational tables and staging buffers. Airflow metadata lives in its own schema. |
+| **minio** | S3-compatible object store for bronze HTML and Parquet history, queried directly by DuckDB. |
+| **caddy** + **oauth2-proxy** | TLS termination, Google authentication, and DB-backed role enforcement. |
+| **prometheus**, **grafana**, **loki**, **promtail**, **container-health**, exporters | Metrics, logs, three-state health, and Telegram alerting. |
+| **pgadmin** | Admin-only database console. |
 
-## Airflow DAGs
+**Long-running worker services expose `/ready` and participate in deploy
+draining.** `/ready` answers 503 while work is in flight, so a deployment can
+wait for admitted work to finish instead of interrupting it.
 
-| DAG | Schedule | Description |
-|-----|----------|-------------|
-| `scrape_listings` | Every 30 min | Advances the rotation slot, explodes configs × scopes, triggers SRP scrapes. |
-| `scrape_detail_pages` | Every 15 min | Queries the detail scrape queue, atomically claims a batch, fetches and writes detail page artifacts. |
-| `results_processing` | Every 5 min | Claims unprocessed artifacts from `artifacts_queue`, POSTs to the processing service for parsing. |
-| `flush_staging_events` | Every 15 min | Archiver bulk-flushes staging event tables to HOT tables. |
-| `flush_silver_observations` | Every 5 min | Archiver writes accumulated observations to MinIO Parquet. |
-| `dbt_build` | Hourly | Runs `dbt build` against DuckDB. Supports selective model runs via `dag_run.conf`. |
-| `orphan_checker` | Every 5 min | Expires stale `detail_scrape_claims` rows left by crashed containers. |
-| `cleanup_queue` | Hourly | Removes fully-processed queue rows. |
-| `delete_stale_emails` | Every 2 hours | Nulls `notification_email` on access requests older than 48 hours (opt-in email retention). |
+### How authorization works
 
----
+Authentication and authorization are deliberately separate, and neither
+requires a dedicated identity service.
 
-## Technical highlights
-
-**Medallion architecture across two storage engines** — Raw HTML lands in MinIO (bronze), gets parsed into Postgres staging events (operational), flushed to Parquet (silver), and transformed by dbt into DuckDB mart tables. Each layer uses a different storage engine chosen for its access pattern.
-
-**Event sourcing via staging flush** — Price observations write to `staging._events` tables first. The archiver bulk-flushes them to HOT tables and Parquet on a schedule. This decouples write throughput from read consistency and enables bulk-insert optimization.
-
-**Atomic claim pattern** — Parallel detail scrapes use `ON CONFLICT DO UPDATE` against `detail_scrape_claims` to prevent duplicate work without a queue service. Time-based expiry via the `orphan_checker` DAG handles crashed containers.
-
-**dbt backoff model** — 403'd listings are tracked in `staging.blocked_cooldown_events`. Exponential backoff logic (`next_eligible_at`, `fully_blocked`) lives entirely in a dbt staging model — queryable, testable, and separated from application code.
-
-**Anti-detection resilience** — curl_cffi with Chrome TLS fingerprinting bypasses passive TLS inspection. FlareSolverr handles active Cloudflare JS challenges. Process-wide credential cache with 25-min TTL and automatic re-bootstrap on 403. FlareSolverr is pinned because its bundled browser version must stay compatible with scraper `curl_cffi` impersonation targets.
-
-**Versioned schema migrations** — 36 Flyway migrations track every schema change from initial setup through the full medallion evolution — reviewed as code and applied automatically on deploy.
-
-**Role-based auth without an auth service** — Caddy calls `GET /auth/check` on the ops service as a forward-proxy. The endpoint hashes the `X-Auth-Request-Email` header with a fixed salt and checks `authorized_users`. Emails are stored as `SHA-256(salt + email)` — not plaintext.
-
----
-
-## Auth & access control
-
-Authentication is handled by Google OAuth2 via oauth2-proxy. Every request passes through Caddy → oauth2-proxy before reaching any service.
-
-Authorization is DB-backed. Caddy calls `GET /auth/check` on the ops service (internal only) after authentication. The ops service looks up the hashed email in `authorized_users` and returns the role.
+1. Caddy sends the request to oauth2-proxy for Google authentication.
+2. Caddy then calls `GET /auth/check` on the ops service as forward auth.
+3. Ops hashes the authenticated email with a secret salt, looks it up in
+   `authorized_users`, and returns the role. Emails are stored only as
+   `SHA-256(salt + email)`, never as plaintext.
+4. A user who authenticates but holds no role is redirected to
+   `/request-access`, where an admin can approve or deny.
 
 | Role | Access |
-|------|--------|
-| `admin` | Everything — deploy panel, search config edits, pgAdmin, MinIO, Grafana |
-| `power_user` | Search config edits, ops admin read/write |
-| `observer` | All ops admin pages read-only — safe for portfolio demos |
+|---|---|
+| `admin` | Everything — deploy panel, config edits, user management, pgAdmin, MinIO, Airflow, Grafana |
+| `power_user` | Config edits and ops admin read/write |
+| `observer` | Ops admin, read-only |
 | `viewer` | Dashboard only |
 
-Users who authenticate but aren't in `authorized_users` are redirected to `/request-access`. Admins approve or deny from the ops admin UI.
+---
+
+## Technical case studies
+
+### Separating operational state from analytical history
+
+An early design kept an append-only price log in Postgres. That was the wrong
+home for it: append-only observation history is columnar, immutable, and read
+in scans, while operational state is small, mutable, and read by key.
+
+The split is now explicit across three Postgres schemas — configuration,
+current operational state, and short-lived event buffers — with the durable
+history in Parquet and the analytical products in DuckDB. Postgres keeps only
+the current row per entity, so the table the scrape queue reads stays small and
+deletable no matter how much history accumulates.
+
+### Replacing n8n with Airflow
+
+The pipeline originally ran on n8n. Its workflows were JSON blobs: not
+reviewable in a pull request, not unit-testable, and not portable. Migrating to
+Airflow was also the moment to move business logic out of orchestrator nodes
+and into service endpoints, under a "fat services, thin DAGs" rule — a DAG task
+issues an HTTP call, and the logic it invokes is testable without Airflow
+running at all.
+
+That boundary is what makes the orchestrator replaceable. If schedules were
+ever replaced by events, a consumer would call the same endpoints the DAG tasks
+call today.
+
+### Deployment as a state machine, not a restart
+
+Redeploying is a sequence of claims that must become true: request scoped
+coordination, drain until admitted work is gone, recreate only the requested
+services, wait for each target to reach its real health state, validate, and
+only then release the gate.
+
+The two failure branches differ on purpose. If validation fails before any
+container changed, coordination is released — the pipeline should not stay
+paused for a change that never happened. If a container was already replaced
+and a later step fails, coordination stays **held**, because a mixed-version
+fleet is a worse place to resume background work than a visible pause.
+
+The health timeout derives from the slowest healthcheck contract in the Compose
+file rather than being guessed, and a test asserts that relationship, which
+turns a deployment assumption into a cross-file invariant. The tooling also
+keeps *recreate* and *restart* distinct: a `git pull` can replace a
+bind-mounted file's inode while the container still holds the old one, so a
+config reload that reports success can be reading stale bytes.
+
+### Storage economics: compression, then packing
+
+Bronze HTML is written as an independently decompressible zstd frame using a
+trained dictionary whose ID is encoded in the frame header — so the reader
+selects the right dictionary from the data itself rather than from a mutable
+"current dictionary" setting. Training a new dictionary changes future writes;
+it never makes an existing object unreadable.
+
+Compression was not the whole problem. Measuring bytes, objects, and inodes
+*separately* showed the real constraint was object **count**, not size: millions
+of small objects cost far more on disk than their bytes suggested. Packing
+groups artifacts into immutable packs with a columnar sidecar index, so reading
+one artifact is a ranged GET and a single frame decompression rather than a
+scan. A source object may be deleted only after its packed replacement returns
+byte-identical content, verified against a hash in the sidecar. Across the
+packed months, inode pressure on the data volume fell by roughly two thirds.
+
+### Health that a green dashboard cannot fake
+
+The lesson that shaped the observability design came from an outage where
+nothing was red. The scrape path kept running, its container stayed healthy,
+and no error rate spiked — but it had stopped producing successful results, and
+it stayed that way for hours.
+
+Two changes followed. Health became three-state against a checked-in expected
+service set, so a service that is *absent* reads as failure rather than
+vanishing from the query, and "running but no healthcheck configured" reads as
+its own unattractive value rather than as healthy. And alerts were rewritten to
+fire on **missing success**, not only on visible errors: no successful bootstrap
+within a window while non-success outcomes accumulate, no successful fetch while
+attempts continue.
+
+Container health, scrape volume, and log-based alerts route to Telegram.
+Functional liveness — whether the pipeline is producing correct results at all —
+remains a separately measured concern, and the work to bound it is in progress
+rather than finished.
 
 ---
 
-## Operational data model
+## Production today vs platform evolution
 
-Tables written by the application (post-decommission of the n8n/runs era):
+**Running in production and serving users:**
 
-| Table | Description |
-|-------|-------------|
-| `artifacts_queue` | Queue of MinIO artifact paths pending processing. Status: pending → processing → done. |
-| `staging.artifacts_queue_events` | Event log for queue state transitions. |
-| `ops.price_observations` | HOT table — current price per listing, upserted by processing. |
-| `staging.price_observation_events` | Staging buffer flushed to HOT by the archiver. |
-| `ops.vin_to_listing_mapping` | HOT table — maps VINs to listing IDs. |
-| `staging.vin_to_listing_events` | Staging buffer for VIN mapping events. |
-| `ops.detail_scrape_claims` | Atomic claim table for parallel detail scrapes. |
-| `staging.blocked_cooldown_events` | Raw 403 events — backoff logic lives in dbt. |
-| `search_configs` | Search definitions — make/model, rotation slot, last queued at. |
-| `tracked_models` | Active make/model pairs to track. |
-| `deploy_intent` | Single-row deploy coordination flag. |
-| `authorized_users` | Email hashes + roles for DB-backed authorization. |
-| `access_requests` | Pending/approved/denied access requests. |
+- Airflow orchestrates scraping, processing, archival, maintenance, and analytics.
+- Postgres owns current operational state and short-lived event buffers.
+- MinIO holds replayable bronze HTML and permanent Parquet history.
+- dbt and DuckDB build and serve every analytical mart used by the public page,
+  the metrics, and the Streamlit dashboard.
+- Caddy, oauth2-proxy, and the ops authorization check protect application routes.
 
----
+**Proven but not production-serving.** Each of these is exercised and evidenced,
+and none of them is in the path of anything a user sees today:
 
-## dbt models (DuckDB target)
+- Production-shaped CI lake snapshots.
+- Iceberg tables registered through Lakekeeper and exercised through Spark.
+- dbt-Spark parity work and MLflow experiment provenance.
+- Adaptive-refresh feature and backtesting foundations.
 
-Sources: MinIO Parquet (silver observations, cooldown events) + Postgres views (search configs, price observations).
-
-**Staging**
-- `stg_observations` — silver Parquet observations with typed fields
-- `stg_price_events` — price event stream from observation events Parquet
-- `stg_blocked_cooldown_events` — 403 events with `next_eligible_at` and `fully_blocked` computed via exponential backoff
-- `stg_search_configs` — active search config snapshot from Postgres
-- `stg_dealers` — dealer name/ID pairs parsed from observations
-
-**Intermediate**
-- `int_latest_observation` — most recent observation per VIN
-- `int_price_history` — price trajectory per VIN (first seen, drops, min/max)
-- `int_benchmarks` — national price percentiles by make/model/trim
-- `int_active_make_models` — distinct active make/model pairs from search configs
-
-**Marts**
-- `mart_vehicle_snapshot` — current state per VIN filtered to tracked make/models
-- `mart_deal_scores` — composite deal score (0–100) with tier (excellent/good/fair/weak)
-- `mart_price_freshness_trend` — price observation recency over time
-- `mart_inventory_coverage` — VIN count vs staleness by make/model
-- `mart_detail_batch_outcomes` — detail scrape success/403/error rates over time
-- `mart_cooldown_cohorts` — 403 cooldown distribution by make/model
+The dashboard reads DuckDB. The Iceberg work is a migration track with its own
+gates, not a shipped capability.
 
 ---
 
-## Testing
+## Test strategy
 
-971 tests across two suites. Run from repo root:
+More than 3,000 tests run in CI. The count is the least interesting fact about
+them; the variety of boundaries is the point. Tests cover four practical layers:
+
+1. **Pure behavior** — parser rules, retry and backoff calculations, pack
+   formats, metrics, state transitions, failure predicates.
+2. **Configuration contracts** — Compose healthcheck coverage, the expected
+   service set, Prometheus jobs, Grafana selectors, log-shipping policy,
+   deployment timeout relationships, planning-document invariants.
+3. **Real service integration** — migrated Postgres, MinIO, Loki, DuckDB
+   extensions, HTTP routers, Airflow DAG loading, archiver operations.
+4. **Cross-engine equivalence** — the same production-shaped lake fixture is
+   evaluated by dbt and by independently written selector SQL, so an
+   optimization cannot quietly change business semantics and pass as a speedup.
+
+Many of the hardest bugs here live *between* files or engines. A unit test for
+the health collector cannot prove every Compose service has a healthcheck; a dbt
+model test cannot prove the archiver's separately maintained selector returns
+the same cohort. Those need repository-level assertions, which is why
+configuration and equivalence tests are first-class rather than an afterthought.
+
+CI builds a miniature production data plane: it applies the real migrations to a
+real Postgres, creates the bucket, installs the same pinned dbt adapters and
+DuckDB extensions the runtime uses, seeds the shared lake fixture, runs a real
+dbt build, and then runs the integration suites against it. Coverage is reported
+with missing lines and no arbitrary `fail-under` gate.
 
 ```bash
-# Unit tests — no database or Docker required
-pytest tests/ -m "not integration"
+# Unit and contract tests — no database or Docker required
+pytest -m "not integration"
 
-# Integration tests — requires Postgres with Flyway migrations applied
+# Integration tests — requires Postgres with migrations applied
 TEST_DATABASE_URL=postgresql://cartracker:cartracker@localhost:5432/cartracker \
   pytest tests/integration/ -m integration
 ```
 
-**Unit tests (705)** cover scraper discovery mode, VIN breakpoint logic, anti-detection session management, processing parsers, archiver flush logic, ops routing, and dbt DAG integrity.
+The full contract, including what a new test owes its reviewer, is in
+[docs/TESTING.md](docs/TESTING.md).
 
-**Integration tests (266)** execute every SQL query across all services against a real Postgres schema — smoke tests for table/constraint existence, write path correctness, and Layer 3 API behavior. CI spins up Postgres + MinIO, applies all 36 Flyway migrations, seeds MinIO with empty Parquet schemas, runs a full `dbt build`, then runs all integration suites.
+---
+
+## Local quick start
+
+Running the platform locally needs Docker and a populated `.env`.
+
+```bash
+cp .env.example .env
+# Edit .env: POSTGRES_PASSWORD, the scoped role passwords, the Google OAuth
+# client, the cookie secret, and AUTH_EMAIL_SALT.
+
+# The network and the Postgres data volume are declared external.
+docker network create cartracker-net
+docker volume create cartracker_pgdata
+
+docker compose up -d
+```
+
+Flyway applies every migration on first start — there are **40+ versioned
+Flyway migrations**, applied automatically on deploy. No separate schema or
+seed step is needed. `docker-compose.override.yml` publishes local ports for
+development.
+
+Deeper operational procedure lives in the runbooks:
+[host maintenance](docs/runbooks/runbook_host_maintenance.md),
+[storage maintenance](docs/runbooks/runbook_storage_maintenance.md), and
+[solver recycling](docs/runbooks/runbook_solver_oom_and_recycle.md).
+How work is proposed, gated, and archived is in
+[docs/PLANS.md](docs/PLANS.md).
 
 ---
 
@@ -174,59 +362,69 @@ TEST_DATABASE_URL=postgresql://cartracker:cartracker@localhost:5432/cartracker \
 
 ```
 cartracker-scraper/
-  scraper/                      # SRP + detail page fetcher
-    processors/
-      scrape_results.py         # SRP fetcher — discovery mode, VIN breakpoint, adaptive backoff
-      scrape_detail.py          # Detail fetcher — curl_cffi, adaptive delay, batch concurrency
-      cf_session.py             # FlareSolverr bootstrap, process-wide credential cache
-      parse_detail_page.py      # Detail HTML parser
-      results_page_cards.py     # SRP HTML parser
-      fingerprint.py            # ZIP rotation, human-like pacing
-  processing/                   # Artifact queue consumer + parser
-    writers/
-      srp_writer.py             # Writes price observations + VIN mappings via staging events
-  archiver/                     # Staging flush + Parquet writer
-    processors/
-      flush_staging_events.py   # HOT table flush
-      flush_silver_observations.py  # MinIO Parquet writer
-  ops/                          # Admin UI + deploy coordination + auth proxy
-    routers/
-      admin.py                  # Search config CRUD, access request management
-      deploy.py                 # deploy_intent management, running count
-      scrape.py                 # Rotation advance, claim-batch, release
-      maintenance.py            # Orphan claim expiry
-      info.py                   # Portfolio landing page with live stats
-      users.py                  # User + access request management
-  dbt_runner/                   # dbt build trigger (FastAPI)
-  dashboard/                    # Streamlit analytics UI
-  dbt/
-    models/
-      staging/                  # 5 staging models
-      intermediate/             # 4 intermediate models
-      marts/                    # 6 mart models
-    profiles.yml                # duckdb + postgres targets
-  airflow/dags/                 # 12 Airflow DAGs
-  db/migrations/                # 36 Flyway migrations (V001–V036)
+  scraper/                  # Results + detail page fetcher (FastAPI)
+    processors/             # Fetch strategies, session bootstrap, HTML parsers
+  processing/               # Artifact queue consumer; writes HOT state + events
+  archiver/                 # Parquet export, silver compaction, sweeps
+  ops/                      # Admin UI, deploy coordination, auth check, public page
+    routers/                # admin, deploy, scrape, maintenance, info, users
+  dbt_runner/               # dbt build trigger (FastAPI)
+  dashboard/                # Streamlit analytics UI
+  shared/                   # Compression, pack format, object-store helpers
+  container_health/         # Three-state health exporter + expected service set
+  dbt/models/               # 20+ dbt models across staging, intermediate, and marts
+  airflow/dags/             # More than a dozen DAG definitions
+  db/migrations/            # 40+ versioned Flyway migrations
   tests/
-    integration/                # 266 integration tests (real Postgres + MinIO)
-      sql/                      # SQL smoke tests
-      ops/                      # Layer 3 API tests
-      archiver/                 # Archiver write-path tests
-      airflow/                  # DAG integrity tests
+    integration/            # Real Postgres + MinIO suites (SQL, ops API, dbt, DAGs)
+  docs/
+    plans/  runbooks/  recaps/  evidence/  planning/
   docker-compose.yml
-  docker-compose.override.yml   # Port mappings for local dev
+  docker-compose.override.yml
   .env.example
 ```
 
+### Public and protected endpoints
+
+| Route | Access |
+|---|---|
+| `/info` | Public — project page with live pipeline statistics |
+| `/static_ops/*` | Public — page assets |
+| `/oauth2/*` | Public — authentication flow |
+| `/request-access` | Google-authenticated, no role required |
+| `/` and `/dashboard*` | Any authorized role (`viewer` and above) |
+| `/admin*` | `observer` and above, with the existing mutation rules |
+| `/admin/users*`, `/admin/access-requests*` | `admin` |
+| `/airflow*`, `/grafana*`, `/minio*`, `/pgadmin*` | `admin` |
+| `/admin/snapshots/adaptive-refresh*` | Bearer-token authenticated, for CI and local scripts |
+
 ---
 
-## Live endpoints
+## Responsible use, affiliation, and license
 
-| | URL |
-|-|-----|
-| Dashboard | https://cartracker.info |
-| Project info | https://cartracker.info/info |
-| Ops admin | https://cartracker.info/admin |
-| Grafana | https://cartracker.info/grafana |
-| MinIO | https://cartracker.info/minio |
-| Request access | https://cartracker.info/request-access |
+**Not affiliated with Cars.com.** CarTracker is an independent portfolio
+project. It is not affiliated with, endorsed by, sponsored by, or connected to
+Cars.com, or to any dealer, manufacturer, or vehicle marketplace whose data or
+name appears in it.
+
+**Trademarks.** "Cars.com" and all vehicle make, model, and manufacturer names
+are the trademarks of their respective owners. They are used here only to
+describe and identify the data the project collects, and their appearance
+implies no association or endorsement.
+
+**Collected data.** Listing pages are collected at modest, rate-limited volume
+for analysis and demonstration. The project retains no personal data about
+consumers. The only personal data it stores about its own users is a salted
+hash of the email address of anyone who signs in or requests access.
+
+**Responsible use.** This repository is published so the engineering can be
+read, not so the collection can be reproduced against a third party. Anyone
+running this code is responsible for the terms of service, robots directives,
+and laws that apply to whatever they point it at. Please do not use it to place
+load on a site you do not have permission to collect from.
+
+**License status.** This repository has **no `LICENSE` file, and therefore
+grants no license.** Source being publicly readable is not permission to use,
+copy, modify, or redistribute it; all rights are reserved by default under
+copyright. Choosing a license is a separate decision that has not been made. If
+you want to use any part of this work, please ask first.

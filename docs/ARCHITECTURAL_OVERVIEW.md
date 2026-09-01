@@ -4,6 +4,21 @@
 > This document is intended to be useful both as an engineering reference and
 > as source material for a conversational explanation of the system.
 
+> **Long-form narrative — not front-door copy.** This document feeds
+> `README.md` by paraphrase only, and the reason is register, not secrecy.
+> Nothing here is undisclosed: the repository is public, and §1 narrates in
+> prose what `scraper/processors/cf_session.py` already documents in code.
+>
+> The README and landing page are entry points, written for someone deciding
+> whether to keep reading, and they describe the scrape path in neutral terms.
+> This document is the deep dive and describes the mechanism. Lifting
+> paragraphs from here to there produces front-door copy written for the wrong
+> reader — which is what
+> [Plan 138](plans/plan_138_public_surface_refresh.md)'s non-goals rule out.
+> Two passages are the ones that keep getting lifted: **§1's solver and
+> session-bootstrap detail**, and the **production object prefixes** in *How
+> the data changes shape* and §3.
+
 ## The architectural idea in one sentence
 
 CarTracker treats a vehicle listing as a fact that becomes progressively more
