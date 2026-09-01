@@ -15,7 +15,7 @@ and only run in the isolated Airflow venv CI job.
 """
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -40,35 +40,40 @@ def _mock_context(conf=None):
 
 
 class TestHourlyDbtBuildPayload:
-    def test_default_payload_selects_hourly_core(self, dbt_build_module):
+    def test_default_payload_selects_hourly_core(self, dbt_build_module, mocker):
         """No dag_run.conf → payload must select the hourly_core tag, not the full graph."""
-        with patch.object(dbt_build_module, "post_json") as mock_post_json:
-            mock_post_json.return_value = {"ok": True}
-            dbt_build_module._run_dbt_build(**_mock_context())
+        mock_post_json = mocker.patch.object(dbt_build_module, "post_json")
+        mock_post_json.return_value = {"ok": True}
+
+        dbt_build_module._run_dbt_build(**_mock_context())
 
         _, kwargs = mock_post_json.call_args
         assert kwargs["payload"] == {"select": ["tag:hourly_core"]}
         assert dbt_build_module.DEFAULT_DBT_SELECT == ["tag:hourly_core"]
 
-    def test_explicit_select_override_is_honored(self, dbt_build_module):
+    def test_explicit_select_override_is_honored(self, dbt_build_module, mocker):
         """dag_run.conf={"select": [...]} must override the hourly_core default."""
-        with patch.object(dbt_build_module, "post_json") as mock_post_json:
-            mock_post_json.return_value = {"ok": True}
-            dbt_build_module._run_dbt_build(**_mock_context({"select": ["tag:feature_daily"]}))
+        mock_post_json = mocker.patch.object(dbt_build_module, "post_json")
+        mock_post_json.return_value = {"ok": True}
+
+        dbt_build_module._run_dbt_build(**_mock_context({"select": ["tag:feature_daily"]}))
 
         _, kwargs = mock_post_json.call_args
         assert kwargs["payload"] == {"select": ["tag:feature_daily"]}
 
-    def test_full_refresh_conf_is_still_honored_alongside_default_select(self, dbt_build_module):
+    def test_full_refresh_conf_is_still_honored_alongside_default_select(
+        self, dbt_build_module, mocker
+    ):
         """full_refresh from conf must pass through even when select falls back to the default."""
-        with patch.object(dbt_build_module, "post_json") as mock_post_json:
-            mock_post_json.return_value = {"ok": True}
-            dbt_build_module._run_dbt_build(**_mock_context({"full_refresh": True}))
+        mock_post_json = mocker.patch.object(dbt_build_module, "post_json")
+        mock_post_json.return_value = {"ok": True}
+
+        dbt_build_module._run_dbt_build(**_mock_context({"full_refresh": True}))
 
         _, kwargs = mock_post_json.call_args
         assert kwargs["payload"] == {"select": ["tag:hourly_core"], "full_refresh": True}
 
-    def test_explicit_empty_select_list_is_still_honored(self, dbt_build_module):
+    def test_explicit_empty_select_list_is_still_honored(self, dbt_build_module, mocker):
         """
         An explicit empty list is a deliberate 'build everything' override, not
         a missing key. This is the documented way to force a full-graph build
@@ -77,9 +82,10 @@ class TestHourlyDbtBuildPayload:
         "fqn:*" reaches dbt as a full-graph selection — an empty list is what
         makes dbt_runner omit --select and build everything.
         """
-        with patch.object(dbt_build_module, "post_json") as mock_post_json:
-            mock_post_json.return_value = {"ok": True}
-            dbt_build_module._run_dbt_build(**_mock_context({"select": []}))
+        mock_post_json = mocker.patch.object(dbt_build_module, "post_json")
+        mock_post_json.return_value = {"ok": True}
+
+        dbt_build_module._run_dbt_build(**_mock_context({"select": []}))
 
         _, kwargs = mock_post_json.call_args
         assert kwargs["payload"] == {"select": []}
@@ -95,11 +101,11 @@ class TestHourlyDbtBuildPayload:
 # ---------------------------------------------------------------------------
 
 class TestNotifyDelegatesToTheSharedNotifier:
-    def test_it_pages_with_this_dags_headline_and_work_tasks(self, dbt_build_module):
+    def test_it_pages_with_this_dags_headline_and_work_tasks(self, dbt_build_module, mocker):
         context = {"ti": MagicMock(), "dag_run": MagicMock()}
+        send = mocker.patch.object(dbt_build_module, "send_failure_alert")
 
-        with patch.object(dbt_build_module, "send_failure_alert") as send:
-            dbt_build_module._notify(**context)
+        dbt_build_module._notify(**context)
 
         send.assert_called_once()
         args, kwargs = send.call_args
@@ -125,17 +131,18 @@ class TestPostResultPreservesTheFailureForNotify:
     which on a flush failure does not exist either.
     """
 
-    def test_a_successful_post_is_pushed(self, dbt_build_module):
+    def test_a_successful_post_is_pushed(self, dbt_build_module, mocker):
         context = {"ti": MagicMock(), "dag_run": MagicMock()}
-        with patch.object(dbt_build_module, "post_json", return_value={"flushed": 7}):
-            result = dbt_build_module._run_flush_silver(**context)
+        mocker.patch.object(dbt_build_module, "post_json", return_value={"flushed": 7})
+
+        result = dbt_build_module._run_flush_silver(**context)
 
         assert result == {"flushed": 7}
         context["ti"].xcom_push.assert_called_once_with(
             key="result", value={"flushed": 7}
         )
 
-    def test_a_500_body_is_pushed_and_the_error_still_raises(self, dbt_build_module):
+    def test_a_500_body_is_pushed_and_the_error_still_raises(self, dbt_build_module, mocker):
         """JsonPostError.result is the endpoint's summary plus its
         failure_reason. The task must still fail — the push is so the page can
         say why, not so the DAG can go green."""
@@ -143,19 +150,21 @@ class TestPostResultPreservesTheFailureForNotify:
         context = {"ti": MagicMock(), "dag_run": MagicMock()}
         error = dbt_build_module.JsonPostError("500 Error", result=body)
 
-        with patch.object(dbt_build_module, "post_json", side_effect=error):
-            with pytest.raises(dbt_build_module.JsonPostError):
-                dbt_build_module._run_flush_staging(**context)
+        mocker.patch.object(dbt_build_module, "post_json", side_effect=error)
+
+        with pytest.raises(dbt_build_module.JsonPostError):
+            dbt_build_module._run_flush_staging(**context)
 
         context["ti"].xcom_push.assert_called_once_with(key="result", value=body)
 
-    def test_the_cooldown_reconcile_is_covered_too(self, dbt_build_module):
+    def test_the_cooldown_reconcile_is_covered_too(self, dbt_build_module, mocker):
         body = {"error": "ops unreachable"}
         context = {"ti": MagicMock(), "dag_run": MagicMock()}
         error = dbt_build_module.JsonPostError("500 Error", result=body)
 
-        with patch.object(dbt_build_module, "post_json", side_effect=error):
-            with pytest.raises(dbt_build_module.JsonPostError):
-                dbt_build_module._run_reconcile_cooldowns(**context)
+        mocker.patch.object(dbt_build_module, "post_json", side_effect=error)
+
+        with pytest.raises(dbt_build_module.JsonPostError):
+            dbt_build_module._run_reconcile_cooldowns(**context)
 
         context["ti"].xcom_push.assert_called_once_with(key="result", value=body)

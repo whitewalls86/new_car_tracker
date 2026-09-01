@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for ops service queries.
+Layer 2 — SQL smoke tests for ops service queries.
 
 Every query the ops service runs against Postgres is executed here against a real
 DB with Flyway migrations applied. The goal is to catch schema breakage (column
@@ -301,7 +301,7 @@ class TestUserManagementQueries:
 # ============================================================================
 
 class TestArtifactsQueueSchema:
-    """Layer 1 smoke tests: verify ops.artifacts_queue table and constraints exist."""
+    """Layer 2 smoke tests: verify ops.artifacts_queue table and constraints exist."""
 
     def test_table_exists_and_has_expected_columns(self, cur):
         cur.execute("""
@@ -359,7 +359,7 @@ class TestArtifactsQueueSchema:
 # ============================================================================
 
 class TestArtifactsQueueEventsSchema:
-    """Layer 1 smoke tests: verify staging.artifacts_queue_events exists."""
+    """Layer 2 smoke tests: verify staging.artifacts_queue_events exists."""
 
     def _insert_queue_row(self, cur) -> int:
         minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"

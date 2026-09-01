@@ -15,7 +15,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import zstandard as zstd
@@ -183,14 +183,15 @@ class TestBuildPrefixes:
         result = build_prefixes(args, MagicMock())
         assert result == ["html/year=2026/month=3/artifact_type=results_page/"]
 
-    def test_year_without_month_calls_discover(self):
+    def test_year_without_month_calls_discover(self, mocker):
         from scripts.estimate_recompression_savings import build_prefixes
         args = _args(year=2026, month=None, artifact_type="detail_page", bucket="bronze")
-        with patch(
+        mock_discover = mocker.patch(
             "scripts.estimate_recompression_savings.discover_months_for_year",
             return_value=[(2026, 3), (2026, 4)],
-        ) as mock_discover:
-            result = build_prefixes(args, MagicMock())
+        )
+
+        result = build_prefixes(args, MagicMock())
         mock_discover.assert_called_once()
         assert sorted(result) == [
             "html/year=2026/month=3/artifact_type=detail_page/",
@@ -237,11 +238,12 @@ class TestSampler:
         sampled = [i for i in range(10) if sampler(i)]
         assert sampled == list(range(10))
 
-    def test_bernoulli_rate_zero_none_sampled(self):
+    def test_bernoulli_rate_zero_none_sampled(self, mocker):
         from scripts.estimate_recompression_savings import make_sampler
-        with patch("scripts.estimate_recompression_savings.random.random", return_value=0.5):
-            sampler = make_sampler(0.0, True)  # 0.5 < 0.0 is always False
-            sampled = [i for i in range(10) if sampler(i)]
+        mocker.patch("scripts.estimate_recompression_savings.random.random", return_value=0.5)
+
+        sampler = make_sampler(0.0, True)  # 0.5 < 0.0 is always False
+        sampled = [i for i in range(10) if sampler(i)]
         assert sampled == []
 
     def test_bernoulli_rate_one_all_sampled(self):
@@ -379,7 +381,7 @@ class TestFailureAccumulation:
 # ── Group G: read-only contract ───────────────────────────────────────────────
 
 class TestReadOnlyContract:
-    def _run_main_with_mocks(self) -> MagicMock:
+    def _run_main_with_mocks(self, mocker) -> MagicMock:
         """Run main() end-to-end with mocked MinIO, return the boto3 client mock."""
         from scripts.estimate_recompression_savings import main
 
@@ -404,40 +406,41 @@ class TestReadOnlyContract:
         mock_paginator.paginate.return_value = [mock_page]
         mock_client.get_paginator.return_value = mock_paginator
 
-        with (
-            patch(
-                "scripts.estimate_recompression_savings.get_boto3_client",
-                return_value=mock_client,
-            ),
-            patch("scripts.estimate_recompression_savings.get_s3fs", return_value=MagicMock()),
-            patch(
-                "sys.argv",
-                [
-                    "script",
-                    "--prefix", "html/year=2026/month=6/artifact_type=detail_page/",
-                    "--sample-rate", "1.0",
-                    "--limit", "1",
-                ],
-            ),
-        ):
-            main()
+        mocker.patch(
+            "scripts.estimate_recompression_savings.get_boto3_client",
+            return_value=mock_client,
+        )
+        mocker.patch(
+            "scripts.estimate_recompression_savings.get_s3fs", return_value=MagicMock()
+        )
+        mocker.patch(
+            "sys.argv",
+            [
+                "script",
+                "--prefix", "html/year=2026/month=6/artifact_type=detail_page/",
+                "--sample-rate", "1.0",
+                "--limit", "1",
+            ],
+        )
+
+        main()
 
         return mock_client
 
-    def test_put_object_never_called(self):
-        client = self._run_main_with_mocks()
+    def test_put_object_never_called(self, mocker):
+        client = self._run_main_with_mocks(mocker)
         client.put_object.assert_not_called()
 
-    def test_delete_object_never_called(self):
-        client = self._run_main_with_mocks()
+    def test_delete_object_never_called(self, mocker):
+        client = self._run_main_with_mocks(mocker)
         client.delete_object.assert_not_called()
 
-    def test_copy_object_never_called(self):
-        client = self._run_main_with_mocks()
+    def test_copy_object_never_called(self, mocker):
+        client = self._run_main_with_mocks(mocker)
         client.copy_object.assert_not_called()
 
-    def test_only_get_object_called(self):
-        client = self._run_main_with_mocks()
+    def test_only_get_object_called(self, mocker):
+        client = self._run_main_with_mocks(mocker)
         # Confirm get_object was the only S3 mutating call attempted
         called_methods = {c[0] for c in client.method_calls}
         write_methods = {"put_object", "delete_object", "copy_object",

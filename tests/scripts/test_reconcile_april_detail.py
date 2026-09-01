@@ -579,50 +579,50 @@ def test_the_manifest_shard_is_named_for_its_source_file():
 
 # -- J: materialize -- write path ------------------------------------------
 
-def test_dry_run_writes_nothing(monkeypatch):
+def test_dry_run_writes_nothing(mocker):
     import shared.minio as minio
     calls = []
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+    mocker.patch.object(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "write_html", lambda k, c: calls.append(k))
     rec = plan_row(_occurrence(html=b"<html>car</html>"))
     out = materialize_row(rec, b"<html>car</html>", apply=False)
     assert calls == []
     assert out["disposition"] == "written"
 
 
-def test_an_existing_object_is_not_rewritten(monkeypatch):
+def test_an_existing_object_is_not_rewritten(mocker):
     import shared.minio as minio
     calls = []
-    monkeypatch.setattr(minio, "object_exists", lambda k: True)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+    mocker.patch.object(minio, "object_exists", lambda k: True)
+    mocker.patch.object(minio, "write_html", lambda k, c: calls.append(k))
     rec = plan_row(_occurrence(html=b"<html>car</html>"))
     out = materialize_row(rec, b"<html>car</html>", apply=True)
     assert calls == []
     assert out["disposition"] == "exists"
 
 
-def test_apply_writes_and_verifies_the_read_back(monkeypatch):
+def test_apply_writes_and_verifies_the_read_back(mocker):
     import shared.minio as minio
     html = b"<html>car</html>"
     written = {}
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: written.update({k: c}))
-    monkeypatch.setattr(minio, "read_html", lambda p: html)
-    monkeypatch.setattr(minio, "object_size", lambda p: 1234)
+    mocker.patch.object(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "write_html", lambda k, c: written.update({k: c}))
+    mocker.patch.object(minio, "read_html", lambda p: html)
+    mocker.patch.object(minio, "object_size", lambda p: 1234)
     rec = plan_row(_occurrence(html=html))
     out = materialize_row(rec, html, apply=True)
     assert list(written) == [rec["object_key"]]
     assert out["compressed_len"] == 1234
 
 
-def test_a_read_back_that_does_not_match_stops_the_run(monkeypatch):
+def test_a_read_back_that_does_not_match_stops_the_run(mocker):
     # Verification reads through the production path rather than comparing the
     # in-memory bytes to themselves, so a corrupted store is actually caught.
     import shared.minio as minio
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: None)
-    monkeypatch.setattr(minio, "read_html", lambda p: b"<html>corrupted</html>")
-    monkeypatch.setattr(minio, "object_size", lambda p: 1)
+    mocker.patch.object(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "write_html", lambda k, c: None)
+    mocker.patch.object(minio, "read_html", lambda p: b"<html>corrupted</html>")
+    mocker.patch.object(minio, "object_size", lambda p: 1)
     rec = plan_row(_occurrence(html=b"<html>car</html>"))
     with pytest.raises(ReconcileError, match="read-back mismatch"):
         materialize_row(rec, b"<html>car</html>", apply=True)
@@ -779,38 +779,38 @@ def test_dedupe_defaults_to_a_dry_run():
     assert args.allow_rate_drift is False
 
 
-def _patch_dedupe(monkeypatch, events, rows, sidecar_hashes):
+def _patch_dedupe(mocker, events, rows, sidecar_hashes):
     """Wire run_dedupe onto in-memory fakes, recording write/delete order."""
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: object())
-    monkeypatch.setattr(mod, "_list_keys", lambda c, b, prefix, suffix: (
+    mocker.patch.object(mod, "_s3_client", lambda: object())
+    mocker.patch.object(mod, "_list_keys", lambda c, b, prefix, suffix: (
         [SIDECAR_KEY] if suffix == ".idx.parquet"
         else [f"{MATERIALIZE_PREFIX}/part-0.parquet"]
     ))
-    monkeypatch.setattr(mod, "load_sidecar_hashes",
+    mocker.patch.object(mod, "load_sidecar_hashes",
                         lambda c, b, keys: dict(sidecar_hashes))
-    monkeypatch.setattr(mod, "_read_parquet_rows",
+    mocker.patch.object(mod, "_read_parquet_rows",
                         lambda c, b, k, columns=None: list(rows))
-    monkeypatch.setattr(mod, "_write_parquet_shard",
+    mocker.patch.object(mod, "_write_parquet_shard",
                         lambda key, schema, records: events.append(
                             ("write", key, len(records))))
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "object_exists", lambda k: False)
 
     def fake_delete(client, bucket, records, *, apply, batch_size, verified_hashes):
         events.append(("delete", [r["object_key"] for r in records]))
         return [{"object_key": r["object_key"], "raw_sha256": r["raw_sha256"],
                  "result": "deleted"} for r in records]
 
-    monkeypatch.setattr(mod, "delete_objects_in_batches", fake_delete)
+    mocker.patch.object(mod, "delete_objects_in_batches", fake_delete)
     return mod
 
 
-def test_run_dedupe_writes_the_deletion_manifest_before_any_delete(monkeypatch):
+def test_run_dedupe_writes_the_deletion_manifest_before_any_delete(mocker):
     events: list = []
     mod = _patch_dedupe(
-        monkeypatch, events,
+        mocker, events,
         rows=[_mrow("k1", SHA_IN_PACK)],
         sidecar_hashes={SHA_IN_PACK: (SIDECAR_KEY, "src")},
     )
@@ -822,10 +822,10 @@ def test_run_dedupe_writes_the_deletion_manifest_before_any_delete(monkeypatch):
     assert events[2][1] == "recovery/plan145/dedupe/receipts/part-0.parquet"
 
 
-def test_run_dedupe_stops_before_deleting_when_the_rate_is_off_band(monkeypatch):
+def test_run_dedupe_stops_before_deleting_when_the_rate_is_off_band(mocker):
     events: list = []
     mod = _patch_dedupe(
-        monkeypatch, events,
+        mocker, events,
         rows=[_mrow("k1", SHA_IN_PACK)],  # 1 of 1 candidate -> 100%, far off 45.6%
         sidecar_hashes={SHA_IN_PACK: (SIDECAR_KEY, "src")},
     )
@@ -836,10 +836,10 @@ def test_run_dedupe_stops_before_deleting_when_the_rate_is_off_band(monkeypatch)
     assert [e[0] for e in events] == ["write"]
 
 
-def test_run_dedupe_allow_rate_drift_reports_instead_of_stopping(monkeypatch):
+def test_run_dedupe_allow_rate_drift_reports_instead_of_stopping(mocker):
     events: list = []
     mod = _patch_dedupe(
-        monkeypatch, events,
+        mocker, events,
         rows=[_mrow("k1", SHA_IN_PACK)],
         sidecar_hashes={SHA_IN_PACK: (SIDECAR_KEY, "src")},
     )
@@ -923,13 +923,13 @@ def _small_pack(n=8):
     return members, pack
 
 
-def test_walking_members_in_frame_order_decompresses_each_frame_once(monkeypatch):
+def test_walking_members_in_frame_order_decompresses_each_frame_once(mocker):
     _members, pack = _small_pack()
     assert pack.frame_count >= 2
 
     calls: list = []
     real = _compression.decompress_frame
-    monkeypatch.setattr(
+    mocker.patch.object(
         _compression, "decompress_frame",
         lambda frame: (calls.append(1), real(frame))[1],
     )
@@ -956,11 +956,11 @@ def test_walking_members_in_frame_order_decompresses_each_frame_once(monkeypatch
     assert sum(calls) > pack.frame_count
 
 
-def test_unpack_writes_under_the_original_source_key_not_a_content_key(monkeypatch):
+def test_unpack_writes_under_the_original_source_key_not_a_content_key(mocker):
     import shared.minio as minio
     written: dict = {}
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: written.__setitem__(k, c))
+    mocker.patch.object(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "write_html", lambda k, c: written.__setitem__(k, c))
 
     content = b"<html>a real captured page</html>"
     entry = _entry(DETAIL_KEY.format("original-uuid"), 0, 0, content,
@@ -981,10 +981,10 @@ def test_unpack_writes_under_the_original_source_key_not_a_content_key(monkeypat
     assert rec["pack_key"].endswith("pack-00000.zpack")
 
 
-def test_a_member_that_does_not_match_its_sidecar_hash_stops_the_run(monkeypatch):
+def test_a_member_that_does_not_match_its_sidecar_hash_stops_the_run(mocker):
     import shared.minio as minio
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
-    monkeypatch.setattr(minio, "write_html",
+    mocker.patch.object(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "write_html",
                         lambda k, c: pytest.fail("must not write on a mismatch"))
 
     entry = PackIndexEntry(DETAIL_KEY.format("x"), 0, 0, 4, "00" * 32)
@@ -997,11 +997,11 @@ def test_a_member_that_does_not_match_its_sidecar_hash_stops_the_run(monkeypatch
         unpack_member(FakeReader(), entry, "pack", apply=True)
 
 
-def test_an_existing_key_is_skipped_rather_than_re_read_or_rewritten(monkeypatch):
+def test_an_existing_key_is_skipped_rather_than_re_read_or_rewritten(mocker):
     import shared.minio as minio
     calls: list = []
-    monkeypatch.setattr(minio, "object_exists", lambda k: True)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+    mocker.patch.object(minio, "object_exists", lambda k: True)
+    mocker.patch.object(minio, "write_html", lambda k, c: calls.append(k))
 
     entry = PackIndexEntry(DETAIL_KEY.format("x"), 2, 8, 4, "00" * 32)
 
@@ -1014,11 +1014,11 @@ def test_an_existing_key_is_skipped_rather_than_re_read_or_rewritten(monkeypatch
     assert calls == []
 
 
-def test_unpack_dry_run_verifies_but_writes_nothing(monkeypatch):
+def test_unpack_dry_run_verifies_but_writes_nothing(mocker):
     import shared.minio as minio
     calls: list = []
-    monkeypatch.setattr(minio, "object_exists", lambda k: False)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+    mocker.patch.object(minio, "object_exists", lambda k: False)
+    mocker.patch.object(minio, "write_html", lambda k, c: calls.append(k))
 
     content = b"<html>x</html>"
     entry = _entry(DETAIL_KEY.format("x"), 0, 0, content)
@@ -1039,7 +1039,7 @@ def test_unpack_defaults_to_a_dry_run():
     assert args.no_verify is False
 
 
-def test_run_unpack_writes_every_member_under_its_original_key(monkeypatch):
+def test_run_unpack_writes_every_member_under_its_original_key(mocker):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
@@ -1068,10 +1068,10 @@ def test_run_unpack_writes_every_member_under_its_original_key(monkeypatch):
                 "IsTruncated": False,
             }
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: FakeClient())
-    monkeypatch.setattr(minio, "object_exists", lambda k: k in written)
-    monkeypatch.setattr(minio, "write_html", lambda k, c: written.__setitem__(k, c))
-    monkeypatch.setattr(mod, "_write_parquet_shard",
+    mocker.patch.object(mod, "_s3_client", lambda: FakeClient())
+    mocker.patch.object(minio, "object_exists", lambda k: k in written)
+    mocker.patch.object(minio, "write_html", lambda k, c: written.__setitem__(k, c))
+    mocker.patch.object(mod, "_write_parquet_shard",
                         lambda key, schema, records: shards.__setitem__(key, list(records)))
 
     rc = mod.run_unpack(mod.parse_args(["unpack", "--apply"]))
@@ -1784,30 +1784,30 @@ def _compare_fixture_store(tmp_path):
     return store, (l1, l2, l3, l4)
 
 
-def _patch_compare_io(monkeypatch, store, vin_rows, *, rows=5):
+def _patch_compare_io(mocker, store, vin_rows, *, rows=5):
     import scripts.reconcile_april_detail as mod
     import shared.db as db
     import shared.minio as minio
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS3Store(store))
-    monkeypatch.setattr(minio, "object_exists", lambda k: k in store)
-    monkeypatch.setattr(
+    mocker.patch.object(mod, "_s3_client", lambda: _FakeS3Store(store))
+    mocker.patch.object(minio, "object_exists", lambda k: k in store)
+    mocker.patch.object(
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
-    monkeypatch.setattr(minio, "read_json", lambda _path: {
+    mocker.patch.object(minio, "read_json", lambda _path: {
         "completed_units": 1204, "planned_units": 1204,
         "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": rows},
     })
-    monkeypatch.setattr(db, "get_conn", lambda: _FakeConn(vin_rows))
+    mocker.patch.object(db, "get_conn", lambda: _FakeConn(vin_rows))
 
 
 def test_run_compare_apply_partitions_and_freezes_then_reruns_as_a_noop(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, (l1, _l2, _l3, _l4) = _compare_fixture_store(tmp_path)
-    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")])
+    _patch_compare_io(mocker, store, [(l1, "VIN-L1")])
 
     rc = mod.run_compare(mod.parse_args(["compare", "--apply"]))
     assert rc == 0
@@ -1865,14 +1865,14 @@ def test_run_compare_apply_partitions_and_freezes_then_reruns_as_a_noop(
 
 
 def test_run_compare_dry_run_writes_nothing_and_issues_no_vin_query(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, (l1, *_rest) = _compare_fixture_store(tmp_path)
     conn = _FakeConn([(l1, "VIN-L1")])
-    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")])
+    _patch_compare_io(mocker, store, [(l1, "VIN-L1")])
     import shared.db as db
-    monkeypatch.setattr(db, "get_conn", lambda: conn)
+    mocker.patch.object(db, "get_conn", lambda: conn)
 
     keys_before = set(store)
     rc = mod.run_compare(mod.parse_args(["compare"]))
@@ -1882,13 +1882,13 @@ def test_run_compare_dry_run_writes_nothing_and_issues_no_vin_query(
 
 
 def test_run_compare_apply_refuses_a_silver_shape_that_is_not_the_frozen_nine(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, (l1, *_rest) = _compare_fixture_store(tmp_path)
     for key in [k for k in store if "/source=carousel/" in k or "/source=listings_page/" in k]:
         del store[key]                       # leaves 3 silver objects, not 9
-    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")])
+    _patch_compare_io(mocker, store, [(l1, "VIN-L1")])
 
     with pytest.raises(ReconcileError, match="found 3"):
         mod.run_compare(mod.parse_args(["compare", "--apply"]))
@@ -1905,7 +1905,7 @@ def test_run_compare_apply_refuses_a_silver_shape_that_is_not_the_frozen_nine(
 
 
 def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_rules(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import io as _io
 
     import pyarrow.parquet as _pq
@@ -1920,7 +1920,7 @@ def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_r
             [_prow(listing_id=None, fetched_at=_WHEN, fetched_at_source="queue_events",
                    object_key="html/c1.zst", content_sha256="sc1", price=300)],
         )
-    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
+    _patch_compare_io(mocker, store, [(l1, "VIN-L1")], rows=6)
 
     # default ceiling is 0: any non-zero no_listing_id cohort stops an --apply run
     with pytest.raises(ReconcileError, match="no_listing_id rows 1"):
@@ -1955,7 +1955,7 @@ def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_r
 
 
 def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     # The probe run's whole job is to learn this cohort's size against the
     # completed Stage 4 units. The gate must not stop it: nothing to protect,
     # since a probe writes nothing that can advance slice 2.
@@ -1968,7 +1968,7 @@ def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
             [_prow(listing_id=None, fetched_at=_WHEN, fetched_at_source="queue_events",
                    object_key="html/c1.zst", content_sha256="sc1", price=300)],
         )
-    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
+    _patch_compare_io(mocker, store, [(l1, "VIN-L1")], rows=6)
     written_before = set(store)
 
     rc = mod.run_compare(mod.parse_args(["compare", "--probe"]))
@@ -2261,15 +2261,15 @@ def _slice2_fixture_store(tmp_path):
     return store, (l1, l2, l3, l4)
 
 
-def _patch_slice2_io(monkeypatch, store, conn=None):
+def _patch_slice2_io(mocker, store, conn=None):
     import scripts.reconcile_april_detail as mod
     import shared.db as db
     import shared.minio as minio
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS3Store(store))
-    monkeypatch.setattr(minio, "object_exists", lambda k: k.split("bronze/")[-1] in store
+    mocker.patch.object(mod, "_s3_client", lambda: _FakeS3Store(store))
+    mocker.patch.object(minio, "object_exists", lambda k: k.split("bronze/")[-1] in store
                         or k in store)
-    monkeypatch.setattr(
+    mocker.patch.object(
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
@@ -2279,8 +2279,8 @@ def _patch_slice2_io(monkeypatch, store, conn=None):
         key = path.split("bronze/")[-1]
         return json.loads(store[key].decode()) if key in store else None
 
-    monkeypatch.setattr(minio, "read_json", _read_json)
-    monkeypatch.setattr(db, "get_conn", lambda: conn)
+    mocker.patch.object(minio, "read_json", _read_json)
+    mocker.patch.object(db, "get_conn", lambda: conn)
     return conn
 
 
@@ -2496,9 +2496,9 @@ def test_the_same_batch_name_with_another_digest_stops_and_shows_both():
     assert "b" * 64 in str(exc.value) and "a" * 64 in str(exc.value)
 
 
-def test_a_committed_batch_writes_zero_rows_on_retry(monkeypatch):
+def test_a_committed_batch_writes_zero_rows_on_retry(mocker):
     conn = _FakeWriteConn(receipts={"b1": ["a" * 64]})
-    _record_execute_values(monkeypatch, conn)
+    _record_execute_values(mocker, conn)
     out = write_import_batch(conn, "b1", "a" * 64,
                              [{"listing_id": LISTING_A}], [{"listing_id": LISTING_A}],
                              [{"artifact_id": 1}])
@@ -2508,7 +2508,7 @@ def test_a_committed_batch_writes_zero_rows_on_retry(monkeypatch):
     assert conn.commits == 0 and conn.rollbacks == 1
 
 
-def _record_execute_values(monkeypatch, conn):
+def _record_execute_values(mocker, conn):
     import psycopg2.extras
 
     def _fake(cur, sql, rows, template=None, page_size=100):
@@ -2517,12 +2517,12 @@ def _record_execute_values(monkeypatch, conn):
         conn.executed_values.append((sql, list(rows)))
         conn.ops.append(("execute_values", sql))
 
-    monkeypatch.setattr(psycopg2.extras, "execute_values", _fake)
+    mocker.patch.object(psycopg2.extras, "execute_values", _fake)
 
 
-def test_one_batch_is_one_transaction_with_the_receipt_inside_it(monkeypatch):
+def test_one_batch_is_one_transaction_with_the_receipt_inside_it(mocker):
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
+    _record_execute_values(mocker, conn)
     out = write_import_batch(
         conn, "b1", "a" * 64,
         [build_recovery_silver_row(_ti_row(LISTING_A, _MAT_KEY), 7, {})],
@@ -2549,19 +2549,19 @@ def test_one_batch_is_one_transaction_with_the_receipt_inside_it(monkeypatch):
     assert [sql for sql, _ in conn.executed_values] != []
 
 
-def test_a_failure_inside_the_batch_rolls_back_and_escapes(monkeypatch):
+def test_a_failure_inside_the_batch_rolls_back_and_escapes(mocker):
     # write_silver_observations_postgres would have logged a warning and
     # returned 0 here; this path must not.
     conn = _FakeWriteConn(fail_on="plan145_recovery_batch_receipts")
-    _record_execute_values(monkeypatch, conn)
+    _record_execute_values(mocker, conn)
     with pytest.raises(RuntimeError, match="injected failure"):
         write_import_batch(conn, "b1", "a" * 64, [], [], [])
     assert conn.commits == 0 and conn.rollbacks == 1
 
 
-def test_no_write_statement_names_the_protected_tables(monkeypatch):
+def test_no_write_statement_names_the_protected_tables(mocker):
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
+    _record_execute_values(mocker, conn)
     write_import_batch(
         conn, "b1", "a" * 64,
         [build_recovery_silver_row(_ti_row(LISTING_A, _MAT_KEY), 7, {})], [],
@@ -2580,13 +2580,12 @@ def test_no_write_statement_names_the_protected_tables(monkeypatch):
 
 # -- O.5: run_assign and run_apply end to end ----------------------------
 
-def test_run_assign_dry_run_plans_without_touching_the_sequence(tmp_path,
-                                                                monkeypatch, capsys):
+def test_run_assign_dry_run_plans_without_touching_the_sequence(tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     before = set(store)
 
     assert mod.run_assign(mod.parse_args(["assign"])) == 0
@@ -2597,14 +2596,14 @@ def test_run_assign_dry_run_plans_without_touching_the_sequence(tmp_path,
 
 
 def test_run_assign_writes_one_identity_per_object_shared_by_all_its_rows(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import pyarrow.parquet as pq
 
     import scripts.reconcile_april_detail as mod
 
     store, (l1, _l2, l3, l4) = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn(next_id=9_000_001)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
 
@@ -2634,14 +2633,14 @@ def test_run_assign_writes_one_identity_per_object_shared_by_all_its_rows(
     assert census["unattributed_pack_members_now_import_bearing"] == 1
 
 
-def test_a_rerun_after_a_crash_reuses_the_recorded_ids(tmp_path, monkeypatch):
+def test_a_rerun_after_a_crash_reuses_the_recorded_ids(tmp_path, mocker):
     import pyarrow.parquet as pq
 
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     first = _FakeWriteConn(next_id=9_000_001)
-    _patch_slice2_io(monkeypatch, store, first)
+    _patch_slice2_io(mocker, store, first)
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
     key = _assigned_key(assign_batch_name(_RUN, 1))
     original = pq.read_table(io.BytesIO(store[key])).to_pylist()
@@ -2649,13 +2648,13 @@ def test_a_rerun_after_a_crash_reuses_the_recorded_ids(tmp_path, monkeypatch):
     # A second run finds the shard present: it must not burn new sequence
     # values or rewrite the recorded identities.
     second = _FakeWriteConn(next_id=5_555_555)
-    _patch_slice2_io(monkeypatch, store, second)
+    _patch_slice2_io(mocker, store, second)
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
     assert second.sql == []
     assert pq.read_table(io.BytesIO(store[key])).to_pylist() == original
 
 
-def test_run_assign_never_reads_legacy_artifact_id(tmp_path, monkeypatch):
+def test_run_assign_never_reads_legacy_artifact_id(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
@@ -2666,8 +2665,8 @@ def test_run_assign_never_reads_legacy_artifact_id(tmp_path, monkeypatch):
         requested.append(columns)
         return real(client, bucket, key, columns=columns)
 
-    monkeypatch.setattr(mod, "_read_parquet_rows", _spy)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mocker.patch.object(mod, "_read_parquet_rows", _spy)
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign"]))
 
     named = {c for cols in requested if cols for c in cols}
@@ -2676,7 +2675,7 @@ def test_run_assign_never_reads_legacy_artifact_id(tmp_path, monkeypatch):
 
 
 def test_a_null_listing_id_in_to_import_stops_assign_and_reports_the_cohort(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
@@ -2684,7 +2683,7 @@ def test_a_null_listing_id_in_to_import_stops_assign_and_reports_the_cohort(
         _write_compared_shard(tmp_path / "ti-c.parquet", [
             _ti_row(None, "html/2026/04/pack/orig3.html.zst"),
         ])
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     before = set(store)
 
     with pytest.raises(ImportSetInvalid, match="null_listing_id"):
@@ -2693,7 +2692,7 @@ def test_a_null_listing_id_in_to_import_stops_assign_and_reports_the_cohort(
     assert "null_listing_id" in capsys.readouterr().out
 
 
-def test_a_non_uuid_listing_id_stops_assign_before_any_write(tmp_path, monkeypatch):
+def test_a_non_uuid_listing_id_stops_assign_before_any_write(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
@@ -2701,18 +2700,18 @@ def test_a_non_uuid_listing_id_stops_assign_before_any_write(tmp_path, monkeypat
         _write_compared_shard(tmp_path / "ti-c.parquet", [
             _ti_row("12345", "html/2026/04/pack/orig3.html.zst"),
         ])
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     before = set(store)
     with pytest.raises(ImportSetInvalid, match="non_uuid_listing_id"):
         mod.run_assign(mod.parse_args(["assign", "--apply"]))
     assert set(store) == before
 
 
-def test_reassigning_a_run_under_different_caps_is_refused(tmp_path, monkeypatch):
+def test_reassigning_a_run_under_different_caps_is_refused(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
     with pytest.raises(ReconcileError, match="already assigned under caps"):
         mod.run_assign(mod.parse_args(
@@ -2721,15 +2720,15 @@ def test_reassigning_a_run_under_different_caps_is_refused(tmp_path, monkeypatch
 
 
 def test_run_apply_dry_run_announces_the_blast_radius_and_writes_nothing(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(["apply"])) == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out
@@ -2740,16 +2739,16 @@ def test_run_apply_dry_run_announces_the_blast_radius_and_writes_nothing(
 
 
 def test_run_apply_writes_four_things_per_batch_in_one_transaction(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, (l1, l2, l3, l4) = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     batch_name = assign_batch_name(_RUN, 1)
     assert mod.run_apply(mod.parse_args(
         ["apply", "--apply", "--batch", batch_name],
@@ -2799,17 +2798,17 @@ def test_run_apply_writes_four_things_per_batch_in_one_transaction(
 
 
 def test_run_apply_refuses_a_write_set_over_the_canary_row_budget(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # The gate is measured in rows, not batches: counting batches would let one
     # default-cap batch -- 50,000 silver rows -- through unapproved.
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="canary budget"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--max-unapproved-rows", "3"],
@@ -2817,16 +2816,16 @@ def test_run_apply_refuses_a_write_set_over_the_canary_row_budget(
     assert conn.sql == []                    # refused before any statement
 
 
-def test_a_named_approval_lets_an_oversized_write_set_through(tmp_path, monkeypatch):
+def test_a_named_approval_lets_an_oversized_write_set_through(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(
         ["apply", "--apply", "--max-unapproved-rows", "3",
          "--maintainer-approval", "a-maintainer"],
@@ -2834,18 +2833,18 @@ def test_a_named_approval_lets_an_oversized_write_set_through(tmp_path, monkeypa
     assert conn.commits == 1
 
 
-def test_several_canary_sized_batches_need_no_approval(tmp_path, monkeypatch):
+def test_several_canary_sized_batches_need_no_approval(tmp_path, mocker):
     # Three one-artifact batches, four silver rows in total: a batch count
     # would have refused this, a row budget correctly permits it.
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply", "--max-artifacts", "1"]))
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(["apply", "--apply"])) == 0
     assert conn.commits == 3                 # one transaction per batch
 
@@ -2860,13 +2859,13 @@ def test_the_canary_budget_leaves_room_for_the_plans_500_observation_canary():
 
 
 def test_a_carousel_row_with_no_listing_id_stops_apply_before_any_write(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # assign would have caught it, but apply re-reads the shards independently
     # and is the last check before the INSERT.
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     rows = _read_to_import_fixture(store, "materialized-a")
@@ -2875,8 +2874,8 @@ def test_a_carousel_row_with_no_listing_id_stops_apply_before_any_write(
         _write_compared_shard(tmp_path / "ti-a-null.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ImportSetInvalid, match="null_listing_id"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--batch", assign_batch_name(_RUN, 1)],
@@ -2909,7 +2908,7 @@ def test_the_violation_log_counts_everything_and_keeps_a_bounded_sample():
 
 
 def test_a_systematic_failure_reports_its_true_size_from_a_bounded_sample(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
@@ -2917,7 +2916,7 @@ def test_a_systematic_failure_reports_its_true_size_from_a_bounded_sample(
         _write_compared_shard(tmp_path / "ti-c.parquet", [
             _ti_row(None, f"html/2026/04/pack/o{i}.html.zst") for i in range(50)
         ])
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     with pytest.raises(ImportSetInvalid) as exc:
         mod.run_assign(mod.parse_args(["assign", "--apply"]))
@@ -2929,11 +2928,11 @@ def test_a_systematic_failure_reports_its_true_size_from_a_bounded_sample(
 
 
 def test_run_apply_stops_when_the_compare_output_moved_under_the_assignment(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     # A row disappears from to_import after the identity was frozen.
@@ -2942,7 +2941,7 @@ def test_run_apply_stops_when_the_compare_output_moved_under_the_assignment(
             _ti_row("aaaaaaaa-1111-1111-1111-111111111111", _MAT_KEY),
         ])
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="row count their assignment recorded"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--batch", assign_batch_name(_RUN, 1)],
@@ -2958,14 +2957,14 @@ def test_assign_and_apply_both_default_to_a_dry_run():
     assert parse_args(["apply"]).maintainer_approval is None
 
 
-def test_assign_issues_nextval_and_never_an_insert(tmp_path, monkeypatch):
+def test_assign_issues_nextval_and_never_an_insert(tmp_path, mocker):
     # The assignment shard is written before any database insertion because
     # assign issues none: the only statement it may send is the sequence read.
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn(next_id=9_000_001)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     assert conn.sql, "the sequence should have been read"
@@ -2976,12 +2975,12 @@ def test_assign_issues_nextval_and_never_an_insert(tmp_path, monkeypatch):
 
 
 def test_apply_refuses_a_run_whose_identities_were_never_assigned(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="run `assign --apply` first"):
         mod.run_apply(mod.parse_args(["apply", "--apply"]))
     assert conn.sql == []
@@ -3033,7 +3032,7 @@ def test_probe_defaults_to_off_on_assign_and_apply():
 
 
 def test_probe_assign_reads_the_probe_run_and_ignores_a_same_named_authoritative_one(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import pyarrow.parquet as pq
 
     import scripts.reconcile_april_detail as mod
@@ -3051,7 +3050,7 @@ def test_probe_assign_reads_the_probe_run_and_ignores_a_same_named_authoritative
         )
 
     conn = _FakeWriteConn(next_id=9_000_001)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"])) == 0
 
     shard = _probe_assigned_key(assign_batch_name(_RUN, 1))
@@ -3065,19 +3064,19 @@ def test_probe_assign_reads_the_probe_run_and_ignores_a_same_named_authoritative
 
 
 def test_authoritative_assign_does_not_see_a_probe_only_compare_run(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)
     store = _to_probe_store(auth_store)          # ONLY *_probe Stage-5 outputs
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     with pytest.raises(ReconcileError, match="no complete compare run"):
         mod.run_assign(mod.parse_args(["assign", "--apply"]))    # authoritative
 
 
 def test_probe_assign_with_no_probe_compare_says_to_run_one_not_to_finish_slice_1(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # The mirror of the test above, and the coverage for roots.probe: when a
     # probe run finds nothing, the fix is a probe compare -- telling a
     # maintainer "slice 1 must finish" would send them to wait on the very
@@ -3085,7 +3084,7 @@ def test_probe_assign_with_no_probe_compare_says_to_run_one_not_to_finish_slice_
     import scripts.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)   # authoritative outputs only
-    _patch_slice2_io(monkeypatch, auth_store, _FakeWriteConn())
+    _patch_slice2_io(mocker, auth_store, _FakeWriteConn())
 
     with pytest.raises(ReconcileError,
                        match=r"run `compare --probe --apply` first"):
@@ -3093,7 +3092,7 @@ def test_probe_assign_with_no_probe_compare_says_to_run_one_not_to_finish_slice_
 
 
 def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative_run(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # The true reverse of the "probe ignores authoritative" case: both runs
     # exist, and an authoritative assign must pick the authoritative one.
     import pyarrow.parquet as pq
@@ -3108,7 +3107,7 @@ def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative
             tmp_path / "ti-probe-x.parquet",
             [_ti_row("eeeeeeee-5555-5555-5555-555555555555", _AUTH_ONLY_KEY)],
         )
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
 
     key = _assigned_key(assign_batch_name(_RUN, 1))
@@ -3118,12 +3117,12 @@ def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative
 
 
 def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)
     store = {**auth_store, **_to_probe_store(auth_store)}   # both prefixes present
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     assert mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"])) == 0
 
     probe_keys = [k for k in store if k.startswith("recovery/plan145/assigned_probe/")]
@@ -3138,31 +3137,31 @@ def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
     # an authoritative apply for the same run finds no shards -- it only ever
     # lists assigned/, never assigned_probe/.
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="run `assign --apply` first"):
         mod.run_apply(mod.parse_args(["apply", "--apply"]))
     assert conn.sql == []
 
 
-def _seed_probe_assignment(tmp_path, monkeypatch):
+def _seed_probe_assignment(tmp_path, mocker):
     """A probe compare fixture with its assignment shards already written."""
     import scripts.reconcile_april_detail as mod
 
     auth_store, ids = _slice2_fixture_store(tmp_path)
     store = _to_probe_store(auth_store)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     assert mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"])) == 0
     return store, ids
 
 
 def test_apply_probe_apply_issues_every_statement_then_rolls_back(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     batch = assign_batch_name(_RUN, 1)
     assert mod.run_apply(mod.parse_args(
@@ -3188,13 +3187,13 @@ def test_apply_probe_apply_issues_every_statement_then_rolls_back(
 
 
 def test_probe_apply_reports_the_would_be_write_set_like_a_dry_run(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     mod.run_apply(mod.parse_args(
         ["apply", "--probe", "--apply", "--batch", assign_batch_name(_RUN, 1)]))
@@ -3205,13 +3204,13 @@ def test_probe_apply_reports_the_would_be_write_set_like_a_dry_run(
 
 
 def test_a_constraint_violation_in_probe_apply_is_not_swallowed_by_the_rollback(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn(fail_on="staging.price_observation_events")
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     with pytest.raises(RuntimeError, match="injected failure"):
         mod.run_apply(mod.parse_args(
@@ -3221,30 +3220,30 @@ def test_a_constraint_violation_in_probe_apply_is_not_swallowed_by_the_rollback(
 
 
 def test_apply_probe_apply_refuses_a_bare_run_and_wants_an_explicit_batch(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # The approval gate was the only bound on how much a bare apply --apply did;
     # a probe is exempt from approval, so it needs its own bound. --batch is it.
     import scripts.reconcile_april_detail as mod
 
-    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="no row budget"):
         mod.run_apply(mod.parse_args(["apply", "--probe", "--apply"]))
     assert conn.sql == []
 
 
 def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    store, _ = _seed_probe_assignment(tmp_path, mocker)
     batch = assign_batch_name(_RUN, 1)
 
     # 1. --probe + --maintainer-approval is refused outright: a probe never
     #    commits, so there is nothing to approve.
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="never commits"):
         mod.run_apply(mod.parse_args(
             ["apply", "--probe", "--apply", "--batch", batch,
@@ -3254,8 +3253,8 @@ def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
     # 2. The canary row budget caps a commit; a probe writes nothing durable, so
     #    a budget of one row does not stop a named-batch probe (Non-negotiable 4).
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(
         ["apply", "--probe", "--apply", "--batch", batch,
          "--max-unapproved-rows", "1"])) == 0
@@ -3263,12 +3262,12 @@ def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
 
 
 def test_apply_probe_dry_run_reads_probe_prefixes_and_issues_no_statement(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     assert mod.run_apply(mod.parse_args(["apply", "--probe"])) == 0
     assert conn.sql == []
@@ -3280,18 +3279,18 @@ def test_apply_probe_dry_run_reads_probe_prefixes_and_issues_no_statement(
     assert assign_batch_name(_RUN, 1) in out
 
 
-def test_authoritative_slice2_paths_are_unchanged_by_probe(tmp_path, monkeypatch):
+def test_authoritative_slice2_paths_are_unchanged_by_probe(tmp_path, mocker):
     # A bare authoritative assign+apply still lands in the authoritative
     # prefixes and commits, with no probe artefact anywhere.
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(["apply", "--apply"])) == 0
     assert conn.commits == 1 and conn.rollbacks == 0
     assert _assigned_key(assign_batch_name(_RUN, 1)) in store
@@ -3374,13 +3373,13 @@ def _write_assigned_shard(path, rows):
     return path.read_bytes()
 
 
-def _patch_slice3_io(monkeypatch, store):
+def _patch_slice3_io(mocker, store):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS3Store(store))
-    monkeypatch.setattr(minio, "object_exists", lambda k: k in store)
-    monkeypatch.setattr(
+    mocker.patch.object(mod, "_s3_client", lambda: _FakeS3Store(store))
+    mocker.patch.object(minio, "object_exists", lambda k: k in store)
+    mocker.patch.object(
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
@@ -3428,11 +3427,11 @@ def _control_store(tmp_path, *, l1_silver_price=25000):
 
 
 def test_control_report_counts_only_the_two_exact_same_source_rows(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     rc = mod.run_control(
         mod.parse_args(["control", "--run-id", _C3RUN, "--apply"]))
@@ -3447,11 +3446,11 @@ def test_control_report_counts_only_the_two_exact_same_source_rows(
 
 
 def test_control_reports_a_single_differing_business_field_and_exits_nonzero(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path, l1_silver_price=25999)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     rc = mod.run_control(
         mod.parse_args(["control", "--run-id", _C3RUN, "--apply"]))
@@ -3481,11 +3480,11 @@ def test_control_ignores_carousel_vin_but_not_detail_vin():
     assert [field for field, _p, _s in detail] == ["vin"]
 
 
-def test_control_ignore_list_is_exactly_four_and_a_fifth_breaks_it(monkeypatch):
+def test_control_ignore_list_is_exactly_four_and_a_fifth_breaks_it(mocker):
     import scripts.reconcile_april_detail as mod
 
     assert len(mod.CONTROL_IGNORED_FIELDS) == 4
-    monkeypatch.setattr(
+    mocker.patch.object(
         mod, "CONTROL_IGNORED_FIELDS", mod.CONTROL_IGNORED_FIELDS + ("year",),
     )
     with pytest.raises(AssertionError):
@@ -3493,15 +3492,15 @@ def test_control_ignore_list_is_exactly_four_and_a_fifth_breaks_it(monkeypatch):
 
 
 def test_control_renaming_an_ignore_token_makes_that_column_a_finding(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # The token list is load-bearing: drop "artifact_id" from it (keeping the
     # count at four) and the deployed row's artifact_id starts showing up as a
     # disagreement, while "written_at" -- still named -- stays ignored.
     import scripts.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
-    monkeypatch.setattr(mod, "CONTROL_IGNORED_FIELDS",
+    _patch_slice3_io(mocker, store)
+    mocker.patch.object(mod, "CONTROL_IGNORED_FIELDS",
                         ("recovery_provenance", "written_at", "carousel_vin",
                          "not_artifact_id"))
 
@@ -3515,36 +3514,36 @@ def test_control_renaming_an_ignore_token_makes_that_column_a_finding(
     assert "written_at" not in census           # still ignored by name
 
 
-def test_control_sample_size_below_one_is_refused(tmp_path, monkeypatch):
+def test_control_sample_size_below_one_is_refused(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     with pytest.raises(ReconcileError, match="sample-size"):
         mod.run_control(
             mod.parse_args(["control", "--run-id", _C3RUN, "--sample-size", "0"]))
 
 
-def test_control_dry_run_writes_nothing(tmp_path, monkeypatch):
+def test_control_dry_run_writes_nothing(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
     before = set(store)
 
     mod.run_control(mod.parse_args(["control", "--run-id", _C3RUN]))
     assert set(store) == before
 
 
-def test_control_probe_reads_and_writes_only_the_probe_prefix(tmp_path, monkeypatch):
+def test_control_probe_reads_and_writes_only_the_probe_prefix(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
     store = {k.replace("recovery/plan145/compared/",
                        "recovery/plan145/compared_probe/"): v
              for k, v in store.items()}
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     rc = mod.run_control(
         mod.parse_args(["control", "--probe", "--run-id", _C3RUN, "--apply"]))
@@ -3625,11 +3624,11 @@ def _canary_store(tmp_path, *, drop_assignment_for=None, orphan_assignment=False
 
 
 def test_canary_sample_covers_every_stratum_and_keeps_artifacts_whole(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     rc = mod.run_canary_sample(
         mod.parse_args(["canary-sample", "--run-id", _C3RUN, "--apply"]))
@@ -3647,7 +3646,7 @@ def test_canary_sample_covers_every_stratum_and_keeps_artifacts_whole(
 
 
 def test_canary_sample_manifest_holds_every_row_of_each_selected_object(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import io as _io
 
     import pyarrow.parquet as _pq
@@ -3655,7 +3654,7 @@ def test_canary_sample_manifest_holds_every_row_of_each_selected_object(
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
     mod.run_canary_sample(
         mod.parse_args(["canary-sample", "--run-id", _C3RUN, "--apply"]))
 
@@ -3670,11 +3669,11 @@ def test_canary_sample_manifest_holds_every_row_of_each_selected_object(
 
 
 def test_canary_sample_stops_when_a_to_import_object_has_no_assignment(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path, drop_assignment_for=_OD)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     with pytest.raises(ReconcileError, match="no assignment"):
         mod.run_canary_sample(
@@ -3683,13 +3682,13 @@ def test_canary_sample_stops_when_a_to_import_object_has_no_assignment(
 
 
 def test_canary_sample_stops_when_an_assigned_object_is_missing_from_the_read(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # A whole dropped to_import shard: the object is gone from the read, so the
     # per-object count cross-check cannot see it -- only the assign-side check.
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path, orphan_assignment=True)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     with pytest.raises(ReconcileError, match="dropped"):
         mod.run_canary_sample(
@@ -3698,7 +3697,7 @@ def test_canary_sample_stops_when_an_assigned_object_is_missing_from_the_read(
 
 
 def test_canary_sample_stops_when_the_to_import_read_is_short_of_the_assignment(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # OA's carousel row is missing from the to_import read; its assignment still
     # says silver_rows=2. Selecting OA would commit a half-artifact.
     import scripts.reconcile_april_detail as mod
@@ -3715,7 +3714,7 @@ def test_canary_sample_stops_when_the_to_import_read_is_short_of_the_assignment(
             _ti_row(lc, _OC, source="detail"),
             _ti_row(ld, _OD, source="carousel"),
         ])
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     with pytest.raises(ReconcileError, match="half-artifact"):
         mod.run_canary_sample(
@@ -3765,11 +3764,11 @@ def _canary_store_wide(tmp_path, *, n_common=38):
 
 
 def test_canary_sample_stratification_pass_covers_the_rare_strata_on_a_tiny_budget(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store_wide(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     rc = mod.run_canary_sample(mod.parse_args(
         ["canary-sample", "--run-id", _C3RUN, "--target-rows", "3", "--apply"]))
@@ -3784,11 +3783,11 @@ def test_canary_sample_stratification_pass_covers_the_rare_strata_on_a_tiny_budg
     assert set(strata["covered_by_sample"]) == set(strata["present_in_population"])
 
 
-def test_canary_sample_dry_run_writes_nothing(tmp_path, monkeypatch):
+def test_canary_sample_dry_run_writes_nothing(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
     before = set(store)
 
     rc = mod.run_canary_sample(
@@ -3798,7 +3797,7 @@ def test_canary_sample_dry_run_writes_nothing(tmp_path, monkeypatch):
 
 
 def test_canary_sample_probe_reads_and_writes_only_the_probe_prefix(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
@@ -3809,7 +3808,7 @@ def test_canary_sample_probe_reads_and_writes_only_the_probe_prefix(
                   "recovery/plan145/vin_snapshot_probe/"): v
         for k, v in store.items()
     }
-    _patch_slice3_io(monkeypatch, store)
+    _patch_slice3_io(mocker, store)
 
     rc = mod.run_canary_sample(
         mod.parse_args(["canary-sample", "--probe", "--run-id", _C3RUN, "--apply"]))
@@ -3915,11 +3914,11 @@ def _blk_report(store):
 
 
 def test_a_block_page_object_is_quarantined_whole_including_its_carousel_rows(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _block_compare_store(tmp_path)
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=5)
 
     assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
 
@@ -3944,7 +3943,7 @@ def test_a_block_page_object_is_quarantined_whole_including_its_carousel_rows(
 
 
 def test_a_priced_detail_row_is_untouched_even_when_its_carousel_rows_are_null(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # Write this one first and watch it fail against a row-level filter: the
     # carousel row here is active with price/vin/make all NULL, so a row-level
     # predicate would quarantine it even though its object parsed a real price.
@@ -3965,7 +3964,7 @@ def test_a_priced_detail_row_is_untouched_even_when_its_carousel_rows_are_null(
              "input_kind": "materialized", "listing_id_source": "legacy_manifest"},
         ],
     )
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=7)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=7)
 
     assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
 
@@ -3977,7 +3976,7 @@ def test_a_priced_detail_row_is_untouched_even_when_its_carousel_rows_are_null(
 
 
 def test_an_unlisted_detail_row_with_null_values_is_not_excluded(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     # An unlisted page legitimately has no price; excluding it would discard
     # real observations.
     import scripts.reconcile_april_detail as mod
@@ -3995,7 +3994,7 @@ def test_an_unlisted_detail_row_with_null_values_is_not_excluded(
              "input_kind": "materialized", "listing_id_source": "legacy_manifest"},
         ],
     )
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=6)
 
     assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
 
@@ -4003,11 +4002,11 @@ def test_an_unlisted_detail_row_with_null_values_is_not_excluded(
     assert un_key in {r["object_key"] for r in _family(store, "to_import")}
 
 
-def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, monkeypatch):
+def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _block_compare_store(tmp_path)
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=5)
 
     assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
 
@@ -4021,7 +4020,7 @@ def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, monkeypatch):
 
 
 def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     # Stage 4 drops NULL-price carousel hints, so every carousel row that
@@ -4031,7 +4030,7 @@ def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused
         _prow("e6666666-6666-6666-6666-666666666666", _WHEN, source="carousel",
               object_key=_BLK_KEY, content_sha256="bcm", price=41995, make="Ford"),
     ])
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=6)
 
     assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0   # no raise
 
@@ -4042,22 +4041,22 @@ def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused
 
 
 def test_a_loosened_block_predicate_that_keeps_a_valued_detail_row_stops_apply(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
     # Guard against a future edit to is_block_signature: drop the price/vin/
     # make-all-NULL requirement and a quarantined detail row can carry a value
     # -- the filter is no longer precise and an authoritative run must stop.
-    monkeypatch.setattr(mod, "is_block_signature",
+    mocker.patch.object(mod, "is_block_signature",
                         lambda row: row.get("listing_state") == "active")
 
     store = _block_compare_store(tmp_path)
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=5)
     with pytest.raises(ReconcileError, match="no longer precise"):
         mod.run_compare(mod.parse_args(["compare", "--apply"]))
 
     store = _block_compare_store(tmp_path)
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=5)
     assert mod.run_compare(mod.parse_args(["compare"])) == 0        # dry run warns
     out = capsys.readouterr().out
     assert "is_block_signature is no longer precise" in out
@@ -4065,7 +4064,7 @@ def test_a_loosened_block_predicate_that_keeps_a_valued_detail_row_stops_apply(
 
 
 def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
@@ -4084,7 +4083,7 @@ def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
         _write_compared_shard(tmp_path / "blk-ti.parquet", blk_rows)
     store["recovery/plan145/parsed/inputs/unpacked-c.parquet"] = \
         _write_inputs_shard(tmp_path / "blk-in.parquet", blk_inputs)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     before = set(store)
 
     with pytest.raises(ImportSetInvalid, match="block_page_signature"):
@@ -4099,7 +4098,7 @@ def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
 
 
 def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     # The per-row check only sees the detail row that carries the signature,
@@ -4112,7 +4111,7 @@ def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
         "families": {"already_represented": 10, "to_import": 3,
                      "unclassifiable": 1, "sum": 14},
     }).encode()
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     before = set(store)
 
     with pytest.raises(ReconcileError, match="predates the block-page filter"):
@@ -4125,19 +4124,19 @@ def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
                      "unclassifiable": 1, "blocked_excluded": 0, "sum": 14},
         "blocked_excluded": {"rows": 0, "objects": 0},
     }).encode()
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
 
 
 def test_apply_refuses_assignment_shards_from_a_pre_block_filter_compare_run(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     # assign refuses a stale run going forward; this is the same refusal for a
     # run whose assignment shards already exist -- apply re-reads them
     # independently and is the last check before the INSERT.
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     mod.run_assign(mod.parse_args(["assign", "--apply"]))     # shards now exist
     batch_name = assign_batch_name(_RUN, 1)
 
@@ -4148,7 +4147,7 @@ def test_apply_refuses_assignment_shards_from_a_pre_block_filter_compare_run(
     }).encode()
     store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = pre_filter
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="predates the block-page filter"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--run-id", _RUN, "--batch", batch_name]))
@@ -4157,7 +4156,7 @@ def test_apply_refuses_assignment_shards_from_a_pre_block_filter_compare_run(
     # a missing report fails closed under --apply (keyed on apply, not the
     # report's truthiness), and a dry run only warns
     del store[f"recovery/plan145/compared/{_RUN}/compare_report.json"]
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     with pytest.raises(ReconcileError, match="predates the block-page filter"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--run-id", _RUN, "--batch", batch_name]))
@@ -4216,9 +4215,9 @@ def _canary_commit_store(tmp_path):
     return store
 
 
-def _seed_canary_manifest(mod, monkeypatch, store):
+def _seed_canary_manifest(mod, mocker, store):
     """Run the real Phase A sampler so the manifest under test is the real one."""
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     assert mod.run_canary_sample(mod.parse_args(
         ["canary-sample", "--run-id", _C3RUN, "--apply"])) == 0
     return store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"]
@@ -4236,22 +4235,22 @@ def _pin(store, *, rows=5):
     return ["--expect-manifest-sha256", digest, "--expect-rows", str(rows)]
 
 
-def _canary_ready(mod, tmp_path, monkeypatch):
+def _canary_ready(mod, tmp_path, mocker):
     store = _canary_commit_store(tmp_path)
-    _seed_canary_manifest(mod, monkeypatch, store)
+    _seed_canary_manifest(mod, mocker, store)
     return store
 
 
 # -- R.1: the commit --------------------------------------------------------
 
 def test_the_canary_commits_exactly_the_manifests_objects_and_no_more(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store))) == 0
@@ -4293,14 +4292,14 @@ def test_the_canary_commits_exactly_the_manifests_objects_and_no_more(
 
 
 def test_the_canary_goes_through_the_real_writer_with_the_receipt_inside_it(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """Non-negotiable 1: reuse write_import_batch, do not reimplement it."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     seen = {}
     real = mod.write_import_batch
@@ -4311,7 +4310,7 @@ def test_the_canary_goes_through_the_real_writer_with_the_receipt_inside_it(
         seen["probe"] = kw.get("probe", False)
         return real(c, batch_name, digest, *a, **kw)
 
-    monkeypatch.setattr(mod, "write_import_batch", _spy)
+    mocker.patch.object(mod, "write_import_batch", _spy)
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store))) == 0
 
@@ -4328,8 +4327,7 @@ def test_the_canary_goes_through_the_real_writer_with_the_receipt_inside_it(
     assert conn.ops[-1] == ("commit", None)
 
 
-def test_the_canary_receipt_name_is_never_a_slice_2_batch_name(tmp_path,
-                                                               monkeypatch):
+def test_the_canary_receipt_name_is_never_a_slice_2_batch_name(tmp_path, mocker):
     """A canary that borrowed b00001's name would mark all 5,000 of its
     artifacts committed on the strength of ~500 rows, and the full apply would
     skip that batch forever."""
@@ -4340,10 +4338,10 @@ def test_the_canary_receipt_name_is_never_a_slice_2_batch_name(tmp_path,
     assert name != mod.assign_batch_name(_C3RUN, 1)
 
     # and `apply` cannot select it: it lists batches by the `-b` prefix
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
     store[f"recovery/plan145/assigned/{name}.parquet"] = b"not-a-shard"
@@ -4354,7 +4352,7 @@ def test_the_canary_receipt_name_is_never_a_slice_2_batch_name(tmp_path,
 
 
 def test_the_canary_budget_is_fixed_in_code_with_no_flag_that_raises_it(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """A widenable ceiling is --maintainer-approval under another name: an
     oversized or wrongly regenerated manifest could be committed by editing one
     number. So the budget is a constant and this mode carries no knob."""
@@ -4371,11 +4369,11 @@ def test_the_canary_budget_is_fixed_in_code_with_no_flag_that_raises_it(
     # does not, which is the whole reason this mode exists.
     assert mod.CANARY_ROW_BUDGET == 1000
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
-    monkeypatch.setattr(mod, "CANARY_ROW_BUDGET", 2)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
+    mocker.patch.object(mod, "CANARY_ROW_BUDGET", 2)
     with pytest.raises(ReconcileError, match="over the fixed 2-row canary budget"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -4385,17 +4383,17 @@ def test_the_canary_budget_is_fixed_in_code_with_no_flag_that_raises_it(
 
 
 def test_an_over_budget_dry_run_reports_the_overage_instead_of_dying(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     """The oversized manifest is exactly when the maintainer needs the safe
     measurement run. A dry run opens no connection, so refusing one buys
     nothing and costs them the number they need."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
-    monkeypatch.setattr(mod, "CANARY_ROW_BUDGET", 2)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
+    mocker.patch.object(mod, "CANARY_ROW_BUDGET", 2)
 
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN])) == 0
@@ -4407,14 +4405,13 @@ def test_an_over_budget_dry_run_reports_the_overage_instead_of_dying(
     assert conn.executed_values == []
 
 
-def test_an_apply_must_pin_the_manifest_it_was_approved_against(tmp_path,
-                                                                monkeypatch):
+def test_an_apply_must_pin_the_manifest_it_was_approved_against(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     # a bare --apply names no manifest
     with pytest.raises(ReconcileError, match="--expect-manifest-sha256"):
@@ -4442,12 +4439,12 @@ def test_an_apply_must_pin_the_manifest_it_was_approved_against(tmp_path,
         ["canary-commit", "--run-id", _C3RUN])) == 0
 
 
-def test_the_dry_run_prints_the_pin_the_commit_will_need(tmp_path, monkeypatch,
-                                                         capsys):
+def test_the_dry_run_prints_the_pin_the_commit_will_need(tmp_path,
+                                                         capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    store = _canary_ready(mod, tmp_path, mocker)
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_canary_commit(mod.parse_args(["canary-commit", "--run-id", _C3RUN]))
     out = capsys.readouterr().out
     digest = hashlib.sha256(
@@ -4457,13 +4454,13 @@ def test_the_dry_run_prints_the_pin_the_commit_will_need(tmp_path, monkeypatch,
 
 
 def test_the_canary_dry_run_builds_the_write_set_and_issues_no_statement(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN])) == 0
@@ -4478,17 +4475,17 @@ def test_the_canary_dry_run_builds_the_write_set_and_issues_no_statement(
 
 
 def test_a_rerun_of_the_canary_skips_on_the_receipt_and_writes_zero_rows(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     digest = hashlib.sha256(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"],
     ).hexdigest()
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
     first_report = json.loads(
@@ -4498,8 +4495,8 @@ def test_a_rerun_of_the_canary_skips_on_the_receipt_and_writes_zero_rows(
 
     # the receipt is now present for this batch name and this manifest digest
     again = _FakeWriteConn(receipts={f"{_C3RUN}-canary": [digest]})
-    _record_execute_values(monkeypatch, again)
-    _patch_slice2_io(monkeypatch, store, again)
+    _record_execute_values(mocker, again)
+    _patch_slice2_io(mocker, store, again)
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store))) == 0
     assert again.executed_values == []           # no INSERT of any kind
@@ -4513,15 +4510,14 @@ def test_a_rerun_of_the_canary_skips_on_the_receipt_and_writes_zero_rows(
     ) == first_report
 
 
-def test_the_same_canary_name_with_a_changed_manifest_stops(tmp_path,
-                                                            monkeypatch):
+def test_the_same_canary_name_with_a_changed_manifest_stops(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
     from scripts.reconcile_april_detail import ReceiptConflict
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn(receipts={f"{_C3RUN}-canary": ["b" * 64]})
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     with pytest.raises(ReceiptConflict):
         mod.run_canary_commit(mod.parse_args(
@@ -4531,10 +4527,10 @@ def test_the_same_canary_name_with_a_changed_manifest_stops(tmp_path,
 
 
 def test_the_canary_writes_identity_from_the_shard_not_the_manifests_copy(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     rows = _read_manifest_rows(store[key])
     for row in rows:
@@ -4543,8 +4539,8 @@ def test_the_canary_writes_identity_from_the_shard_not_the_manifests_copy(
     store[key] = _write_canary_manifest(tmp_path / "tampered.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError,
                        match="manifest field.*disagree with the assignment"):
         mod.run_canary_commit(mod.parse_args(
@@ -4553,29 +4549,28 @@ def test_the_canary_writes_identity_from_the_shard_not_the_manifests_copy(
 
 
 def test_the_canary_stops_when_a_manifest_object_has_no_assignment_row(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     assigned_key = f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"
     kept = [r for r in _read_assigned_rows(store[assigned_key])
             if r["object_key"] != _OC]
     store[assigned_key] = _write_assigned_shard(tmp_path / "trimmed.parquet", kept)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="no row in the assignment shard"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
     assert conn.executed_values == []
 
 
-def test_the_canary_stops_rather_than_commit_half_an_artifact(tmp_path,
-                                                              monkeypatch):
+def test_the_canary_stops_rather_than_commit_half_an_artifact(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     # drop _OA's carousel row: the object now reads 1 where both the assignment
     # and the manifest say 2
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -4591,8 +4586,8 @@ def test_the_canary_stops_rather_than_commit_half_an_artifact(tmp_path,
         ])
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError,
                        match="no longer match the frozen canary manifest"):
         mod.run_canary_commit(mod.parse_args(
@@ -4601,13 +4596,13 @@ def test_the_canary_stops_rather_than_commit_half_an_artifact(tmp_path,
 
 
 def test_the_canary_never_names_a_protected_table_in_any_statement(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
 
@@ -4619,16 +4614,16 @@ def test_the_canary_never_names_a_protected_table_in_any_statement(
 
 
 def test_the_canary_refuses_a_compare_run_that_predates_the_block_page_filter(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     store[f"recovery/plan145/compared/{_C3RUN}/compare_report.json"] = json.dumps(
         {"families": {"to_import": 5}}).encode()
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="predates the block-page filter"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -4636,12 +4631,12 @@ def test_the_canary_refuses_a_compare_run_that_predates_the_block_page_filter(
 
 
 def test_the_canary_says_to_run_the_sampler_when_there_is_no_manifest(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store = _canary_commit_store(tmp_path)      # no canary-sample run
     conn = _FakeWriteConn()
-    _patch_slice2_io(monkeypatch, store, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="canary-sample --apply"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply",
@@ -4663,13 +4658,13 @@ def _retarget_to_import(tmp_path, store, rows, name):
 
 
 def test_a_carousel_row_flipped_to_detail_is_caught_though_the_count_holds(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """The concrete superset: _OA keeps two rows, but its carousel row becomes
     a detail row, so build_recovery_price_event mints a historical price event
     the frozen sample never approved."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     lac = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
     lb = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -4684,8 +4679,8 @@ def test_a_carousel_row_flipped_to_detail_is_caught_though_the_count_holds(
     ], "flipped.parquet")
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError,
                        match="no longer match the frozen canary manifest") as exc:
         mod.run_canary_commit(mod.parse_args(
@@ -4698,12 +4693,12 @@ def test_a_carousel_row_flipped_to_detail_is_caught_though_the_count_holds(
 
 
 def test_a_changed_business_value_is_caught_by_the_write_set_digest_alone(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """Same object, same count, same detail/carousel split, same strata -- only
     the price moved. Nothing but the row digest sees this."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     lac = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
     lb = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -4718,8 +4713,8 @@ def test_a_changed_business_value_is_caught_by_the_write_set_digest_alone(
     ], "repriced.parquet")
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError,
                        match="rebuild to a different write set") as exc:
         mod.run_canary_commit(mod.parse_args(
@@ -4795,12 +4790,12 @@ def test_the_assignment_capture_time_changes_the_write_set_digest():
     ("detail_rows", 0),
 ])
 def test_every_manifest_field_copied_from_the_assignment_is_bound(
-        tmp_path, monkeypatch, field, value):
+        tmp_path, field, value, mocker):
     """Not just artifact_id. Each of these reaches the write set or names the
     stratum the sample was approved on."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     rows = _read_manifest_rows(store[key])
     for row in rows:
@@ -4809,8 +4804,8 @@ def test_every_manifest_field_copied_from_the_assignment_is_bound(
     store[key] = _write_canary_manifest(tmp_path / f"m-{field}.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError,
                        match="disagree with the assignment shard") as exc:
         mod.run_canary_commit(mod.parse_args(
@@ -4820,13 +4815,13 @@ def test_every_manifest_field_copied_from_the_assignment_is_bound(
 
 
 def test_a_manifest_naming_an_assignment_batch_that_does_not_exist_stops(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """`batch_name` is bound too, but a wrong one never reaches the field
     comparison -- it resolves to no shard. That has to be a refusal, not a
     KeyError out of the object read."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     rows = _read_manifest_rows(store[key])
     for row in rows:
@@ -4835,21 +4830,20 @@ def test_a_manifest_naming_an_assignment_batch_that_does_not_exist_stops(
     store[key] = _write_canary_manifest(tmp_path / "m-batch.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="does not exist"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
     assert conn.sql == []
 
 
-def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path,
-                                                               monkeypatch):
+def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path, mocker):
     """Fail closed. A pre-write_set_digest manifest freezes only counts, which is
     exactly the contract the column exists to replace."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     rows = _read_manifest_rows(store[key])
     for row in rows:
@@ -4857,8 +4851,8 @@ def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path,
     store[key] = _write_canary_manifest(tmp_path / "nodigest.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="carries no write_set_digest") as exc:
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -4869,10 +4863,10 @@ def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path,
 
 
 def test_the_sampler_freezes_a_write_set_digest_for_every_selected_artifact(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     rows = _read_manifest_rows(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"])
     assert rows
@@ -4906,16 +4900,16 @@ def _v1_manifest(tmp_path, store, *, drop=("write_set_digest",
 
 
 def test_the_migration_preserves_the_frozen_manifest_and_its_object_set(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     source_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     target_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"
     v1_rows = _v1_manifest(tmp_path, store)
     v1_bytes = store[source_key]
 
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     assert mod.run_canary_remanifest(mod.parse_args(
         ["canary-remanifest", "--run-id", _C3RUN, "--apply"])) == 0
 
@@ -4939,8 +4933,8 @@ def test_the_migration_preserves_the_frozen_manifest_and_its_object_set(
         assert len(row["write_set_digest"]) == 64
         assert row["page_fetched_at"] is not None
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     digest = hashlib.sha256(store[target_key]).hexdigest()
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply",
@@ -4949,12 +4943,12 @@ def test_the_migration_preserves_the_frozen_manifest_and_its_object_set(
 
 
 def test_the_migration_refuses_when_an_input_moved_under_the_frozen_sample(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """The whole reason not to re-sample: if an input moved, a re-selection
     would quietly pick a different set. The migration stops instead."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     lac = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
@@ -4969,7 +4963,7 @@ def test_the_migration_refuses_when_an_input_moved_under_the_frozen_sample(
         _ti_row(ld, _OD, source="carousel"),
     ], "moved.parquet")
 
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     with pytest.raises(ReconcileError, match="no longer read the way the manifest"):
         mod.run_canary_remanifest(mod.parse_args(
             ["canary-remanifest", "--run-id", _C3RUN, "--apply"]))
@@ -4978,39 +4972,39 @@ def test_the_migration_refuses_when_an_input_moved_under_the_frozen_sample(
 
 
 def test_the_migration_will_not_overwrite_an_existing_migrated_manifest(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
     store[f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"] = b"x"
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     with pytest.raises(ReconcileError, match="already exists"):
         mod.run_canary_remanifest(mod.parse_args(
             ["canary-remanifest", "--run-id", _C3RUN, "--apply"]))
 
 
-def test_the_migration_dry_run_writes_nothing(tmp_path, monkeypatch):
+def test_the_migration_dry_run_writes_nothing(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
     before = set(store)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     assert mod.run_canary_remanifest(mod.parse_args(
         ["canary-remanifest", "--run-id", _C3RUN])) == 0
     assert set(store) == before
 
 
 def test_a_migrated_manifest_beside_the_original_is_the_one_that_is_read(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """Resolution is by existence, not by a flag: there is no way to commit
     against the weaker manifest while a migrated one sits beside it."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     mod.run_canary_remanifest(mod.parse_args(
         ["canary-remanifest", "--run-id", _C3RUN, "--apply"]))
 
@@ -5018,8 +5012,8 @@ def test_a_migrated_manifest_beside_the_original_is_the_one_that_is_read(
     # pinning the *original* digest now refuses -- the resolved manifest is the
     # migrated one, and the pin is taken over its exact bytes
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="not the one this run was approved"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5028,19 +5022,19 @@ def test_a_migrated_manifest_beside_the_original_is_the_one_that_is_read(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"]).hexdigest()
 
 
-def _migrated(mod, tmp_path, monkeypatch, store):
+def _migrated(mod, tmp_path, mocker, store):
     """Age the manifest to v1 and migrate it, returning the sibling's key."""
     _v1_manifest(tmp_path, store)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     assert mod.run_canary_remanifest(mod.parse_args(
         ["canary-remanifest", "--run-id", _C3RUN, "--apply"])) == 0
     return f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"
 
 
-def _commit_the_sibling(mod, monkeypatch, store, target_key, *, rows=5):
+def _commit_the_sibling(mod, mocker, store, target_key, *, rows=5):
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     args = ["canary-commit", "--run-id", _C3RUN, "--apply",
             "--expect-manifest-sha256",
             hashlib.sha256(store[target_key]).hexdigest(),
@@ -5049,14 +5043,14 @@ def _commit_the_sibling(mod, monkeypatch, store, target_key, *, rows=5):
 
 
 def test_a_substituted_sibling_with_a_different_object_set_commits_nothing(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """Resolution picks the sibling because it exists. Existence is not a
     reason to trust it: a sibling created or replaced independently could hand
     a commit an object set that is not the window's subject."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
 
     # a valid, digest-bearing, self-consistent sibling -- over three artifacts
     # instead of four. Every per-artifact check inside it passes.
@@ -5064,7 +5058,7 @@ def test_a_substituted_sibling_with_a_different_object_set_commits_nothing(
             if r["object_key"] != _OD]
     store[target_key] = _write_canary_manifest(tmp_path / "sub.parquet", rows)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key, rows=4)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key, rows=4)
     with pytest.raises(ReconcileError, match="not a promotion of the frozen") as exc:
         mod.run_canary_commit(parsed)
     assert "it selects different artifacts" in str(exc.value)
@@ -5074,7 +5068,7 @@ def test_a_substituted_sibling_with_a_different_object_set_commits_nothing(
 
 
 def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """The attack object-set equality does not cover. Keep every object key,
     flip one selected carousel row to detail in `to_import`, and substitute a
     sibling that agrees with the flip: its write_set_digest matches the mutated
@@ -5083,8 +5077,8 @@ def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
     carousel, and an extra historical price event is minted without it."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
     sibling = _read_manifest_rows(store[target_key])
 
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -5117,7 +5111,7 @@ def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
     store[target_key] = _write_canary_manifest(tmp_path / "sameset.parquet",
                                                sibling)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     with pytest.raises(ReconcileError, match="not a promotion of the frozen") as exc:
         mod.run_canary_commit(parsed)
     message = str(exc.value)
@@ -5141,13 +5135,13 @@ def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
     ("strata", ["something|else|entirely|here"]),
 ])
 def test_every_field_the_frozen_manifest_carried_must_survive_promotion(
-        tmp_path, monkeypatch, field, value):
+        tmp_path, field, value, mocker):
     """A promotion may add page_fetched_at, write_set_digest,
     vin_snapshot_sha256 and the two source columns. Nothing else."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
     sibling = _read_manifest_rows(store[target_key])
     for row in sibling:
         if row["object_key"] == _OA:
@@ -5155,7 +5149,7 @@ def test_every_field_the_frozen_manifest_carried_must_survive_promotion(
     store[target_key] = _write_canary_manifest(tmp_path / f"p-{field}.parquet",
                                                sibling)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     with pytest.raises(ReconcileError, match="were changed") as exc:
         mod.run_canary_commit(parsed)
     assert field in str(exc.value)
@@ -5176,58 +5170,55 @@ def test_a_promotion_may_add_the_migration_columns_and_only_those():
                        "silver_rows", "detail_rows", "strata"]
 
 
-def test_strata_order_is_not_part_of_the_promotion_contract(tmp_path,
-                                                            monkeypatch):
+def test_strata_order_is_not_part_of_the_promotion_contract(tmp_path, mocker):
     """The two manifests must name the same strata; a Parquet round trip is
     not required to preserve their order."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
     sibling = _read_manifest_rows(store[target_key])
     for row in sibling:
         row["strata"] = list(reversed(row["strata"]))
     store[target_key] = _write_canary_manifest(tmp_path / "reordered.parquet",
                                                sibling)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     assert mod.run_canary_commit(parsed) == 0
     assert conn.commits == 1
 
 
-def test_a_sibling_promoted_from_other_bytes_commits_nothing(tmp_path,
-                                                             monkeypatch):
+def test_a_sibling_promoted_from_other_bytes_commits_nothing(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
     rows = _read_manifest_rows(store[target_key])
     for row in rows:
         row["source_manifest_sha256"] = "a" * 64
     store[target_key] = _write_canary_manifest(tmp_path / "othersrc.parquet", rows)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     with pytest.raises(ReconcileError, match="not a promotion of the frozen") as exc:
         mod.run_canary_commit(parsed)
     assert "now hashes to" in str(exc.value)
     assert conn.executed_values == []
 
 
-def test_a_sibling_naming_no_source_at_all_commits_nothing(tmp_path,
-                                                           monkeypatch):
+def test_a_sibling_naming_no_source_at_all_commits_nothing(tmp_path, mocker):
     """Only canary-remanifest may write this object, and it always names what
     it promoted."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
     rows = _read_manifest_rows(store[target_key])
     for row in rows:
         row["source_manifest_sha256"] = None
         row["source_object_set_digest"] = None
     store[target_key] = _write_canary_manifest(tmp_path / "nosrc.parquet", rows)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     with pytest.raises(ReconcileError,
                        match="does not name one frozen manifest"):
         mod.run_canary_commit(parsed)
@@ -5235,25 +5226,25 @@ def test_a_sibling_naming_no_source_at_all_commits_nothing(tmp_path,
 
 
 def test_the_frozen_manifest_must_still_exist_to_prove_the_promotion(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """It is the only record of what the window's subject was. A promotion
     that can no longer be checked against it is not a promotion."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
     del store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"]
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     with pytest.raises(ReconcileError, match="is gone; it is the only record"):
         mod.run_canary_commit(parsed)
     assert conn.executed_values == []
 
 
-def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, monkeypatch):
+def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     rows = _read_manifest_rows(store[key])
     for row in rows:
@@ -5261,8 +5252,8 @@ def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, monkeypatch):
     store[key] = _write_canary_manifest(tmp_path / "fakesrc.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="slots are not interchangeable"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5270,14 +5261,14 @@ def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, monkeypatch):
 
 
 def test_a_good_promotion_is_reproved_and_reported_at_commit_time(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     source_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    target_key = _migrated(mod, tmp_path, mocker, store)
 
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     assert mod.run_canary_commit(parsed) == 0
     assert conn.commits == 1
     out = capsys.readouterr().out
@@ -5289,20 +5280,20 @@ def test_a_good_promotion_is_reproved_and_reported_at_commit_time(
         store[source_key]).hexdigest()
 
 
-def test_the_flush_check_also_refuses_an_unproven_sibling(tmp_path, monkeypatch):
+def test_the_flush_check_also_refuses_an_unproven_sibling(tmp_path, mocker):
     """It rebuilds the write set from the manifest, so it resolves the same
     sibling and must apply the same proof."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    target_key = _migrated(mod, tmp_path, monkeypatch, store)
-    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    store = _canary_ready(mod, tmp_path, mocker)
+    target_key = _migrated(mod, tmp_path, mocker, store)
+    conn, parsed = _commit_the_sibling(mod, mocker, store, target_key)
     mod.run_canary_commit(parsed)
 
     rows = [r for r in _read_manifest_rows(store[target_key])
             if r["object_key"] != _OD]
     store[target_key] = _write_canary_manifest(tmp_path / "sub2.parquet", rows)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     with pytest.raises(ReconcileError, match="not a promotion of the frozen"):
         mod.run_canary_flush_verify(mod.parse_args(
             ["canary-flush-verify", "--run-id", _C3RUN]))
@@ -5313,16 +5304,16 @@ def test_the_flush_check_also_refuses_an_unproven_sibling(tmp_path, monkeypatch)
 @pytest.mark.parametrize("mode", ["canary-commit", "canary-remanifest",
                                   "canary-flush-verify"])
 def test_phase_b_refuses_a_bucket_that_is_not_the_configured_one(
-        tmp_path, monkeypatch, mode):
+        tmp_path, mode, mocker):
     """Reads take the bucket they are given, but bare-key object_exists and
     write_bytes use the configured one -- so an override splits a run's
     inputs, its checks and its outputs across two buckets."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     argv = [mode, "--run-id", _C3RUN, "--bucket", "somewhere-else"]
     if mode == "canary-commit":
@@ -5333,13 +5324,12 @@ def test_phase_b_refuses_a_bucket_that_is_not_the_configured_one(
     assert conn.executed_values == []
 
 
-def test_phase_b_accepts_the_configured_bucket_named_explicitly(tmp_path,
-                                                                monkeypatch):
+def test_phase_b_accepts_the_configured_bucket_named_explicitly(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    store = _canary_ready(mod, tmp_path, mocker)
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--bucket", minio.BUCKET])) == 0
 
@@ -5347,21 +5337,21 @@ def test_phase_b_accepts_the_configured_bucket_named_explicitly(tmp_path,
 # -- R.1e: the VIN snapshot is an input to the write set -------------------
 
 def test_a_vin_snapshot_that_moved_after_sampling_stops_the_commit(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """build_recovery_silver_row fills a missing carousel vin from the frozen
     snapshot, so changing it changes a committed VIN -- while every count,
     stratum and assignment check passes."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     store[f"recovery/plan145/vin_snapshot/{_C3RUN}.parquet"] = _write_vin_shard(
         tmp_path / "vin-moved.parquet",
         [("aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa", "VIN-SOMETHING-ELSE")],
     )
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="VIN snapshot") as exc:
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5370,13 +5360,12 @@ def test_a_vin_snapshot_that_moved_after_sampling_stops_the_commit(
     assert conn.executed_values == []
 
 
-def test_an_assignment_capture_time_that_moved_stops_the_commit(tmp_path,
-                                                                monkeypatch):
+def test_an_assignment_capture_time_that_moved_stops_the_commit(tmp_path, mocker):
     """The queue event's historical fetched_at comes from the assignment, and
     no to_import row carries it."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     assigned_key = f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"
     rows = _read_assigned_rows(store[assigned_key])
     for row in rows:
@@ -5385,8 +5374,8 @@ def test_an_assignment_capture_time_that_moved_stops_the_commit(tmp_path,
     store[assigned_key] = _write_assigned_shard(tmp_path / "asg-moved.parquet", rows)
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError,
                        match="disagree with the assignment shard") as exc:
         mod.run_canary_commit(mod.parse_args(
@@ -5398,7 +5387,7 @@ def test_an_assignment_capture_time_that_moved_stops_the_commit(tmp_path,
 # -- R.1c: the commit time is the receipt's, never a wall clock ------------
 
 def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """V047 stores committed_at inside the writing transaction. If the MinIO
     report write fails after the commit, the retry that repairs it must record
     when the batch actually landed -- canary-flush-verify uses that time as its
@@ -5407,7 +5396,7 @@ def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     real_commit = _dt(2026, 7, 31, 23, 50, 0, tzinfo=_tz.utc)
     digest = hashlib.sha256(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"],
@@ -5415,13 +5404,13 @@ def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
 
     # first run: the transaction commits, then the report write fails
     conn = _FakeWriteConn(receipt_committed_at=real_commit)
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     def _boom(key, data, content_type=None):
         raise RuntimeError("MinIO write failed after the commit")
 
-    monkeypatch.setattr(minio, "write_bytes", _boom)
+    mocker.patch.object(minio, "write_bytes", _boom)
     with pytest.raises(RuntimeError, match="after the commit"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5433,8 +5422,8 @@ def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
     again = _FakeWriteConn(receipts={f"{_C3RUN}-canary": [digest]},
                            receipt_committed_at=real_commit,
                            receipt_counts=(4, 5, 3, 4))
-    _record_execute_values(monkeypatch, again)
-    _patch_slice2_io(monkeypatch, store, again)
+    _record_execute_values(mocker, again)
+    _patch_slice2_io(mocker, store, again)
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store))) == 0
     assert again.executed_values == []          # still a no-op
@@ -5448,14 +5437,14 @@ def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
 
 
 def test_the_first_commit_records_the_receipts_time_not_the_processs(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     real_commit = _dt(2026, 8, 29, 6, 30, 0, tzinfo=_tz.utc)
     conn = _FakeWriteConn(receipt_committed_at=real_commit)
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5465,23 +5454,22 @@ def test_the_first_commit_records_the_receipts_time_not_the_processs(
     assert report["committed_at_source"] == "receipt"
 
 
-def test_no_receipt_time_is_a_refusal_not_a_wall_clock_fallback(tmp_path,
-                                                                 monkeypatch):
+def test_no_receipt_time_is_a_refusal_not_a_wall_clock_fallback(tmp_path, mocker):
     """Falling back to a prior report, or to now(), reintroduces exactly the
     wrong LastModified bound and the wrong queue-event partition that reading
     the receipt exists to prevent. V047 declares the column NOT NULL DEFAULT
     now(), so a missing value is a receipt problem, not a timing one."""
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     commit_key = f"recovery/plan145/canary/{_C3RUN}-canary_commit.json"
     # a prior report exists, and must NOT be accepted as a substitute
     store[commit_key] = json.dumps(
         {"committed_at": "2026-08-29T07:00:00+00:00"}).encode()
 
     conn = _FakeWriteConn(receipt_committed_at=None)
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="no receipt committed_at") as exc:
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5491,14 +5479,13 @@ def test_no_receipt_time_is_a_refusal_not_a_wall_clock_fallback(tmp_path,
         "committed_at": "2026-08-29T07:00:00+00:00"}
 
 
-def test_no_receipt_time_leaves_no_flush_expectation_behind(tmp_path,
-                                                            monkeypatch):
+def test_no_receipt_time_leaves_no_flush_expectation_behind(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn(receipt_committed_at=None)
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="no receipt committed_at"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
@@ -5506,17 +5493,17 @@ def test_no_receipt_time_leaves_no_flush_expectation_behind(tmp_path,
 
     # and the flush check then has nothing to run against, rather than a
     # guessed window it would silently scan the wrong month with
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     with pytest.raises(ReconcileError, match="canary-commit --apply"):
         mod.run_canary_flush_verify(mod.parse_args(
             ["canary-flush-verify", "--run-id", _C3RUN]))
 
 
 def test_a_commit_report_that_disagrees_with_the_receipt_is_rewritten(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store = _canary_ready(mod, tmp_path, mocker)
     real_commit = _dt(2026, 7, 31, 23, 50, 0, tzinfo=_tz.utc)
     digest = hashlib.sha256(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"],
@@ -5527,8 +5514,8 @@ def test_a_commit_report_that_disagrees_with_the_receipt_is_rewritten(
 
     conn = _FakeWriteConn(receipts={f"{_C3RUN}-canary": [digest]},
                           receipt_committed_at=real_commit)
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store))) == 0
     assert json.loads(store[commit_key])["committed_at"] == real_commit.isoformat()
@@ -5639,23 +5626,23 @@ def _flush_the_canary(mod, tmp_path, store, *, drop=()):
     return report
 
 
-def _committed_canary(mod, tmp_path, monkeypatch):
-    store = _canary_ready(mod, tmp_path, monkeypatch)
+def _committed_canary(mod, tmp_path, mocker):
+    store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store))) == 0
     return store
 
 
 def test_the_flush_round_trip_passes_when_every_row_reached_the_lake(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 0
@@ -5676,12 +5663,12 @@ def test_the_flush_round_trip_passes_when_every_row_reached_the_lake(
 
 
 def test_the_flush_verification_fails_when_the_lake_objects_are_absent(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     # committed, but no flush has run: staging still holds the rows
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 1
@@ -5695,26 +5682,26 @@ def test_the_flush_verification_fails_when_the_lake_objects_are_absent(
 
 
 def test_one_table_left_behind_by_the_flush_fails_the_round_trip(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store, drop=("queue",))
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN])) == 1
 
 
 def test_a_partly_flushed_table_fails_on_the_rows_that_did_not_arrive(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
     # the carousel partition never landed -- 2 of the 5 silver rows are gone
     del store[_silver_key("carousel", 4, "canary")]
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 1
@@ -5728,17 +5715,17 @@ def test_a_partly_flushed_table_fails_on_the_rows_that_did_not_arrive(
 
 
 def test_the_flush_check_reads_a_silver_rows_source_from_the_hive_path(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """`source` is a partition column: it is in the key, not in the file. A
     check that keyed on a file column would match nothing."""
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
     # move the carousel rows under source=detail: same rows, wrong partition
     store[_silver_key("detail", 4, "misfiled")] = \
         store.pop(_silver_key("carousel", 4, "canary"))
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 1
@@ -5747,17 +5734,16 @@ def test_the_flush_check_reads_a_silver_rows_source_from_the_hive_path(
     assert report["tables"]["staging.silver_observations"]["missing_keys"] == 2
 
 
-def test_a_duplicate_flush_is_recorded_and_is_not_a_failure(tmp_path,
-                                                            monkeypatch):
+def test_a_duplicate_flush_is_recorded_and_is_not_a_failure(tmp_path, mocker):
     """A flush interrupted between the Parquet write and the DELETE re-runs and
     writes the rows again; the flusher's own contract calls that acceptable."""
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
     store[_silver_key("detail", 4, "canary-again")] = \
         store[_silver_key("detail", 4, "canary")]
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 0
@@ -5766,31 +5752,30 @@ def test_a_duplicate_flush_is_recorded_and_is_not_a_failure(tmp_path,
     assert report["tables"]["staging.silver_observations"]["duplicate_rows"] == 3
 
 
-def test_the_flush_check_refuses_before_the_canary_has_committed(tmp_path,
-                                                                 monkeypatch):
+def test_the_flush_check_refuses_before_the_canary_has_committed(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _canary_ready(mod, tmp_path, monkeypatch)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    store = _canary_ready(mod, tmp_path, mocker)
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     with pytest.raises(ReconcileError, match="canary-commit --apply"):
         mod.run_canary_flush_verify(mod.parse_args(
             ["canary-flush-verify", "--run-id", _C3RUN]))
 
 
 def test_the_flush_check_rebuilds_the_expectation_rather_than_trusting_the_report(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     """A verification that read its expectation out of the writer's own record
     of what it wrote would pass on a writer that recorded the wrong thing."""
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_commit.json"
     doctored = json.loads(store[key])
     doctored["committed"]["silver"] = 1
     doctored["flush_expectation"]["staging.silver_observations"]["rows"] = 1
     store[key] = json.dumps(doctored).encode()
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 0
@@ -5799,13 +5784,13 @@ def test_the_flush_check_rebuilds_the_expectation_rather_than_trusting_the_repor
     assert report["tables"]["staging.silver_observations"]["expected_rows"] == 5
 
 
-def test_the_flush_check_writes_nothing_without_apply(tmp_path, monkeypatch):
+def test_the_flush_check_writes_nothing_without_apply(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
     before = set(store)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN])) == 0
@@ -5813,13 +5798,13 @@ def test_the_flush_check_writes_nothing_without_apply(tmp_path, monkeypatch):
 
 
 def test_an_unreadable_lake_object_is_reported_and_does_not_crash_the_check(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store = _committed_canary(mod, tmp_path, monkeypatch)
+    store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
     store[_silver_key("detail", 4, "junk")] = b"not parquet at all"
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
 
     assert mod.run_canary_flush_verify(mod.parse_args(
         ["canary-flush-verify", "--run-id", _C3RUN, "--apply"])) == 0
@@ -5847,10 +5832,10 @@ def _commit_report(run_id, *, manifest_key, manifest_sha256, artifacts, silver):
     }).encode()
 
 
-def _slice2_with_canary(tmp_path, monkeypatch, *, skip=(_MAT_KEY,)):
+def _slice2_with_canary(tmp_path, mocker, *, skip=(_MAT_KEY,)):
     """A committed canary covering `skip`, over the slice-2 fixture's objects."""
     store, ids = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     mod = __import__("scripts.reconcile_april_detail", fromlist=["x"])
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
@@ -5870,14 +5855,13 @@ def _slice2_with_canary(tmp_path, monkeypatch, *, skip=(_MAT_KEY,)):
     return store, ids, digest
 
 
-def test_apply_skips_the_artifacts_the_canary_already_committed(tmp_path,
-                                                                monkeypatch):
+def test_apply_skips_the_artifacts_the_canary_already_committed(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, (l1, l2, l3, l4), digest = _slice2_with_canary(tmp_path, monkeypatch)
+    store, (l1, l2, l3, l4), digest = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
 
     assert mod.run_apply(mod.parse_args(
         ["apply", "--apply", "--maintainer-approval", "tester"])) == 0
@@ -5899,12 +5883,12 @@ def test_apply_skips_the_artifacts_the_canary_already_committed(tmp_path,
     assert len(inserts["artifacts_queue_events"]) == 2      # 3 artifacts - 1
 
 
-def test_apply_reports_the_skip_in_its_blast_radius(tmp_path, monkeypatch,
-                                                    capsys):
+def test_apply_reports_the_skip_in_its_blast_radius(tmp_path,
+                                                    capsys, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    store, _, _ = _slice2_with_canary(tmp_path, mocker)
+    _patch_slice2_io(mocker, store, _FakeWriteConn())
     assert mod.run_apply(mod.parse_args(["apply"])) == 0
     out = capsys.readouterr().out
     assert "canary already wrote" in out
@@ -5913,42 +5897,41 @@ def test_apply_reports_the_skip_in_its_blast_radius(tmp_path, monkeypatch,
     assert "receipt NOT confirmed" in out
 
 
-def test_the_apply_dry_run_still_opens_no_connection(tmp_path, monkeypatch):
+def test_the_apply_dry_run_still_opens_no_connection(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    store, _, _ = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(["apply"])) == 0
     assert conn.sql == [] and conn.executed_values == []
 
 
-def test_the_budget_gate_still_refuses_before_any_statement(tmp_path,
-                                                            monkeypatch):
+def test_the_budget_gate_still_refuses_before_any_statement(tmp_path, mocker):
     """The exclusion is computed connection-free precisely so the gate keeps
     this property: nothing is issued until the row budget has been cleared."""
     import scripts.reconcile_april_detail as mod
 
-    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    store, _, _ = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="canary budget"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--max-unapproved-rows", "1"]))
     assert conn.sql == []
 
 
-def test_a_commit_report_with_no_receipt_stops_the_apply(tmp_path, monkeypatch):
+def test_a_commit_report_with_no_receipt_stops_the_apply(tmp_path, mocker):
     """The canary was rolled back and its report left behind. Excluding would
     silently drop those artifacts from the import."""
     import scripts.reconcile_april_detail as mod
 
-    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    store, _, _ = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn()                       # no receipt for the canary
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="no matching receipt"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--maintainer-approval", "tester"]))
@@ -5956,16 +5939,16 @@ def test_a_commit_report_with_no_receipt_stops_the_apply(tmp_path, monkeypatch):
     assert conn.commits == 0
 
 
-def test_a_receipt_with_no_commit_report_stops_the_apply(tmp_path, monkeypatch):
+def test_a_receipt_with_no_commit_report_stops_the_apply(tmp_path, mocker):
     """The mirror failure: rows were committed that this run cannot identify,
     so it cannot avoid writing them twice."""
     import scripts.reconcile_april_detail as mod
 
-    store, _, digest = _slice2_with_canary(tmp_path, monkeypatch)
+    store, _, digest = _slice2_with_canary(tmp_path, mocker)
     del store[f"recovery/plan145/canary/{_RUN}-canary_commit.json"]
     conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="cannot avoid writing them twice"):
         mod.run_apply(mod.parse_args(
             ["apply", "--apply", "--maintainer-approval", "tester"]))
@@ -5973,30 +5956,29 @@ def test_a_receipt_with_no_commit_report_stops_the_apply(tmp_path, monkeypatch):
 
 
 def test_a_manifest_that_moved_under_the_commit_report_stops_the_apply(
-        tmp_path, monkeypatch):
+        tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
-    store, _, digest = _slice2_with_canary(tmp_path, monkeypatch)
+    store, _, digest = _slice2_with_canary(tmp_path, mocker)
     store[f"recovery/plan145/canary/{_RUN}-canary_sample.parquet"] += b"tamper"
     conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     with pytest.raises(ReconcileError, match="no longer describes what the canary"):
         mod.run_apply(mod.parse_args(["apply"]))
     assert conn.sql == []
 
 
-def test_no_canary_means_no_exclusion_and_no_extra_statement(tmp_path,
-                                                             monkeypatch):
+def test_no_canary_means_no_exclusion_and_no_extra_statement(tmp_path, mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
-    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, store, conn)
     assert mod.run_apply(mod.parse_args(
         ["apply", "--apply", "--maintainer-approval", "tester"])) == 0
     # all 3 artifacts and all 4 silver rows, exactly as before the exclusion
@@ -6006,12 +5988,12 @@ def test_no_canary_means_no_exclusion_and_no_extra_statement(tmp_path,
     assert conn.commits == 1
 
 
-def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, monkeypatch):
+def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, mocker):
     """A probe commits nothing, so it cannot duplicate the canary and must not
     spend a statement checking."""
     import scripts.reconcile_april_detail as mod
 
-    store, _, digest = _slice2_with_canary(tmp_path, monkeypatch)
+    store, _, digest = _slice2_with_canary(tmp_path, mocker)
     probe_store = {k.replace("recovery/plan145/compared/",
                              "recovery/plan145/compared_probe/")
                     .replace("recovery/plan145/assigned/",
@@ -6022,8 +6004,8 @@ def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, monkeypatch):
                              "recovery/plan145/inventory_probe/"): v
                    for k, v in store.items()}
     conn = _FakeWriteConn()
-    _record_execute_values(monkeypatch, conn)
-    _patch_slice2_io(monkeypatch, probe_store, conn)
+    _record_execute_values(mocker, conn)
+    _patch_slice2_io(mocker, probe_store, conn)
     assert mod.run_apply(mod.parse_args(
         ["apply", "--probe", "--apply", "--run-id", _RUN, "--batch",
          assign_batch_name(_RUN, 1)])) == 0
@@ -6444,11 +6426,10 @@ def test_the_read_back_sample_is_stratified_over_the_replacement_packs():
 
 
 def test_a_baseline_that_names_no_pack_refuses_rather_than_verifying_nothing(
-    monkeypatch,
-):
+    mocker):
     import scripts.reconcile_april_detail as mod
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS6Store({}))
+    mocker.patch.object(mod, "_s3_client", lambda: _FakeS6Store({}))
     with pytest.raises(ReconcileError, match="no Stage 3b unpack manifests"):
         mod.load_unpack_baseline(_FakeS6Store({}), "bronze")
 
@@ -6633,11 +6614,11 @@ def test_the_legacy_delete_guard_refuses_anything_off_the_manifest():
         )
 
 
-def test_deleting_without_named_approval_is_refused(monkeypatch):
+def test_deleting_without_named_approval_is_refused(mocker):
     import scripts.reconcile_april_detail as mod
 
     args = parse_args(["delete-legacy", "--apply"])
-    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS6Store({}))
+    mocker.patch.object(mod, "_s3_client", lambda: _FakeS6Store({}))
 
     with pytest.raises(ReconcileError, match="maintainer-approval"):
         mod.run_delete_legacy(args)
@@ -6793,26 +6774,26 @@ def _s6_seed_store(*, uncovered=False):
     return store, old_packs, new_pack
 
 
-def _patch_verify_io(monkeypatch, store, *, population=3):
+def _patch_verify_io(mocker, store, *, population=3):
     import scripts.reconcile_april_detail as mod
 
     fake = _FakeS6Store(store)
-    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
-    monkeypatch.setattr(mod, "EXPECTED_UNPACK_SHARDS", 2)
-    monkeypatch.setattr(mod, "EXPECTED_FLATTENED_INPUTS", population)
+    mocker.patch.object(mod, "_s3_client", lambda: fake)
+    mocker.patch.object(mod, "EXPECTED_UNPACK_SHARDS", 2)
+    mocker.patch.object(mod, "EXPECTED_FLATTENED_INPUTS", population)
     return fake
 
 
-def test_repack_verify_passes_on_a_complete_replacement(monkeypatch, capsys):
+def test_repack_verify_passes_on_a_complete_replacement(capsys, mocker):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
     store, old_packs, _ = _s6_seed_store()
     written: dict[str, object] = {}
 
-    _patch_verify_io(monkeypatch, store)
-    monkeypatch.setattr(minio, "write_json", lambda k, o: written.__setitem__(k, o))
-    monkeypatch.setattr(
+    _patch_verify_io(mocker, store)
+    mocker.patch.object(minio, "write_json", lambda k, o: written.__setitem__(k, o))
+    mocker.patch.object(
         minio, "read_packed_html",
         lambda path: {"old-a": b"a", "old-b": b"b", "mat-c": b"c"}[
             path.rsplit("/", 1)[-1].replace(".html.zst", "")
@@ -6834,8 +6815,7 @@ def test_repack_verify_passes_on_a_complete_replacement(monkeypatch, capsys):
 
 
 def test_repack_verify_fails_and_exits_non_zero_when_a_member_is_dropped(
-    monkeypatch,
-):
+    mocker):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
@@ -6849,9 +6829,9 @@ def test_repack_verify_fails_and_exits_non_zero_when_a_member_is_dropped(
     ])
 
     written: dict[str, object] = {}
-    _patch_verify_io(monkeypatch, store)
-    monkeypatch.setattr(minio, "write_json", lambda k, o: written.__setitem__(k, o))
-    monkeypatch.setattr(minio, "read_packed_html", lambda path: b"a")
+    _patch_verify_io(mocker, store)
+    mocker.patch.object(minio, "write_json", lambda k, o: written.__setitem__(k, o))
+    mocker.patch.object(minio, "read_packed_html", lambda path: b"a")
 
     args = parse_args([
         "repack-verify", "--pack-prefix", _S6_PACK_PREFIX, "--verify-sample", "0",
@@ -6864,15 +6844,14 @@ def test_repack_verify_fails_and_exits_non_zero_when_a_member_is_dropped(
 
 
 def test_retire_packs_deletes_exactly_the_frozen_set_and_nothing_else(
-    monkeypatch,
-):
+    mocker):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
     store, old_packs, new_pack = _s6_seed_store()
     fake = _FakeS6Store(store)
-    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
-    monkeypatch.setattr(
+    mocker.patch.object(mod, "_s3_client", lambda: fake)
+    mocker.patch.object(
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
@@ -6897,12 +6876,12 @@ def test_retire_packs_deletes_exactly_the_frozen_set_and_nothing_else(
     assert f"{RETIRE_PREFIX}/repack-x/receipts.parquet" in store
 
 
-def test_a_retire_dry_run_writes_no_manifest_and_deletes_nothing(monkeypatch):
+def test_a_retire_dry_run_writes_no_manifest_and_deletes_nothing(mocker):
     import scripts.reconcile_april_detail as mod
 
     store, old_packs, new_pack = _s6_seed_store()
     fake = _FakeS6Store(store)
-    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    mocker.patch.object(mod, "_s3_client", lambda: fake)
     store[f"{REPACK_PREFIX}/repack-x/verify_report.json"] = json.dumps({
         "run_id": "repack-x",
         "passed": True,
@@ -6916,13 +6895,13 @@ def test_a_retire_dry_run_writes_no_manifest_and_deletes_nothing(monkeypatch):
     assert not any(k.startswith(RETIRE_PREFIX) for k in store)
 
 
-def test_retiring_after_the_replacement_set_moved_is_refused(monkeypatch):
+def test_retiring_after_the_replacement_set_moved_is_refused(mocker):
     """Re-verify rather than retire against a proof of a store that changed."""
     import scripts.reconcile_april_detail as mod
 
     store, old_packs, new_pack = _s6_seed_store()
     fake = _FakeS6Store(store)
-    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    mocker.patch.object(mod, "_s3_client", lambda: fake)
     store[f"{REPACK_PREFIX}/repack-x/verify_report.json"] = json.dumps({
         "run_id": "repack-x",
         "passed": True,
@@ -6962,21 +6941,21 @@ def _s6_legacy_store(*, uncovered=False):
     return store, _S6_LEGACY_KEYS, results_key
 
 
-def _patch_legacy_io(monkeypatch, store, *, baseline=2):
+def _patch_legacy_io(mocker, store, *, baseline=2):
     import scripts.reconcile_april_detail as mod
     import shared.minio as minio
 
     fake = _FakeS6Store(store)
-    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    mocker.patch.object(mod, "_s3_client", lambda: fake)
     # The drift gate is exercised by its own test. Everywhere else the fixture
     # states its own baseline rather than reaching for --allow-drift, which is
     # a flag for overruling a measured refusal, not for making a test pass.
-    monkeypatch.setattr(mod, "BASELINE_OBJECTS", baseline)
-    monkeypatch.setattr(
+    mocker.patch.object(mod, "BASELINE_OBJECTS", baseline)
+    mocker.patch.object(
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
-    monkeypatch.setattr(minio, "write_json", lambda k, o: store.__setitem__(k, b"{}"))
+    mocker.patch.object(minio, "write_json", lambda k, o: store.__setitem__(k, b"{}"))
     return fake
 
 
@@ -6988,12 +6967,11 @@ def _legacy_args(*extra):
 
 
 def test_delete_legacy_removes_the_parquet_and_leaves_results_pages_alone(
-    monkeypatch,
-):
+    mocker):
     import scripts.reconcile_april_detail as mod
 
     store, legacy_keys, results_key = _s6_legacy_store()
-    fake = _patch_legacy_io(monkeypatch, store)
+    fake = _patch_legacy_io(mocker, store)
 
     args = _legacy_args("--apply", "--maintainer-approval", "the maintainer")
     assert mod.run_delete_legacy(args) == 0
@@ -7005,23 +6983,23 @@ def test_delete_legacy_removes_the_parquet_and_leaves_results_pages_alone(
     assert f"{LEGACY_DELETE_PREFIX}/repack-x/receipts.parquet" in store
 
 
-def test_a_legacy_dry_run_deletes_nothing_and_writes_no_manifest(monkeypatch):
+def test_a_legacy_dry_run_deletes_nothing_and_writes_no_manifest(mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
-    fake = _patch_legacy_io(monkeypatch, store)
+    fake = _patch_legacy_io(mocker, store)
 
     assert mod.run_delete_legacy(_legacy_args()) == 0
     assert fake.deleted == []
     assert not any(k.startswith(LEGACY_DELETE_PREFIX) for k in store)
 
 
-def test_one_uncovered_body_stops_the_whole_deletion(monkeypatch):
+def test_one_uncovered_body_stops_the_whole_deletion(mocker):
     """Not a skip: the refused object is a body that exists nowhere else."""
     import scripts.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store(uncovered=True)
-    fake = _patch_legacy_io(monkeypatch, store)
+    fake = _patch_legacy_io(mocker, store)
 
     args = _legacy_args("--apply", "--maintainer-approval", "the maintainer")
     with pytest.raises(ReconcileError, match="not provably recoverable"):
@@ -7030,12 +7008,11 @@ def test_one_uncovered_body_stops_the_whole_deletion(monkeypatch):
 
 
 def test_allow_partial_deletes_the_covered_objects_and_says_which_it_left(
-    monkeypatch,
-):
+    mocker):
     import scripts.reconcile_april_detail as mod
 
     store, legacy_keys, _ = _s6_legacy_store(uncovered=True)
-    fake = _patch_legacy_io(monkeypatch, store)
+    fake = _patch_legacy_io(mocker, store)
 
     args = _legacy_args(
         "--apply", "--maintainer-approval", "the maintainer", "--allow-partial",
@@ -7046,40 +7023,39 @@ def test_allow_partial_deletes_the_covered_objects_and_says_which_it_left(
     assert legacy_keys[1] in store
 
 
-def test_a_drifted_legacy_population_stops_the_run(monkeypatch):
+def test_a_drifted_legacy_population_stops_the_run(mocker):
     """The count is held to the frozen baseline, so a population that moved is
     a stop rather than a deletion against a different set of objects."""
     import scripts.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
-    _patch_legacy_io(monkeypatch, store, baseline=1172)
+    _patch_legacy_io(mocker, store, baseline=1172)
 
     with pytest.raises(ReconcileError, match="drifted from its frozen census"):
         mod.run_delete_legacy(_legacy_args())
 
 
 def test_a_legacy_object_no_stage_2_shard_names_is_drift_not_a_deletion(
-    monkeypatch,
-):
+    mocker):
     """--census-from-manifests is a weaker attestation than the census, not an
     absent one: the Stage 2 shards still have to name every live key."""
     import scripts.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
     store[f"{_S6_POP_PREFIX}part-stray.parquet"] = b"never materialized"
-    _patch_legacy_io(monkeypatch, store, baseline=3)
+    _patch_legacy_io(mocker, store, baseline=3)
 
     with pytest.raises(ReconcileError, match="drifted from its frozen census"):
         mod.run_delete_legacy(_legacy_args())
 
 
-def test_deleting_before_any_replacement_pack_exists_is_refused(monkeypatch):
+def test_deleting_before_any_replacement_pack_exists_is_refused(mocker):
     import scripts.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
     new_sidecar = f"{_S6_PACK_PREFIX}pack-00002.idx.parquet"
     del store[new_sidecar]
-    _patch_legacy_io(monkeypatch, store)
+    _patch_legacy_io(mocker, store)
 
     with pytest.raises(ReconcileError, match="no replacement sidecars"):
         mod.run_delete_legacy(_legacy_args())

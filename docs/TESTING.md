@@ -57,9 +57,10 @@ and unit tests take their real place at the cheap end.
 | Layer 2 | **3** | dbt model logic |
 | Layer 3 | **4** | Service API integration |
 
-The docstrings in `tests/` and the step names in `ci.yml` still carry Plan 84's
-numbers. That sweep is mechanical and is [G11](#the-gap-list) — and the
-asserting test checks it, so the two cannot drift apart again.
+The docstrings in `tests/` and the step names in `ci.yml` carried Plan 84's
+numbers until Plan 162 Stage 5 swept all 16 of them on 2026-09-01 (CAR-49).
+`test_every_layer_number_in_the_code_matches_the_contract` waives nothing now,
+so the two cannot drift apart again.
 
 Layers 3 and 4 keep Plan 84's relative order on its own fail-fast rationale
 rather than on strict cost, and Plan 162's job split may revisit it.
@@ -200,28 +201,27 @@ Two clarifications dissolve most of the apparent drift:
   It is the right tool there and `mocker` is not. `monkeypatch.setattr` on an
   application object is the violation — that is `mocker.patch`'s job.
 
-#### The one place `mocker` is unavailable is a defect, not an exemption
+#### The one place `mocker` was unavailable was a defect, not an exemption
 
 `tests/integration/airflow/` runs from the isolated venv the CI job builds, and
-that venv installs `apache-airflow`, `pytest`, `psycopg2-binary` and
-`requests` — **pytest-mock is not among them**, so the `mocker` fixture does
-not exist in that interpreter and its two files use `unittest.mock.patch`.
+until 2026-08-31 that venv installed `apache-airflow`, `pytest`,
+`psycopg2-binary` and `requests` — **pytest-mock was not among them**, so the
+`mocker` fixture did not exist in that interpreter and its two files used
+`unittest.mock.patch`.
 
-That is a missing line in one `pip install`, and the contract does not bend
+That was a missing argument on one `pip install`, and the contract did not bend
 around it. `pytest-mock` declares exactly one dependency — `pytest` — which
 that venv already installs, so none of the starlette/fastapi conflict that
-forced the venv's existence in the first place applies to it. The real cause is
+forced the venv's existence in the first place applied to it. The real cause was
 that the venv was built to run Airflow, and its *test* dependencies were never
 thought about separately.
 
-Nor do those two files need `unittest.mock` for anything: what they patch is
+Nor did those two files need `unittest.mock` for anything: what they patch is
 `requests.post`, `requests.get`, `time.sleep`, and one `patch.object` on a DAG
 module's `post_json`. All four are ordinary `mocker.patch` calls.
 
-**The fix is to install pytest-mock in that venv and convert the two files** —
-[G4](#the-gap-list), owned by Plan 162. Until then the asserting test waives
-those two files by name, with that gap as the reason. A waiver is how a defect
-waits its turn; it is not a second convention.
+**Plan 162 Stage 5 added `pytest-mock` to that `pip install` and converted both
+files** (CAR-49, 2026-09-01). The rule now has no waivers and no venv carve-out.
 
 The general form, because this will come up again: **"the environment cannot do
 it" is a fact about the environment, and the first question is always whether
@@ -462,12 +462,12 @@ the suite does not implement:
 | Rule | Asserted by | How it is checked without a curated list |
 |---|---|---|
 | Every `tests/integration/<dir>` is invoked by a named CI step, or declared dormant with a reason | `test_every_integration_suite_is_invoked_by_a_ci_step` | Parse `.github/workflows/ci.yml` for `pytest tests/integration/...` invocations; compare to the directories on disk |
-| Patching is `mocker`, everywhere | `test_patching_is_mocker_everywhere` | AST-walk for `unittest.mock.patch` and for `monkeypatch.setattr` on an application object. No venv carve-out — the two Airflow files are waived by name against [G4](#the-gap-list) |
+| Patching is `mocker`, everywhere | `test_patching_is_mocker_everywhere` | AST-walk for `unittest.mock.patch` and for `monkeypatch.setattr` on an application object. No venv carve-out and, since Stage 5, no waivers: every interpreter that runs a test here installs `pytest-mock` |
 | Every route is reached through the app's routing table | `test_every_route_is_reached_through_the_apps_routing_table`, `test_no_route_is_hidden_from_the_schema_this_rule_reads` | Walk each FastAPI app's `app.routes`; compare to the verb/path literals tests actually request |
 | Every service directory has a row in the "enough" table | `test_every_service_directory_has_a_row_in_the_enough_table` | Compare this document's table to the service directories on disk |
 | Every `.sql` file is executed by a Layer 2 test | `test_every_production_sql_file_is_touched_by_a_layer_2_test` | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
-| Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops [G11](#the-gap-list) recurring |
-| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps; a pytest step without it is [G13](#the-gap-list)'s failure |
+| Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops Plan 84's numbering coming back |
+| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps. This is the one mechanically checkable clause of *the harness must not decide the outcome*; the rest of that rule is judgement, and the row below says so |
 | Coverage measures every service directory, and the number it produces is consumed | `test_every_service_directory_is_measured_by_coverage`, `test_the_coverage_number_the_unit_job_produces_is_consumed` | Compare `[tool.coverage.run] source` to the service directories on disk; require `--cov-fail-under` on every `ci.yml` step that passes `--cov` |
 
 ### Specified here, not yet asserted
@@ -540,27 +540,25 @@ Every entry is a measured violation of the contract above, as of 2026-08-31.
 Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 
 An entry is deleted when it is repaired, not marked closed: a violations table
-that keeps its dead rows is a list you have to read twice to use. **G1 and G2
-were repaired by Plan 162 Stage 1 on 2026-08-31** (CAR-45), and **G10 by Stage
-2 the same day** (CAR-46); all three are gone from the table below. What the
-run of those 73 tests found, and what unblinding coverage exposed, are in
+that keeps its dead rows is a list you have to read twice to use. Six rows have
+gone that way, all to Plan 162: **G1 and G2** to Stage 1 (CAR-45) and **G10**
+to Stage 2 (CAR-46) on 2026-08-31, and **G4, G11 and G13** to Stage 5 (CAR-49)
+on 2026-09-01. What the run of those 73 tests found, what unblinding coverage
+exposed, and what the 34 mock conversions and 16 layer renames turned up are in
 [`docs/plans/plan_162_testing_census_and_restructure.md`](plans/plan_162_testing_census_and_restructure.md),
-§Stage 1 and §Stage 2. The numbering never reuses a letter, so a deleted row
-leaves a gap in the sequence and the plan documents stay the place the history
-lives.
+§Stage 1, §Stage 2 and §Stage 5. The numbering never reuses a letter, so a
+deleted row leaves a gap in the sequence and the plan documents stay the place
+the history lives.
 
 | # | Violation | Measure | Owner |
 |---|---|---|---|
-| G4 | **34 test files patch with something other than `mocker`** — 17 import `patch` from `unittest.mock`, 17 use `monkeypatch.setattr`, and two do both. The second half is what the 2026-08-31 census did not count: every one of those 17 targets a module object rather than process state, so `mocker.patch` is the tool for all of them. Two of the 34 are `tests/integration/airflow/`, whose venv **does not install pytest-mock** — a missing argument on one `pip install` line in `ci.yml`, not a conflict: `pytest-mock` depends only on `pytest`, which that venv already has. Fix the venv first, then convert all 34 | `tests/test_testing_contract.py`, AST census | Plan 162 |
 | G5 | **Inline SQL at `.execute()` call sites in 10 production modules**, against six that use the loader: `ops/routers/{coordination,deploy,scrape,users}.py`, `archiver/processors/{pack_bronze_html,delete_packed_source_html,flush_silver_observations,flush_staging_events}.py`, `shared/db.py`, `shared/duckdb_s3.py` | `.execute(` with a literal first argument | Plan 162 |
 | G6 | **Twelve routes reached by no test through any routing table**, not the four measured by eye: all four of `container_health`'s, including `/health` and `/metrics` (there is no `TestClient` in that service at all), and eight of `ops`' — the two `/maintenance` routes already named, plus `GET /coordination/status`, `POST /coordination/begin-validation`, `POST /coordination/cancel` and the three `/admin/snapshots/adaptive-refresh/` reads. The three coordination routes are the same surface whose drain hung Plan 142's first deploy | `tests/test_testing_contract.py`: each app's real `app.routes` versus the request literals in that service's own test directories | Plan 162 |
 | G7 | **`dashboard/`: 7 modules, 0 test files.** Its SQL is covered by Layer 2 through `dashboard.queries`; its Python is covered by nothing | — | Plan 162 |
 | G8 | **`scraper/`: Plan 84's four-month-old deferral, now lifted.** One integration file — orphaned until Stage 1 gave it a CI step, and still the whole of the service's coverage above Layer 1 | — | Plan 162 |
 | G9 | `tests/test_container_health_app.py` and `tests/test_container_health_collector.py` are Layer 1 tests sitting in Layer 0's directory. `container_health` has no `tests/container_health/` and no Layer 4 at all | — | Plan 162 |
-| G13 | **Harness-decides-the-outcome tests.** Both originally named instances are repaired: the `Documentation tests` step now sets `PYTHONPATH` (CAR-42), and `tests/airflow/test_prune_task_logs_dag.py` was fixed in `21333ab`, which is the pattern the rule points at. **What is left is one live instance and a rule with no mechanism behind it**: `tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check` builds its canary command with `shlex.quote(sys.executable)`, POSIX quoting that `cmd.exe` does not honour, so it fails on Windows and passes in CI. Found by Plan 161, left unowned until 2026-08-31 | Reproduced on an untouched checkout: *"The filename, directory name, or volume label syntax is incorrect"*. Only the `PYTHONPATH` clause is asserted; the rest is judgement, and CI is Linux so it cannot see the remaining instance at all | Plan 162, Stage 5 |
-| G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
-| G14 | **54 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 17 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 so much as names it. A stricter check can only find more | Plan 162 |
+| G14 | **56 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 19 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 names it **as a whole word**. Was 54 until 2026-09-01, when Stage 5 found the match was a bare substring and three files were being credited by identifiers that merely contained their stem | Plan 162 |
 
 ---
 

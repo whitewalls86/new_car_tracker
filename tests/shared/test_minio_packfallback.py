@@ -122,7 +122,7 @@ def store(mocker):
 
 
 @pytest.fixture
-def dictionary(monkeypatch):
+def dictionary(mocker):
     """A trained dictionary resolved without Postgres or MinIO.
 
     Packed frames carry a dictionary (Stage 0d: without one the first member of
@@ -141,7 +141,7 @@ def dictionary(monkeypatch):
     ]
     trained = zstd.train_dictionary(4096, samples)
     compression.clear_dictionary_cache()
-    monkeypatch.setattr(
+    mocker.patch.object(
         compression,
         "_load_registered",
         lambda dict_id: compression.RegisteredDictionary(
@@ -379,10 +379,10 @@ class TestMissingEverywhere:
         assert exc_info.value.response["Error"]["Code"] == "AccessDenied"
         assert store.calls["list"] == 0
 
-    def test_fallback_can_be_switched_off(self, store, monkeypatch):
+    def test_fallback_can_be_switched_off(self, store, mocker):
         keys = _write_sources(store, 2)
         _pack_sources(store, keys)
-        monkeypatch.setattr(minio, "PACK_READ_FALLBACK", False)
+        mocker.patch.object(minio, "PACK_READ_FALLBACK", False)
 
         with pytest.raises(self._client_error()):
             minio.read_html(keys[0])
@@ -476,8 +476,8 @@ class TestCaching:
         assert store.calls["get_index"] == 1
         assert store.calls["head_object"] == 1
 
-    def test_index_cache_is_bounded(self, store, monkeypatch):
-        monkeypatch.setattr(minio, "PACK_INDEX_CACHE_PACKS", 1)
+    def test_index_cache_is_bounded(self, store, mocker):
+        mocker.patch.object(minio, "PACK_INDEX_CACHE_PACKS", 1)
         keys = _write_sources(store, 4)
         _pack_sources(store, keys[:2], seq=0)
         _pack_sources(store, keys[2:], seq=1)
@@ -486,9 +486,9 @@ class TestCaching:
         minio.read_html(keys[0])
         assert len(minio._pack_index_cache) == 1
 
-    def test_month_sized_scan_stays_resident_as_source_keys_only(self, store, monkeypatch):
+    def test_month_sized_scan_stays_resident_as_source_keys_only(self, store, mocker):
         pack_count = 5
-        monkeypatch.setattr(minio, "PACK_INDEX_CACHE_PACKS", pack_count)
+        mocker.patch.object(minio, "PACK_INDEX_CACHE_PACKS", pack_count)
         keys = [_source_key(i) for i in range(pack_count)]
         for seq, key in enumerate(keys):
             _pack_sources(store, [key], seq=seq)

@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import gzip
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -587,21 +587,20 @@ class TestSectionArtifact:
 # ── Group H: fetch loop behaviour and the read-only contract ──────────────────
 
 class TestCollectArtifacts:
-    def _patched(self, html: str):
-        return patch(
-            "shared.minio.read_html", return_value=html.encode("utf-8")
-        ), patch(
+    def _patched(self, mocker, html: str):
+        mocker.patch("shared.minio.read_html", return_value=html.encode("utf-8"))
+        mocker.patch(
             "scripts.audit_sectioned_html_storage._compressed_size", return_value=5000
         )
 
-    def test_fetches_sections_and_records_each_artifact(self):
+    def test_fetches_sections_and_records_each_artifact(self, mocker):
         html = _load_fixture("real_detail_crv")
-        read, size = self._patched(html)
+        self._patched(mocker, html)
         totals = Totals()
-        with read, size:
-            artifacts, texts = collect_artifacts(
-                [_row(1, "L1"), _row(2, "L2")], totals, verify_parse=False
-            )
+
+        artifacts, texts = collect_artifacts(
+            [_row(1, "L1"), _row(2, "L2")], totals, verify_parse=False
+        )
         assert len(artifacts) == 2
         assert totals.fetched == 2
         assert set(texts) == {1, 2}
@@ -615,60 +614,66 @@ class TestCollectArtifacts:
         assert totals.skipped_no_path == 1
         assert totals.failures == []
 
-    def test_a_fetch_error_is_recorded_and_the_audit_continues(self):
+    def test_a_fetch_error_is_recorded_and_the_audit_continues(self, mocker):
         html = _load_fixture("real_detail_crv")
-        with patch(
+        mocker.patch(
             "shared.minio.read_html",
             side_effect=[RuntimeError("boom"), html.encode("utf-8")],
-        ), patch("scripts.audit_sectioned_html_storage._compressed_size", return_value=1):
-            totals = Totals()
-            artifacts, _ = collect_artifacts(
-                [_row(1, "L1"), _row(2, "L2")], totals, verify_parse=False
-            )
+        )
+        mocker.patch("scripts.audit_sectioned_html_storage._compressed_size", return_value=1)
+
+        totals = Totals()
+        artifacts, _ = collect_artifacts(
+            [_row(1, "L1"), _row(2, "L2")], totals, verify_parse=False
+        )
         assert len(artifacts) == 1
         assert len(totals.failures) == 1
         assert totals.failures[0].stage == "fetch"
 
-    def test_a_head_object_failure_does_not_lose_the_artifact(self):
+    def test_a_head_object_failure_does_not_lose_the_artifact(self, mocker):
         """Compressed size is context, not a measurement the audit depends on."""
         html = _load_fixture("real_detail_crv")
-        with patch("shared.minio.read_html", return_value=html.encode("utf-8")), patch(
+        mocker.patch("shared.minio.read_html", return_value=html.encode("utf-8"))
+        mocker.patch(
             "scripts.audit_sectioned_html_storage._compressed_size",
             side_effect=RuntimeError("no such key"),
-        ):
-            totals = Totals()
-            artifacts, _ = collect_artifacts([_row()], totals, verify_parse=False)
+        )
+
+        totals = Totals()
+        artifacts, _ = collect_artifacts([_row()], totals, verify_parse=False)
         assert len(artifacts) == 1
         assert artifacts[0].stored_compressed_bytes == 0
         assert totals.failures == []
 
-    def test_max_artifacts_caps_the_fetch(self):
+    def test_max_artifacts_caps_the_fetch(self, mocker):
         html = _load_fixture("real_detail_crv")
-        read, size = self._patched(html)
-        with read, size:
-            artifacts, _ = collect_artifacts(
-                [_row(i, f"L{i}") for i in range(5)],
-                Totals(),
-                max_artifacts=2,
-                verify_parse=False,
-            )
+        self._patched(mocker, html)
+
+        artifacts, _ = collect_artifacts(
+            [_row(i, f"L{i}") for i in range(5)],
+            Totals(),
+            max_artifacts=2,
+            verify_parse=False,
+        )
         assert len(artifacts) == 2
 
-    def test_lossy_utf8_decode_is_flagged(self):
-        with patch("shared.minio.read_html", return_value=b"<html>\xff\xfe</html>"), patch(
+    def test_lossy_utf8_decode_is_flagged(self, mocker):
+        mocker.patch("shared.minio.read_html", return_value=b"<html>\xff\xfe</html>")
+        mocker.patch(
             "scripts.audit_sectioned_html_storage._compressed_size", return_value=1
-        ):
-            artifacts, _ = collect_artifacts([_row()], Totals(), verify_parse=False)
+        )
+
+        artifacts, _ = collect_artifacts([_row()], Totals(), verify_parse=False)
         assert artifacts[0].decode_was_lossy is True
 
-    def test_audit_never_writes_to_minio(self):
+    def test_audit_never_writes_to_minio(self, mocker):
         """Read-only is a contract, not an intention."""
         html = _load_fixture("real_detail_crv")
         client = MagicMock()
-        with patch("shared.minio.read_html", return_value=html.encode("utf-8")), patch(
-            "shared.minio.get_boto3_client", return_value=client
-        ):
-            collect_artifacts([_row()], Totals(), verify_parse=False)
+        mocker.patch("shared.minio.read_html", return_value=html.encode("utf-8"))
+        mocker.patch("shared.minio.get_boto3_client", return_value=client)
+
+        collect_artifacts([_row()], Totals(), verify_parse=False)
 
         client.put_object.assert_not_called()
         client.delete_object.assert_not_called()

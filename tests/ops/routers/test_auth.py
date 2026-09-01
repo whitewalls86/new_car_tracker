@@ -12,13 +12,13 @@ SALT = "test-salt"
 # Unit: _hash_email
 # ---------------------------------------------------------------------------
 
-def test_hash_email_lowercase(monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_hash_email_lowercase(mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     assert _hash_email("Alice@Gmail.COM") == _hash_email("alice@gmail.com")
 
 
-def test_hash_email_deterministic(monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_hash_email_deterministic(mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     expected = hashlib.sha256((SALT + "alice@gmail.com").encode()).hexdigest()
     assert _hash_email("alice@gmail.com") == expected
 
@@ -32,8 +32,8 @@ def test_auth_check_no_email(mock_client):
     assert resp.status_code == 403
 
 
-def test_auth_check_unknown_email(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_unknown_email(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = None
 
@@ -44,8 +44,8 @@ def test_auth_check_unknown_email(mock_client, mock_cursor_context, monkeypatch)
     assert resp.status_code == 403
 
 
-def test_auth_check_known_admin(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_known_admin(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "admin"}
 
@@ -57,8 +57,8 @@ def test_auth_check_known_admin(mock_client, mock_cursor_context, monkeypatch):
     assert resp.headers["x-user-role"] == "admin"
 
 
-def test_auth_check_known_observer(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_known_observer(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "observer"}
 
@@ -70,8 +70,8 @@ def test_auth_check_known_observer(mock_client, mock_cursor_context, monkeypatch
     assert resp.headers["x-user-role"] == "observer"
 
 
-def test_auth_check_db_error(mock_client, mock_db_connection_error, mock_logger_error, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_db_error(mock_client, mock_db_connection_error, mock_logger_error, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     resp = mock_client.get(
         "/auth/check",
         headers={"X-Auth-Request-Email": "anyone@gmail.com"},
@@ -83,8 +83,8 @@ def test_auth_check_db_error(mock_client, mock_db_connection_error, mock_logger_
 # Role tier enforcement via ?require=
 # ---------------------------------------------------------------------------
 
-def test_auth_check_require_admin_allows_admin(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_require_admin_allows_admin(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "admin"}
 
@@ -96,8 +96,8 @@ def test_auth_check_require_admin_allows_admin(mock_client, mock_cursor_context,
     assert resp.headers["x-user-role"] == "admin"
 
 
-def test_auth_check_require_admin_rejects_power_user(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_require_admin_rejects_power_user(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "power_user"}
 
@@ -109,9 +109,9 @@ def test_auth_check_require_admin_rejects_power_user(mock_client, mock_cursor_co
 
 
 def test_auth_check_require_observer_allows_power_user(
-    mock_client, mock_cursor_context, monkeypatch
+    mock_client, mock_cursor_context, mocker
 ):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "power_user"}
 
@@ -122,8 +122,8 @@ def test_auth_check_require_observer_allows_power_user(
     assert resp.status_code == 200
 
 
-def test_auth_check_require_observer_rejects_viewer(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_require_observer_rejects_viewer(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "viewer"}
 
@@ -134,8 +134,8 @@ def test_auth_check_require_observer_rejects_viewer(mock_client, mock_cursor_con
     assert resp.status_code == 403
 
 
-def test_auth_check_no_require_allows_any_role(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_auth_check_no_require_allows_any_role(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "viewer"}
 

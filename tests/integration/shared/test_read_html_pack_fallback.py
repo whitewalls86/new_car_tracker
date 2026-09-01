@@ -100,7 +100,7 @@ def _seed(artifact_type: str, n: int) -> list[tuple[str, bytes]]:
     return seeded
 
 
-def _pack(monkeypatch, artifact_type: str, seeded, **kwargs):
+def _pack(mocker, artifact_type: str, seeded, **kwargs):
     """Run the production packer over exactly the seeded artifacts."""
     def _fetch(con, bucket, a_type, year, month):
         # (source_key, artifact_id, listing_id, cluster_key, fetched_at) —
@@ -115,8 +115,8 @@ def _pack(monkeypatch, artifact_type: str, seeded, **kwargs):
                 datetime(year, month, 1 + (i % 27), 12, tzinfo=timezone.utc),
             )
 
-    monkeypatch.setattr(packer, "fetch_member_metadata", _fetch)
-    monkeypatch.setattr(
+    mocker.patch.object(packer, "fetch_member_metadata", _fetch)
+    mocker.patch(
         "shared.duckdb_s3.get_duckdb_s3_connection", MagicMock(return_value=MagicMock())
     )
     params = {
@@ -139,13 +139,13 @@ def _delete(s3_client, keys):
 
 
 def test_packed_artifacts_read_identically_before_and_after_their_sources_go(
-    artifact_type, s3_client, monkeypatch
+    artifact_type, s3_client, mocker
 ):
     seeded = _seed(artifact_type, 12)
     before = {key: read_html(key) for key, _ in seeded}
     assert before == dict(seeded)
 
-    result = _pack(monkeypatch, artifact_type, seeded, frame_target_bytes=4096)
+    result = _pack(mocker, artifact_type, seeded, frame_target_bytes=4096)
     assert result["members_verified"] == 12
 
     # Still present: the object path must win, and the pack must not be touched.
@@ -161,10 +161,10 @@ def test_packed_artifacts_read_identically_before_and_after_their_sources_go(
 
 
 def test_unpacked_artifacts_in_the_same_month_still_read_from_their_objects(
-    artifact_type, s3_client, monkeypatch
+    artifact_type, s3_client, mocker
 ):
     packed = _seed(artifact_type, 6)
-    _pack(monkeypatch, artifact_type, packed, frame_target_bytes=4096)
+    _pack(mocker, artifact_type, packed, frame_target_bytes=4096)
 
     later = _seed(artifact_type, 3)          # arrived after the pack was written
     _delete(s3_client, [key for key, _ in packed])
@@ -176,11 +176,11 @@ def test_unpacked_artifacts_in_the_same_month_still_read_from_their_objects(
         assert read_html(key) == content     # from the object
 
 
-def test_a_key_in_neither_place_raises_the_same_404(artifact_type, monkeypatch):
+def test_a_key_in_neither_place_raises_the_same_404(artifact_type, mocker):
     from botocore.exceptions import ClientError
 
     seeded = _seed(artifact_type, 3)
-    _pack(monkeypatch, artifact_type, seeded, frame_target_bytes=4096)
+    _pack(mocker, artifact_type, seeded, frame_target_bytes=4096)
 
     missing = (
         f"html/year={_YEAR}/month={_MONTH}/artifact_type={artifact_type}/"
@@ -192,7 +192,7 @@ def test_a_key_in_neither_place_raises_the_same_404(artifact_type, monkeypatch):
 
 
 def test_dictionary_compressed_objects_and_packed_members_are_both_readable(
-    artifact_type, s3_client, monkeypatch
+    artifact_type, s3_client, mocker, monkeypatch
 ):
     """Both frame types, through one code path.
 
@@ -202,7 +202,7 @@ def test_dictionary_compressed_objects_and_packed_members_are_both_readable(
     """
     dict_id = os.environ.get("INTEGRATION_HTML_DICT_ID", "").strip()
     seeded = _seed(artifact_type, 4)
-    _pack(monkeypatch, artifact_type, seeded, frame_target_bytes=4096)
+    _pack(mocker, artifact_type, seeded, frame_target_bytes=4096)
     _delete(s3_client, [key for key, _ in seeded])
     minio.clear_pack_caches()
 

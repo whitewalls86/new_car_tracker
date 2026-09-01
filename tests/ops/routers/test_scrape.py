@@ -2,7 +2,7 @@
 Unit tests for ops.routers.scrape.
 
 DB interactions are mocked via mock_cursor_context (patches psycopg2.connect).
-Tests validate logic branches — SQL correctness is covered by Layer 3 integration tests.
+Tests validate logic branches — SQL correctness is covered by Layer 4 integration tests.
 """
 import datetime
 import json

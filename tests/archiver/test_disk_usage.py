@@ -42,7 +42,7 @@ class TestWalkTiers:
 
 
 class TestMeasurePath:
-    def test_reports_physical_bytes(self, tmp_path, monkeypatch):
+    def test_reports_physical_bytes(self, tmp_path, mocker):
         calls = {}
 
         class _Proc:
@@ -54,10 +54,10 @@ class TestMeasurePath:
             calls["cmd"] = cmd
             return _Proc()
 
-        monkeypatch.setattr(disk_usage.subprocess, "run", fake_run)
+        mocker.patch.object(disk_usage.subprocess, "run", fake_run)
         assert disk_usage.measure_path("/measure/root/usr") == {"bytes": 4096, "error": None}
 
-    def test_uses_block_size_not_apparent_size(self, monkeypatch):
+    def test_uses_block_size_not_apparent_size(self, mocker):
         """--block-size=1 is physical; -b would be apparent and would hide the
         per-object floor this whole plan exists to expose."""
         captured = {}
@@ -67,7 +67,7 @@ class TestMeasurePath:
             stdout = "1\t/x\n"
             stderr = ""
 
-        monkeypatch.setattr(
+        mocker.patch.object(
             disk_usage.subprocess, "run",
             lambda cmd, **kw: (captured.update(cmd=cmd), _Proc())[1],
         )
@@ -76,7 +76,7 @@ class TestMeasurePath:
         assert "-b" not in captured["cmd"]
         assert "-x" in captured["cmd"]
 
-    def test_partial_total_is_kept(self, monkeypatch):
+    def test_partial_total_is_kept(self, mocker):
         """du exits non-zero when it cannot descend into some subtree but still
         prints a total for the rest. A partial number beats no series."""
         class _Proc:
@@ -84,26 +84,26 @@ class TestMeasurePath:
             stdout = "512\t/x\n"
             stderr = "du: cannot read directory '/x/secret': Permission denied"
 
-        monkeypatch.setattr(disk_usage.subprocess, "run", lambda cmd, **kw: _Proc())
+        mocker.patch.object(disk_usage.subprocess, "run", lambda cmd, **kw: _Proc())
         assert disk_usage.measure_path("/x")["bytes"] == 512
 
-    def test_unparseable_output_is_an_error_not_a_zero(self, monkeypatch):
+    def test_unparseable_output_is_an_error_not_a_zero(self, mocker):
         """Reporting 0 for an unmeasurable path would read as 'this is empty'."""
         class _Proc:
             returncode = 1
             stdout = ""
             stderr = "du: cannot access '/nope': No such file or directory"
 
-        monkeypatch.setattr(disk_usage.subprocess, "run", lambda cmd, **kw: _Proc())
+        mocker.patch.object(disk_usage.subprocess, "run", lambda cmd, **kw: _Proc())
         result = disk_usage.measure_path("/nope")
         assert result["bytes"] is None
         assert "No such file" in result["error"]
 
-    def test_timeout_is_an_error_not_a_hang(self, monkeypatch):
+    def test_timeout_is_an_error_not_a_hang(self, mocker):
         def boom(cmd, **kwargs):
             raise disk_usage.subprocess.TimeoutExpired(cmd, 5)
 
-        monkeypatch.setattr(disk_usage.subprocess, "run", boom)
+        mocker.patch.object(disk_usage.subprocess, "run", boom)
         result = disk_usage.measure_path("/slow", timeout=5)
         assert result["bytes"] is None
         assert "5s" in result["error"]
@@ -165,11 +165,11 @@ class TestWriteTextfile:
         disk_usage.write_textfile(str(tmp_path), "second\n")
         assert (tmp_path / disk_usage.TEXTFILE_NAME).read_text() == "second\n"
 
-    def test_a_failed_write_leaves_no_partial_temp_file(self, tmp_path, monkeypatch):
+    def test_a_failed_write_leaves_no_partial_temp_file(self, tmp_path, mocker):
         def boom(src, dst):
             raise OSError("disk full")
 
-        monkeypatch.setattr(disk_usage.os, "replace", boom)
+        mocker.patch.object(disk_usage.os, "replace", boom)
         with pytest.raises(OSError):
             disk_usage.write_textfile(str(tmp_path), "nope\n")
         assert list(tmp_path.iterdir()) == []
@@ -177,9 +177,9 @@ class TestWriteTextfile:
 
 class TestRunDiskUsage:
     @pytest.fixture
-    def measured(self, monkeypatch):
+    def measured(self, mocker):
         """Every path measures to a stable byte count derived from its name."""
-        monkeypatch.setattr(
+        mocker.patch.object(
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": len(path), "error": None},
         )
@@ -244,15 +244,15 @@ class TestRunDiskUsage:
         assert second[root] >= first[root], "freshly walked paths do move"
 
     def test_a_failed_measurement_carries_the_old_value_and_is_reported(
-        self, tmp_path, monkeypatch
-    ):
-        monkeypatch.setattr(
+        self, tmp_path
+    , mocker):
+        mocker.patch.object(
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": 500, "error": None},
         )
         disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
 
-        monkeypatch.setattr(
+        mocker.patch.object(
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": None, "error": "du blew up"},
         )
@@ -267,10 +267,10 @@ class TestRunDiskUsage:
         assert published[(disk_usage.PATH_METRIC, "/usr")] == 500
 
     def test_first_ever_run_publishes_nothing_it_could_not_measure(
-        self, tmp_path, monkeypatch
-    ):
+        self, tmp_path
+    , mocker):
         """No previous file and a failing du must not emit a zero."""
-        monkeypatch.setattr(
+        mocker.patch.object(
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": None, "error": "not mounted"},
         )
@@ -284,9 +284,9 @@ class TestRunDiskUsage:
         text = (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         assert disk_usage.parse_previous(text) == {}
 
-    def test_root_paths_are_measured_under_the_mount_prefix(self, tmp_path, monkeypatch):
+    def test_root_paths_are_measured_under_the_mount_prefix(self, tmp_path, mocker):
         seen = []
-        monkeypatch.setattr(
+        mocker.patch.object(
             disk_usage, "measure_path",
             lambda path, timeout=None: (seen.append(path), {"bytes": 1, "error": None})[1],
         )

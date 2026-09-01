@@ -19,7 +19,7 @@ from __future__ import annotations
 import io
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -406,84 +406,85 @@ class TestDryRunSafety:
         fs.ls.return_value = existing_parquet or []
         return fs
 
-    def test_dry_run_never_calls_write_table(self):
+    def test_dry_run_never_calls_write_table(self, mocker):
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
 
-        with patch("pyarrow.parquet.read_metadata") as mock_meta:
-            mock_meta.return_value.num_row_groups = 0
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
-            _dry_run_unit(unit, fs, "bronze")
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        mock_meta.return_value.num_row_groups = 0
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
+        _dry_run_unit(unit, fs, "bronze")
 
         fs.open.assert_not_called()
 
-    def test_dry_run_never_calls_rename(self):
+    def test_dry_run_never_calls_rename(self, mocker):
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
 
-        with patch("pyarrow.parquet.read_metadata") as mock_meta:
-            mock_meta.return_value.num_row_groups = 0
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
-            _dry_run_unit(unit, fs, "bronze")
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        mock_meta.return_value.num_row_groups = 0
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
+        _dry_run_unit(unit, fs, "bronze")
 
         fs.rename.assert_not_called()
         fs.move.assert_not_called()
 
-    def test_dry_run_never_calls_pq_write_table(self):
+    def test_dry_run_never_calls_pq_write_table(self, mocker):
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
 
-        with (
-            patch("pyarrow.parquet.read_metadata") as mock_meta,
-            patch("pyarrow.parquet.write_table") as mock_write,
-        ):
-            mock_meta.return_value.num_row_groups = 0
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
-            _dry_run_unit(unit, fs, "bronze")
-            mock_write.assert_not_called()
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+        mock_write = mocker.patch("pyarrow.parquet.write_table")
 
-    def test_dry_run_does_not_call_pq_read_table(self):
+        mock_meta.return_value.num_row_groups = 0
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
+        _dry_run_unit(unit, fs, "bronze")
+        mock_write.assert_not_called()
+
+    def test_dry_run_does_not_call_pq_read_table(self, mocker):
         """dry_run reads only metadata (footer), never full column data."""
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
 
-        with (
-            patch("pyarrow.parquet.read_metadata") as mock_meta,
-            patch("pyarrow.parquet.read_table") as mock_read,
-        ):
-            mock_meta.return_value.num_row_groups = 0
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
-            _dry_run_unit(unit, fs, "bronze")
-            mock_read.assert_not_called()
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+        mock_read = mocker.patch("pyarrow.parquet.read_table")
 
-    def test_dry_run_result_status_ok_when_would_proceed(self):
+        mock_meta.return_value.num_row_groups = 0
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
+        _dry_run_unit(unit, fs, "bronze")
+        mock_read.assert_not_called()
+
+    def test_dry_run_result_status_ok_when_would_proceed(self, mocker):
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
 
-        with patch("pyarrow.parquet.read_metadata") as mock_meta:
-            mock_meta.return_value.num_row_groups = 1
-            rg = MagicMock()
-            rg.num_rows = 10
-            mock_meta.return_value.row_group.return_value = rg
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([
-                pa.field("event_id", pa.int64()),
-            ])
-            result = _dry_run_unit(unit, fs, "bronze")
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        mock_meta.return_value.num_row_groups = 1
+        rg = MagicMock()
+        rg.num_rows = 10
+        mock_meta.return_value.row_group.return_value = rg
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([
+            pa.field("event_id", pa.int64()),
+        ])
+        result = _dry_run_unit(unit, fs, "bronze")
 
         assert result.status == "ok"
         assert result.rows_source == 10
 
-    def test_dry_run_skip_existing_when_target_has_parquet(self):
+    def test_dry_run_skip_existing_when_target_has_parquet(self, mocker):
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
@@ -493,9 +494,10 @@ class TestDryRunSafety:
         ]
         fs = self._make_fs_mock(existing_parquet=existing)
 
-        with patch("pyarrow.parquet.write_table") as mock_write:
-            result = _dry_run_unit(unit, fs, "bronze")
-            mock_write.assert_not_called()
+        mock_write = mocker.patch("pyarrow.parquet.write_table")
+
+        result = _dry_run_unit(unit, fs, "bronze")
+        mock_write.assert_not_called()
 
         assert result.status == "skipped"
 
@@ -587,6 +589,7 @@ class TestApplyFlow:
 
     def _run_apply(
         self,
+        mocker,
         unit,
         source_table: pa.Table,
         *,
@@ -607,52 +610,51 @@ class TestApplyFlow:
         if rename_raises is not None:
             fs_mock.rename.side_effect = rename_raises
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=source_table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=written_meta),
-        ):
-            result = _apply_unit(
-                unit, fs_mock, "bronze",
-                baseline_rows=baseline_rows,
-                replace_existing=replace_existing,
-            )
+        mocker.patch("pyarrow.parquet.read_table", return_value=source_table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=written_meta)
+
+        result = _apply_unit(
+            unit, fs_mock, "bronze",
+            baseline_rows=baseline_rows,
+            replace_existing=replace_existing,
+        )
 
         return result, fs_mock
 
-    def test_row_count_preserved(self):
+    def test_row_count_preserved(self, mocker):
         """Row count in source == rows_written in the result."""
         unit = _make_unit()
         table = _make_table(25)
-        result, _ = self._run_apply(unit, table)
+        result, _ = self._run_apply(mocker, unit, table)
 
         assert result.rows_source == 25
         assert result.rows_written == 25
         assert result.status == "ok"
 
-    def test_output_path_uses_normalized_prefix(self):
+    def test_output_path_uses_normalized_prefix(self, mocker):
         """target_file is under the normalized prefix (ops_normalized/ or silver_normalized/)."""
         unit = _make_unit()
         table = _make_table(5)
-        result, _ = self._run_apply(unit, table)
+        result, _ = self._run_apply(mocker, unit, table)
 
         assert result.target_file is not None
         assert result.target_file.startswith(unit.target_prefix)
 
-    def test_output_filename_contains_uuid(self):
+    def test_output_filename_contains_uuid(self, mocker):
         """Final file uses part-<uuid>-0.parquet naming convention."""
         unit = _make_unit()
         table = _make_table(5)
-        result, _ = self._run_apply(unit, table)
+        result, _ = self._run_apply(mocker, unit, table)
 
         import re
         assert re.search(r"part-[0-9a-f-]{36}-0\.parquet$", result.target_file or "")
 
-    def test_rename_called_with_tmp_and_final_paths(self):
+    def test_rename_called_with_tmp_and_final_paths(self, mocker):
         """fs.rename is called from .parquet.tmp → .parquet."""
         unit = _make_unit()
         table = _make_table(5)
-        result, fs_mock = self._run_apply(unit, table)
+        result, fs_mock = self._run_apply(mocker, unit, table)
 
         assert fs_mock.rename.called
         rename_args = fs_mock.rename.call_args[0]
@@ -668,20 +670,21 @@ class TestApplyFlow:
         tmp_name = "part-abc-0.parquet.tmp"
         assert not fnmatch.fnmatch(tmp_name, "*.parquet")
 
-    def test_tmp_key_not_equal_to_final_key(self):
+    def test_tmp_key_not_equal_to_final_key(self, mocker):
         """The tmp key used for writing is different from the final renamed key."""
         unit = _make_unit()
         table = _make_table(5)
-        _, fs_mock = self._run_apply(unit, table)
+        _, fs_mock = self._run_apply(mocker, unit, table)
 
         rename_args = fs_mock.rename.call_args[0]
         assert rename_args[0] != rename_args[1]
 
-    def test_skip_existing_when_target_has_parquet(self):
+    def test_skip_existing_when_target_has_parquet(self, mocker):
         """If the target prefix already has .parquet files, the unit is skipped."""
         unit = _make_unit()
         table = _make_table(5)
         result, fs_mock = self._run_apply(
+            mocker,
             unit, table,
             existing_parquet=["bronze/ops_normalized/price_observation_events/year=2026/month=6/part-old.parquet"],
         )
@@ -690,12 +693,12 @@ class TestApplyFlow:
         # No write or rename should have happened
         fs_mock.rename.assert_not_called()
 
-    def test_schema_fingerprint_in_result(self):
+    def test_schema_fingerprint_in_result(self, mocker):
         from scripts.rewrite_parquet_layout import _schema_fingerprint
 
         unit = _make_unit()
         table = _make_table(5)
-        result, _ = self._run_apply(unit, table)
+        result, _ = self._run_apply(mocker, unit, table)
 
         expected_fp = _schema_fingerprint(table.schema)
         assert result.schema_fingerprint == expected_fp
@@ -764,35 +767,35 @@ class TestApplyFlow:
 
 
 class TestRowCountMismatchAbortsRename:
-    def test_mismatch_status_is_failed(self):
+    def test_mismatch_status_is_failed(self, mocker):
         unit = _make_unit()
         table = _make_table(10)
-        result, _ = TestApplyFlow()._run_apply(unit, table, write_rows_override=5)
+        result, _ = TestApplyFlow()._run_apply(mocker, unit, table, write_rows_override=5)
 
         assert result.status == "failed"
         assert result.error is not None
         assert "mismatch" in result.error.lower()
 
-    def test_mismatch_rename_not_called(self):
+    def test_mismatch_rename_not_called(self, mocker):
         unit = _make_unit()
         table = _make_table(10)
-        _, fs_mock = TestApplyFlow()._run_apply(unit, table, write_rows_override=5)
+        _, fs_mock = TestApplyFlow()._run_apply(mocker, unit, table, write_rows_override=5)
 
         fs_mock.rename.assert_not_called()
 
-    def test_mismatch_error_mentions_tmp_path(self):
+    def test_mismatch_error_mentions_tmp_path(self, mocker):
         """Error message references the tmp file path for manual recovery."""
         unit = _make_unit()
         table = _make_table(10)
-        result, _ = TestApplyFlow()._run_apply(unit, table, write_rows_override=5)
+        result, _ = TestApplyFlow()._run_apply(mocker, unit, table, write_rows_override=5)
 
         assert ".parquet.tmp" in (result.error or "")
 
-    def test_mismatch_rows_written_recorded(self):
+    def test_mismatch_rows_written_recorded(self, mocker):
         """rows_written is populated even on mismatch (for diagnostics)."""
         unit = _make_unit()
         table = _make_table(10)
-        result, _ = TestApplyFlow()._run_apply(unit, table, write_rows_override=3)
+        result, _ = TestApplyFlow()._run_apply(mocker, unit, table, write_rows_override=3)
 
         assert result.rows_source == 10
         assert result.rows_written == 3
@@ -804,41 +807,45 @@ class TestRowCountMismatchAbortsRename:
 
 
 class TestRenameFailure:
-    def test_rename_failure_status_is_failed(self):
+    def test_rename_failure_status_is_failed(self, mocker):
         unit = _make_unit()
         table = _make_table(5)
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, rename_raises=OSError("connection reset")
         )
 
         assert result.status == "failed"
         assert result.error is not None
 
-    def test_rename_failure_error_mentions_tmp_path(self):
+    def test_rename_failure_error_mentions_tmp_path(self, mocker):
         """Error message references the tmp path for manual recovery."""
         unit = _make_unit()
         table = _make_table(5)
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, rename_raises=OSError("connection reset")
         )
 
         assert ".parquet.tmp" in (result.error or "")
 
-    def test_rename_failure_target_file_is_none(self):
+    def test_rename_failure_target_file_is_none(self, mocker):
         """target_file is not set when rename did not complete."""
         unit = _make_unit()
         table = _make_table(5)
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, rename_raises=OSError("timeout")
         )
 
         assert result.target_file is None
 
-    def test_rename_failure_rows_source_and_written_recorded(self):
+    def test_rename_failure_rows_source_and_written_recorded(self, mocker):
         """rows_source and rows_written are recorded even on rename failure."""
         unit = _make_unit()
         table = _make_table(7)
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, rename_raises=OSError("timeout")
         )
 
@@ -852,7 +859,7 @@ class TestRenameFailure:
 
 
 class TestOldPrefixUntouched:
-    def test_write_table_never_called_with_old_prefix(self):
+    def test_write_table_never_called_with_old_prefix(self, mocker):
         """pq.write_table is never called with a path under the old prefix."""
         unit = _make_unit()
         table = _make_table(5)
@@ -865,17 +872,16 @@ class TestOldPrefixUntouched:
         def _track_write(t, path, **kwargs):
             written_paths.append(path)
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table", side_effect=_track_write),
-            patch("pyarrow.parquet.read_metadata") as mock_meta,
-        ):
-            rg = MagicMock()
-            rg.num_rows = len(table)
-            mock_meta.return_value.num_row_groups = 1
-            mock_meta.return_value.row_group.return_value = rg
-            from scripts.rewrite_parquet_layout import _apply_unit
-            _apply_unit(unit, fs_mock, "bronze")
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table", side_effect=_track_write)
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        rg = MagicMock()
+        rg.num_rows = len(table)
+        mock_meta.return_value.num_row_groups = 1
+        mock_meta.return_value.row_group.return_value = rg
+        from scripts.rewrite_parquet_layout import _apply_unit
+        _apply_unit(unit, fs_mock, "bronze")
 
         old_prefixes = ("silver/observations/", "ops/price_observation_events/")
         for path in written_paths:
@@ -884,7 +890,7 @@ class TestOldPrefixUntouched:
                     f"write_table called with old-prefix path: {path}"
                 )
 
-    def test_rename_never_targets_old_prefix(self):
+    def test_rename_never_targets_old_prefix(self, mocker):
         """fs.rename is never called with old-prefix paths."""
         unit = _make_unit()
         table = _make_table(5)
@@ -892,17 +898,16 @@ class TestOldPrefixUntouched:
         fs_mock = MagicMock()
         fs_mock.ls.return_value = []
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata") as mock_meta,
-        ):
-            rg = MagicMock()
-            rg.num_rows = len(table)
-            mock_meta.return_value.num_row_groups = 1
-            mock_meta.return_value.row_group.return_value = rg
-            from scripts.rewrite_parquet_layout import _apply_unit
-            _apply_unit(unit, fs_mock, "bronze")
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        rg = MagicMock()
+        rg.num_rows = len(table)
+        mock_meta.return_value.num_row_groups = 1
+        mock_meta.return_value.row_group.return_value = rg
+        from scripts.rewrite_parquet_layout import _apply_unit
+        _apply_unit(unit, fs_mock, "bronze")
 
         if fs_mock.rename.called:
             args = fs_mock.rename.call_args[0]
@@ -971,12 +976,13 @@ class TestBaselineAudit:
         assert (2026, 6) not in ops
         assert ops[(2026, 7)] == 500
 
-    def test_baseline_mismatch_fails_unit_before_rename(self):
+    def test_baseline_mismatch_fails_unit_before_rename(self, mocker):
         """If source rows != baseline rows, the unit fails and rename is not called."""
         unit = _make_unit()
         table = _make_table(10)  # 10 rows in source
 
         result, fs_mock = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, baseline_rows=15  # baseline expects 15
         )
 
@@ -986,17 +992,17 @@ class TestBaselineAudit:
         assert "15" in result.baseline_mismatch
         fs_mock.rename.assert_not_called()
 
-    def test_baseline_match_proceeds_normally(self):
+    def test_baseline_match_proceeds_normally(self, mocker):
         """If source rows == baseline rows, the unit succeeds."""
         unit = _make_unit()
         table = _make_table(10)
 
-        result, _ = TestApplyFlow()._run_apply(unit, table, baseline_rows=10)
+        result, _ = TestApplyFlow()._run_apply(mocker, unit, table, baseline_rows=10)
 
         assert result.status == "ok"
         assert result.baseline_mismatch is None
 
-    def test_baseline_mismatch_no_write_occurs(self):
+    def test_baseline_mismatch_no_write_occurs(self, mocker):
         """Write is not attempted when baseline mismatch detected."""
         unit = _make_unit()
         table = _make_table(10)
@@ -1004,14 +1010,13 @@ class TestBaselineAudit:
         fs_mock = MagicMock()
         fs_mock.ls.return_value = []
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table") as mock_write,
-            patch("pyarrow.parquet.read_metadata"),
-        ):
-            from scripts.rewrite_parquet_layout import _apply_unit
-            _apply_unit(unit, fs_mock, "bronze", baseline_rows=99)
-            mock_write.assert_not_called()
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mock_write = mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata")
+
+        from scripts.rewrite_parquet_layout import _apply_unit
+        _apply_unit(unit, fs_mock, "bronze", baseline_rows=99)
+        mock_write.assert_not_called()
 
     def test_baseline_lookup_returns_none_for_missing_dataset(self, tmp_path):
         from scripts.rewrite_parquet_layout import _baseline_lookup, load_baseline_audit
@@ -1024,11 +1029,11 @@ class TestBaselineAudit:
         unit = _make_unit()
         assert _baseline_lookup(baseline, unit) is None
 
-    def test_no_baseline_supplied_unit_proceeds(self):
+    def test_no_baseline_supplied_unit_proceeds(self, mocker):
         """Without --baseline-audit, no baseline check is performed."""
         unit = _make_unit()
         table = _make_table(5)
-        result, _ = TestApplyFlow()._run_apply(unit, table, baseline_rows=None)
+        result, _ = TestApplyFlow()._run_apply(mocker, unit, table, baseline_rows=None)
         assert result.status == "ok"
 
 
@@ -1152,7 +1157,7 @@ class TestReportStructure:
 
 
 class TestNeverDeleteGuarantee:
-    def _run_apply(self, table=None):
+    def _run_apply(self, mocker, table=None):
         from scripts.rewrite_parquet_layout import _apply_unit
 
         unit = _make_unit()
@@ -1167,20 +1172,19 @@ class TestNeverDeleteGuarantee:
         meta_mock.num_row_groups = 1
         meta_mock.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta_mock),
-        ):
-            _apply_unit(unit, fs_mock, "bronze")
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta_mock)
+
+        _apply_unit(unit, fs_mock, "bronze")
         return fs_mock
 
-    def test_fs_rm_never_called_in_apply(self):
-        fs_mock = self._run_apply()
+    def test_fs_rm_never_called_in_apply(self, mocker):
+        fs_mock = self._run_apply(mocker)
         fs_mock.rm.assert_not_called()
 
-    def test_fs_delete_file_never_called(self):
-        fs_mock = self._run_apply()
+    def test_fs_delete_file_never_called(self, mocker):
+        fs_mock = self._run_apply(mocker)
         fs_mock.delete_file.assert_not_called()
 
     def test_delete_object_never_called(self):
@@ -1209,7 +1213,7 @@ class TestNeverDeleteGuarantee:
         assert "cleanup_parquet" not in source_text
         assert "import delete_object" not in source_text
 
-    def test_fs_rm_never_called_on_rename_failure(self):
+    def test_fs_rm_never_called_on_rename_failure(self, mocker):
         """Even when rename fails, no rm/delete is called to clean up the tmp."""
         from scripts.rewrite_parquet_layout import _apply_unit
 
@@ -1225,12 +1229,11 @@ class TestNeverDeleteGuarantee:
         meta_mock.num_row_groups = 1
         meta_mock.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta_mock),
-        ):
-            _apply_unit(unit, fs_mock, "bronze")
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta_mock)
+
+        _apply_unit(unit, fs_mock, "bronze")
 
         fs_mock.rm.assert_not_called()
         fs_mock.delete_file.assert_not_called()
@@ -1250,7 +1253,7 @@ class TestReplaceExistingTarget:
         args = parse_args(["--all", "--apply", "--replace-existing-target"])
         assert args.replace_existing_target is True
 
-    def test_replace_mode_does_not_skip_existing_target(self):
+    def test_replace_mode_does_not_skip_existing_target(self, mocker):
         """With replace_existing=True, a unit with existing normalized files proceeds."""
         unit = _make_unit()
         table = _make_table(10)
@@ -1260,11 +1263,12 @@ class TestReplaceExistingTarget:
         ]
 
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, existing_parquet=existing, replace_existing=True
         )
         assert result.status == "ok"
 
-    def test_replace_mode_calls_fs_rm_on_old_normalized_file(self):
+    def test_replace_mode_calls_fs_rm_on_old_normalized_file(self, mocker):
         """fs.rm is called on the previously-existing normalized file after rename."""
         unit = _make_unit()
         table = _make_table(10)
@@ -1273,12 +1277,13 @@ class TestReplaceExistingTarget:
             "/year=2026/month=6/part-old-uuid-0.parquet"
         )
         _, fs_mock = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, existing_parquet=[old_path], replace_existing=True
         )
 
         fs_mock.rm.assert_called_once_with(old_path)
 
-    def test_replace_mode_rm_called_after_rename(self):
+    def test_replace_mode_rm_called_after_rename(self, mocker):
         """fs.rename is called before fs.rm (new file must be live before old is removed)."""
         unit = _make_unit()
         table = _make_table(5)
@@ -1296,6 +1301,7 @@ class TestReplaceExistingTarget:
             call_order.append("rm")
 
         _, fs_mock = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, existing_parquet=[old_path], replace_existing=True
         )
         fs_mock.rename.side_effect = None  # already called; just inspect call_args_list
@@ -1313,18 +1319,17 @@ class TestReplaceExistingTarget:
         meta.num_row_groups = 1
         meta.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta),
-        ):
-            _apply_unit(unit, fs_mock2, "bronze", replace_existing=True)
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+        _apply_unit(unit, fs_mock2, "bronze", replace_existing=True)
 
         assert call_order == ["rename", "rm"], (
             f"Expected rename before rm, got: {call_order}"
         )
 
-    def test_replace_mode_replaced_files_count_in_result(self):
+    def test_replace_mode_replaced_files_count_in_result(self, mocker):
         """result.replaced_files equals the number of old normalized files deleted."""
         unit = _make_unit()
         table = _make_table(5)
@@ -1333,12 +1338,13 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events/year=2026/month=6/part-b.parquet",
         ]
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, existing_parquet=old_files, replace_existing=True
         )
 
         assert result.replaced_files == 2
 
-    def test_replace_mode_old_source_prefix_not_touched(self):
+    def test_replace_mode_old_source_prefix_not_touched(self, mocker):
         """fs.rm is never called with old-prefix paths (silver/observations/ or ops/)."""
         unit = _make_unit()
         table = _make_table(5)
@@ -1346,6 +1352,7 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events/year=2026/month=6/part-old.parquet"
         ]
         _, fs_mock = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, existing_parquet=old_normalized, replace_existing=True
         )
 
@@ -1354,44 +1361,48 @@ class TestReplaceExistingTarget:
             assert "ops/price_observation_events/" not in path
             assert "silver/observations/" not in path
 
-    def test_replace_mode_without_existing_target_succeeds_normally(self):
+    def test_replace_mode_without_existing_target_succeeds_normally(self, mocker):
         """replace_existing=True on a unit with no existing target works like normal mode."""
         unit = _make_unit()
         table = _make_table(8)
         result, fs_mock = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, existing_parquet=[], replace_existing=True
         )
 
         assert result.status == "ok"
         fs_mock.rm.assert_not_called()
 
-    def test_replace_mode_baseline_accepts_more_rows_than_baseline(self):
+    def test_replace_mode_baseline_accepts_more_rows_than_baseline(self, mocker):
         """Delta mode: source_rows > baseline_rows is ok (final flush added rows)."""
         unit = _make_unit()
         table = _make_table(20)  # 20 source rows > baseline of 15
 
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, baseline_rows=15, replace_existing=True
         )
         assert result.status == "ok"
         assert result.baseline_mismatch is None
 
-    def test_replace_mode_baseline_accepts_equal_rows(self):
+    def test_replace_mode_baseline_accepts_equal_rows(self, mocker):
         """Delta mode: source_rows == baseline_rows is ok (no new rows from flush)."""
         unit = _make_unit()
         table = _make_table(15)
 
         result, _ = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, baseline_rows=15, replace_existing=True
         )
         assert result.status == "ok"
 
-    def test_replace_mode_baseline_fails_on_fewer_rows(self):
+    def test_replace_mode_baseline_fails_on_fewer_rows(self, mocker):
         """Delta mode: source_rows < baseline_rows → regression → fail before write."""
         unit = _make_unit()
         table = _make_table(10)  # 10 < baseline of 15 = data loss
 
         result, fs_mock = TestApplyFlow()._run_apply(
+            mocker,
             unit, table, baseline_rows=15, replace_existing=True
         )
         assert result.status == "failed"
@@ -1399,7 +1410,7 @@ class TestReplaceExistingTarget:
         assert result.baseline_mismatch is not None
         fs_mock.rename.assert_not_called()
 
-    def test_replace_mode_baseline_regression_no_write_occurs(self):
+    def test_replace_mode_baseline_regression_no_write_occurs(self, mocker):
         """pq.write_table is not called when baseline regression detected in replace mode."""
         unit = _make_unit()
         table = _make_table(5)
@@ -1409,16 +1420,15 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events/year=2026/month=6/part-old.parquet"
         ]
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table") as mock_write,
-            patch("pyarrow.parquet.read_metadata"),
-        ):
-            from scripts.rewrite_parquet_layout import _apply_unit
-            _apply_unit(unit, fs_mock, "bronze", baseline_rows=99, replace_existing=True)
-            mock_write.assert_not_called()
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mock_write = mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata")
 
-    def test_replace_mode_dry_run_reports_would_replace(self):
+        from scripts.rewrite_parquet_layout import _apply_unit
+        _apply_unit(unit, fs_mock, "bronze", baseline_rows=99, replace_existing=True)
+        mock_write.assert_not_called()
+
+    def test_replace_mode_dry_run_reports_would_replace(self, mocker):
         """In dry-run with replace_existing=True, status is ok and replaced_files is set."""
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
@@ -1429,18 +1439,19 @@ class TestReplaceExistingTarget:
         fs_mock = MagicMock()
         fs_mock.ls.return_value = existing
 
-        with patch("pyarrow.parquet.read_metadata") as mock_meta:
-            rg = MagicMock()
-            rg.num_rows = 5
-            mock_meta.return_value.num_row_groups = 1
-            mock_meta.return_value.row_group.return_value = rg
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
-            result = _dry_run_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        rg = MagicMock()
+        rg.num_rows = 5
+        mock_meta.return_value.num_row_groups = 1
+        mock_meta.return_value.row_group.return_value = rg
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
+        result = _dry_run_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         assert result.status == "ok"
         assert result.replaced_files == 1
 
-    def test_replace_mode_dry_run_no_rm_called(self):
+    def test_replace_mode_dry_run_no_rm_called(self, mocker):
         """Dry-run with replace_existing=True never calls fs.rm."""
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
@@ -1452,10 +1463,11 @@ class TestReplaceExistingTarget:
         fs_mock = MagicMock()
         fs_mock.ls.return_value = existing
 
-        with patch("pyarrow.parquet.read_metadata") as mock_meta:
-            mock_meta.return_value.num_row_groups = 0
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
-            _dry_run_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+
+        mock_meta.return_value.num_row_groups = 0
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([])
+        _dry_run_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         fs_mock.rm.assert_not_called()
 
@@ -1480,7 +1492,7 @@ class TestReplaceExistingTarget:
         )
         assert report["units"][0]["replaced_files"] == 1
 
-    def test_replace_mode_rm_failure_sets_status_failed(self):
+    def test_replace_mode_rm_failure_sets_status_failed(self, mocker):
         """fs.rm failure after rename must set status=failed, not ok."""
         unit = _make_unit()
         table = _make_table(8)
@@ -1500,16 +1512,15 @@ class TestReplaceExistingTarget:
         meta.num_row_groups = 1
         meta.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta),
-        ):
-            result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+        result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         assert result.status == "failed"
 
-    def test_replace_mode_rm_failure_records_target_file_for_recovery(self):
+    def test_replace_mode_rm_failure_records_target_file_for_recovery(self, mocker):
         """When rm fails, target_file is still set so the operator knows what was written."""
         unit = _make_unit()
         table = _make_table(8)
@@ -1529,17 +1540,16 @@ class TestReplaceExistingTarget:
         meta.num_row_groups = 1
         meta.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta),
-        ):
-            result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+        result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         assert result.target_file is not None
         assert result.target_file.endswith(".parquet")
 
-    def test_replace_mode_rm_failure_error_mentions_failed_path(self):
+    def test_replace_mode_rm_failure_error_mentions_failed_path(self, mocker):
         """Error message names the file(s) that need manual cleanup."""
         unit = _make_unit()
         table = _make_table(8)
@@ -1559,16 +1569,15 @@ class TestReplaceExistingTarget:
         meta.num_row_groups = 1
         meta.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta),
-        ):
-            result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+        result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         assert old_path in (result.error or "")
 
-    def test_replace_mode_rm_failure_replaced_files_counts_successes_only(self):
+    def test_replace_mode_rm_failure_replaced_files_counts_successes_only(self, mocker):
         """replaced_files counts only successfully deleted files."""
         unit = _make_unit()
         table = _make_table(8)
@@ -1593,12 +1602,11 @@ class TestReplaceExistingTarget:
         meta.num_row_groups = 1
         meta.row_group.return_value = rg
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=table),
-            patch("pyarrow.parquet.write_table"),
-            patch("pyarrow.parquet.read_metadata", return_value=meta),
-        ):
-            result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mocker.patch("pyarrow.parquet.read_table", return_value=table)
+        mocker.patch("pyarrow.parquet.write_table")
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+        result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         assert result.status == "failed"
         assert result.replaced_files == 1  # one succeeded before the failure
@@ -1645,7 +1653,9 @@ def _make_table_with_partition_cols(n: int, dataset: str) -> pa.Table:
     )
 
 
-def _run_apply_capture_written(unit, source_table, *, replace_existing=False, baseline_rows=None):
+def _run_apply_capture_written(
+    mocker, unit, source_table, *, replace_existing=False, baseline_rows=None
+):
     """Run _apply_unit and capture the table passed to pq.write_table."""
     from scripts.rewrite_parquet_layout import _apply_unit
 
@@ -1664,16 +1674,15 @@ def _run_apply_capture_written(unit, source_table, *, replace_existing=False, ba
     fs_mock = MagicMock()
     fs_mock.ls.return_value = []
 
-    with (
-        patch("pyarrow.parquet.read_table", return_value=source_table),
-        patch("pyarrow.parquet.write_table", side_effect=_capture_write),
-        patch("pyarrow.parquet.read_metadata", return_value=meta),
-    ):
-        result = _apply_unit(
-            unit, fs_mock, "bronze",
-            baseline_rows=baseline_rows,
-            replace_existing=replace_existing,
-        )
+    mocker.patch("pyarrow.parquet.read_table", return_value=source_table)
+    mocker.patch("pyarrow.parquet.write_table", side_effect=_capture_write)
+    mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+    result = _apply_unit(
+        unit, fs_mock, "bronze",
+        baseline_rows=baseline_rows,
+        replace_existing=replace_existing,
+    )
 
     return result, written_tables, fs_mock
 
@@ -1681,13 +1690,13 @@ def _run_apply_capture_written(unit, source_table, *, replace_existing=False, ba
 class TestPartitionColumnStripping:
     """Group N: partition columns excluded from physical Parquet schema after rewrite."""
 
-    def test_silver_partition_cols_not_in_written_schema(self):
+    def test_silver_partition_cols_not_in_written_schema(self, mocker):
         """source, obs_year, obs_month are not present in the written table."""
         unit = _make_unit(dataset="silver_observations", source="detail")
         source_table = _make_table_with_partition_cols(10, "silver_observations")
         assert "source" in source_table.schema.names  # confirm input has them
 
-        result, written_tables, _ = _run_apply_capture_written(unit, source_table)
+        result, written_tables, _ = _run_apply_capture_written(mocker, unit, source_table)
 
         assert result.status == "ok"
         assert len(written_tables) == 1
@@ -1697,13 +1706,13 @@ class TestPartitionColumnStripping:
                 f"Partition column '{col}' must not appear physically in rewritten file"
             )
 
-    def test_ops_partition_cols_not_in_written_schema(self):
+    def test_ops_partition_cols_not_in_written_schema(self, mocker):
         """year, month are not present in the written table for ops datasets."""
         unit = _make_unit(dataset="price_observation_events")
         source_table = _make_table_with_partition_cols(10, "price_observation_events")
         assert "year" in source_table.schema.names
 
-        result, written_tables, _ = _run_apply_capture_written(unit, source_table)
+        result, written_tables, _ = _run_apply_capture_written(mocker, unit, source_table)
 
         assert result.status == "ok"
         written_schema = written_tables[0].schema
@@ -1712,48 +1721,48 @@ class TestPartitionColumnStripping:
                 f"Partition column '{col}' must not appear physically in rewritten file"
             )
 
-    def test_non_partition_cols_preserved(self):
+    def test_non_partition_cols_preserved(self, mocker):
         """Business columns survive the partition-column drop."""
         unit = _make_unit(dataset="price_observation_events")
         source_table = _make_table_with_partition_cols(10, "price_observation_events")
 
-        _, written_tables, _ = _run_apply_capture_written(unit, source_table)
+        _, written_tables, _ = _run_apply_capture_written(mocker, unit, source_table)
 
         written_schema = written_tables[0].schema
         for col in ("event_id", "listing_id", "event_at"):
             assert col in written_schema.names
 
-    def test_row_count_preserved_after_drop(self):
+    def test_row_count_preserved_after_drop(self, mocker):
         """Row count is unchanged — dropping columns does not lose rows."""
         unit = _make_unit(dataset="price_observation_events")
         source_table = _make_table_with_partition_cols(17, "price_observation_events")
 
-        result, written_tables, _ = _run_apply_capture_written(unit, source_table)
+        result, written_tables, _ = _run_apply_capture_written(mocker, unit, source_table)
 
         assert result.rows_source == 17
         assert len(written_tables[0]) == 17
 
-    def test_path_partition_values_still_in_target_prefix(self):
+    def test_path_partition_values_still_in_target_prefix(self, mocker):
         """Even after dropping physical columns, year/month/source are in the path."""
         unit = _make_unit(dataset="price_observation_events", year=2026, month=7)
         source_table = _make_table_with_partition_cols(5, "price_observation_events")
 
-        result, _, _ = _run_apply_capture_written(unit, source_table)
+        result, _, _ = _run_apply_capture_written(mocker, unit, source_table)
 
         assert "year=2026" in result.target_prefix
         assert "month=7" in result.target_prefix
 
-    def test_source_files_not_deleted_after_drop(self):
+    def test_source_files_not_deleted_after_drop(self, mocker):
         """Dropping partition columns must never trigger source file deletion."""
         unit = _make_unit(dataset="price_observation_events")
         source_table = _make_table_with_partition_cols(5, "price_observation_events")
 
-        _, _, fs_mock = _run_apply_capture_written(unit, source_table)
+        _, _, fs_mock = _run_apply_capture_written(mocker, unit, source_table)
 
         fs_mock.rm.assert_not_called()
         fs_mock.delete_file.assert_not_called()
 
-    def test_replace_mode_still_works_after_drop(self):
+    def test_replace_mode_still_works_after_drop(self, mocker):
         """replace_existing=True completes successfully when partition cols are dropped."""
         from scripts.rewrite_parquet_layout import _apply_unit
 
@@ -1780,12 +1789,11 @@ class TestPartitionColumnStripping:
         fs_mock = MagicMock()
         fs_mock.ls.return_value = [old_path]
 
-        with (
-            patch("pyarrow.parquet.read_table", return_value=source_table),
-            patch("pyarrow.parquet.write_table", side_effect=_capture_write),
-            patch("pyarrow.parquet.read_metadata", return_value=meta),
-        ):
-            result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
+        mocker.patch("pyarrow.parquet.read_table", return_value=source_table)
+        mocker.patch("pyarrow.parquet.write_table", side_effect=_capture_write)
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=meta)
+
+        result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
 
         assert result.status == "ok"
         assert result.replaced_files == 1
@@ -1793,7 +1801,7 @@ class TestPartitionColumnStripping:
         assert "year" not in written_schema.names
         assert "month" not in written_schema.names
 
-    def test_dry_run_no_write_for_table_with_partition_cols(self):
+    def test_dry_run_no_write_for_table_with_partition_cols(self, mocker):
         """dry-run never writes even when source table contains partition columns."""
         from scripts.rewrite_parquet_layout import _dry_run_unit
 
@@ -1801,30 +1809,30 @@ class TestPartitionColumnStripping:
         fs_mock = MagicMock()
         fs_mock.ls.return_value = []
 
-        with (
-            patch("pyarrow.parquet.read_metadata") as mock_meta,
-            patch("pyarrow.parquet.write_table") as mock_write,
-        ):
-            mock_meta.return_value.num_row_groups = 1
-            rg = MagicMock()
-            rg.num_rows = 5
-            mock_meta.return_value.row_group.return_value = rg
-            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([
-                pa.field("event_id", pa.int64()),
-                pa.field("year", pa.int32()),
-                pa.field("month", pa.int32()),
-            ])
-            result = _dry_run_unit(unit, fs_mock, "bronze")
-            mock_write.assert_not_called()
+        mock_meta = mocker.patch("pyarrow.parquet.read_metadata")
+        mock_write = mocker.patch("pyarrow.parquet.write_table")
+
+        mock_meta.return_value.num_row_groups = 1
+        rg = MagicMock()
+        rg.num_rows = 5
+        mock_meta.return_value.row_group.return_value = rg
+        mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([
+            pa.field("event_id", pa.int64()),
+            pa.field("year", pa.int32()),
+            pa.field("month", pa.int32()),
+        ])
+        result = _dry_run_unit(unit, fs_mock, "bronze")
+        mock_write.assert_not_called()
 
         assert result.status == "ok"
 
-    def test_regression_guard_still_enforced_after_drop(self):
+    def test_regression_guard_still_enforced_after_drop(self, mocker):
         """Baseline regression guard works correctly when partition cols are present."""
         unit = _make_unit(dataset="price_observation_events")
         source_table = _make_table_with_partition_cols(5, "price_observation_events")
 
         result, _, fs_mock = _run_apply_capture_written(
+            mocker,
             unit, source_table, replace_existing=True, baseline_rows=10
         )
 

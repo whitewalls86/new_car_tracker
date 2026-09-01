@@ -233,10 +233,10 @@ class TestSeedLakeSnapshot:
                 clear_prefixes=False, allow_production_target=False, client=client,
             )
 
-    def test_main_cli_smoke(self, tmp_path, capsys, monkeypatch):
+    def test_main_cli_smoke(self, tmp_path, capsys, mocker):
         archive, _ = _build_snapshot(tmp_path)
         client = _mock_client()
-        monkeypatch.setattr(
+        mocker.patch(
             "scripts.seed_lake_snapshot.build_boto3_client", lambda endpoint: client,
         )
 

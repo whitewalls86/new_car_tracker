@@ -1,5 +1,5 @@
 """
-Layer 3 — access request lifecycle integration tests.
+Layer 4 — access request lifecycle integration tests.
 
 Covers POST /request-access, GET /admin/access-requests,
 POST /admin/access-requests/{id}/approve, POST /admin/access-requests/{id}/deny.

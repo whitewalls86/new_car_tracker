@@ -39,8 +39,8 @@ def test_submit_access_request_invalid_role(mock_client):
     assert "Invalid role" in resp.text
 
 
-def test_submit_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_submit_access_request_ok(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.side_effect = [None, None]  # not authorized, no pending
     resp = mock_client.post(
@@ -56,9 +56,8 @@ def test_submit_access_request_ok(mock_client, mock_cursor_context, monkeypatch)
 
 
 def test_submit_access_request_db_error(
-    mock_client, mock_db_connection_error, mock_logger_error, monkeypatch,
-):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+    mock_client, mock_db_connection_error, mock_logger_error, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     resp = mock_client.post(
         "/request-access",
         data={"display_name": "Test User", "requested_role": "observer"},
@@ -69,11 +68,11 @@ def test_submit_access_request_db_error(
 
 
 def test_submit_access_request_sends_telegram(
-    mock_client, mock_cursor_context, monkeypatch, mocker,
+    mock_client, mock_cursor_context, mocker,
 ):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
-    monkeypatch.setattr("ops.routers.users._TELEGRAM_API", "fake-token")
-    monkeypatch.setattr("ops.routers.users._TELEGRAM_CHAT_ID", "12345")
+    mocker.patch("ops.routers.auth._SALT", SALT)
+    mocker.patch("ops.routers.users._TELEGRAM_API", "fake-token")
+    mocker.patch("ops.routers.users._TELEGRAM_CHAT_ID", "12345")
     mock_post = mocker.patch("ops.routers.users.http_requests.post")
     _, cursor = mock_cursor_context
     cursor.fetchone.side_effect = [None, None]  # not authorized, no pending
@@ -91,11 +90,11 @@ def test_submit_access_request_sends_telegram(
 
 
 def test_submit_access_request_no_telegram_when_unconfigured(
-    mock_client, mock_cursor_context, monkeypatch, mocker,
+    mock_client, mock_cursor_context, mocker,
 ):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
-    monkeypatch.setattr("ops.routers.users._TELEGRAM_API", "")
-    monkeypatch.setattr("ops.routers.users._TELEGRAM_CHAT_ID", "")
+    mocker.patch("ops.routers.auth._SALT", SALT)
+    mocker.patch("ops.routers.users._TELEGRAM_API", "")
+    mocker.patch("ops.routers.users._TELEGRAM_CHAT_ID", "")
     mock_post = mocker.patch("ops.routers.users.http_requests.post")
 
     mock_client.post(
@@ -110,8 +109,8 @@ def test_submit_access_request_no_telegram_when_unconfigured(
 # GET /admin/users
 # ---------------------------------------------------------------------------
 
-def test_submit_access_request_duplicate_pending(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_submit_access_request_duplicate_pending(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     # First fetchone: not already authorized; second: has a pending request
     cursor.fetchone.side_effect = [None, {"id": 1}]
@@ -153,8 +152,8 @@ def test_list_users_db_error(mock_client, mock_db_connection_error, mock_logger_
 # POST /admin/users/{id}/role
 # ---------------------------------------------------------------------------
 
-def test_change_user_role_ok(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_change_user_role_ok(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     resp = mock_client.post(
         "/admin/users/1/role",
         data={"role": "observer"},
@@ -182,8 +181,8 @@ def test_change_user_role_invalid(mock_client):
 # POST /admin/users/{id}/revoke
 # ---------------------------------------------------------------------------
 
-def test_revoke_user_ok(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_revoke_user_ok(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     resp = mock_client.post(
         "/admin/users/1/revoke",
         follow_redirects=False,
@@ -230,8 +229,8 @@ def test_list_access_requests_empty(mock_client, mock_db_connection_error, mock_
 # POST /admin/access-requests/{id}/approve
 # ---------------------------------------------------------------------------
 
-def test_approve_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_approve_access_request_ok(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {
         "email_hash": "abc123",
@@ -250,8 +249,8 @@ def test_approve_access_request_ok(mock_client, mock_cursor_context, monkeypatch
     assert cursor.execute.call_count == 3
 
 
-def test_approve_access_request_not_found(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_approve_access_request_not_found(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = None
 
@@ -268,8 +267,8 @@ def test_approve_access_request_not_found(mock_client, mock_cursor_context, monk
 # POST /admin/access-requests/{id}/deny
 # ---------------------------------------------------------------------------
 
-def test_deny_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
-    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+def test_deny_access_request_ok(mock_client, mock_cursor_context, mocker):
+    mocker.patch("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"notification_email": None}
     resp = mock_client.post(

@@ -513,7 +513,7 @@ jobs:
         # image tag, mirroring how Airflow is its own container in prod.
         run: |
           python -m venv /tmp/airflow-venv
-          /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest psycopg2-binary requests
+          /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest pytest-mock psycopg2-binary requests
 
       - name: Create the Airflow metadata schema (airflow db migrate)
         # Plan 139 Stage F. Production runs this same command on every stack
@@ -537,7 +537,7 @@ jobs:
           AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:ci_airflow@localhost:5432/cartracker
           AIRFLOW__CORE__LOAD_EXAMPLES: "false"
 
-      - name: Run SQL smoke tests (Layer 1)
+      - name: Run SQL smoke tests (Layer 2)
         run: pytest tests/integration/sql/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -636,7 +636,7 @@ jobs:
             -r ops/requirements.txt \
             -r dbt_runner/requirements.txt
 
-      - name: Run API integration tests (Layer 3)
+      - name: Run API integration tests (Layer 4)
         run: pytest tests/integration/ops/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}

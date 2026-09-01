@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -197,14 +197,15 @@ def test_run_prune_does_not_post_when_pack_was_skipped(dag_module):
     assert "pack did not select" in result["reason"]
 
 
-def test_run_pack_targets_the_worker_and_honors_conf_overrides(dag_module):
+def test_run_pack_targets_the_worker_and_honors_conf_overrides(dag_module, monkeypatch):
     context = _context(
         conf={"max_packs": 2},
         params=dag_module.DEFAULT_PARAMS,
     )
     sensors, post = _fake_sensors(_pack_result())
-    with patch.dict(sys.modules, {"sensors": sensors}):
-        dag_module._run_pack(**context)
+    monkeypatch.setitem(sys.modules, "sensors", sensors)
+
+    dag_module._run_pack(**context)
 
     post.assert_called_once_with(
         "http://pack-worker:8001/pack/bronze/run",
@@ -218,7 +219,7 @@ def test_run_pack_targets_the_worker_and_honors_conf_overrides(dag_module):
     )
 
 
-def test_run_prune_derives_year_and_month_from_pack_result(dag_module):
+def test_run_prune_derives_year_and_month_from_pack_result(dag_module, monkeypatch):
     context = _context(xcom_result=_pack_result(), params=dag_module.DEFAULT_PARAMS)
     clean_prune = {
         "artifact_type": "detail_page",
@@ -229,8 +230,9 @@ def test_run_prune_derives_year_and_month_from_pack_result(dag_module):
         "capped": False,
     }
     sensors, post = _fake_sensors(clean_prune)
-    with patch.dict(sys.modules, {"sensors": sensors}):
-        dag_module._run_prune(**context)
+    monkeypatch.setitem(sys.modules, "sensors", sensors)
+
+    dag_module._run_prune(**context)
 
     post.assert_called_once_with(
         "http://pack-worker:8001/pack/bronze/prune",
@@ -246,13 +248,14 @@ def test_run_prune_derives_year_and_month_from_pack_result(dag_module):
     )
 
 
-def test_run_verify_calls_the_read_path_canary_after_prune(dag_module):
+def test_run_verify_calls_the_read_path_canary_after_prune(dag_module, monkeypatch):
     prune_result = {"artifact_type": "detail_page", "year": 2026, "month": 7}
     context = _context(xcom_result=prune_result, params=dag_module.DEFAULT_PARAMS)
     clean_verify = {"verified": 5, "failed": 0}
     sensors, post = _fake_sensors(clean_verify)
-    with patch.dict(sys.modules, {"sensors": sensors}):
-        dag_module._run_verify(**context)
+    monkeypatch.setitem(sys.modules, "sensors", sensors)
+
+    dag_module._run_verify(**context)
 
     post.assert_called_once_with(
         "http://pack-worker:8001/pack/bronze/verify",

@@ -1,5 +1,5 @@
 """
-Layer 3 — authorized_users mutation integration tests.
+Layer 4 — authorized_users mutation integration tests.
 
 Covers POST /admin/users/{id}/role and POST /admin/users/{id}/revoke.
 

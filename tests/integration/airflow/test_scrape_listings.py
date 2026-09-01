@@ -12,7 +12,9 @@ verified that the DAG was constructing the same format when calling the API.
 """
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+import pytest
 
 # Ensure airflow/dags/ is importable so the DAG module loads cleanly.
 DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
@@ -20,6 +22,12 @@ if str(DAGS_DIR) not in sys.path:
     sys.path.insert(0, str(DAGS_DIR))
 
 from scrape_listings import _run_scrapes  # noqa: E402
+
+# Without this the CI step -- `pytest tests/integration/airflow/ -m integration`
+# -- collects this file and deselects every test in it, so the suite counts as
+# invoked and runs nothing. Plan 162 Stage 5 (CAR-49) found it while converting
+# the file to `mocker`.
+pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,7 +77,7 @@ def _completed_job(job_id, artifact_count=5):
 class TestRunScrapesPayloadContract:
     """Verify _run_scrapes sends the payload structure that scrape_results() expects."""
 
-    def test_post_body_is_wrapped_in_params_key(self):
+    def test_post_body_is_wrapped_in_params_key(self, mocker):
         """
         The JSON body sent to POST /scrape_results must be {"params": {...}},
         not the flat dict from search_configs.params.
@@ -95,14 +103,13 @@ class TestRunScrapesPayloadContract:
         fetched_resp.json.return_value = {"job_id": job_id, "status": "fetched"}
         fetched_resp.raise_for_status = MagicMock()
 
-        with patch("scrape_listings.requests.post") as mock_post, \
-             patch("scrape_listings.requests.get") as mock_get, \
-             patch("scrape_listings.time.sleep"):
+        mock_post = mocker.patch("scrape_listings.requests.post")
+        mock_get = mocker.patch("scrape_listings.requests.get")
+        mocker.patch("scrape_listings.time.sleep")
+        mock_post.return_value = submit_resp
+        mock_get.return_value = poll_resp
 
-            mock_post.return_value = submit_resp
-            mock_get.return_value = poll_resp
-
-            _run_scrapes(**context)
+        _run_scrapes(**context)
 
         # Find the /scrape_results call (not the /fetched call)
         srp_calls = [
@@ -121,7 +128,7 @@ class TestRunScrapesPayloadContract:
             assert "makes" in body["params"], "body['params'] missing 'makes'"
             assert "models" in body["params"], "body['params'] missing 'models'"
 
-    def test_makes_and_models_reach_scraper_correctly(self):
+    def test_makes_and_models_reach_scraper_correctly(self, mocker):
         """makes and models from search_configs are present at body['params']['makes/models']."""
         config = _make_config(search_key="kia-sportage_hybrid")
         rotation = _make_rotation([config])
@@ -136,11 +143,11 @@ class TestRunScrapesPayloadContract:
         poll_resp.json.return_value = [_completed_job(job_id)]
         poll_resp.raise_for_status = MagicMock()
 
-        with patch("scrape_listings.requests.post", return_value=submit_resp), \
-             patch("scrape_listings.requests.get", return_value=poll_resp), \
-             patch("scrape_listings.time.sleep"):
+        mocker.patch("scrape_listings.requests.post", return_value=submit_resp)
+        mocker.patch("scrape_listings.requests.get", return_value=poll_resp)
+        mocker.patch("scrape_listings.time.sleep")
 
-            _run_scrapes(**context)
+        _run_scrapes(**context)
 
         srp_calls = [
             c for c in submit_resp.mock_calls
@@ -148,13 +155,12 @@ class TestRunScrapesPayloadContract:
         ]
 
         # Re-run with captured mock_post
-        with patch("scrape_listings.requests.post") as mock_post, \
-             patch("scrape_listings.requests.get") as mock_get, \
-             patch("scrape_listings.time.sleep"):
-
-            mock_post.return_value = submit_resp
-            mock_get.return_value = poll_resp
-            _run_scrapes(**context)
+        mock_post = mocker.patch("scrape_listings.requests.post")
+        mock_get = mocker.patch("scrape_listings.requests.get")
+        mocker.patch("scrape_listings.time.sleep")
+        mock_post.return_value = submit_resp
+        mock_get.return_value = poll_resp
+        _run_scrapes(**context)
 
         srp_calls = [
             c for c in mock_post.call_args_list
@@ -165,7 +171,7 @@ class TestRunScrapesPayloadContract:
         assert body["params"]["makes"] == ["honda"] or body["params"]["makes"] is not None
         assert body["params"]["models"] is not None
 
-    def test_one_post_per_config_scope(self):
+    def test_one_post_per_config_scope(self, mocker):
         """A config with two scopes produces two POST /scrape_results calls."""
         config = _make_config(scopes=["local", "national"])
         rotation = _make_rotation([config])
@@ -190,15 +196,15 @@ class TestRunScrapesPayloadContract:
         poll_resp.json.return_value = completed
         poll_resp.raise_for_status = MagicMock()
 
-        with patch("scrape_listings.requests.post", side_effect=post_side_effect), \
-             patch("scrape_listings.requests.get", return_value=poll_resp), \
-             patch("scrape_listings.time.sleep"):
+        mocker.patch("scrape_listings.requests.post", side_effect=post_side_effect)
+        mocker.patch("scrape_listings.requests.get", return_value=poll_resp)
+        mocker.patch("scrape_listings.time.sleep")
 
-            _run_scrapes(**context)
+        _run_scrapes(**context)
 
         assert call_count == 2, f"Expected 2 scrape_results POSTs, got {call_count}"
 
-    def test_scope_sent_as_query_param(self):
+    def test_scope_sent_as_query_param(self, mocker):
         """The scope must appear as a query param, not inside the JSON body."""
         config = _make_config(scopes=["national"])
         rotation = _make_rotation([config])
@@ -213,12 +219,12 @@ class TestRunScrapesPayloadContract:
         poll_resp.json.return_value = [_completed_job(job_id)]
         poll_resp.raise_for_status = MagicMock()
 
-        with patch("scrape_listings.requests.post") as mock_post, \
-             patch("scrape_listings.requests.get", return_value=poll_resp), \
-             patch("scrape_listings.time.sleep"):
+        mock_post = mocker.patch("scrape_listings.requests.post")
+        mocker.patch("scrape_listings.requests.get", return_value=poll_resp)
+        mocker.patch("scrape_listings.time.sleep")
+        mock_post.return_value = submit_resp
 
-            mock_post.return_value = submit_resp
-            _run_scrapes(**context)
+        _run_scrapes(**context)
 
         srp_calls = [
             c for c in mock_post.call_args_list
@@ -235,41 +241,42 @@ class TestRunScrapesPayloadContract:
 # ---------------------------------------------------------------------------
 
 class TestRunScrapesGuards:
-    def test_empty_configs_skips_scrape(self):
+    def test_empty_configs_skips_scrape(self, mocker):
         """When advance_rotation returns no configs, no HTTP calls are made."""
         rotation = _make_rotation(configs=[], slot=None, run_id=None)
         context = _mock_context(rotation)
 
-        with patch("scrape_listings.requests.post") as mock_post, \
-             patch("scrape_listings.requests.get") as mock_get:
+        mock_post = mocker.patch("scrape_listings.requests.post")
+        mock_get = mocker.patch("scrape_listings.requests.get")
 
-            result = _run_scrapes(**context)
+        result = _run_scrapes(**context)
 
         mock_post.assert_not_called()
         mock_get.assert_not_called()
         assert result["skipped"] is True
 
-    def test_xcom_null_pull_does_not_crash(self):
+    def test_xcom_null_pull_does_not_crash(self, mocker):
         """When advance_rotation was skipped, xcom_pull returns None → must not AttributeError."""
         ti = MagicMock()
         ti.xcom_pull.return_value = None
         context = {"ti": ti}
 
-        with patch("scrape_listings.requests.post") as mock_post, \
-             patch("scrape_listings.requests.get") as mock_get:
-            result = _run_scrapes(**context)
+        mock_post = mocker.patch("scrape_listings.requests.post")
+        mock_get = mocker.patch("scrape_listings.requests.get")
+
+        result = _run_scrapes(**context)
 
         mock_post.assert_not_called()
         mock_get.assert_not_called()
         assert result["skipped"] is True
 
-    def test_too_soon_reason_propagated(self):
+    def test_too_soon_reason_propagated(self, mocker):
         rotation = {"slot": None, "run_id": None, "configs": [], "reason": "too_soon"}
         context = _mock_context(rotation)
 
-        with patch("scrape_listings.requests.post"), \
-             patch("scrape_listings.requests.get"):
+        mocker.patch("scrape_listings.requests.post")
+        mocker.patch("scrape_listings.requests.get")
 
-            result = _run_scrapes(**context)
+        result = _run_scrapes(**context)
 
         assert result["reason"] == "too_soon"

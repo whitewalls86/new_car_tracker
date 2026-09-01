@@ -14,10 +14,9 @@ logging, os and requests, so the one piece of this repo that is supposed to
 speak up when everything else breaks does not need an Airflow install to be
 covered.
 """
-import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -58,13 +57,13 @@ def _context(*, task_states=None, xcoms=None, states_error=None, logical_date=No
 
 
 @pytest.fixture
-def telegram():
-    """Configured credentials and a captured sendMessage. Yields the mock post."""
-    with patch.dict(
-        os.environ, {"TELEGRAM_API": "test-token", "TELEGRAM_CHAT_ID": "-100"}
-    ), patch("notifications.requests.post") as post:
-        post.return_value = MagicMock(ok=True, status_code=200, text="")
-        yield post
+def telegram(mocker, monkeypatch):
+    """Configured credentials and a captured sendMessage. Returns the mock post."""
+    monkeypatch.setenv("TELEGRAM_API", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    post = mocker.patch("notifications.requests.post")
+    post.return_value = MagicMock(ok=True, status_code=200, text="")
+    return post
 
 
 def _sent_text(post):
@@ -318,14 +317,16 @@ class TestItStillPagesWhenThingsGoWrongInsideIt:
 
         assert len(_sent_text(telegram)) <= MAX_MESSAGE_CHARS
 
-    def test_no_credentials_means_no_send(self):
-        with patch.dict(os.environ, {"TELEGRAM_API": "", "TELEGRAM_CHAT_ID": ""}), \
-             patch("notifications.requests.post") as post:
-            sent = send_failure_alert(
-                _context(task_states={"dbt_build": "failed"}),
-                "dbt build FAILED",
-                task_ids=("dbt_build",),
-            )
+    def test_no_credentials_means_no_send(self, mocker, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_API", "")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
+        post = mocker.patch("notifications.requests.post")
+
+        sent = send_failure_alert(
+            _context(task_states={"dbt_build": "failed"}),
+            "dbt build FAILED",
+            task_ids=("dbt_build",),
+        )
 
         assert sent is False
         post.assert_not_called()

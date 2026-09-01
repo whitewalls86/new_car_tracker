@@ -1,9 +1,9 @@
 """
-Layer 3 — ops maintenance endpoint integration tests.
+Layer 4 — ops maintenance endpoint integration tests.
 
 Validates the HTTP layer (routing, response shape, DB side effect) for the
 expire-orphan-detail-claims endpoint. SQL logic edge cases are covered by
-the Layer 1 tests in test_maintenance.py.
+test_maintenance.py beside it.
 """
 import uuid
 

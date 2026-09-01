@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for the processing service.
+Layer 2 — SQL smoke tests for the processing service.
 
 Tests every SQL statement issued by processing/processor.py against a real DB
 with Flyway migrations applied. Does not invoke MinIO or the parsers — those

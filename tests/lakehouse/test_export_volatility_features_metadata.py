@@ -102,13 +102,13 @@ class TestCleanupKeys:
 
         assert matching == [f"{prefix}data/f1.parquet", f"{prefix}metadata/v1.metadata.json"]
 
-    def test_rejects_non_spike_prefix(self, monkeypatch):
+    def test_rejects_non_spike_prefix(self, mocker):
         import scripts.spike_iceberg_lakehouse as spike_module
 
         def _always_unsafe(key):
             raise UnsafePrefixError(key)
 
-        monkeypatch.setattr(spike_module, "require_spike_prefix", _always_unsafe)
+        mocker.patch.object(spike_module, "require_spike_prefix", _always_unsafe)
         prefix = "silver_normalized/observations/"
         with pytest.raises(UnsafePrefixError):
             cleanup_keys([f"{prefix}f1.parquet"], prefix)

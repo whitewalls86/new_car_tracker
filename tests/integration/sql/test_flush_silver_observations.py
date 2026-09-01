@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for flush_silver_observations.
+Layer 2 — SQL smoke tests for flush_silver_observations.
 
 Validates the SELECT / DELETE SQL patterns used by flush_silver_observations
 against a real DB with Flyway migrations applied. Tests catch schema breakage
