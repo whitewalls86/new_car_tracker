@@ -10,8 +10,26 @@ import uuid
 import pytest
 
 from processing.queries import (
+    BATCH_LOOKUP_VIN_TO_LISTING,
     CLAIM_ARTIFACT,
+    CLAIM_ARTIFACTS,
+    CLEAR_BLOCKED_COOLDOWN,
+    DELETE_PRICE_OBSERVATION,
+    DELETE_PRICE_OBSERVATION_BY_VIN,
     DELETE_PRICE_OBSERVATIONS_FOR_MISSING_LISTINGS,
+    GET_TRACKED_MODELS,
+    INSERT_ARTIFACT_EVENT,
+    INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
+    INSERT_DETAIL_CLAIM_EVENT,
+    INSERT_PRICE_OBSERVATION_EVENT,
+    INSERT_TRACKED_MODEL_EVENT,
+    INSERT_VIN_TO_LISTING_EVENT,
+    LOOKUP_VIN_COLLISION,
+    MARK_ARTIFACT_STATUS,
+    RELEASE_DETAIL_CLAIMS,
+    UPSERT_PRICE_OBSERVATION,
+    UPSERT_TRACKED_MODEL,
+    UPSERT_VIN_TO_LISTING,
 )
 
 pytestmark = pytest.mark.integration
@@ -596,3 +614,188 @@ class TestExtractedProcessingStatements:
             (["NOSUCHVIN00000000"], [str(uuid.uuid4())]),
         )
         assert cur.rowcount == 0
+
+
+# ===========================================================================
+# Every remaining processing statement, executed — Plan 162 Stage 7
+# ===========================================================================
+
+class TestProcessingQueueStatements:
+    """The artifacts_queue lifecycle, in the order processing runs it."""
+
+    def test_claim_artifacts_by_type(self, cur):
+        row = _insert_artifact(cur, artifact_type="detail_page", status="pending")
+        # type_filter is a .format() slot, not a bind parameter: the caller
+        # composes it in processing/routers/batch.py. Both branches are shapes
+        # production issues, so both are executed here.
+        cur.execute(
+            CLAIM_ARTIFACTS.format(type_filter="AND artifact_type = 'detail_page'"),
+            {"limit": 10},
+        )
+        claimed = {r["artifact_id"] for r in cur.fetchall()}
+        assert row["artifact_id"] in claimed
+
+    def test_claim_artifacts_without_a_type_filter(self, cur):
+        _insert_artifact(cur, status="pending")
+        cur.execute(CLAIM_ARTIFACTS.format(type_filter=""), {"limit": 1})
+        assert len(cur.fetchall()) == 1
+
+    def test_mark_artifact_status(self, cur):
+        row = _insert_artifact(cur)
+        cur.execute(
+            MARK_ARTIFACT_STATUS,
+            {"status": "complete", "artifact_id": row["artifact_id"]},
+        )
+        assert cur.rowcount == 1
+
+    def test_insert_artifact_event(self, cur):
+        row = _insert_artifact(cur)
+        cur.execute(INSERT_ARTIFACT_EVENT, {
+            "artifact_id": row["artifact_id"],
+            "status": "complete",
+            "minio_path": row["minio_path"],
+            "artifact_type": row["artifact_type"],
+            "fetched_at": row["fetched_at"],
+            "listing_id": None,
+            "run_id": None,
+        })
+        assert cur.rowcount == 1
+
+
+class TestPriceObservationStatements:
+    """ops.price_observations and its staging twin."""
+
+    def _observation(self, listing_id, artifact_id):
+        return {
+            "listing_id": listing_id,
+            "vin": "1HGCM82633A004352",
+            "price": 25000,
+            "make": "Honda",
+            "model": "Accord",
+            "customer_id": "dealer-1",
+            "last_seen_at": "2099-01-01T00:00:00+00:00",
+            "last_artifact_id": artifact_id,
+            "last_detail_enriched_at": None,
+        }
+
+    def test_upsert_then_lookup_then_delete(self, cur):
+        artifact = _insert_artifact(cur)
+        listing_id = _random_listing_id()
+        payload = self._observation(listing_id, artifact["artifact_id"])
+
+        cur.execute(UPSERT_PRICE_OBSERVATION, payload)
+        assert cur.rowcount == 1
+        # Re-running the same observation must take the ON CONFLICT branch
+        # rather than raising: processing writes every sighting, not just new
+        # ones.
+        cur.execute(UPSERT_PRICE_OBSERVATION, payload)
+        assert cur.rowcount == 1
+
+        cur.execute(
+            LOOKUP_VIN_COLLISION,
+            {"vin": payload["vin"], "listing_id": _random_listing_id()},
+        )
+        assert any(r["listing_id"] == listing_id for r in cur.fetchall())
+
+        cur.execute(DELETE_PRICE_OBSERVATION, {"listing_id": listing_id})
+        assert cur.rowcount == 1
+
+    def test_delete_price_observation_by_vin(self, cur):
+        artifact = _insert_artifact(cur)
+        listing_id = _random_listing_id()
+        cur.execute(
+            UPSERT_PRICE_OBSERVATION,
+            self._observation(listing_id, artifact["artifact_id"]),
+        )
+        cur.execute(DELETE_PRICE_OBSERVATION_BY_VIN, {"old_listing_id": listing_id})
+        assert cur.rowcount == 1
+
+    def test_insert_price_observation_event(self, cur):
+        artifact = _insert_artifact(cur)
+        cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
+            "listing_id": _random_listing_id(),
+            "vin": "1HGCM82633A004352",
+            "price": 25000,
+            "make": "Honda",
+            "model": "Accord",
+            "artifact_id": artifact["artifact_id"],
+            "event_type": "created",
+            "source": "detail",
+        })
+        assert cur.rowcount == 1
+
+
+class TestVinToListingStatements:
+
+    def test_upsert_batch_lookup_and_event(self, cur):
+        artifact = _insert_artifact(cur)
+        listing_id = _random_listing_id()
+        vin = "1HGCM82633A004353"
+
+        cur.execute(UPSERT_VIN_TO_LISTING, {
+            "vin": vin,
+            "listing_id": listing_id,
+            "mapped_at": "2099-01-01T00:00:00+00:00",
+            "artifact_id": artifact["artifact_id"],
+        })
+        assert cur.rowcount == 1
+
+        cur.execute(BATCH_LOOKUP_VIN_TO_LISTING, {"listing_ids": [listing_id]})
+        assert [r["vin"] for r in cur.fetchall()] == [vin]
+
+        cur.execute(INSERT_VIN_TO_LISTING_EVENT, {
+            "vin": vin,
+            "listing_id": listing_id,
+            "artifact_id": artifact["artifact_id"],
+            "event_type": "mapped",
+            "previous_listing_id": None,
+        })
+        assert cur.rowcount == 1
+
+    def test_batch_lookup_matching_nothing(self, cur):
+        cur.execute(BATCH_LOOKUP_VIN_TO_LISTING, {"listing_ids": [_random_listing_id()]})
+        assert cur.fetchall() == []
+
+
+class TestTrackedModelStatements:
+
+    def test_upsert_is_idempotent_then_get_and_event(self, cur, seed_search_config):
+        payload = {"search_key": seed_search_config, "make": "Honda", "model": "Accord"}
+
+        cur.execute(UPSERT_TRACKED_MODEL, payload)
+        assert cur.rowcount == 1
+        # ON CONFLICT DO NOTHING: the second write is a no-op, not an error.
+        cur.execute(UPSERT_TRACKED_MODEL, payload)
+        assert cur.rowcount == 0
+
+        cur.execute(GET_TRACKED_MODELS)
+        assert ("Honda", "Accord") in {(r["make"], r["model"]) for r in cur.fetchall()}
+
+        cur.execute(INSERT_TRACKED_MODEL_EVENT, dict(payload, event_type="added"))
+        assert cur.rowcount == 1
+
+
+class TestDetailClaimAndCooldownStatements:
+
+    def test_insert_detail_claim_event(self, cur):
+        cur.execute(INSERT_DETAIL_CLAIM_EVENT, {
+            "listing_id": _random_listing_id(),
+            "run_id": _random_listing_id(),
+            "status": "claimed",
+        })
+        assert cur.rowcount == 1
+
+    def test_release_detail_claims_matching_nothing(self, cur):
+        cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": _random_listing_id()})
+        assert cur.rowcount == 0
+
+    def test_clear_blocked_cooldown_matching_nothing(self, cur):
+        cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": _random_listing_id()})
+        assert cur.fetchone() is None
+
+    def test_insert_blocked_cooldown_cleared_event(self, cur):
+        cur.execute(INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT, {
+            "listing_id": _random_listing_id(),
+            "num_of_attempts": 3,
+        })
+        assert cur.rowcount == 1

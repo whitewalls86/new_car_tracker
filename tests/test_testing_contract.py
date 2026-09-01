@@ -850,36 +850,17 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 # ---------------------------------------------------------------------------
 # Rule 5 -- every .sql file is executed by a Layer 2 test.
 # ---------------------------------------------------------------------------
+# One entry left, and it is not a missing test. processing/sql/
+# get_active_search_configs.sql was added by Plan 93 with the processing
+# service and has never been referenced by any Python file since -- no
+# constant loads it, no call site names it, and `git log -S` finds only the
+# contract test that waives it. Writing it a Layer 2 test would cover code
+# nothing calls; deleting it would shrink the denominator, which is what
+# G16 exists to police. It stays waived until someone decides which.
 LAYER_2_WAIVERS = tuple(
     Waiver(subject, gap="G14", owner=162)
     for subject in (
-        "ops/sql/evict_delisted_cooldowns.sql",
-        "ops/sql/expire_orphan_detail_claims.sql",
-        "ops/sql/insert_artifact_event.sql",
-        "ops/sql/insert_blocked_cooldown_cleared_event.sql",
-        "ops/sql/mark_artifact_status.sql",
-        "ops/sql/select_live_cooldown_listings.sql",
-        "ops/sql/select_pending_cleared_listings.sql",
-        "ops/sql/select_stuck_processing_artifacts.sql",
-        "processing/sql/batch_lookup_vin_to_listing.sql",
-        "processing/sql/claim_artifacts.sql",
-        "processing/sql/clear_blocked_cooldown.sql",
-        "processing/sql/delete_price_observation.sql",
-        "processing/sql/delete_price_observation_by_vin.sql",
         "processing/sql/get_active_search_configs.sql",
-        "processing/sql/get_tracked_models.sql",
-        "processing/sql/insert_artifact_event.sql",
-        "processing/sql/insert_blocked_cooldown_cleared_event.sql",
-        "processing/sql/insert_detail_claim_event.sql",
-        "processing/sql/insert_price_observation_event.sql",
-        "processing/sql/insert_tracked_model_event.sql",
-        "processing/sql/insert_vin_to_listing_event.sql",
-        "processing/sql/lookup_vin_collision.sql",
-        "processing/sql/mark_artifact_status.sql",
-        "processing/sql/release_detail_claims.sql",
-        "processing/sql/upsert_price_observation.sql",
-        "processing/sql/upsert_tracked_model.sql",
-        "processing/sql/upsert_vin_to_listing.sql",
     )
 )
 
@@ -1069,6 +1050,71 @@ def production_python_files() -> list[Path]:
                 continue
             seen[relative] = path
     return [seen[key] for key in sorted(seen)]
+
+
+# ---------------------------------------------------------------------------
+# Rule 5d -- no statement is filed twice.
+# ---------------------------------------------------------------------------
+# One pair, and it is a decision rather than an oversight. `cancel` refuses
+# anything past 'draining' and the deploy facade releases unconditionally --
+# two policies that agree today, enforced in the Python around them rather than
+# in the statements, which is why the statements match. Consolidating would
+# couple two rules that are allowed to diverge.
+DUPLICATE_SQL_WAIVERS: tuple[Waiver, ...] = (
+    Waiver(
+        "ops/sql/cancel_coordination_state.sql == "
+        "ops/sql/release_deploy_coordination.sql",
+        gap="G17",
+        owner=162,
+    ),
+)
+
+
+def _sql_body(relative: str) -> str:
+    """A ``.sql`` file's statement, with comments and whitespace normalised."""
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    body = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    )
+    return re.sub(r"\s+", " ", body).strip().rstrip(";")
+
+
+def test_no_two_production_sql_files_hold_the_same_statement():
+    """A statement filed twice is two things to edit and one to forget.
+
+    Found on 2026-09-01, while writing Layer 2 tests for the last of G14:
+    ``mark_artifact_status``, ``insert_artifact_event`` and
+    ``insert_blocked_cooldown_cleared_event`` each existed **byte-identically**
+    under both ``ops/sql/`` and ``processing/sql/``. Both services issue them
+    against the same tables, so the schema already coupled the two -- the copies
+    decoupled nothing and only made a second place to edit, with nothing to
+    notice when one moved. They are now one file each under ``shared/sql/``,
+    re-exported by both services' ``queries.py`` so no call site changed.
+
+    **The weak reading made this worse than it looks.** Rule 5 credits a
+    ``.sql`` file when a Layer 2 module names its *stem*, and these pairs shared
+    one -- so a test of ``processing``'s copy silently credited ``ops``'s. Three
+    files were reported covered by a test that never executed them, which is
+    the same defect as the paraphrase, arriving through the checker instead of
+    the test.
+
+    This rule is cheap and general: it compares every production statement to
+    every other, so the next duplicate is a failure rather than a discovery.
+    """
+    bodies: dict[str, list[str]] = {}
+    for relative in production_sql_files():
+        bodies.setdefault(_sql_body(relative), []).append(relative)
+    found = {
+        " == ".join(sorted(group))
+        for group in bodies.values()
+        if len(group) > 1
+    }
+    _assert_exactly(
+        found,
+        DUPLICATE_SQL_WAIVERS,
+        "these production .sql files hold the same statement, so one of them "
+        "will be edited and the other will not:",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2013,6 +2059,7 @@ ALL_WAIVERS = (
     + MOCKER_WAIVERS
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
+    + DUPLICATE_SQL_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + LAYER_NUMBER_WAIVERS
@@ -2114,6 +2161,7 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("mocker", MOCKER_WAIVERS),
         ("route coverage", ROUTE_WAIVERS),
         ("Layer 2 SQL", LAYER_2_WAIVERS),
+        ("duplicate SQL", DUPLICATE_SQL_WAIVERS),
         ("inline SQL", INLINE_SQL_WAIVERS),
         ("SQL literal", SQL_LITERAL_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),

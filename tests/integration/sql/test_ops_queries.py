@@ -24,7 +24,10 @@ from ops.queries import (
     DELETE_AUTHORIZED_USER,
     DELETE_DETAIL_SCRAPE_CLAIMS,
     DENY_ACCESS_REQUEST,
+    EVICT_DELISTED_COOLDOWNS,
+    EXPIRE_ORPHAN_DETAIL_CLAIMS,
     INSERT_ACCESS_REQUEST,
+    INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
     INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH,
     INSERT_COMPLETION_RECEIPT,
     INSERT_COORDINATION_RELEASE_EVIDENCE,
@@ -47,13 +50,16 @@ from ops.queries import (
     SELECT_DEPLOY_INTENT_STATUS,
     SELECT_LAST_QUEUED_AT,
     SELECT_LEGACY_SEARCH_CONFIG,
+    SELECT_LIVE_COOLDOWN_LISTINGS,
     SELECT_NEXT_ROTATION_SLOT,
+    SELECT_PENDING_CLEARED_LISTINGS,
     SELECT_PENDING_REQUEST_DETAILS,
     SELECT_PENDING_REQUEST_FOR_EMAIL,
     SELECT_PENDING_REQUEST_ID_FOR_EMAIL,
     SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL,
     SELECT_RELEASE_EVIDENCE,
     SELECT_ROTATION_SLOT_CONFIGS,
+    SELECT_STUCK_PROCESSING_ARTIFACTS,
     SELECT_USER_ROLE,
     SET_DEPLOY_INTENT,
     UPDATE_USER_ROLE,
@@ -1057,3 +1063,62 @@ class TestScrapeStatements:
         # Plan 147 added is still there rather than asserting a row count.
         cur.execute(RECORD_DETAIL_FETCHES, ([listing_id],))
         assert cur.rowcount == 0
+
+
+# ===========================================================================
+# The maintenance statements, executed — Plan 162 Stage 7
+# ===========================================================================
+
+class TestMaintenanceStatements:
+    """The five ops statements the census found no layer executing.
+
+    Each is parameterless and touches a table ``ops/routers/maintenance.py``
+    owns, so the seeding here is what makes them more than a parse check: an
+    unseeded ``DELETE ... RETURNING`` proves the statement plans and nothing
+    about which rows it takes.
+    """
+
+    def test_select_stuck_processing_artifacts(self, cur):
+        cur.execute(SELECT_STUCK_PROCESSING_ARTIFACTS)
+        cur.fetchall()
+
+    def test_expire_orphan_detail_claims(self, cur):
+        cur.execute(EXPIRE_ORPHAN_DETAIL_CLAIMS)
+        cur.fetchall()
+
+    def test_evict_delisted_cooldowns_takes_a_listing_with_no_observation(self, cur):
+        # A cooldown whose listing has no price observation is precisely what
+        # this evicts, so seeding one exercises the NOT EXISTS branch rather
+        # than only proving the statement plans.
+        listing_id = str(uuid.uuid4())
+        cur.execute(
+            "INSERT INTO ops.blocked_cooldown (listing_id, num_of_attempts) "
+            "VALUES (%s, 1)",
+            (listing_id,),
+        )
+        cur.execute(EVICT_DELISTED_COOLDOWNS)
+        assert listing_id in {str(row["listing_id"]) for row in cur.fetchall()}
+
+    def test_select_live_cooldown_listings(self, cur):
+        listing_id = str(uuid.uuid4())
+        cur.execute(
+            "INSERT INTO ops.blocked_cooldown (listing_id, num_of_attempts) "
+            "VALUES (%s, 2)",
+            (listing_id,),
+        )
+        cur.execute(SELECT_LIVE_COOLDOWN_LISTINGS)
+        assert listing_id in {row["listing_id"] for row in cur.fetchall()}
+
+    def test_cleared_event_is_read_back_by_the_pending_query(self, cur):
+        # The reconcile pass writes with one statement and reads with the
+        # other, so the two have to agree on event_type = 'cleared'. Running
+        # them as a pair is what proves that; either alone would not.
+        listing_id = str(uuid.uuid4())
+        cur.execute(INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT, {
+            "listing_id": listing_id,
+            "num_of_attempts": 4,
+        })
+        assert cur.rowcount == 1
+
+        cur.execute(SELECT_PENDING_CLEARED_LISTINGS)
+        assert listing_id in {row["listing_id"] for row in cur.fetchall()}

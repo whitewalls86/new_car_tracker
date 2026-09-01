@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from shared import queries as shared_queries
 from shared.query_loader import load_query
 
 _SQL_DIR = Path(__file__).parent / "sql"
@@ -13,12 +14,9 @@ EXPIRE_ORPHAN_DETAIL_CLAIMS = _q("expire_orphan_detail_claims")
 
 # Stuck-processing artifact reaper
 SELECT_STUCK_PROCESSING_ARTIFACTS = _q("select_stuck_processing_artifacts")
-MARK_ARTIFACT_STATUS = _q("mark_artifact_status")
-INSERT_ARTIFACT_EVENT = _q("insert_artifact_event")
 
 # Blocked-cooldown cleanup / reconciliation
 EVICT_DELISTED_COOLDOWNS = _q("evict_delisted_cooldowns")
-INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = _q("insert_blocked_cooldown_cleared_event")
 SELECT_LIVE_COOLDOWN_LISTINGS = _q("select_live_cooldown_listings")
 SELECT_PENDING_CLEARED_LISTINGS = _q("select_pending_cleared_listings")
 INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH = _q("insert_blocked_cooldown_events_batch")
@@ -78,3 +76,14 @@ SELECT_ROTATION_SLOT_CONFIGS = _q("select_rotation_slot_configs")
 CLAIM_DETAIL_SCRAPE_BATCH = _q("claim_detail_scrape_batch")
 DELETE_DETAIL_SCRAPE_CLAIMS = _q("delete_detail_scrape_claims")
 RECORD_DETAIL_FETCHES = _q("record_detail_fetches")
+
+# Issued by this service and by the other one, against tables they share, so
+# the statement lives in shared/sql/ and there is exactly one copy. Re-exported
+# here rather than imported at each call site: this module is the service's
+# query surface, and what it exports should not depend on where a statement
+# happens to be filed.
+MARK_ARTIFACT_STATUS = shared_queries.MARK_ARTIFACT_STATUS
+INSERT_ARTIFACT_EVENT = shared_queries.INSERT_ARTIFACT_EVENT
+INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = (
+    shared_queries.INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
+)
