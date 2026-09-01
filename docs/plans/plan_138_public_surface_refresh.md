@@ -2,7 +2,8 @@
 
 ## Status
 
-**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. Stages 2 through 6 not started.**
+**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. STAGE 7 BUILT AND UNDEPLOYED.**
+**Stages 2 through 6 not started.**
 Written 2026-08-17 after comparing the live `https://cartracker.info/info` page
 and `README.md` against `master` at `6f6a2ba`.
 
@@ -14,26 +15,30 @@ reconciled overviews and the assigned replacement claims.
 | Stage 1 slice | State |
 |---|---|
 | **1a** README rewrite (CAR-38, PR #320) | Merged to `master` at `a458877`, **soaking** — merged is not closed, per the truth contract's §4 |
-| **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
+| **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31 and **deployed 2026-09-01**, soaking |
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
-| **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
-| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01, soaking and undeployed** — and *unreachable*: the 20 generated pages ship in `ops/static_ops/recaps/` but nothing serves `/recaps` until Stage 2 item 3. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
+| **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01 and **deployed the same day**, soaking. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
+| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01 and deployed the same day**, soaking. **The pages are already public and always were** — `handle /static_ops/*` is unauthenticated, so they served 200 from the moment the image carried them; measured 2026-09-01. They are *unlinked*, not unreachable, and what Stage 2 owes them is a canonical route rather than a first one. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
 | **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
 | **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
 | **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
 
-**The two public surfaces are now in different states, and the distinction
-matters.** The repository is public, so 1a's README changed a public surface the
-moment it merged. The landing page has not: 1b merged to `master` on
-2026-08-31, but the ops service has not been redeployed from it, so
-`https://cartracker.info/info` still serves the pre-plan copy the Stage 0
-baseline screenshotted. A fetch on 2026-08-31 returned 54,343 bytes still
-carrying "without manual intervention" and the hardcoded make/model counts —
-two of the phrases Stage 0 disposed of. **Merging fixed the template, not the
-surface.** Until that deploy lands, **the README and the live page disagree** —
-which is the drift this plan exists to remove, temporarily widened by fixing one
-surface before the other. Stage 6 is what closes it.
+**The two public surfaces converged on 2026-09-01, and the gap they closed is
+worth keeping in the record.** The repository is public, so 1a's README changed
+a public surface the moment it merged. The landing page lagged: 1b merged on
+2026-08-31 and `https://cartracker.info/info` went on serving the pre-plan copy
+the Stage 0 baseline screenshotted — a fetch that day returned 54,343 bytes
+still carrying "without manual intervention" and the hardcoded make/model
+counts, two of the phrases Stage 0 disposed of. **Merging fixed the template,
+not the surface**, and for a day the README and the live page disagreed.
+
+The `ops` deploy on 2026-09-01 closed it. Measured against the live page the
+same day: **98,398 bytes, zero occurrences of "without manual intervention",
+and Stage 1d's `work-planned` lists present** — so 1b, 1d, 1e and 1f are
+deployed, not merely merged, and the build order's step 1 is done. This is the
+one status claim in this document that cannot be checked from the tree, which
+is why it carries its measurement rather than an assertion.
 
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
@@ -770,7 +775,7 @@ next" nor "recently completed"; such a plan appears in **neither** list until it
 completion row lands in the archive. That is the operational form of the truth
 contract's §4 rule, and it is why the feed needs no third state.
 
-The generator writes deterministic `ops/static_ops/project-updates.json` with a
+The generator writes deterministic `ops/static_ops/generated/project-updates.json` with a
 small versioned schema:
 
 ```json
@@ -931,7 +936,7 @@ new recap that has not been regenerated.
 
 #### Stage 1e evidence — 2026-09-01 (CAR-58)
 
-`scripts/build_public_recaps.py` emits `ops/static_ops/recaps/` — 20 pages and a
+`scripts/build_public_recaps.py` emits `ops/static_ops/generated/recaps/` — 20 pages and a
 newest-first `index.html` — from the 31 files in `docs/recaps/`. CI runs
 `--check` in the documentation job, beside 1d's.
 
@@ -1907,12 +1912,13 @@ The work feed is dynamic in the browser but static and source-controlled at the
 service boundary:
 
 1. Run `python scripts/build_public_roadmap.py` whenever the roadmap changes.
-   Commit the deterministic `ops/static_ops/project-updates.json`; the existing
-   ops image build already copies it into the image.
+   Commit the deterministic `ops/static_ops/generated/project-updates.json`.
+   Stage 7 bind-mounts that directory into `ops` from the checkout, so it
+   reaches the page on the next `git pull` rather than the next image build.
 2. Add semantic "Planned next" and "Recently completed" containers to
    `info.html`, with a plain link to the GitHub roadmap as the no-JavaScript and
    fetch-failure fallback.
-3. `info.js` fetches `/static_ops/project-updates.json` after the narrative is
+3. `info.js` fetches `/static_ops/generated/project-updates.json` after the narrative is
    usable, validates `schema_version`, and renders with DOM APIs and
    `textContent` only. Do not inject feed values through `innerHTML`.
 4. Sort planned items by `order` and completed items by date even though the
@@ -2015,7 +2021,7 @@ GET /                 -> 200, no OAuth redirect
 GET /info             -> 308 -> /
 GET /recaps           -> 200 text/html, no OAuth redirect
 GET /recaps/2026-08-30 -> 200 text/html, no OAuth redirect
-GET /static_ops/project-updates.json -> 200 application/json
+GET /static_ops/generated/project-updates.json -> 200 application/json
 GET /robots.txt       -> 200 text/plain
 GET /sitemap.xml      -> 200 application/xml
 GET /dashboard        -> OAuth redirect when unauthenticated
@@ -2064,6 +2070,200 @@ both rollout and rollback.
 
 ---
 
+## Stage 7 — Publish content without an image rebuild
+
+**Raised 2026-09-01, out of Stage 2's scoping.** Stages 1d, 1e and 1g each add a
+generated artifact to the public surface, and each one updates on a cadence that
+has nothing to do with the code that serves it. Stage 4 states the delivery rule
+those stages inherited — *"New roadmap content becomes public with the next
+normal image deploy"* — and that rule was written when the roadmap projection
+was the only such artifact. It does not survive three of them.
+
+### What publishing a recap costs today
+
+`ops/Dockerfile` is `COPY . .`, and `.dockerignore` excludes only VCS, cache and
+secret paths — not `docs/`. `ops/app.py` mounts `/static_ops` from
+`StaticFiles(directory=…/static_ops)`, baked into the image. So a new recap
+reaches the site through:
+
+1. `docker compose build ops`. The cache key for `COPY . .` is the whole build
+   context, so **any** repository file invalidates that layer — *editing a plan
+   document rebuilds the ops image.*
+2. `scripts/redeploy.sh ops`, which posts `/deploy/start`, begins a coordination
+   drain, and polls `/coordination/authorize` for up to `DEPLOY_DRAIN_TIMEOUT`
+   (600s), **parking every in-scope Airflow DAG**, then recreates the container
+   and health-gates for up to `DEPLOY_HEALTH_TIMEOUT` (300s).
+3. A new image on the VM every time — which is [Plan
+   170](plan_170_container_image_reclaim_policy.md)'s problem, arriving weekly.
+4. A recreate, which changes the container's address and puts `ops` into
+   `deploy-followers.txt` territory (redeploy.sh decision 5).
+
+That is a fleet-wide pipeline pause to publish a weekly write-up. The mechanism
+is correct for code and disproportionate for prose.
+
+### The system already answers this, and this stage copies the answer
+
+Two precedents, both already paid for:
+
+- **In this same service.** `ops` mounts
+  `analytics_snapshot:/data/analytics_snapshot:ro` — Plan 143's serving
+  snapshot, written by `dbt_runner` and read read-only. Content that changes on
+  its own cadence *already* has a non-image path into `ops`.
+- **In `redeploy.sh`.** Decision 4 documents the single-file bind-mount inode
+  trap that went unnoticed twice on 2026-08-20, and `_verify_config_mounts`
+  carries the carve-out this stage depends on: *"Directory mounts are immune:
+  names resolve on every access."*
+
+### The decision
+
+**Generated public content moves to `ops/static_ops/generated/` and is
+bind-mounted read-only into `ops` from the checkout.** Publishing then becomes
+`git pull` on the VM: no build, no new image, no recreate, no drain, no address
+change, no Airflow pause. `StaticFiles` stats per request, so new files serve
+without a restart.
+
+**The `COPY` stays.** The mount overlays the image rather than replacing it, so
+the image remains self-contained — a fresh deploy on a host with no checkout
+still works, and rollback is removing the mount.
+
+**It must be a directory mount, and that is not a style preference.**
+`project-updates.json` is a single file; mounting it as one would pin the inode,
+and `git pull` replaces that file rather than editing it in place, so the
+container would go on serving a deleted copy while reporting success. That is
+redeploy.sh decision 4's defect exactly, and it fails silently. A directory
+resolves names per access and cannot fail that way.
+
+**Why `generated/` and not all of `static_ops/`.** Mounting the whole directory
+would work today and would be wrong by step 5 of the build order: **Stage 3c
+extracts the inline CSS and JavaScript into `ops/static_ops/`**. Under a
+whole-directory mount those become `git pull`-deployable, which means shipping
+*code* to production without a build, a health gate or a deploy record. The seam
+is generated data on one side and authored assets on the other, and it is far
+cheaper to draw now — two paths move — than after 3c adds two more.
+
+### What lands
+
+1. `scripts/build_public_roadmap.py` writes
+   `ops/static_ops/generated/project-updates.json`; `scripts/build_public_recaps.py`
+   writes `ops/static_ops/generated/recaps/`. Both `--check` modes follow.
+2. The template's fetch URL and Stage 2's recap route resolve the new paths.
+3. `docker-compose.yml` gains
+   `./ops/static_ops/generated:/app/ops/static_ops/generated:ro` on `ops`.
+4. A Compose contract test asserting the mount exists, is read-only, is
+   directory-shaped, and covers **every** generator output path — so a future
+   generator cannot quietly write to the image-only side.
+5. The publish procedure, written down: `git pull`, and nothing else.
+
+### Two traps, stated
+
+**Adding the mount is itself a recreate, once.** A volume change is service
+configuration, not file content: `docker compose restart ops` will not apply it
+and will report success. This one deploy needs `redeploy.sh ops`. Every
+*subsequent* content publish needs neither.
+
+**Verification is the content, not a new endpoint.** The generated artifacts are
+already publicly served, so a publish is confirmed by fetching the public URL and
+finding the new content — if the mount were absent, the image's older copy would
+answer. This is the "ask the container what it loaded" check, and it needs no new
+production surface to run.
+
+**Gate 7:** a recap added to `docs/recaps/` and regenerated becomes live on the
+site after `git pull` alone, with no image build and no container recreate,
+confirmed by fetching its public URL; the Compose contract test fails if the
+mount is removed, made writable, narrowed to a single file, or left behind by a
+new generator output path.
+
+#### Stage 7 evidence — 2026-09-01 (CAR-65)
+
+**Built 2026-09-01.** `ops/static_ops/generated/` now holds both artifacts, the
+`ops` service mounts it read-only from the checkout, and
+`tests/test_ops_content_mount.py` is 7 tests.
+
+| Gate 7 check | State |
+|---|---|
+| The mount is a read-only directory bind of the generated content | Met — `./ops/static_ops/generated:/app/ops/static_ops/generated:ro` |
+| The test fails if the mount is **removed** | Met — 3 tests fail |
+| …if it is **made writable** | Met — 2 tests fail |
+| …if it is **narrowed to a single file** | Met — 4 tests fail, including the one named for the inode trap |
+| …if a **new generator writes outside it** | Met — 1 test fails |
+| A regenerated recap goes live on `git pull` alone, confirmed by fetching its public URL | **Owed.** Nothing is deployed yet |
+
+**The four failure modes were verified by mutation, not by the suite passing.**
+Each was applied to the tree in turn, the suite run, and the file restored; the
+table above records which tests caught which. A contract test that has only ever
+been seen green is an assertion about nothing, and this stage exists precisely
+because every way the mount can fail is silent.
+
+**The generators' output is byte-identical across the move.** Both were
+re-run after the paths changed and `git status` reported renames only, with no
+content modification — so the relocation moved files and changed nothing about
+what is served.
+
+**Gate 7's runtime half is owed and its blocker is not what it looks like.** It
+needs a deploy, and this one deploy is a *recreate* — `docker compose restart
+ops` does not apply a volume change and would report success anyway. It does
+**not** need Stage 2: `handle /static_ops/*` is already public in the Caddyfile,
+so `/static_ops/generated/project-updates.json` can demonstrate the whole
+mechanism as soon as `ops` is recreated, without a single route change.
+
+**One consequence Stage 2 should know about, and it is already live.** The
+public `/static_ops/*` handler means the recap pages are fetchable at
+`/static_ops/recaps/YYYY-MM-DD.html` **today** — measured 2026-09-01, 200 with
+no OAuth redirect, from the 1e deploy earlier the same day and not from this
+slice. Stage 7 moves that URL under `generated/`; it neither creates nor removes
+the exposure.
+
+This is not a disclosure change; the truth contract's §5 already records that
+the recaps are public in the repository. It is a **canonicalisation** problem,
+and it is present rather than hypothetical: one page is reachable at a static
+path, Stage 2 adds `/recaps/YYYY-MM-DD`, and the sitemap Stage 2 introduces must
+name exactly one of them. Nothing links the static path today — the landing
+page's only recap mention points at GitHub — so the cost of leaving it is a
+duplicate URL nobody follows. The cost of *forgetting* it is a sitemap that
+publishes both.
+
+**This corrected a claim this document made twice.** Stage 1e's row and the
+Stage 2 rationale both said the generated pages were "unreachable until Stage 2
+item 3". They were never unreachable; they were unlinked. The distinction
+matters because it changes what Stage 2 is for — a canonical route and a
+sitemap that names one URL, rather than first access.
+
+**The publish procedure is written where the author stands**, not in a runbook
+nobody opens: `plan-week`'s "After writing" section now says a merged recap
+publishes on `git pull` and that `redeploy.sh ops` is the wrong tool for it, and
+the `plans` skill's note on the slice cell — already the one place that knew the
+cell is published copy — now says the edit reaches the page on the next pull.
+
+**Public surfaces: yes, and small — and the first answer here was wrong.** This
+section originally recorded a "no", reasoning that the move is internal and that
+`/static_ops/project-updates.json` becoming `/static_ops/generated/project-updates.json`
+is a fetch URL rather than a claim. Both halves of that are true and the
+conclusion was still wrong, because it only looked at the two files.
+
+The closeout's question found the surface the diff does not touch. `docs/PLANS.md`
+row 3's **Next executable slice** cell is published copy — 1h's evidence above
+records exactly that — and it read *"gives Stage 1e's 20 generated pages a URL"*.
+That is the unreachability claim this slice disproved, rendered into
+`#work-planned` on the live page. The cell was corrected through the `plans`
+skill and the projection regenerated.
+
+**The near miss is the point.** The wrong answer was not careless: it checked
+`README.md` and `ops/templates/info.html`, which is what the question names, and
+the false claim was on neither. It was in a generated projection *of* a file this
+slice edited. A surface can be moved by a build step two hops away from the diff.
+
+**Closed out 2026-09-01 against PR #337**, four commits, CI green across ten
+jobs. `Documentation tests` skipped, correctly: `scripts/ci_change_scope.py`
+routes a code-touching changeset to the unit job, where both generators'
+`--check` and committed-artifact assertions already run — checked rather than
+assumed, because those two `--check` steps exist only in the skipped job.
+
+**Six of seven exit checks met.** Gate 7's runtime half is owed to the deploy and
+is the only thing between this slice and `Done`. Cost: estimate 1, actual 1.
+
+
+---
+
 ## Expected file map
 
 | File | Change |
@@ -2076,7 +2276,7 @@ both rollout and rollback.
 | `ops/templates/info.html` | Correct copy and semantic markup |
 | `ops/static_ops/info.css` | Extracted page styles |
 | `ops/static_ops/info.js` | Accessible progressive enhancement |
-| `ops/static_ops/project-updates.json` | Deterministic public projection of planned and completed work |
+| `ops/static_ops/generated/project-updates.json` | Deterministic public projection of planned and completed work |
 | `ops/static_ops/*` | Local vendor assets, poster, optimized video, favicon/social image |
 | `scripts/build_public_roadmap.py` | Parse the build order and the completion archive, validate them, and generate/check the JSON snapshot |
 | `scripts/build_public_recaps.py` | Render `docs/recaps/` to static HTML, rewrite links, emit the index and sitemap URL list, and `--check` for drift |
@@ -2092,6 +2292,8 @@ both rollout and rollback.
 | `tests/test_observability_config.py` or focused Caddy test | Public/protected route contract and headers |
 | `docs/PLANS.md` | Ordered/scored plan source; the completion archive stays in `docs/planning/completed_plans.md` |
 | `docs/recaps/*.md` | Unchanged as a source; the recap publication policy is committed alongside them |
+| `docker-compose.yml` | Stage 7's read-only directory bind mount of the generated content into `ops` |
+| `tests/test_ops_content_mount.py` | Stage 7's Compose contract: mount present, read-only, directory-shaped, covering every generator output path |
 | `.github/workflows/ci.yml` | Reject stale or invalid project-updates and recap snapshots |
 
 ## Recommended build order
@@ -2102,30 +2304,38 @@ anticipated: **everything that changed the landing page is merged and
 undeployed**, and **Stage 1e's generated pages have no route**. The order below
 is driven by those.
 
-**1. Deploy the merged copy — `ops` image only, no Caddy change.**
-`https://cartracker.info/` still serves the pre-plan copy the Stage 0 baseline
-screenshotted, while 1b, 1d, 1e and 1f are all merged. Stage 6 defers every
-deploy to the end, which is *why* four slices have accumulated unreleased. The
-template needs no route change to go live, so this is separable from Stage 6 and
-should not wait for it. Rollback is the previous image.
+**1. Deploy the merged copy — `ops` image only, no Caddy change. DONE
+2026-09-01.** The live page had gone on serving the pre-plan copy the Stage 0
+baseline screenshotted while 1b, 1d, 1e and 1f were all merged. Stage 6 defers
+every deploy to the end, which is *why* four slices had accumulated unreleased;
+the template needed no route change to go live, so this was separable from
+Stage 6 and did not wait for it. Verified on the live page the same day — see
+the status section's measurement.
 
 **2. Stage 1h (CAR-61) — the closeout question.** Cheap, ready, and it belongs
 *before* the stages below rather than after: steps 3 onward change mechanisms,
 names and quantities across the system, and 1h is what stops them silently
 re-drifting the copy step 1 just published.
 
-**3. Stage 2 — the public root, the `/info` redirect, and the recap routes.**
+**3. Stage 7 — publish content without an image rebuild.** Raised out of Stage
+2's scoping and placed *before* it deliberately: Stage 7 moves the generated
+artifacts to `ops/static_ops/generated/`, which is the path Stage 2's recap route
+has to resolve. Doing it after would mean writing that route twice. It also has
+to land before step 6, because Stage 3c puts CSS and JavaScript into
+`static_ops/` and the mount's seam depends on those staying on the image side.
+
+**4. Stage 2 — the public root, the `/info` redirect, and the recap routes.**
 The unlock: it makes `/` the front door, and it gives 1e's 20 pages a URL. It
 also carries this plan's riskiest change. **Write Stage 5's Streamlit-coupling
 assertion as part of this stage, not after it** — Gate 2 as written cannot see
 the failure mode, and a test that lands after the change has shipped protects
 nothing.
 
-**4. Stage 6, route half — deploy Caddy and `ops` together** and run the full
+**5. Stage 6, route half — deploy Caddy and `ops` together** and run the full
 matrix, including loading the dashboard as `viewer` to confirm the websocket
 connects.
 
-**5. Stage 3b and 3c — the asset and header pass.** The largest user-visible
+**6. Stage 3b and 3c — the asset and header pass.** The largest user-visible
 quality change available, and it starts with a decision rather than an
 encoding: 3b picks whether the 41.7 MB hero video should exist at all. 3c then
 self-hosts PicoCSS and the service icons — the page currently makes third-party
@@ -2133,34 +2343,34 @@ requests to `cdn.jsdelivr.net` and `cdn.simpleicons.org` on every visit, which
 is what makes a same-origin CSP impossible — extracts the inline CSS and
 JavaScript, and applies the headers and caching policy.
 
-**6. Stage 3a — semantic interactions.** The service and decision cards are
+**7. Stage 3a — semantic interactions.** The service and decision cards are
 clickable `<div>` elements: not focusable, not announced, not operable without a
 mouse, with active state signalled by colour alone.
 
-**7. Stage 4 — the Plan 143 snapshot presentation.** Unblocked since Plan 143
+**8. Stage 4 — the Plan 143 snapshot presentation.** Unblocked since Plan 143
 completed on 2026-08-20 and **dependent on nothing above**, so it can move
 earlier if shipping the numbers is worth more than the recap route.
 
-**8. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
+**9. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
 question and whether `/recaps` leads with the newest week in full — govern both
 3d's markup and 1g's. Settle them, build 3d, then link the articles.
 
-**9. The remainder of Stage 5, then Stage 6's final verification.**
+**10. The remainder of Stage 5, then Stage 6's final verification.**
 
 ### What this order costs, stated
 
 The original sequence had PRs B and C reviewed together for CSP and asset-path
-compatibility. Here routing (step 3) ships before the CSP work (step 5), so the
-headers arrive after the routes rather than with them. **Mitigation:** step 3
-ships without tightening CSP, and step 5 adds it and re-runs the full route
-matrix rather than trusting step 4's run. The alternative — holding the routes
+compatibility. Here routing (step 4) ships before the CSP work (step 6), so the
+headers arrive after the routes rather than with them. **Mitigation:** step 4
+ships without tightening CSP, and step 6 adds it and re-runs the full route
+matrix rather than trusting step 5's run. The alternative — holding the routes
 until the asset pass is ready — keeps the live page stale and 1e's pages
 unreachable for longer, which is the worse trade while the surfaces disagree.
 
 Two seams from the original sequence survive and still hold. The recap work
 splits between build-time generation and frontend presentation, and **Stage 1g
 splits on that same seam**: its corpus data file and date-assertion test are
-generation work, its section markup is step 8.
+generation work, its section markup is step 9.
 
 ## Completion criteria
 
@@ -2180,6 +2390,10 @@ Plan 138 is complete only when:
   `docs/recaps/` at build time, reachable from the landing page, and readable
   with JavaScript disabled at 360 px;
 - adding a recap to `docs/recaps/` without regenerating fails CI;
+- a regenerated recap becomes live on the site through `git pull` alone, with no
+  image build and no container recreate, and the Compose contract test fails if
+  that mount is removed, made writable, narrowed to a single file, or left behind
+  by a new generator output path;
 - the published writing is linked from the landing page with publication dates
   and point-in-time framing, and an entry without a date fails a test;
 - adding an article to that list without reconciling it against both surfaces is

@@ -248,7 +248,7 @@ Only after approval, and only what was approved.
    open session, with their source. **Never edit `PLANS.md` directly from
    here**, and that includes a one-cell pointer edit: `plans` is where this
    repository keeps the fact that the build order's top four rows are published
-   through `ops/static_ops/project-updates.json`, along with the regeneration
+   through `ops/static_ops/generated/project-updates.json`, along with the regeneration
    step and the check that proves it. An edit made from here reaches none of
    that.
 4. **Linear** — set the issue to `Done`, post the closeout comment. Leave the

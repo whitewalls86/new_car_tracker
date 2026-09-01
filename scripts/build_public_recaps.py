@@ -1,6 +1,6 @@
 """Plan 138 Stage 1e: project the weekly recaps onto the public site, at build time.
 
-Emits ``ops/static_ops/recaps/`` -- one HTML page per published recap plus a
+Emits ``ops/static_ops/generated/recaps/`` -- one HTML page per published recap plus a
 newest-first ``index.html`` -- from the Markdown in ``docs/recaps/``. This is
 Stage 1d's pattern pointed at a second directory: a deterministic projection of
 source-controlled Markdown into a committed static artifact, with a ``--check``
@@ -72,7 +72,7 @@ from markdown_it import MarkdownIt
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = "docs"
 RECAPS_DIR = "docs/recaps"
-OUTPUT_DIR = "ops/static_ops/recaps"
+OUTPUT_DIR = "ops/static_ops/generated/recaps"
 
 # The same destination Stage 1d resolves plan links to. The repository is
 # public, so a blob URL is the honest target for a document this plan's
