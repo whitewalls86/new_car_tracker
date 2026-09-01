@@ -272,6 +272,27 @@ def _check_shape(exchanges: List[Dict[str, Any]]) -> List[str]:
     return problems
 
 
+def _request_kinds(paths: "set[str] | List[str]") -> set:
+    """Collapse per-container paths to the kind of request they are.
+
+    Container ids change on every run, so comparing raw paths would report
+    drift on a fleet that behaved identically. The question this comparison
+    asks is whether the same *kinds* of request still work, and an id is not
+    a kind.
+    """
+    kinds = set()
+    for path in paths:
+        if path == "/containers/json":
+            kinds.add(path)
+        elif path.endswith("/stats"):
+            kinds.add("/containers/<id>/stats")
+        elif path.endswith("/json"):
+            kinds.add("/containers/<id>/json")
+        else:
+            kinds.add(path)
+    return kinds
+
+
 def _fleet_seen(exchanges: List[Dict[str, Any]]) -> List[str]:
     """The fleet is only a fixture if the proxy actually returned it."""
     services = set()
@@ -357,17 +378,8 @@ def main(argv: List[str] | None = None) -> int:
     committed = json.loads(CORPUS.read_text(encoding="utf-8"))
     recorded_paths = {exchange["path"] for exchange in committed["exchanges"]}
     live_paths = {exchange["path"] for exchange in exchanges}
-    # Compared as shapes, not ids: container ids change every run, so the
-    # question is whether the *kinds* of request still work, not whether the
-    # same containers came back.
-    normalise = lambda paths: {  # noqa: E731
-        "/containers/<id>/json" if p.endswith("/json") and p != "/containers/json"
-        else "/containers/<id>/stats" if p.endswith("/stats")
-        else p
-        for p in paths
-    }
-    only_live = normalise(live_paths) - normalise(recorded_paths)
-    only_recorded = normalise(recorded_paths) - normalise(live_paths)
+    only_live = _request_kinds(live_paths) - _request_kinds(recorded_paths)
+    only_recorded = _request_kinds(recorded_paths) - _request_kinds(live_paths)
     if only_live or only_recorded:
         report("FAIL the request set has drifted from the corpus:")
         for path in sorted(only_live):
