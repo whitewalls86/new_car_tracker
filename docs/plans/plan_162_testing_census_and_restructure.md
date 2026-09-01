@@ -138,6 +138,7 @@ order:
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
 | **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
+| **12** | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | -- |
 
 **4 + 50 + 12 + 56 = 122.** The stages account for the whole waiver list; no
 entry is left without a stage that deletes it. Stage 7 later raised its own
@@ -256,6 +257,54 @@ be wrong.** G14 was undercounted at 54, G5 at 10, the scan surface at eight
 packages, and `executemany` was left out because it matched nothing that day.
 The rules that have never been wrong are the derived ones —
 `service_packages()`, `_test_directories()`, `production_sql_files()`.
+
+### Stage 12 exists because this plan grew the suite
+
+**Added 2026-09-01, at the maintainer's suggestion, during Stage 7.** Plan 162
+has spent nine stages adding tests -- Stage 1 put 73 orphaned ones into CI,
+Stage 6 added Layer 4 for `container_health`, and Stage 7 alone took Layer 2
+from 129 tests to 237. Nothing has yet looked at what that growth duplicated.
+
+Measured on 2026-09-01, before the stage starts:
+
+| | |
+|---|---|
+| Tests collected | 3,988 |
+| Shared fixtures serving them | 11 |
+| Ad-hoc `INSERT` statements inside test modules | 96 |
+| Module-local seed helpers | 55 |
+
+**The duplication is by name, not merely by shape.** `_insert_artifact` is
+defined separately in `tests/integration/ops/test_maintenance.py`,
+`tests/integration/sql/test_ops_views.py` and
+`tests/integration/sql/test_processing_queries.py`; `_insert_detail_claim` in
+two files; `_seed` in three archiver modules; `_make_tar_zst` in three script
+modules.
+
+**Why this is the same defect as G17 and not a tidiness exercise.** A seed
+`INSERT` written by hand inside a test is a statement that has to agree with
+the schema, and there are 96 of them with no single definition. A column rename
+means finding all 96, and nothing notices when 95 are found -- the surviving
+one keeps passing against whatever it seeds. `tests/` is exempt from the Layer 2
+census by design, and correctly so, because fixture seeds are not production
+SQL. That exemption is what makes this invisible: the rules this plan built all
+stop at the tests' own door.
+
+**Two things the stage must not do**, stated now so they are decisions rather
+than discoveries. It must not consolidate a fixture whose two callers want
+different data -- a shared seed that grows parameters until it can serve
+everyone is harder to read than the two helpers it replaced, and a test whose
+setup lives three files away is worse at explaining its own failure. And it
+must not touch `tests/scripts/oneoff/`, which Stage 5b declared spent: those
+helpers duplicate each other freely and should, because the plans that own them
+have archived.
+
+**The instrument this stage needs does not exist yet**, which is why it is
+scoped after Stage 11 rather than before it. "Two helpers do the same thing" is
+not a textual property -- `_seed` and `_insert_queue_row` may be identical in
+effect and share no token -- so unlike G5, G15 and G17 there is no cheap
+derived check waiting to be written. The stage should say plainly whether it
+found one or whether it leaves prose behind, per success criterion 2.
 
 ### Stage 11 answers a question Plan 161 did not ask
 
