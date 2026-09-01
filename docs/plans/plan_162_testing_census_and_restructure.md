@@ -1795,3 +1795,75 @@ client asks for something the corpus does not hold.
 - **The `enough` table's `container_health` row was updated, not its
   neighbours.** The other counts are a dated measurement and re-deriving them
   was not this stage's work.
+
+#### What CI said, and what only CI could have said
+
+Merged from run `33521767976` on `4b88d4b`, all eleven jobs green
+(`Documentation tests` skipped by design on a changeset that is not docs-only).
+
+| | |
+|---|---|
+| Unit suite | 3355 passed, 1 skipped, 479 deselected, 48.7s |
+| Coverage | **78%** against a floor of 75 |
+| `container_health` Layer 4 | **8 passed in 0.09s** |
+| `container_health` Docker contract (real proxy) | **green in 16s**, verify step ~4s |
+
+The Layer 4 suite passed in CI on its first attempt and needed no change. The
+loopback fake, the background thread and the conftest import ordering behave the
+same on `ubuntu-latest` as on Windows, which was the part with no prior evidence
+either way.
+
+**The real-proxy job earned its place on its first run by failing.** It died in
+nine seconds on `ModuleNotFoundError: No module named 'prometheus_client'`: the
+job ran `setup-python` and installed nothing. The cause is a consequence of a
+decision worth keeping — the verifier imports the production label constants
+from `container_health.collector` rather than restating them, because a copy of
+`com.docker.compose.project` in a checker is the paraphrase failure this contract
+names for SQL — and that import chain reaches `prometheus_client`. Repaired by
+installing `container_health/requirements.txt`, so the pin has one source.
+
+The repair was verified against a **cold venv**, not the development environment
+that already had the package, which is the only reason the fix was known to work
+before the second run rather than guessed at.
+
+**The corpus proved portable, which was the open risk.** It was recorded on a
+Windows machine against Docker 29.1.3 (api 1.52) and verified against the
+runner's own daemon — a different machine, a different daemon, the same seven
+exchanges. That is the property the whole two-part design rests on, and until
+this run it was an assumption.
+
+#### Three times the same mistake: citing a precedent and copying half of it
+
+Worth recording because the shape repeated inside one stage, and none of the
+three was caught by reading:
+
+1. The contract job was modelled on `promtail-config` and copied without its
+   `pip install` step. CI caught it.
+2. The verifier was modelled on `verify_promtail_contract.py` and shipped
+   without the test file that sits beside it. 171 uncovered statements, caught
+   by reading the coverage report rather than by any rule.
+3. The first pass at those tests stopped at 45% on the reasoning that the rest
+   "needs a daemon". Most of it did not: `main`'s exit codes, `_capture`'s
+   one-stats-read-per-capped-container rule and `_start_fleet`'s argument
+   construction are all decision logic over data, and every one of their failure
+   modes is silent. A dropped `--memory` does not fail anything; it removes
+   `memory_capped`'s only input and the corpus quietly stops carrying a stats
+   exchange for ever.
+
+Coverage after the third correction: the verifier 45% → **99%**, the two
+remaining lines being a one-line `subprocess` wrapper and the `__main__` guard.
+
+**The sister script was cleaned up in the same pass**, unscoped and deliberately
+so: `verify_promtail_contract.py` sat at 48% two files away, and the argument
+that the coverage was cheap applies identically. 48% → **69%**. What it gained is
+not more verdict testing but the replay *setup* — the image read from compose
+(so the checker cannot agree with a version production stopped running), the
+`docker: {}` envelope strip, the `service` label `_parse_entries` filters on,
+and `main`'s exit codes. One test written for it asserted the wrong thing and
+the code was right: absence on every attempt is a real drop, and inconclusive
+means lost and then recovered.
+
+Both scripts stop at the same line. `_run`'s `Popen` and threading needs a
+daemon, and faking it would assert the shape of the mocks rather than the
+behaviour of Promtail or Docker — rule 3 of what must never be mocked. That half
+is CI's in both cases, which is the whole argument of this stage stated twice.
