@@ -133,7 +133,7 @@ order:
 | **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
 | **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
-| **7** | SQL execution, from both directions. The largest stage | G14, G5 | 56 |
+| **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
 | **8** | The services below the floor | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
@@ -2326,3 +2326,213 @@ one naming a missing gap entry or an archived owner.
 - **The 3.15 upgrade was not scheduled here.** PEP 686 will retire this class,
   but that is a version bump with its own consequences and it is not Plan 162's
   to make.
+
+
+### Evidence — Stage 7, SQL execution from both directions (CAR-51), 2026-09-01
+
+**G14 is closed and `LAYER_2_WAIVERS` is `()`.** With it, the whole of the
+original waiver list: the plan's own arithmetic was 4 + 50 + 12 + 56 = 122, and
+G14's 56 was the last column standing. Every waiver that remains is one this
+stage found.
+
+| Ledger | Start | End |
+|---|---|---|
+| `LAYER_2_WAIVERS` (G14) | 56 | **0** |
+| `INLINE_SQL_WAIVERS` (G5) | rule did not exist | 15 |
+| `SQL_LITERAL_WAIVERS` (G15) | gap did not exist | 19 |
+| `DUPLICATE_SQL_WAIVERS` (G17) | gap did not exist | 1, waived with a reason |
+| production `.sql` files | 76 | 141 |
+| production `.py` scanned for SQL | ~100, across 8 packages | 156 |
+| Layer 2 tests | 129 | **242, all executed in CI** |
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+#### The finding that matters most: two production defects only execution found
+
+CI's first run failed two jobs, and both traced to one cause. **psycopg2 counts
+parameter placeholders across the whole statement string, comments included**,
+so a comment written to *explain* a parameter adds one.
+
+`ops/sql/set_deploy_intent.sql` explained its `interval` construct by quoting
+the placeholder. That made the statement expect four parameters where
+`ops/routers/deploy.py` passes three, so `/deploy/start` raised, the router
+caught it, and returned **503** — seven Layer 4 tests in
+`tests/integration/ops/test_deploy_intent.py` failed on that alone, in a code
+path this stage was not supposed to touch.
+`ops/sql/insert_blocked_cooldown_events_batch.sql` did the same to
+`execute_values`, which refuses outright any statement carrying two
+placeholders.
+
+A third was a live trap that had not sprung. `processing/sql/claim_artifacts.sql`
+carried a *named* placeholder in its first comment line and worked, because a
+named placeholder resolves from the same dict however many times it appears.
+Rename the parameter and it raises `KeyError` from a line that is not code.
+
+**Every static rule in `test_testing_contract.py` passed on all three files.**
+The statements were correctly extracted, correctly imported, correctly named,
+and byte-faithful to what they replaced — verified mechanically, on normalised
+whitespace, against the literals in `HEAD`. Two of them were broken. The suite
+was green locally before the push and green locally after. This is the
+argument for the stage, stated by the stage: **a statement that no layer
+executes is not covered by anything, however carefully it was read.** Rule 5e
+now fails on a placeholder inside a `.sql` comment, canaried in both
+directions.
+
+#### Three gaps this stage opened
+
+**G5's stated measure was blind by construction.** The gap list said
+"`.execute(` with a literal first argument"; `execute_values(cur, sql, rows)`
+carries its statement second, and `ops/routers/maintenance.py:152` was a
+literal `INSERT` sitting exactly there, in a module G5 never named. Measured
+properly it was 66 sites in 15 modules, not 10 — and two of the named ten did
+not belong: `shared/db.py`'s only match is inside `db_cursor`'s own docstring,
+and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup,
+which name no schema and so cannot drift from one.
+
+**G15 is what closing G5 revealed.** A statement bound to a name and executed
+from there is invisible to both instruments at once: Rule 5b does not fire
+because it is not at a call site, and Rule 5's denominator cannot count it
+because there is no `.sql` file. Six were extracted by hand and only because
+someone happened to read the files; the measured cost of that blind spot was 23
+more in 11 modules, six of them in `ops/routers/admin.py`, a router this stage
+would never have touched because every one of its statements is assigned before
+it is executed.
+
+**G17 was found by writing the tests.** `mark_artifact_status`,
+`insert_artifact_event` and `insert_blocked_cooldown_cleared_event` existed
+**byte-identically** under both `ops/sql/` and `processing/sql/`. Worse, Rule 5
+credits a file when Layer 2 names its *stem* — and each pair shared one, so a
+test of `processing`'s copy silently credited `ops`'s. Three files would have
+been reported covered by a test that never executed them: the paraphrase
+defect, arriving through the checker rather than through a test. They are one
+file each under `shared/sql/` now, re-exported so no call site changed, and
+G17 compares every production statement to every other so the next copy is a
+failure rather than a discovery.
+
+#### A merge that would have broken deploys silently
+
+`ops/routers/deploy.py` selects `(kind, phase, generation, requested_by)` and
+reads the result **positionally** — `row[1]` is phase. `coordination.py` selects
+the same four columns as `(phase, generation, kind, requested_by)`. Merging the
+two, which is what a tidy-up does when it sees duplicate SQL, puts `generation`
+at `row[1]` and compares a number to `'none'`: every deploy would report itself
+locked and nothing would fail. They are kept apart, each file saying why, and
+`test_the_two_four_column_reads_are_not_interchangeable` asserts both orders
+against the live server.
+
+#### The scan surface was the third instance of one mistake
+
+Both new rules were written against `service_packages()`, which answers "is
+this a service" and not "is this production Python". The two coincided for the
+eight top-level packages and stopped coinciding exactly where it mattered:
+`airflow/` and `scripts/` hold no `__init__.py`, so they held no rule — and 26
+SQL sites, 22 of them in Plan 125's Iceberg and Spark tooling, which Gates C
+and D productionize.
+
+**The fix is deliberately not an `__init__.py`.** `service_packages()` drives
+seven rules — the layer-home mapping, the hidden-route check, route coverage
+which imports `<service>.app`, the "enough" table's rows in both directions,
+and the coverage `source` list. Making `scripts` a package would demand an
+"enough" row for something that is not a service and send the route rule
+looking for `scripts.app`. The contract already said so in
+`test_every_service_directory_is_in_the_coverage_source`. So
+`production_python_files()` is a second derivation, reading Stage 5b's declared
+bucket table, and `scripts/oneoff/` is excluded because that table declares it
+spent.
+
+The lesson generalises past this stage and is worth stating once rather than a
+fourth time: **a denominator that is listed, or scoped to what exists when it
+is written, will be wrong.** G14 was undercounted at 54, G5 at 10, the scan
+surface at eight packages, and `executemany` was left out of the name set
+because it matched nothing that day. The rules that have never been wrong are
+the derived ones.
+
+#### 18 files were never uncovered, and the ruler was the problem
+
+Every `archiver/sql/lake_snapshot_selectors/` file is executed in CI against
+real Parquet in MinIO by `tests/integration/archiver/`, whose
+`test_all_selectors_run_without_error` asserts the entire registry runs clean.
+The rule read only `tests/integration/sql/` and reported them absent — tests
+stronger than the check's own weak reading, called nothing at all.
+
+The suites it reads are now declared in `docs/TESTING.md` and derived here,
+matching `DORMANT_SUITES` and `script_buckets()`. **Deliberately not a glob:**
+measured on 2026-09-01, reading all of `tests/integration/` would have credited
+35 of the then-46 files on a name match alone, several from suites that mention
+a statement without running it.
+
+`cooldown_events.sql` needed a real repair rather than the widening. Five
+selectors share it through `sql_template`, so no test contained the token even
+though all five execute it — and it was the file Stage 5 caught being credited
+to an unrelated *table name* under the old substring reading. The indirection
+is asserted now instead: every selector `.sql` file is some runnable selector's
+template, and none names a template with no file.
+
+#### One file left the census, under G16's rule
+
+`processing/sql/get_active_search_configs.sql` read `params -> 'makes'` and
+`params -> 'models'` out of `search_configs` jsonb "for carousel make/model
+filtering", in its own words. That filtering still happens — `detail_writer.py`
+has a section header that still reads *Carousel search_config filtering* — but
+it reads `ops.tracked_models` joined to enabled configs, a normalised
+`(search_key, make, model)` grain, cached where the old one was not. Same
+question, same consumer, same `enabled = true` gate, different source. The
+superseded file had been dead since Plan 93 shipped it: no constant loaded it,
+and `git log -S` finds only the contract test that waived it.
+
+This is G16's first case, and recording *which* of the two ways a file may
+leave `production_sql_files()` this was is the entire point of that rule. A
+denominator may shrink; it may not shrink silently, and "nothing references it"
+is not on its own a reason — the reason is that something else does the work
+and can be pointed at.
+
+#### A guard the instrument itself needed
+
+`duckdb_con` skipped when `DUCKDB_PATH` was absent, and **55 Layer 2 tests take
+it** — every dashboard query and both analytics snapshots. A path that quietly
+went missing, or a dbt build that produced no file, would have skipped a
+quarter of the suite and left the step green. The pattern for fixing it was one
+fixture away: `airflow_metadata` has failed rather than skipped under
+`REQUIRE_AIRFLOW_SCHEMA` since Stage 3.
+
+`REQUIRE_DUCKDB` closes that fixture and `REQUIRE_LAYER_2_EXECUTION` closes the
+class — any skip in the suite fails the run. Both were verified in both
+directions before shipping, which is the only way a guard is worth having: with
+the flag set, 25 skipped tests exit 1 and name their reason; without it, the
+same run exits 0 and stays a local convenience.
+
+**CI's final run is what makes the 242 meaningful.** `242 passed` with
+`REQUIRE_LAYER_2_EXECUTION=1`, `REQUIRE_DUCKDB=1` and `REQUIRE_AIRFLOW_SCHEMA=1`
+all set — zero skips under that guard is proof of execution rather than of
+collection.
+
+#### What was deliberately not done
+
+- **15 G5 sites remain**, all in Plan 112 and Plan 125 audit and parity scripts.
+  Extracting them creates `scripts/sql/*.sql` files that immediately owe a
+  Layer 2 test, and several run against Spark and Iceberg — engines the Layer 2
+  job has none of. That would grow a list this plan only lets shrink, so they
+  stay waived until there is somewhere for their tests to run.
+- **`cancel_coordination_state.sql` and `release_deploy_coordination.sql` are
+  textually identical and stay two files.** They are two policies that agree
+  today — cancel refuses anything past `draining`, the deploy facade releases
+  unconditionally — and both rules live in the Python around the statements.
+  Consolidating would couple two policies allowed to diverge. This is the
+  weakest of the three "kept apart on purpose" decisions and is recorded as a
+  waiver rather than a comment, because a waiver is checked.
+- **The engine-binding check was scoped and not built.** Which engine a `.sql`
+  file targets is only worth asserting once
+  [Plan 125 Gate D2](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
+  has chosen a serving pattern: under "DuckDB as a non-authoritative Iceberg
+  cache" it is a no-op for all 26 affected files. It sits in Stage 11 with the
+  execution recorder.
+
+#### Cost
+
+Estimate 2 points, actual 1. The stage was the plan's largest by file count —
+18 commits, 118 files, +3,300/−650 — and cost less than its estimate because
+almost all of it was mechanical once the rules existed. **Building the checker
+first is what made it cheap**, and it is the reusable lesson: the rule found
+`maintenance.py:152`, `admin.py`'s six, and the byte-identical trio, none of
+which a reading pass had found in three prior stages of looking at these files.
