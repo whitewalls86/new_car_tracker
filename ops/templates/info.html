@@ -1385,6 +1385,10 @@
                         <p>The safety rule is the part worth copying: <strong>a source object may be deleted only after its packed replacement returns byte-identical content</strong>, verified against a hash held in the sidecar. Not "the pack was written successfully" — the packed copy is read back and compared. Deleting the only copy of history on the strength of a successful write is how archives get lost.</p>
                         <h4>What changed</h4>
                         <p>The first three packed months turned 2.7 million bronze objects into 222 packs and sidecars. Inodes stopped being the binding constraint on the data volume and bytes became one again, which is where a storage problem should end up — and the object count is the honest way to say it, because a whole-volume percentage would credit packing with a smaller number than it earned while the pipeline kept writing new pages throughout. The stack still runs on a single server — one Postgres, one object store, one scheduler — and that remains a deliberate choice rather than a limitation, because at this scale the bottleneck is whether the data model is right, not what the hardware can do.</p>
+                        <h4>A design that was built, proven, and thrown away</h4>
+                        <p>Section-level deduplication splits each page into named sections and stores each distinct section once. It was implemented, and it is lossless — the audit reconstructs artifacts byte-identically. On bytes alone it looked like a win. Measured against the real backend it came out <strong>223% worse</strong> than simply compressing each page, because this single-drive object store costs roughly 8&nbsp;KB per object in directory and block padding, and 60 artifacts became 556 section objects. Splitting more finely made it worse rather than better: content-defined chunking at 256&nbsp;B reaches 70.5% gross deduplication and nets −622.9%. The redundancy was real and reachable, and collecting it cost far more than it saved. Showing a rejected design is the point — the measurement is what made it a decision rather than a hunch.</p>
+                        <h4>The bigger win that is deliberately not taken</h4>
+                        <p>Storing only the page regions the parser actually reads would cut stored HTML by roughly 96% stacked on the dictionary — the largest reduction measured here, and the only one that is irreversible. It is refused on what bronze is <em>for</em>. Bronze is what arrived; silver and mart are opinions about what it means, and an optimization that keeps only what today's parser understands quietly turns bronze into another opinion. The probe showed it concretely: the projection is parser-equivalent on 60 of 60 active listings, and it silently rewrites a blocked page and an unlisted page to <code>active</code>, discarding the fields that said otherwise. A delisted vehicle reappearing as available is the worst direction that error can run.</p>
                     </div>
                 </div>
 
@@ -1485,6 +1489,19 @@
                     <p>The same production-shaped lake fixture is evaluated by dbt and by independently written selector SQL, so an optimization cannot quietly change business meaning and pass as a speedup.</p>
                 </div>
             </div>
+            <p class="evidence-note">
+                The fixture underneath that fourth layer is built with its arrow reversed. The usual
+                approach takes some production rows and hopes they exercise the code. Here the branches
+                come first: each dbt branch or guard worth protecting is named as a coverage selector,
+                and the selector is a SQL query that goes and finds production entities exhibiting that
+                behavior. There are more than twenty — gaps-and-islands state runs, price-drop and
+                price-increase lags, source-priority ties where a detail row outranks a search-results
+                row, sparse benchmark groups that must not silently disappear, each 403 cooldown bucket
+                boundary. The selected entities are then closed over VINs, listings, and artifacts, so
+                rows arrive with everything they need to join. What the snapshot asserts is coverage
+                itself: a named behavior with no representative is a reported shortfall rather than a
+                branch nobody noticed was untested.
+            </p>
             <p class="evidence-note">
                 A unit test for the health collector cannot prove every Compose service has a healthcheck,
                 and a dbt model test cannot prove the archiver's separately maintained selector returns the

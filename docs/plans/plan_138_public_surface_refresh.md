@@ -18,7 +18,10 @@ reconciled overviews and the assigned replacement claims.
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
 | **1e** Weekly recap projection (CAR-58, PR #331) | **Built 2026-09-01, in review** — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
-| **1f** Reconcile against the published writings | **Audit done 2026-08-31**, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open |
+| **1h** Ask at closeout whether the landed work moved a surface (CAR-61) | **Raised 2026-09-01, ready.** The only pullable Stage 1 slice. 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it — which is the class every Gate 0 defect came from. Adds one cheap question to the `close-out` skill, in the same mechanism/name/quantity taxonomy 1c already uses, that proposes and never writes |
+| **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
+| **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
+| **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
 
 **The two public surfaces are now in different states, and the distinction
 matters.** The repository is public, so 1a's README changed a public surface the
@@ -51,10 +54,12 @@ Two changes on 2026-08-31, from a scoping session:
 
 This plan covers the repository README and the unauthenticated portfolio surface.
 It does not change dashboard behavior, authorization roles, or the production data
-architecture. **That inventory of public surfaces may be incomplete** — the
-author's published writing is public and covers some of the same claims, which
-[Stage 1f](#1f-reconcile-against-the-published-writings) raises as an explicit
-scope decision rather than leaving unstated here.
+architecture. **That inventory was deliberately bounded on 2026-09-01** — the
+author's published writing is public and covers some of the same claims, and
+[Stage 1f](#1f-reconcile-against-the-published-writings) recorded the decision
+that it stays out of scope: an article is a point-in-time artifact, correct as of
+its date and not maintained afterwards. The drift that leaves standing is written
+down in 1f rather than treated as an oversight here.
 
 ## Decision in one paragraph
 
@@ -1189,6 +1194,354 @@ records where it finished. The article does.
   standing argument for doing it here: it has carried ten disposed-of claims
   since May because nothing checked it before it went out.
 
+#### Stage 1f evidence — 2026-09-01 (CAR-59)
+
+**The surface scope question is answered: the published articles are out of
+scope.** They are point-in-time artifacts. An article states what was true on
+the day it was published and is not maintained afterwards, so it is read the way
+the truth contract's §5 reads a weekly recap — correct as of its date, never
+revised to match a later truth. This plan owns `README.md` and
+`ops/templates/info.html`, and it does not own the corpus.
+
+What that decision leaves standing, recorded rather than resolved:
+
+- **A and C contradict each other on bronze retention**, and both stay
+  published. A tells a reader bronze is discarded after 30 days; C explains the
+  packing that retains every page. The audit's ten-row table above is the
+  measure of the drift being accepted, and the "as of 2026-05-08" reading is the
+  only thing reconciling it.
+- **A remains the most likely entry point a reader has.** Accepting the drift
+  means accepting that a reader may arrive at the surfaces from a document that
+  disagrees with them.
+- **Article D is untouched by this call.** D is unpublished, so its
+  pre-publication gate is not a maintenance question. If anything this decision
+  sharpens it: an article that will never be corrected after publication makes
+  the check before publication the only one there is.
+
+**The copy pass: what was drawn onto a surface, and what verified it.** Framing
+came from the corpus; every fact was checked against the tree.
+
+| Drawn on | Surface | Verified against |
+|---|---|---|
+| The cost model had one variable — bytes; adding the cost of an object's existence reversed a settled decision | README "Storage economics", landing `#highlight-storage` summary | [Plan 114](plan_114_sectioned_html_artifact_audit.md) §134, "the bytes-only estimate is optimistic by roughly 8 KB per object", and the reversal itself in the §469 result table |
+| Section dedup was built, is lossless, and measured **−223%** | README "Storage economics", landing `#highlight-storage` detail | Plan 114 §43 and §537 (lossless, "correct… simply not a storage win"); §469 (−223% vs like-for-like zstd-9); §245 (~8 KB/object floor = 4 KB directory + 4 KB-rounded file, single-drive backend); §471 (556 section objects for 60 artifacts); §494–497 (256 B chunking: 70.5% gross, −622.9% net). `processing/html_sections.py` confirmed present in the tree |
+| Bronze is what arrived; silver and mart are opinions about what it means | README "Storage economics", landing `#highlight-storage` detail | Framing only — no numeric claim. Its consequence is the row below |
+| The ~96% projection win is refused, because it flips blocked and unlisted pages to `active` | README "Storage economics", landing `#highlight-storage` detail | [Plan 130](plan_130_parser_input_projection.md) §17 (~82% alone, ~96% stacked with Plan 129); §9 (the only irreversible option on the table); §65 (parser-equivalent 60/60 on active listings); §109–113 (blocked → `active`, unlisted → `active`, unlisted fields lost); §116 ("Both fail toward `active`, which is the worst direction") |
+| Coverage's arrow is reversed: branches first, then production data shopped for to reach them | README "Test strategy", landing "How it is tested" | [Plan 120](plan_120_ci_lake_snapshot_delivery.md) §277–287 (branches → named selectors → SQL finding production entities → coverage assertions); §294–317 (the selector table). **Counted in the tree, not read from the plan:** `archiver/config/lake_snapshot_selectors.yml` defines exactly 22 selectors and their names match the plan's table one for one. Closure over VINs/listings/artifacts at §328–348; `tests/integration/dbt/test_selector_dbt_equivalence.py` confirmed present |
+| A coverage shortfall is a *reported* shortfall | README "Test strategy", landing "How it is tested" | Deliberately worded to match `require_selector_coverage` being opt-in validation policy (Plan 120 §124) rather than a hard CI failure |
+
+Both surfaces already carried the packing headline decided in the pass above;
+this slice did not restate it, and **no percentage was added to either surface**
+outside the two dated measurements that name their own denominators (−223%
+against a like-for-like zstd-9 baseline, ~96% against unprojected HTML).
+
+**One caveat carried but not surfaced.** Plan 114 §542 notes the 8 KB floor is
+backend-specific and that a packed-object layout "would change the arithmetic,
+though not the 0.65% cross-listing reuse". Packing is now in production, so the
+floor that killed section dedup is no longer the only layout available. The
+surfaces report the measurement as what it is — a dated result against the
+backend it was run on — and do not claim the conclusion is permanent. Re-opening
+sectioning on top of packing is not proposed here; it is noted so the record
+shows the caveat was read rather than missed.
+
+**Gate 1f is met on both halves:** the verification table above, and the
+recorded answer to the scope question.
+
+Not done, and not in this slice: the surfaces still say nothing about Article D,
+and D's own pre-publication gate — the §4 register filter over the post-mortem
+draft's incident, transcript, and arithmetic sections — remains unowned by any
+issue.
+
+### The writing surface — what 1e/3d and 1g share
+
+**Raised 2026-09-01, before 1g is built.** Two slices are each adding a place to
+read long-form writing about this system: 1e/3d publish the weekly recaps, 1g
+links the published articles. Designed apart they become two bolted-on content
+surfaces with two date treatments, two framings and two links off the landing
+page, and a reader looking for "more depth" has to find both. This subsection is
+what they hold in common, written once so neither has to guess.
+
+It is written **after 1e shipped its generator and before 1g starts**, which is
+the only ordering where alignment is free: 1e's shapes are real code, so 1g
+conforms to them rather than both negotiating.
+
+**One section on `/`, two destinations behind it.** The reader sees a single
+place to go for more depth. Inside it, the articles are listed *inline* and the
+recaps are reached through their index at `/recaps`. The asymmetry is
+principled rather than incidental: **inline what is small and finite, index what
+grows.** Four articles gaining one or two a year belong on the page; 20 recap
+pages growing weekly need an index of their own. This also avoids renaming a
+route that Stage 2's contract and the sitemap already carry.
+
+**Three shapes 1g reuses rather than reinvents**, all of them now real in
+`scripts/build_public_recaps.py`:
+
+| Shape | Where it lives | Why 1g takes it |
+|---|---|---|
+| The index row — `<li><a>title</a><span class="meta">…</span></li>` | `render_index`, class `.index-list` | An article entry is title, link and date. That is the same row with a different meta line. Two list treatments for two lists of writing is the fragmentation this subsection exists to prevent |
+| The §5 note block — `.note`, text from `_POINT_IN_TIME` | `_page`'s `note` argument | 1g already committed to reusing 3d's point-in-time framing. This names the mechanism instead of the intent |
+| The date-in-the-meta-line convention | `Week ending {week_end}` | An article's meta line is its publication date. Same position, same weight, same reason — a dated record must show its date without the reader hunting |
+
+**One thing they do not share, and the page must show it.** A recap link stays on
+this site; an article link leaves it for a third-party platform. Listing both
+under one heading without marking that is a small lie of omission, and it is
+exactly the defect that only appears when the two are designed together — each
+alone is internally consistent. **Outbound links are visibly outbound.**
+
+**Both are §5 records, for different reasons, and the framing must not flatten
+them.** A recap is a dated record *of a week*, generated from history. An article
+is a dated artifact *of the author's understanding*, written by hand and never
+revised. The shared sentence is that neither is revised to match a later truth;
+it is not that they are the same kind of document. `_POINT_IN_TIME`'s wording is
+specific to a week and should not be stretched to cover an article — 1g writes
+its own sentence in the same register, in the same `.note` block.
+
+**What must stay separate, stated so nobody unifies it later.** Alignment is
+about what the reader sees, not about collapsing two mechanisms into one:
+
+- **The generator.** Recaps project a repository source that grows on its own.
+  The corpus has no repository source and four hand-written entries. 1g's refusal
+  of a generator stands, and a later attempt to "finish the job" by generating
+  both would be machinery for its own sake.
+- **The publication policy.** A recap is published by its own `**Publish:**`
+  marker, required and never defaulted. An article is published by being in the
+  list. Both are one decision in one place; they are not the same decision.
+- **The gate.** Recaps are held by CI's `--check` drift assertion. Articles are
+  held by 1g's two-way reconciliation. Different questions, and merging them
+  would weaken the stronger one.
+
+**One drift to resolve in 3d, not here.** 3d specifies that the recap pages
+"share `info.css`"; the shipped generator inlines its own `_STYLE` and loads no
+external stylesheet, which is the more CSP-friendly choice and may well be right.
+1g cannot conform to a rule the tree contradicts, so **3d owes a decision on
+which is true** before 1g writes any markup. Flagged here rather than resolved,
+because 1e is in review and this is its stage's call.
+
+### 1g. Link the published writing from the landing page
+
+**Raised 2026-09-01, out of 1f.** 1f decided the articles are not a surface this
+plan maintains. It did not decide whether the landing page *points at* them, and
+nothing else in this plan does either: Stage 2 is discoverability of `/`, Stage
+3d presents the recaps, and the non-goals bar blog-platform features on the
+**recap** surface. Linking an external corpus appears in no stage, no non-goal,
+and no backlog row. That is a hole, not a deferral.
+
+**The tension this stage exists to resolve.** A portfolio landing page that does
+not link the author's writing about the system is leaving its best explanatory
+prose unreachable — 1f measured that directly, and found all three articles are
+better front-door prose than what the surfaces carried. But linking them spends
+part of 1f's decision. The moment `/` points at Article A, the landing page is
+handing a reader ten claims the Gate 0 table disposed of, and doing it from a
+surface this plan *does* maintain. "Out of scope to maintain" and "safe to
+recommend" are different properties, and 1f only established the first.
+
+**The contract this needs, and it already exists.** Stage 3d gives each recap
+page "an explicit *point-in-time record* note per the truth contract's §5". That
+is the same contract an article needs and for the same reason, so 1g reuses it
+rather than inventing a second one: **every linked article displays its
+publication date, and the section states once that these are dated artifacts,
+not maintained pages.** A reader who sees "2026-05-08" next to A has what they
+need to read its numbers as history.
+
+**What that contract does not cover, and this stage must decide.** A dated note
+explains why A's numbers are stale. It does not explain why A and C, both linked
+from the same section, *contradict each other* on whether bronze is retained —
+one says discarded after 30 days, the other explains the packing that keeps
+every page. A date reconciles a surface with the past. It does not reconcile two
+linked documents with each other. Three ways to answer, and this stage owes one:
+
+| | Answer | Cost |
+|---|---|---|
+| **a** | Link all four with dates and the §5 note; accept that a diligent reader can find the contradiction | Cheapest and most honest about the corpus being unmaintained. A reader who finds it learns the project ships stale writing |
+| **b** | Link the corpus but annotate A specifically — one line naming what has since changed | Preserves A's genuinely good narrative sections while refusing to launder its numbers. Costs a per-article annotation field that only one article uses |
+| **c** | Link only the articles that do not contradict a maintained surface, and say the list is curated | Cleanest page. Silently drops the author's most-read piece, and "curated" without a stated rule is the kind of unstated judgment this plan exists to remove |
+
+**Decided 2026-09-01: (a) — dates for all, annotations for none.** (b) was
+recommended first and is wrong, for a reason worth writing down because it
+generalises.
+
+**An annotation is state about an article relative to a tree that moves.** "A
+says bronze is discarded after 30 days; this has since changed" is true today
+and silently rots the next time the storage story moves — when Plan 125 lands,
+when packing changes again, when a claim nobody was tracking becomes false.
+Nothing would tell you. That is a **new drift surface, inside the surface whose
+drift this plan exists to remove**, and it is worse than the original because it
+is drift about drift. It also scales with the corpus times the rate of change,
+which is the shape of a maintenance treadmill.
+
+A **publication date is immutable.** It is a fact about the article, not about
+the article's relationship to a repository, so it never needs revisiting. That
+is the whole difference, and it gives the list its rule:
+
+> **An entry carries only immutable facts about the article — title,
+> publication date, URL. Anything that would need revisiting when the tree moves
+> does not belong in the list.**
+
+The contradiction between A and C is then handled where contradictions actually
+get handled: **once, when the article is added**, by the procedure below — not by
+a permanent note that has to be kept true forever. A is the worked example. It
+was reconciled in 1f, its ten disposed-of claims are recorded in the audit table
+above, and the surfaces were corrected as a result. That reconciliation already
+happened; a per-article annotation would be a second, decaying copy of a record
+this plan already holds properly.
+
+#### Adding an article is a procedure, not a list edit
+
+The list is the cheap half. The half that carries the value is what has to happen
+*when* an entry is added, and it runs in both directions — which is exactly what
+1f did by hand for A, B and C, and what nothing currently repeats for D or
+anything after it.
+
+1. **The entry goes in the data file.** Title, publication date, URL with the
+   per-session `trackingId`/`lipi` parameters stripped. Mechanical, and a test
+   holds it: an entry without a date fails.
+2. **The article is checked against the surfaces, both ways.**
+   - **Drift** — does the article assert something the README or landing page
+     now contradicts? A one-time reckoning at add time, whose output is a
+     correction to a surface or a recorded disposition, never a note attached to
+     the article. This is what would have caught A and C disagreeing *before*
+     the page linked both.
+   - **Harvest** — does the article carry framing or a story the surfaces should
+     have? 1f found all three existing articles were better front-door prose
+     than what the surfaces carried, and drew four framings across. An article
+     is written when the thinking is freshest; the surfaces should not be the
+     last to hear it.
+3. **What the check produces lands on a maintained surface or in this plan's
+   record.** Never as durable per-article state. That is the rule that keeps the
+   list immutable and the treadmill from starting.
+
+**This is a skill and a commit gate, not a test** — and Stage 1c already argued
+why, in the same words: judging whether a claim is still true "needs the tree
+read with judgment, which is a skill's job", and "a check you must remember is
+weaker than one you cannot forget". The machinery exists and needs extending, not
+inventing: `scripts/public_surface_gate.py` holds a commit that stages a surface
+until `public-surface-check` has read that exact staged content, keyed by a
+digest stamp so passing once buys nothing for content nobody looked at. The
+corpus data file becomes a third gated path on the same mechanism.
+
+The direction differs, and the extension has to respect it. Today's gate asks
+*surface → tree*: "is this claim still true?" The corpus gate asks *article →
+surfaces*, twice: "does this contradict them?" and "should they have taken
+something from it?" Same hook, same stamp, different questions — so this is a
+second skill or a second mode, not a wider glob on the existing one. The
+existing skill scopes itself out of this explicitly: "Not `docs/`, not the
+overviews, not the published articles — those are Stage 1f's problem and they
+have their own reckoning." **1g is that reckoning.**
+
+**Scope.**
+
+- **Landing page only.** The README is the technical entry point and links
+  runbooks, not essays. Adding the corpus there is not proposed and would need
+  its own reason.
+- **No generator.** 1d and 1e each project a repository source that already
+  exists and grows on its own (`docs/PLANS.md`, `docs/recaps/`). The corpus is
+  four hand-written entries that change a few times a year and have no
+  repository source to project. A build-time generator over a four-row list is
+  machinery this plan does not need, and 1e's own experience is that the
+  generator's cost is in the policy, not the rendering. **A committed data file
+  read at render time, with a test asserting every entry carries a date**, is
+  the whole mechanism.
+- **Presentation defers to Stage 3**, the way 1e defers to 3d: whatever markup
+  1g adds must satisfy 3a's heading rule, 3c's CSP, and render with JavaScript
+  disabled at 360 px. 1g decides *what is linked and how it is framed*; Stage 3
+  holds it to the same bar as everything else on the page.
+- **Placement and shape are set by [the writing surface](#the-writing-surface--what-1e3d-and-1g-share)
+  above**, not decided here: one section on `/`, articles inline and the recap
+  index linked, reusing `.index-list`, the `.note` block and the date-in-the-meta
+  -line convention that `scripts/build_public_recaps.py` already establishes.
+  Outbound links are visibly outbound, and 1g writes its own §5 sentence rather
+  than stretching `_POINT_IN_TIME`, which is worded for a week.
+
+**Gate 1g:** the landing page carries one writing section, not two, and it reuses
+1e's list row, note block and date convention rather than a second treatment;
+every linked article renders with its publication date and the §5
+point-in-time framing; outbound links are visibly outbound; no entry carries anything beyond the immutable facts; a
+test fails if an entry is added without a date, and no linked URL carries the
+per-session `trackingId`/`lipi` parameters 1f stripped when it recorded the
+corpus; and **adding an entry without the two-way reconciliation having run
+against that exact staged content is blocked by the gate, not by memory** —
+demonstrated by adding Article D through the procedure rather than by hand.
+
+### 1h. Ask at closeout whether the landed work moved a surface
+
+**Raised 2026-09-01.** There are three ways a public surface and the repository
+can come apart, and after 1c and 1g there is still only coverage for two:
+
+| | Trigger | Direction | Held by |
+|---|---|---|---|
+| 1 | Someone edits a surface | surface → tree: "is this claim still true?" | Stage 1c's commit gate |
+| 2 | Someone adds an article | article → surfaces, both ways | Stage 1g's gate |
+| 3 | **Someone changes the system and touches no surface** | **tree → surfaces: "did the front door just become wrong?"** | **nothing** |
+
+**The third is the one that has actually produced every defect this plan
+caught.** `public_surface_gate.py` fires on `git diff --cached --name-only`
+containing `README.md` or `ops/templates/info.html`; a commit that touches
+neither never reaches it. So the gate is structurally blind to a plan that adds
+migrations, adds tests, adds containers, or replaces a solver, and edits no
+prose. The `public-surface-check` skill says what that blindness cost:
+
+> Gate 0 found "36 Flyway migrations" against 49, "266 integration tests"
+> against 468, "971 tests" against 3,661, "eleven Docker containers" against
+> more than two dozen. **Not one of those was a disagreement between the two
+> surfaces** — each was a surface that had drifted from the code.
+
+Not one of those was a bad edit. Each was a surface standing still while the
+tree moved underneath it, and the only thing that ever caught them was Gate 0 —
+a one-time, expensive, retrospective audit of accumulated drift. **Gate 0 is
+what this stage exists to stop needing a second time.**
+
+**Closeout is the right moment, and the argument is availability rather than
+rigour.** At closeout the person knows what the work changed and why; the
+`close-out` skill's Phase 1 has already gathered the slice's commits and
+evidence, so the marginal cost is one question against material already on
+screen. Every alternative moment is worse: a test cannot judge materiality, CI
+cannot see intent, and a periodic sweep is Gate 0 again — expensive, late, and
+measuring drift that has already been published.
+
+**The question, in the taxonomy that already exists.** `public-surface-check`
+defines a claim as a sentence that would be false if the repository changed, in
+three kinds — a **mechanism**, a **name**, or a **quantity**. So 1h asks the
+same taxonomy from the other end:
+
+> Did this work change a mechanism, a name, or a quantity that `README.md` or
+> `ops/templates/info.html` states?
+
+Reusing that taxonomy is the point. A closeout that finds "yes, a quantity" is
+handing the 1c skill exactly the shape of input it is built to check.
+
+**It must be cheap and it must usually end in "no".** Most plans change nothing
+either surface claims, and a step that stops every closeout to deliberate will
+be skipped within a month — the same failure `public_surface_gate.py` designed
+its digest stamp to avoid. The 1c skill's discipline applies unchanged: most
+invocations end in one line. The prompt is answerable from the slice's own
+evidence and does not re-read either surface unless the answer is yes.
+
+**What it produces, and what it must not.** The `close-out` skill "gathers and
+proposes first and writes nothing until the user approves", and 1h inherits that
+without exception — **a closeout must never silently edit a public surface.**
+Three outcomes, all recorded:
+
+- **No** — recorded in one line in the evidence section, so the record shows the
+  question was asked rather than skipped.
+- **Yes, and small** — the correction is proposed in the same approval stop the
+  closeout already makes, and lands with it. It then stages a surface, so
+  Stage 1c's gate fires on it in the normal way. The two gates compose.
+- **Yes, and larger than this closeout** — a ticket, not a rushed edit. A
+  closeout is a bad place to rewrite a section of the front door.
+
+**State the weakness plainly rather than overselling it.** This is a skill step,
+not a hook: nothing forces a closeout to happen, so unlike 1c's gate it is a
+check you can still forget by never closing out. It is worth doing anyway
+because it rides a ritual that already exists rather than asking for a new one,
+and because the alternative on offer is another Gate 0. **1c remains the
+enforceable gate; 1h is the one that catches what 1c cannot see.**
+
+**Gate 1h:** the `close-out` skill asks the question as a named step, in the
+taxonomy above; its three outcomes are written into the skill including the
+requirement to record a "no"; the step is demonstrated on a real closeout whose
+answer is "no" and one whose answer is "yes"; and the skill's "what this must
+never do" section names silently editing a public surface.
+
 
 ## Stage 2 — Make the landing page discoverable
 
@@ -1361,6 +1714,15 @@ The recap pages are the one place on the public surface with a long-form reading
 requirement, and they get it from the same local stylesheet rather than a second
 design.
 
+**Read [the writing surface](#the-writing-surface--what-1e3d-and-1g-share) first.**
+Stage 1g links the published articles from the same section of `/` that reaches
+this index, and takes its list row, note block and date convention from what 1e
+built. Two items there land on 3d: the landing page carries **one** "more depth"
+section rather than a link per corpus, and **3d owes a decision on the stylesheet
+question** — this stage says the recap pages share `info.css`, while the shipped
+generator inlines `_STYLE` and loads no external sheet. 1g cannot conform to a
+rule the tree contradicts.
+
 - A generated index at `/recaps`: newest first, each row the week and a
   one-line lead taken from the file, with no client-side fetch. This page is
   static HTML, unlike the "Recent work" section, because it has no freshness
@@ -1377,6 +1739,58 @@ design.
   while `body.scrollWidth` stays at 360.
 - The pages share `info.css`, load no JavaScript, and satisfy Stage 3c's CSP
   without exception. A recap page that needs a script has been over-built.
+
+#### Open: does `/recaps` lead with the newest week in full?
+
+**Raised 2026-09-01.** The shipped index is a bare list of 20 links. The
+alternative is the newest published recap rendered **in full** at the top of
+`/recaps`, with the index beneath it. This is a 3d decision — it is presentation
+— but it is not free: `render_index` currently emits only `<li>` rows, so
+choosing this changes what 1e's generator produces.
+
+**The case for it.** An index of twenty dates is a poor place to land. A reader
+arriving from the landing page's writing section has to gamble on a week before
+seeing whether any of this is worth reading, and the newest week is both the most
+current and the most likely to be the one they wanted. It also gives the page
+characterisable content — a list of links has nothing in it to summarise, quote
+or preview. And it is the same instinct the writing surface already applies one
+level up: **put content where the reader lands, not only links.** Articles are
+inline on `/` because they are few; the newest recap is inline on `/recaps`
+because it is the one most worth reading.
+
+**Three consequences a bare index does not have, and each needs an answer:**
+
+1. **The newest recap would exist at two URLs** — `/recaps` and its own page.
+   Stage 2 owns canonical metadata and the sitemap, so this needs a `rel=canonical`
+   to the recap's own page, or a deliberate decision that the index is canonical
+   and the page is not. Duplicate content published without either is the kind of
+   thing Stage 2's route contract exists to prevent.
+2. **The §5 note has to be per-week, not per-index.** The index's current note is
+   about the collection ("each recap is a point-in-time record"). A recap
+   displayed in full needs its own, naming *its* week, in `_POINT_IN_TIME`'s
+   words. One page would then carry two notes, or one merged note that does both
+   jobs without blurring them.
+3. **"Newest" can be old, and displaying it in full makes it look current.** 1e
+   measured that 11 of 31 weeks hold no commits, and unpublished weeks are
+   skipped — so the newest *published* recap can be several weeks behind today.
+   A link in a dated list carries that honestly. A full-bleed article at the top
+   of a page reads as "here is where things stand," which it is not. **Whatever
+   is displayed must state its week at the top, prominently**, not only in a note
+   below the fold.
+
+**One overlap to weigh rather than ignore.** 1b item 6 already gives `/` a
+"Recent work" section fed by the roadmap projection, so "what has been happening
+lately" has an answer before a reader reaches `/recaps`. The registers differ —
+that one is planned/completed rows, this is prose about a week — but the intent
+overlaps, and two answers to the same question in two places is how surfaces
+start disagreeing. Deciding this means deciding which of the two is the front
+door for recency.
+
+**Recommended: yes, with (3) as the binding condition.** The landing cost of a
+bare index is real, and the fix is cheap. But the staleness point is what makes
+it a truth-contract question rather than a layout preference, and it is the one
+that would be easy to implement and forget. If the week is not stated at the top,
+this change makes the surface less honest than the list it replaced.
 
 **Gate 3:** all page functions are usable with keyboard only, reduced-motion
 users do not receive autoplay, no third-party request is required to render the
@@ -1594,6 +2008,10 @@ both rollout and rollback.
 | `scripts/build_public_recaps.py` | Render `docs/recaps/` to static HTML, rewrite links, emit the index and sitemap URL list, and `--check` for drift |
 | `ops/routers/info.py` or a recap router | Serve the generated recap index and pages as static responses |
 | `ops/requirements.txt` | One Markdown rendering library, used at build time only |
+| A committed published-writing data file | Stage 1g's corpus entries — title, publication date, URL, and nothing that a moving tree could falsify |
+| `scripts/public_surface_gate.py` | Extend Stage 1c's commit gate to the corpus data file, on the same digest-stamp mechanism |
+| A published-writing reconciliation skill | Stage 1g's two-way check: article against both surfaces, for drift and for harvest |
+| `.claude/skills/close-out/SKILL.md` | Stage 1h's step: did this work change a mechanism, name, or quantity either surface states |
 | `dashboard/app.py` | Canonical portfolio and dashboard links |
 | `ops/email.py` | Canonical destinations where needed |
 | `tests/ops/routers/test_info.py` | Stats and template behavior |
@@ -1623,7 +2041,8 @@ throughout.
 
 The recap work splits across A and C on the same seam as the roadmap work —
 generation with the other build-time projections, presentation with the other
-frontend. If the publication policy in Stage 1e turns out to need a long
+frontend. Stage 1g splits on that same seam: the corpus data file and its
+date-assertion test belong in PR A, the section's markup in PR C. If the publication policy in Stage 1e turns out to need a long
 read-through, the generator can land in PR A behind a published-from date that
 admits only recent weeks, and the date widened later without touching code.
 
@@ -1645,6 +2064,12 @@ Plan 138 is complete only when:
   `docs/recaps/` at build time, reachable from the landing page, and readable
   with JavaScript disabled at 360 px;
 - adding a recap to `docs/recaps/` without regenerating fails CI;
+- the published writing is linked from the landing page with publication dates
+  and point-in-time framing, and an entry without a date fails a test;
+- adding an article to that list without reconciling it against both surfaces is
+  blocked by the commit gate;
+- closing out a slice asks, and records, whether the landed work changed a
+  mechanism, name, or quantity either surface states;
 - the demo is bounded, lazy, accessible, and cached;
 - interactive content works with keyboard and screen reader semantics;
 - scoped public security headers and local assets are in production;
