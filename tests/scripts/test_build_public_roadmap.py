@@ -434,6 +434,7 @@ def _run(*args: str) -> subprocess.CompletedProcess:
         cwd=brm.REPO_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
 

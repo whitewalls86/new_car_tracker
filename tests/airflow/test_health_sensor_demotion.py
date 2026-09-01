@@ -55,7 +55,7 @@ def _dag_files():
 
 
 def _tree(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(), filename=str(path))
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 def _kwarg(call: ast.Call, name: str):
@@ -182,7 +182,7 @@ class TestTheSensorSkipsRatherThanFails:
         wired = {
             path.name: _health_sensor_services(_tree(path))
             for path in _dag_files()
-            if HEALTH_FACTORY in path.read_text()
+            if HEALTH_FACTORY in path.read_text(encoding="utf-8")
         }
         wired.pop("sensors.py", None)  # defines the factory, calls it nowhere
         assert wired == HEALTH_SENSOR_CENSUS, (
@@ -219,7 +219,7 @@ class TestTheSensorSkipsRatherThanFails:
             and n.func.id == "_ServiceHealthSensor"
         )
         task_id = _kwarg(call, "task_id")
-        source = ast.get_source_segment(SENSORS.read_text(), task_id)
+        source = ast.get_source_segment(SENSORS.read_text(encoding="utf-8"), task_id)
         assert source == 'f"check_{service_name}_health"', (
             f"{HEALTH_FACTORY} builds its task_id as {source}; "
             "tests/health_sensor_census.py predicts check_{service}_health and "
@@ -236,7 +236,7 @@ class TestTheSensorSkipsRatherThanFails:
             n for n in ast.walk(tree)
             if isinstance(n, ast.FunctionDef) and n.name == "deploy_intent_sensor"
         )
-        assert "soft_fail" not in ast.get_source_segment(SENSORS.read_text(), func)
+        assert "soft_fail" not in ast.get_source_segment(SENSORS.read_text(encoding="utf-8"), func)
 
 
 class TestNoSensorFeedsANotifier:

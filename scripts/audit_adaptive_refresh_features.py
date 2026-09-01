@@ -298,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(results, indent=2))
 
     if args.json_out:
-        with open(args.json_out, "w") as f:
+        with open(args.json_out, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
 
     any_missing = any(r["missing"] for r in results)

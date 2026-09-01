@@ -11,7 +11,17 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+# PLW1514 is preview-gated, and `preview = true` on its own would also turn on
+# every other preview rule in E/F/I -- 207 new violations, all cosmetic,
+# measured 2026-09-01. `explicit-preview-rules` narrows that to the preview
+# rules actually named here, so this costs the 12 sites it found and nothing
+# else. It owns `open` and `tempfile.NamedTemporaryFile`, where its type
+# inference is the right instrument; `read_text`/`write_text` are owned by
+# test_every_text_read_and_write_states_its_encoding, which sees the receiver
+# shapes ruff cannot. Plan 162 Stage 6b.
+select = ["E", "F", "I", "PLW1514"]
+preview = true
+explicit-preview-rules = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

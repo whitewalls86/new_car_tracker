@@ -72,7 +72,7 @@ def load_registry() -> dict[str, tuple[str, str]]:
 
 
 def _services(filename: str) -> dict:
-    return yaml.safe_load((_REPO_ROOT / filename).read_text())["services"]
+    return yaml.safe_load((_REPO_ROOT / filename).read_text(encoding="utf-8"))["services"]
 
 
 def _split(key: str) -> tuple[str, str]:

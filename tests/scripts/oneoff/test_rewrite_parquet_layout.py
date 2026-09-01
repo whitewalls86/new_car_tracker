@@ -937,7 +937,7 @@ class TestBaselineAudit:
             {"path": f"{base}/obs_year=2026/obs_month=7/obs_day=1/", "rows": 200},
         ])
         f = tmp_path / "audit.json"
-        f.write_text(json.dumps(data))
+        f.write_text(json.dumps(data), encoding="utf-8")
 
         baseline = load_baseline_audit(f)
         silver = baseline["silver_observations"]
@@ -954,7 +954,7 @@ class TestBaselineAudit:
             {"path": "ops/price_observation_events/year=2026/month=7/", "rows": 2000},
         ])
         f = tmp_path / "audit.json"
-        f.write_text(json.dumps(data))
+        f.write_text(json.dumps(data), encoding="utf-8")
 
         baseline = load_baseline_audit(f)
         ops = baseline["price_observation_events"]
@@ -969,7 +969,7 @@ class TestBaselineAudit:
             {"path": "ops/price_observation_events/year=2026/month=7/", "rows": 500},
         ])
         f = tmp_path / "audit.json"
-        f.write_text(json.dumps(data))
+        f.write_text(json.dumps(data), encoding="utf-8")
 
         baseline = load_baseline_audit(f)
         ops = baseline["price_observation_events"]
@@ -1023,7 +1023,7 @@ class TestBaselineAudit:
 
         data = {"generated_at": "...", "datasets": {}}
         f = tmp_path / "audit.json"
-        f.write_text(json.dumps(data))
+        f.write_text(json.dumps(data), encoding="utf-8")
 
         baseline = load_baseline_audit(f)
         unit = _make_unit()
@@ -1146,8 +1146,8 @@ class TestReportStructure:
 
         report = build_report([], dry_run=True, bucket="bronze", datasets=[])
         out = tmp_path / "report.json"
-        out.write_text(json.dumps(report, indent=2))
-        data = json.loads(out.read_text())
+        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        data = json.loads(out.read_text(encoding="utf-8"))
         assert "generated_at" in data
 
 
@@ -1209,7 +1209,7 @@ class TestNeverDeleteGuarantee:
         """cleanup_parquet is not imported in the rewrite script."""
         import scripts.oneoff.rewrite_parquet_layout as module
 
-        source_text = open(module.__file__).read()
+        source_text = open(module.__file__, encoding="utf-8").read()
         assert "cleanup_parquet" not in source_text
         assert "import delete_object" not in source_text
 

@@ -353,7 +353,8 @@ def archived_numbers() -> set[int]:
     """
     numbers: set[int] = set()
     for line in (REPO_ROOT / ARCHIVE).read_text(
-            encoding="utf-8").splitlines():
+    encoding="utf-8",
+            ).splitlines():
         if not line.startswith("|"):
             continue
         cells = _cells(line)

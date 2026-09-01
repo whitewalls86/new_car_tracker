@@ -53,7 +53,7 @@ def _model_tags() -> dict:
     """Map model name -> set of config.tags, read from every *.schema.yml."""
     tags_by_model = {}
     for schema_path in MODELS_DIR.glob("*/*.schema.yml"):
-        doc = yaml.safe_load(schema_path.read_text())
+        doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
         for model in doc.get("models", []):
             tags = set(model.get("config", {}).get("tags", []))
             tags_by_model[model["name"]] = tags
@@ -61,7 +61,7 @@ def _model_tags() -> dict:
 
 
 def test_selectors_yml_parses_and_defines_expected_names():
-    doc = yaml.safe_load(SELECTORS_PATH.read_text())
+    doc = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
     names = {s["name"] for s in doc["selectors"]}
     assert names == {HOURLY_CORE, FEATURE_DAILY, BACKTEST, "full_validation"}
 

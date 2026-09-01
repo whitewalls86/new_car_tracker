@@ -14,7 +14,9 @@ from psycopg2.extras import RealDictCursor
 
 _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
-_SQL = (Path(__file__).parents[3] / "airflow" / "sql" / "delete_stale_emails.sql").read_text()
+_SQL = (
+    Path(__file__).parents[3] / "airflow" / "sql" / "delete_stale_emails.sql"
+).read_text(encoding="utf-8")
 
 
 def _get_conn():

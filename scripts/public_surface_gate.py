@@ -38,7 +38,7 @@ STAMP_NAME = "public-surface-stamp"
 def _git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], capture_output=True, text=True, check=False
-    ).stdout
+    , encoding="utf-8").stdout
 
 
 def staged_digest(paths: list[str]) -> str:
@@ -73,7 +73,7 @@ def main() -> int:
 
     digest = staged_digest(touched)
     stamp = stamp_path()
-    if stamp.exists() and stamp.read_text().strip() == digest:
+    if stamp.exists() and stamp.read_text(encoding="utf-8").strip() == digest:
         return 0
 
     print(

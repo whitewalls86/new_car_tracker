@@ -47,7 +47,7 @@ def _write_snapshot_pair(directory: Path, payload: bytes = b"archive-bytes") -> 
         },
     }
     manifest_path = directory / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
 
 

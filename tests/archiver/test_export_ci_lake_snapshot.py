@@ -269,7 +269,7 @@ class TestSelectorConfigValidation:
         )
 
         config_path = tmp_path / "selectors.yml"
-        config_path.write_text(yaml_text)
+        config_path.write_text(yaml_text, encoding="utf-8")
         return load_selector_configs(config_path, DEFAULT_SQL_DIR)
 
     def test_real_config_loads_without_error(self):
@@ -442,7 +442,7 @@ selectors:
 
         from archiver.processors.lake_snapshot_selector_config import DEFAULT_CONFIG_PATH
 
-        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text())
+        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
         assert set(RUNNABLE_SELECTORS) == set(raw["selectors"].keys())
 
     def test_registry_returns_one_selector_per_yaml_entry(self):
@@ -450,7 +450,7 @@ selectors:
 
         from archiver.processors.lake_snapshot_selector_config import DEFAULT_CONFIG_PATH
 
-        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text())
+        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
         registry = build_selector_registry()
         assert set(registry.keys()) == set(raw["selectors"].keys())
         assert len(registry) == len(raw["selectors"])

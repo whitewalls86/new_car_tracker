@@ -16,7 +16,9 @@ REPO_ROOT = Path(__file__).parents[2]
 
 
 def _compose_services() -> dict:
-    return yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]
+    return yaml.safe_load(
+        (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )["services"]
 
 
 def _dependencies(spec: dict | None) -> set[str]:
@@ -26,7 +28,7 @@ def _dependencies(spec: dict | None) -> set[str]:
 
 def _follower_targets() -> set[str]:
     targets = set()
-    for line in (REPO_ROOT / "deploy-followers.txt").read_text().splitlines():
+    for line in (REPO_ROOT / "deploy-followers.txt").read_text(encoding="utf-8").splitlines():
         if line and not line.startswith(("#", " ", "\t")):
             targets.add(line.split()[0])
     return targets

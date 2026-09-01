@@ -644,7 +644,7 @@ def test_request_endpoint_maps_failures(mock_client, mocker, result, status_code
 
 
 def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
-    sql = Path("db/migrations/V043__coordination_state.sql").read_text()
+    sql = Path("db/migrations/V043__coordination_state.sql").read_text(encoding="utf-8")
 
     assert "CHECK (id = 1)" in sql
     for phase in ("none", "requested", "draining", "active", "validating"):
@@ -658,7 +658,7 @@ def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
 
 
 def test_coordination_event_migration_is_append_only_and_archiver_accessible():
-    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text()
+    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text(encoding="utf-8")
 
     assert "CREATE TABLE staging.coordination_state_events" in sql
     assert "event_id bigserial PRIMARY KEY" in sql
@@ -677,7 +677,7 @@ def test_coordination_event_migration_is_append_only_and_archiver_accessible():
 
 
 def test_host_evidence_migration_is_append_only_and_archiver_accessible():
-    sql = Path("db/migrations/V045__coordination_release_evidence.sql").read_text()
+    sql = Path("db/migrations/V045__coordination_release_evidence.sql").read_text(encoding="utf-8")
 
     assert "CREATE TABLE staging.coordination_release_evidence" in sql
     assert "evidence_id bigserial PRIMARY KEY" in sql
@@ -688,7 +688,7 @@ def test_host_evidence_migration_is_append_only_and_archiver_accessible():
 
 
 def test_every_declared_transition_has_a_durable_event_phase():
-    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text()
+    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text(encoding="utf-8")
 
     phases = {
         phase for transition in coordination._TRANSITIONS.values() for phase in transition[:2]

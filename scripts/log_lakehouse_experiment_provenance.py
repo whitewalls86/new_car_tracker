@@ -151,6 +151,7 @@ def _detect_code_sha() -> Optional[str]:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, check=True,
+            encoding="utf-8",
         )
         return out.stdout.strip() or None
     except (subprocess.SubprocessError, FileNotFoundError, OSError):

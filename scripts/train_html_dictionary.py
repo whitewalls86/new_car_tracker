@@ -41,7 +41,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def load_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.sample_in:
-        return list(json.loads(args.sample_in.read_text()))
+        return list(json.loads(args.sample_in.read_text(encoding="utf-8")))
     from shared.duckdb_s3 import get_duckdb_s3_connection
 
     con = get_duckdb_s3_connection()

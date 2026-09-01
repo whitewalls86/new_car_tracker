@@ -318,7 +318,9 @@ def main() -> int:
                 LOG.info("Stopping at --limit=%s", args.limit)
                 log_summary("Final", totals)
                 if args.json_out:
-                    args.json_out.write_text(json.dumps(totals.as_dict(), indent=2))
+                    args.json_out.write_text(
+                        json.dumps(totals.as_dict(), indent=2), encoding="utf-8"
+                    )
                 return 0
 
     if current_day is not None:
@@ -326,7 +328,7 @@ def main() -> int:
     log_summary("Final", totals)
 
     if args.json_out:
-        args.json_out.write_text(json.dumps(totals.as_dict(), indent=2))
+        args.json_out.write_text(json.dumps(totals.as_dict(), indent=2), encoding="utf-8")
         LOG.info("Wrote %s", args.json_out)
 
     return 0

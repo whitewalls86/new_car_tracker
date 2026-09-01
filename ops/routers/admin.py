@@ -262,7 +262,7 @@ def view_logs(request: Request, lines: int = 200):
         pass
 
     try:
-        with open(_OPS_LOG_PATH) as f:
+        with open(_OPS_LOG_PATH, encoding="utf-8") as f:
             ops_lines = f.readlines()[-lines:]
     except FileNotFoundError:
         pass

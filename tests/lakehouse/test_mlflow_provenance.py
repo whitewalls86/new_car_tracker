@@ -144,7 +144,7 @@ class TestManifestArtifact:
 
     def test_existing_manifest_is_attached(self, tmp_path):
         manifest = tmp_path / "archive_manifest.json"
-        manifest.write_text("{}")
+        manifest.write_text("{}", encoding="utf-8")
         payload = build_provenance_payload(
             _full_fields(), manifest_artifact_path=str(manifest)
         )
@@ -241,12 +241,12 @@ class TestCliFieldCollection:
             "iceberg_table": "cartracker_experiments.t",
             "feature_table_name": "int_listing_volatility_features",
             "row_count": 1,
-        }))
+        }), encoding="utf-8")
         manifest = tmp_path / "manifest.json"
         manifest.write_text(json.dumps({
             "snapshot_id": "from-manifest",
             "archive": {"path": "a.tar.zst", "sha256": "sh", "bytes": 1},
-        }))
+        }), encoding="utf-8")
 
         fields = self._run_collect([
             "--metadata-json", str(metadata),
@@ -307,7 +307,7 @@ class TestCliCleanErrors:
 
     def test_invalid_json_returns_clean_error(self, tmp_path, capsys):
         bad = tmp_path / "bad.json"
-        bad.write_text("{not valid json")
+        bad.write_text("{not valid json", encoding="utf-8")
         rc = self._main(["--iceberg-info-json", str(bad), "--dry-run"])
         assert rc == 2
         assert "not valid JSON" in capsys.readouterr().err

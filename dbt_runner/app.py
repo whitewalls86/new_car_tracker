@@ -50,7 +50,7 @@ def _model_timings_from_run_results() -> List[Dict[str, Any]]:
     if not os.path.exists(path):
         return []
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return []
@@ -110,7 +110,7 @@ def get_docs_status() -> Dict[str, Any]:
 def dbt_docs_generate() -> Dict[str, Any]:
     """Run dbt deps + dbt docs generate and return ok/stdout/stderr."""
     with active_job():
-        deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
+        deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True, encoding="utf-8")
         if deps.returncode != 0:
             logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
             raise HTTPException(status_code=500, detail={
@@ -120,7 +120,9 @@ def dbt_docs_generate() -> Dict[str, Any]:
                 "stderr": _cap(deps.stderr),
             })
 
-        proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
+        proc = subprocess.run(
+            ["dbt", "docs", "generate"], capture_output=True, text=True, encoding="utf-8"
+        )
         ok = proc.returncode == 0
         if not ok:
             logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
@@ -202,7 +204,7 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
             logger.info("dbt build invocation=%s starting: %s", invocation_id, cmd_str)
 
             start = time.monotonic()
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
             duration_seconds = round(time.monotonic() - start, 2)
             ended_at = datetime.now(timezone.utc).isoformat()
             likely_oom = _likely_oom(proc.returncode)

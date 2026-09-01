@@ -61,7 +61,9 @@ def configure_logging(stream: bool = True) -> None:
     root = logging.getLogger()
     log_path = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    file_handler = RotatingFileHandler(log_path, maxBytes=5_000_000, backupCount=3)
+    file_handler = RotatingFileHandler(
+        log_path, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+    )
     file_handler.setFormatter(_JsonFormatter())
     root.addHandler(file_handler)
 

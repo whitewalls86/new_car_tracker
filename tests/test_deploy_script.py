@@ -52,7 +52,9 @@ def load_health_exemptions(path: Path = _EXEMPTIONS) -> dict:
 
 
 def _compose_services() -> dict:
-    return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())["services"]
+    return yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )["services"]
 
 
 def _cron_fire_interval(schedule: str) -> int:
@@ -301,7 +303,7 @@ class TestRedeployScriptContract:
         assert schedules, "no gated DAG declares a schedule; the floor is unverifiable"
         tightest = min(_cron_fire_interval(s) for s in schedules.values())
 
-        sensors = (_REPO_ROOT / "airflow" / "dags" / "sensors.py").read_text()
+        sensors = (_REPO_ROOT / "airflow" / "dags" / "sensors.py").read_text(encoding="utf-8")
         gate = sensors[sensors.index("def deploy_intent_sensor("):]
         match = re.search(r"poke_interval=(\d+)", gate)
         assert match, "deploy_intent_sensor no longer declares a poke_interval"
@@ -375,6 +377,7 @@ class TestRedeployScriptContract:
             input=json.dumps(document),
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         out = result.stdout
@@ -521,7 +524,7 @@ class TestCachedPeerAddressRegistry:
         x-airflow-common anchor, so all four need the restart -- not just the
         scheduler, which is merely the one that was noticed."""
         entry = load_health_exemptions(_FOLLOWERS)["statsd-exporter"]
-        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
         assert compose["x-airflow-common"]["environment"][
             "AIRFLOW__METRICS__STATSD_HOST"
         ] == "statsd-exporter", "Airflow no longer points at statsd-exporter"

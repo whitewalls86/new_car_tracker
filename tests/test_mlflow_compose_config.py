@@ -17,7 +17,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 def _load(filename):
     path = _REPO_ROOT / filename
     assert path.exists(), f"{filename} missing"
-    return yaml.safe_load(path.read_text())
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 class TestMainComposeUntouched:
@@ -47,12 +47,12 @@ class TestMlflowComposeStandalone:
         assert build["target"] == "mlflow"
 
     def test_mlflow_image_uses_python_312_for_arm64_wheels(self):
-        dockerfile = (_REPO_ROOT / "lakehouse" / "Dockerfile").read_text()
+        dockerfile = (_REPO_ROOT / "lakehouse" / "Dockerfile").read_text(encoding="utf-8")
         assert "FROM python:3.12-slim-bookworm AS mlflow" in dockerfile
         assert "pyarrow 17" in dockerfile
 
     def test_mlflow_image_packages_provenance_client(self):
-        dockerfile = (_REPO_ROOT / "lakehouse" / "Dockerfile").read_text()
+        dockerfile = (_REPO_ROOT / "lakehouse" / "Dockerfile").read_text(encoding="utf-8")
         assert "COPY shared /app/shared" in dockerfile
         assert "COPY scripts /app/scripts" in dockerfile
         assert "COPY __init__.py /app/__init__.py" in dockerfile

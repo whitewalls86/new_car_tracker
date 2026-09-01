@@ -296,7 +296,7 @@ def print_summary(stats: Stats, sample_rate: float, json_out: Path | None = None
             "projected_saved_bytes": proj_saved,
             "recommendation": rec,
         }
-        Path(json_out).write_text(json.dumps(summary, indent=2))
+        Path(json_out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
         LOG.info("Wrote JSON summary to %s", json_out)
 
 
