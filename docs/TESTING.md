@@ -132,6 +132,23 @@ def db_conn(db_conn_factory):
 
 **Lives in:** `tests/integration/sql/`.
 
+**Executes production SQL from these suites.** The rule that every `.sql` file
+is executed reads all of them, and this table is the declared source it reads —
+a suite absent here is invisible to that rule however much SQL it runs, so
+adding one is an edit here rather than a change to the checker.
+
+| Suite | Engine | Why it executes production SQL |
+|---|---|---|
+| `tests/integration/sql/` | Postgres, DuckDB | Layer 2 proper: imports each service's `queries.py` constants and executes them |
+| `tests/integration/archiver/` | DuckDB over MinIO | The Plan 120 lake-snapshot selectors run against real Parquet through `run_lake_selectors`, which no Postgres/DuckDB fixture in Layer 2 can reach. They live beside their service because they are also that service's integration tests |
+
+**Why a declared table and not a glob over `tests/integration/`.** Measured
+2026-09-01, a glob would credit 35 of the then-46 uncovered files on a name
+match alone, several of them from suites that mention a statement without
+running it. The check matches a filename stem in a test's *text*; it cannot
+tell execution from mention, so widening what it reads has to be a decision
+somebody made rather than a directory that happened to exist.
+
 ### Layer 3 — dbt model logic
 
 **For:** transformation correctness. Known inputs produce known outputs.

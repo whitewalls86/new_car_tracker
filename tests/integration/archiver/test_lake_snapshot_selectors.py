@@ -29,6 +29,10 @@ from archiver.processors.export_ci_lake_snapshot import (
     export_ci_lake_snapshot,
 )
 from archiver.processors.lake_snapshot_cohort import collect_selector_candidates
+from archiver.processors.lake_snapshot_selector_config import (
+    DEFAULT_SQL_DIR,
+    load_selector_configs,
+)
 from archiver.processors.lake_snapshot_selectors import RUNNABLE_SELECTORS, run_lake_selectors
 from archiver.processors.lake_source_audit import audit_source_tables
 from scripts import seed_lake_snapshot_fixture as fx
@@ -203,3 +207,57 @@ class TestRunLakeSelectorsContract:
         assert result.selector_diagnostics is not None
         assert result.selector_diagnostics["ok"] is True
         assert result.selector_diagnostics["selectors"]["relisted_vin"]["entities"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Every selector .sql file is reached by something above
+# ---------------------------------------------------------------------------
+
+class TestEveryTemplateIsExercised:
+    """The mapping from selector to `.sql` file, asserted rather than assumed.
+
+    Selectors name their SQL through `sql_template` in
+    `archiver/config/lake_snapshot_selectors.yml`, and the two are usually the
+    same word -- so a test naming the selector happens to name its file too,
+    and the Layer 2 census is satisfied by coincidence.
+
+    `cooldown_events.sql` is where the coincidence breaks: five selectors
+    (`cooldown_blocked`, `cooldown_incremented`, and the three bucket
+    selectors) share it, so no test above contains the token `cooldown_events`
+    even though all five execute it. The census reported it uncovered for
+    exactly that reason, and it was the one file in this directory the earlier
+    substring reading had credited to an unrelated table name.
+
+    This asserts the indirection instead of papering over it: every `.sql` file
+    in the selector directory is the template of at least one runnable
+    selector, and `cooldown_events` is the template of the five that share it.
+    """
+
+    def test_every_selector_sql_file_backs_a_runnable_selector(self):
+        configs = load_selector_configs()
+        templates = {config.sql_template for config in configs.values()}
+        on_disk = {path.stem for path in DEFAULT_SQL_DIR.glob("*.sql")}
+        assert on_disk - templates == set(), (
+            f"selector .sql files no selector names: {sorted(on_disk - templates)}"
+        )
+        assert templates - on_disk == set(), (
+            f"selectors naming a template with no file: {sorted(templates - on_disk)}"
+        )
+
+    def test_cooldown_events_is_the_template_the_five_cooldown_selectors_share(self):
+        configs = load_selector_configs()
+        sharing = sorted(
+            name for name, config in configs.items()
+            if config.sql_template == "cooldown_events"
+        )
+        # Sorted, so "11_plus" precedes "3_4" -- string order, not numeric.
+        assert sharing == [
+            "cooldown_blocked",
+            "cooldown_bucket_11_plus",
+            "cooldown_bucket_3_4",
+            "cooldown_bucket_5_10",
+            "cooldown_incremented",
+        ]
+        # And all five are runnable, so the file above executes five times in
+        # `test_all_selectors_run_without_error`.
+        assert set(sharing) <= set(RUNNABLE_SELECTORS)

@@ -853,28 +853,6 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 LAYER_2_WAIVERS = tuple(
     Waiver(subject, gap="G14", owner=162)
     for subject in (
-        "archiver/sql/lake_snapshot_selectors/active_to_unlisted.sql",
-        "archiver/sql/lake_snapshot_selectors/benchmark_dense_make_model.sql",
-        "archiver/sql/lake_snapshot_selectors/benchmark_sparse_make_model.sql",
-        "archiver/sql/lake_snapshot_selectors/carousel_only_or_low_priority.sql",
-        "archiver/sql/lake_snapshot_selectors/cooldown_events.sql",
-        "archiver/sql/lake_snapshot_selectors/detail_beats_srp.sql",
-        "archiver/sql/lake_snapshot_selectors/fresh_recent_listing.sql",
-        "archiver/sql/lake_snapshot_selectors/invalid_or_null_vin.sql",
-        "archiver/sql/lake_snapshot_selectors/no_price_history.sql",
-        "archiver/sql/lake_snapshot_selectors/price_changed_30d_only.sql",
-        "archiver/sql/lake_snapshot_selectors/price_changed_7d.sql",
-        # price_drop and stale_listing were exposed on 2026-09-01, when Stage 5
-        # tightened the match above to a word boundary. Both had been credited
-        # by a test *method* name that happened to contain the stem; neither
-        # .sql file is executed by anything.
-        "archiver/sql/lake_snapshot_selectors/price_drop.sql",
-        "archiver/sql/lake_snapshot_selectors/price_increase.sql",
-        "archiver/sql/lake_snapshot_selectors/relisted_vin.sql",
-        "archiver/sql/lake_snapshot_selectors/srp_fallback.sql",
-        "archiver/sql/lake_snapshot_selectors/stable_state_run.sql",
-        "archiver/sql/lake_snapshot_selectors/stale_listing.sql",
-        "archiver/sql/lake_snapshot_selectors/state_change_run.sql",
         "ops/sql/evict_delisted_cooldowns.sql",
         "ops/sql/expire_orphan_detail_claims.sql",
         "ops/sql/insert_artifact_event.sql",
@@ -904,6 +882,47 @@ LAYER_2_WAIVERS = tuple(
         "processing/sql/upsert_vin_to_listing.sql",
     )
 )
+
+_SQL_SUITE_ROW = re.compile(r"^\| `(tests/integration/[^`]+)` \| ", re.M)
+
+
+@lru_cache(maxsize=None)
+def sql_executing_suites() -> frozenset[str]:
+    """The suites the contract declares as executing production SQL.
+
+    Read from ``docs/TESTING.md``'s Layer 2 section rather than listed here,
+    for the reason every other derivation in this file gives: a list in the
+    checker is a list nobody reviews. Adding a suite is an edit to the document
+    that has to say *why* the suite executes production SQL, in the row itself.
+
+    **This started as ``tests/integration/sql/`` alone and that was too narrow.**
+    18 of the ``.sql`` files this rule reported as uncovered -- every
+    ``archiver/sql/lake_snapshot_selectors/`` file -- are executed in CI against
+    real Parquet in MinIO by ``tests/integration/archiver/``, which the rule
+    could not see. That is a blind spot in the ruler, not a gap in the work,
+    and it is the sharpest argument against location as a proxy for coverage:
+    the tests were stronger than this check's own reading and it called them
+    absent.
+
+    **It is deliberately not a glob.** Measured 2026-09-01, reading all of
+    ``tests/integration/`` would have credited 35 of 46 files on a name match
+    alone, including matches from suites that mention a statement without
+    executing it. The check reads a filename stem out of a test's *text*; it
+    cannot tell execution from mention, so what it reads is a decision.
+    """
+    section = _read(CONTRACT).split("### Layer 2 — SQL smoke tests")[1]
+    section = section.split("### Layer 3")[0]
+    suites = {row.rstrip("/") for row in _SQL_SUITE_ROW.findall(section)}
+    assert suites, (
+        f"{CONTRACT}'s Layer 2 section no longer declares which suites execute "
+        f"production SQL. See 'Executes production SQL from these suites.'"
+    )
+    missing = sorted(s for s in suites if not (REPO_ROOT / s).is_dir())
+    assert not missing, (
+        f"{CONTRACT} declares suites that do not exist: {missing}"
+    )
+    return frozenset(suites)
+
 
 # Flyway owns db/migrations/ and dbt owns its models; both are named exemptions
 # in the contract. tests/ holds fixture seeds, which are not production SQL.
@@ -973,9 +992,13 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
     """
     layer_2 = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in sorted((TESTS_DIR / "integration" / "sql").rglob("*.py"))
+        for suite in sql_executing_suites()
+        for path in sorted((REPO_ROOT / suite).rglob("*.py"))
     )
-    assert layer_2.strip(), "tests/integration/sql/ holds no Python at all"
+    assert layer_2.strip(), (
+        f"the suites {CONTRACT} declares as executing production SQL hold no "
+        f"Python at all: {sorted(sql_executing_suites())}"
+    )
     untouched = {
         relative
         for relative in production_sql_files()
