@@ -17,7 +17,7 @@ reconciled overviews and the assigned replacement claims.
 | **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
-| **1e** Weekly recap projection (CAR-58, PR #331) | **Built 2026-09-01, in review** — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
+| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01, soaking and undeployed** — and *unreachable*: the 20 generated pages ship in `ops/static_ops/recaps/` but nothing serves `/recaps` until Stage 2 item 3. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1h** Ask at closeout whether the landed work moved a surface (CAR-61) | **Raised 2026-09-01, ready.** The only pullable Stage 1 slice. 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it — which is the class every Gate 0 defect came from. Adds one cheap question to the `close-out` skill, in the same mechanism/name/quantity taxonomy 1c already uses, that proposes and never writes |
 | **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
 | **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
@@ -2020,31 +2020,73 @@ both rollout and rollback.
 | `docs/recaps/*.md` | Unchanged as a source; the recap publication policy is committed alongside them |
 | `.github/workflows/ci.yml` | Reject stale or invalid project-updates and recap snapshots |
 
-## Recommended PR sequence
+## Recommended build order
 
-1. **PR A — Truth and roadmap pass:** README and landing copy, accurate
-   architecture, current versus experimental, scored roadmap, deterministic
-   public projection, the recap publication policy and its generator, and CI
-   drift checks; no routing change.
-2. **PR B — Public root:** Caddy route contract, canonical metadata, robots,
-   sitemap including the generated recap URLs, link updates, and route tests.
-3. **PR C — Frontend quality:** semantic interactions, dynamically loaded work
-   feed, recap index and page presentation, extracted/local assets, optimized
-   media, CSP, caching, and accessibility evidence.
-4. **PR D — Stats presentation:** consume the already-landed Plan 143 snapshot,
-   add stale/partial/empty UI states, and verify no request-time dependency.
+**Rewritten 2026-09-01**, replacing the original PR A-D sequence. That sequence
+was written before Stage 1 ran, and Stage 1 produced two facts it could not have
+anticipated: **everything that changed the landing page is merged and
+undeployed**, and **Stage 1e's generated pages have no route**. The order below
+is driven by those.
 
-PR A can ship independently. PRs B and C should be reviewed together for CSP and
-asset-path compatibility. PR D requires Plan 143's snapshot contract, which
-landed on 2026-08-20, and must preserve the current soft-failure behavior
-throughout.
+**1. Deploy the merged copy — `ops` image only, no Caddy change.**
+`https://cartracker.info/` still serves the pre-plan copy the Stage 0 baseline
+screenshotted, while 1b, 1d, 1e and 1f are all merged. Stage 6 defers every
+deploy to the end, which is *why* four slices have accumulated unreleased. The
+template needs no route change to go live, so this is separable from Stage 6 and
+should not wait for it. Rollback is the previous image.
 
-The recap work splits across A and C on the same seam as the roadmap work —
-generation with the other build-time projections, presentation with the other
-frontend. Stage 1g splits on that same seam: the corpus data file and its
-date-assertion test belong in PR A, the section's markup in PR C. If the publication policy in Stage 1e turns out to need a long
-read-through, the generator can land in PR A behind a published-from date that
-admits only recent weeks, and the date widened later without touching code.
+**2. Stage 1h (CAR-61) — the closeout question.** Cheap, ready, and it belongs
+*before* the stages below rather than after: steps 3 onward change mechanisms,
+names and quantities across the system, and 1h is what stops them silently
+re-drifting the copy step 1 just published.
+
+**3. Stage 2 — the public root, the `/info` redirect, and the recap routes.**
+The unlock: it makes `/` the front door, and it gives 1e's 20 pages a URL. It
+also carries this plan's riskiest change. **Write Stage 5's Streamlit-coupling
+assertion as part of this stage, not after it** — Gate 2 as written cannot see
+the failure mode, and a test that lands after the change has shipped protects
+nothing.
+
+**4. Stage 6, route half — deploy Caddy and `ops` together** and run the full
+matrix, including loading the dashboard as `viewer` to confirm the websocket
+connects.
+
+**5. Stage 3b and 3c — the asset and header pass.** The largest user-visible
+quality change available, and it starts with a decision rather than an
+encoding: 3b picks whether the 41.7 MB hero video should exist at all. 3c then
+self-hosts PicoCSS and the service icons — the page currently makes third-party
+requests to `cdn.jsdelivr.net` and `cdn.simpleicons.org` on every visit, which
+is what makes a same-origin CSP impossible — extracts the inline CSS and
+JavaScript, and applies the headers and caching policy.
+
+**6. Stage 3a — semantic interactions.** The service and decision cards are
+clickable `<div>` elements: not focusable, not announced, not operable without a
+mouse, with active state signalled by colour alone.
+
+**7. Stage 4 — the Plan 143 snapshot presentation.** Unblocked since Plan 143
+completed on 2026-08-20 and **dependent on nothing above**, so it can move
+earlier if shipping the numbers is worth more than the recap route.
+
+**8. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
+question and whether `/recaps` leads with the newest week in full — govern both
+3d's markup and 1g's. Settle them, build 3d, then link the articles.
+
+**9. The remainder of Stage 5, then Stage 6's final verification.**
+
+### What this order costs, stated
+
+The original sequence had PRs B and C reviewed together for CSP and asset-path
+compatibility. Here routing (step 3) ships before the CSP work (step 5), so the
+headers arrive after the routes rather than with them. **Mitigation:** step 3
+ships without tightening CSP, and step 5 adds it and re-runs the full route
+matrix rather than trusting step 4's run. The alternative — holding the routes
+until the asset pass is ready — keeps the live page stale and 1e's pages
+unreachable for longer, which is the worse trade while the surfaces disagree.
+
+Two seams from the original sequence survive and still hold. The recap work
+splits between build-time generation and frontend presentation, and **Stage 1g
+splits on that same seam**: its corpus data file and date-assertion test are
+generation work, its section markup is step 8.
 
 ## Completion criteria
 
