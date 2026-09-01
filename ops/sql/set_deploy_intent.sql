@@ -2,10 +2,13 @@
 -- RETURNING is the whole result: a row means this caller won, no row means the
 -- lock is held and still fresh.
 --
--- Note the third parameter sits inside the quoted interval literal
--- (`interval '%s minutes'`). psycopg2 substitutes into the statement text
+-- Note the third parameter sits inside the quoted interval literal at the
+-- bottom of the WHERE clause. psycopg2 substitutes into the statement text
 -- before the server parses it, so STALE_LOCK_MINUTES lands as the number of
 -- minutes. Preserved as-is: this is the statement production runs.
+-- The literal is not repeated here on purpose -- psycopg2 counts placeholders
+-- across the whole string, comments included, so writing one into a comment
+-- adds a parameter the caller does not pass.
 UPDATE deploy_intent
    SET
         intent = 'pending',

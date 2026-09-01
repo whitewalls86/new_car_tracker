@@ -719,7 +719,8 @@ class TestPriceObservationStatements:
             "make": "Honda",
             "model": "Accord",
             "artifact_id": artifact["artifact_id"],
-            "event_type": "created",
+            # CHECK (event_type IN ('upserted', 'deleted')) -- V021.
+            "event_type": "upserted",
             "source": "detail",
         })
         assert cur.rowcount == 1

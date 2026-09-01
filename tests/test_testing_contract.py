@@ -1056,6 +1056,57 @@ def production_python_files() -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Rule 5e -- no .sql comment contains a parameter placeholder.
+# ---------------------------------------------------------------------------
+_PLACEHOLDER_IN_COMMENT = re.compile(r"^\s*--.*(%s|%\([a-z_]+\)s)", re.M)
+
+
+def test_no_sql_comment_contains_a_parameter_placeholder():
+    """A failure mode this plan created, found by CI on 2026-09-01.
+
+    psycopg2 counts placeholders across the **whole statement string**, comments
+    included. So a comment written to explain a parameter adds one, and the
+    caller then passes too few.
+
+    Both instances were written the same day, by the same well-meant impulse.
+    ``ops/sql/set_deploy_intent.sql`` explained its ``interval '<placeholder>
+    minutes'`` construct by quoting it, which made the statement expect four
+    parameters where ``deploy.py`` passes three -- so ``/deploy/start`` raised,
+    the router caught it, and returned 503. Seven Layer 4 tests failed on that
+    alone, in a code path the extraction was not supposed to touch.
+    ``ops/sql/insert_blocked_cooldown_events_batch.sql`` did the same to
+    ``execute_values``, which refuses any statement carrying two placeholders
+    and had exactly one job.
+
+    **The named form is the one that will get someone later.**
+    ``processing/sql/claim_artifacts.sql`` had ``%(limit)s`` in its first
+    comment line and worked fine, because a named placeholder resolves from the
+    same dict however many times it appears. It is a live trap that happens not
+    to have sprung: rename the parameter and the comment raises ``KeyError``
+    from a line that is not code. All three are fixed and this rule keeps them
+    fixed.
+
+    Worth stating plainly, because it is the argument for the whole exercise
+    rather than a footnote to it: **this defect could only be found by
+    executing.** Every static rule in this file passed on all three files. The
+    statements were correctly extracted, correctly imported and correctly
+    named, and two of them were broken.
+    """
+    found = {
+        f"{relative}:{text[:match.start()].count(chr(10)) + 1}"
+        for relative in production_sql_files()
+        for text in [(REPO_ROOT / relative).read_text(encoding="utf-8")]
+        for match in _PLACEHOLDER_IN_COMMENT.finditer(text)
+    }
+    assert not found, (
+        "these .sql comments contain a parameter placeholder, which psycopg2 "
+        "counts as part of the statement -- the caller will pass too few "
+        "parameters, or a rename will raise KeyError from a comment:\n  "
+        + "\n  ".join(sorted(found))
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule 5d -- no statement is filed twice.
 # ---------------------------------------------------------------------------
 # One pair, and it is a decision rather than an oversight. `cancel` refuses

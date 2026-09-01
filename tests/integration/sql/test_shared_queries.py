@@ -40,17 +40,18 @@ class TestDictionaryRegistrationQueries:
     """
 
     def test_registration_collision_check_matches_nothing(self, cur):
-        cur.execute(SELECT_COMPRESSION_DICTIONARY_REGISTRATION, (0, "v0-absent"))
+        cur.execute(SELECT_COMPRESSION_DICTIONARY_REGISTRATION, (0, 999_999_998))
         assert cur.fetchone() is None
 
     def test_insert_then_collision_check_finds_it(self, cur):
-        dict_id, version = 999_999_999, "v-test-999"
+        # version is integer NOT NULL CHECK (version > 0) -- V041, not text.
+        dict_id, version = 999_999_999, 999_999_999
         cur.execute(
             INSERT_COMPRESSION_DICTIONARY,
             (
                 dict_id,
                 version,
-                "s3://bronze/dictionaries/zstd/v-test-999.dict",
+                "s3://bronze/dictionaries/zstd/v999999999.dict",
                 b"\x00\x01",
                 2,
                 19,
@@ -63,7 +64,7 @@ class TestDictionaryRegistrationQueries:
 
         # The collision check is what makes the dictionary immutable: it has to
         # see the row this insert just wrote, on either half of the identity.
-        cur.execute(SELECT_COMPRESSION_DICTIONARY_REGISTRATION, (dict_id, "v-other"))
+        cur.execute(SELECT_COMPRESSION_DICTIONARY_REGISTRATION, (dict_id, 999_999_997))
         assert cur.fetchone()["dict_id"] == dict_id
         cur.execute(SELECT_COMPRESSION_DICTIONARY_REGISTRATION, (0, version))
         assert cur.fetchone()["version"] == version
