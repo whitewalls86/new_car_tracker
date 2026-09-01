@@ -17,17 +17,6 @@ on:
   # run.
   workflow_dispatch:
 
-# PEP 597. Makes any text read, write or subprocess that falls back to the
-# locale encoding emit EncodingWarning, which `filterwarnings` in
-# pyproject.toml turns into a failure. This is the runtime half of the
-# encoding guard: it sees shapes no static rule can -- `subprocess.run(text=True)`
-# and `logging.RotatingFileHandler` are how it found its first two -- but only
-# on lines a test actually executes, which is why the static rule in
-# tests/test_testing_contract.py stays. The two fail in opposite directions.
-# Plan 162 Stage 6b.
-env:
-  PYTHONWARNDEFAULTENCODING: "1"
-
 jobs:
 
   changes:

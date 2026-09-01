@@ -1132,8 +1132,6 @@ def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
 # after the class the row above calls judgement produced another instance.
 ENCODING_WAIVERS = ()
 
-PYPROJECT = "pyproject.toml"
-
 # Not source, and ``.claude/`` is the one that matters: in the primary checkout
 # it holds every active worktree, so walking it would report each violation
 # once per worktree and make the count depend on how many branches happen to be
@@ -1150,6 +1148,22 @@ _NOT_SOURCE = frozenset({
 # rather than a ruff setting -- see the docstring below.
 _TEXT_IO_METHODS = frozenset({"read_text", "write_text"})
 
+# Text-mode subprocess decodes the child's output through the locale, so it is
+# the same defect wearing different clothes: the same command yields str on one
+# machine and raises on another. Only text mode qualifies -- a bytes-mode call
+# has no encoding to state, which is why the text/universal_newlines flags are
+# read rather than the function name alone.
+_SUBPROCESS_CALLS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+_TEXT_MODE_FLAGS = ("text", "universal_newlines")
+
+# Every logging handler that opens a file takes ``encoding`` and defaults to the
+# locale. ``StreamHandler`` is deliberately absent: it wraps an existing stream
+# and has no encoding of its own to state.
+_FILE_LOG_HANDLERS = frozenset({
+    "FileHandler", "RotatingFileHandler", "TimedRotatingFileHandler",
+    "WatchedFileHandler",
+})
+
 
 def _source_files() -> list[Path]:
     """Every Python file in the repository, minus the directories that are not it."""
@@ -1161,7 +1175,12 @@ def _source_files() -> list[Path]:
 
 
 def _encoding_free_text_io(source: str, filename: str = "<canary>") -> set[int]:
-    """Line numbers in *source* where a text read or write names no encoding.
+    """Line numbers in *source* where a text operation names no encoding.
+
+    Three shapes, each identified by name rather than by inferring the type of
+    a receiver, because every one of them is unambiguous by name in this
+    repository: the two ``pathlib`` methods, a text-mode subprocess, and a
+    logging handler that opens a file.
 
     Separated from the check below so the rule itself can be tested. A
     structural check nothing exercises is a check that quietly stops matching
@@ -1169,14 +1188,32 @@ def _encoding_free_text_io(source: str, filename: str = "<canary>") -> set[int]:
     exists to prevent.
     """
     tree = ast.parse(source, filename=filename)
-    return {
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in _TEXT_IO_METHODS
-        and not any(keyword.arg == "encoding" for keyword in node.keywords)
-    }
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if any(keyword.arg == "encoding" for keyword in node.keywords):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+
+        if isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            name = node.func.id
+        else:
+            continue
+
+        if isinstance(node.func, ast.Attribute) and name in _TEXT_IO_METHODS:
+            found.add(node.lineno)
+        elif name in _SUBPROCESS_CALLS and any(
+            isinstance(keywords.get(flag), ast.Constant)
+            and keywords[flag].value is True
+            for flag in _TEXT_MODE_FLAGS
+        ):
+            found.add(node.lineno)
+        elif name in _FILE_LOG_HANDLERS:
+            found.add(node.lineno)
+    return found
 
 
 def test_the_encoding_rule_sees_the_shape_ruff_cannot():
@@ -1190,16 +1227,24 @@ def test_the_encoding_rule_sees_the_shape_ruff_cannot():
     The receiver shapes below are the three the repository actually writes.
     ``Path(...)`` is the one ruff already sees, and it is here so that
     narrowing this rule to the fixture idiom alone would fail.
+
+    Lines 5 and 6 are the shapes PEP 597's ``EncodingWarning`` found at runtime
+    on 2026-09-01, after this rule had already been written and committed. They
+    are asserted statically now, over this repository's files only -- see the
+    stage's decision record for why the runtime check that discovered them was
+    not kept in CI.
     """
     caught = _encoding_free_text_io(
         'from pathlib import Path\n'
         '(tmp_path / "a.md").write_text("—")\n'
         'target.write_text("x")\n'
         'Path("b.md").read_text()\n'
+        'subprocess.run(cmd, capture_output=True, text=True)\n'
+        'RotatingFileHandler(path, maxBytes=5)\n'
     )
-    assert caught == {2, 3, 4}, (
-        "the encoding rule no longer sees every receiver shape: expected lines "
-        f"2, 3 and 4, got {sorted(caught)}"
+    assert caught == {2, 3, 4, 5, 6}, (
+        "the encoding rule no longer sees every shape: expected lines "
+        f"2 through 6, got {sorted(caught)}"
     )
 
     clean = _encoding_free_text_io(
@@ -1207,6 +1252,11 @@ def test_the_encoding_rule_sees_the_shape_ruff_cannot():
         'Path("b.md").read_text(encoding="utf-8")\n'
         'archive.read_bytes()\n'
         'tarfile.open(path)\n'
+        # Bytes-mode subprocess has no encoding to state, and neither does a
+        # handler that wraps an existing stream. Flagging either would make the
+        # rule fire on correct code, which is how a rule gets switched off.
+        'subprocess.run(cmd, capture_output=True)\n'
+        'logging.StreamHandler(sys.stdout)\n'
     )
     assert not clean, (
         f"the encoding rule fires on calls that are already correct: {sorted(clean)}"
@@ -1243,6 +1293,18 @@ def test_every_text_read_and_write_states_its_encoding():
     defines, so the name alone is proof and no inference is needed. Between
     them there is no gap and no double report.
 
+    **Two further shapes are here because a runtime check found them and this
+    one had not.** ``subprocess.run(..., text=True)`` decodes the child's
+    output through the locale, and ``logging.RotatingFileHandler`` writes its
+    file the same way -- 21 sites, one of them the ops log that
+    ``ops/routers/admin.py`` reads. PEP 597's ``EncodingWarning`` surfaced
+    them; it is not in CI, because as an interpreter-wide flag it also judges
+    dbt's and Airflow's own file handling by this repository's policy, and its
+    attribution is unreliable -- the same warning was blamed on the caller
+    locally and on ``configparser`` in CI. Both are recorded in the stage's
+    decision record. The shapes it taught us are checked here instead, over
+    this repository's files, where ownership is not in question.
+
     What this does **not** close is the rest of the class. Path separators,
     line endings and case-insensitive filesystems still decide outcomes that
     only a second platform can see, and CI is ``ubuntu-latest`` in all ten
@@ -1261,53 +1323,6 @@ def test_every_text_read_and_write_states_its_encoding():
         ENCODING_WAIVERS,
         "these text reads and writes let the machine choose the encoding, so "
         "their result depends on the locale of whoever runs them:",
-    )
-
-
-def test_the_runtime_encoding_guard_is_enabled_in_ci():
-    """The other half of the guard, and the half that can vanish silently.
-
-    The rule above is complete over the repository and blind to any shape it
-    does not name. PEP 597's ``EncodingWarning`` is the opposite: raised from
-    inside CPython, so it sees ``subprocess.run(text=True)`` and
-    ``logging.RotatingFileHandler`` -- the two shapes that were missed when
-    this stage first scoped itself -- but only on lines a test actually
-    executes. Neither is a superset of the other, so both are kept.
-
-    It takes two settings in two files to work, and **removing either one
-    fails open**: no warning is raised, every test still passes, and the guard
-    is gone with nothing to show for it. That is precisely the silent-instrument
-    failure this document exists to prevent, so the settings are asserted here
-    rather than trusted.
-    """
-    workflow = yaml.safe_load(_read(WORKFLOW))
-    assert str(workflow.get("env", {}).get("PYTHONWARNDEFAULTENCODING")) == "1", (
-        f"{WORKFLOW} no longer sets PYTHONWARNDEFAULTENCODING=1 at the workflow "
-        f"level. Without it CPython never raises EncodingWarning and the "
-        f"filterwarnings entry below has nothing to turn into a failure."
-    )
-
-    filters = tomllib.loads(_read(PYPROJECT))["tool"]["pytest"]["ini_options"]
-    warning_filters = filters.get("filterwarnings", [])
-    assert "error::EncodingWarning" in warning_filters, (
-        f"{PYPROJECT} no longer turns EncodingWarning into an error, so CI "
-        f"would print the warning and pass."
-    )
-
-    # An unscoped ignore is the obvious way to make a red build green, and it
-    # switches the guard off for every module at once. Third-party noise is
-    # exempted by naming the offending module, which stays visible in review.
-    # A filter is "action:message:category:module:lineno", so the module is
-    # field 3 and an entry that stops before it applies everywhere.
-    unscoped = [
-        entry for entry in warning_filters
-        if entry.startswith("ignore::EncodingWarning")
-        and entry.split(":")[3:4] in ([], [""])
-    ]
-    assert not unscoped, (
-        f"these entries in {PYPROJECT} ignore EncodingWarning everywhere "
-        f"rather than for one named module: {unscoped}. Scope the ignore to "
-        f"the third-party module that raises it, or the guard is off."
     )
 
 

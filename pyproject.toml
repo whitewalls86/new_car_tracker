@@ -32,27 +32,6 @@ asyncio_mode = "auto"
 markers = [
     "integration: tests that require a real Postgres database",
 ]
-# Only fires when the interpreter was started with PYTHONWARNDEFAULTENCODING=1
-# (ci.yml sets it workflow-wide), so this is inert locally unless a developer
-# opts in the same way. Plan 162 Stage 6b.
-#
-# The two ignores are third-party code we cannot fix, and both are scoped as
-# tightly as the offender allows rather than by package, because a broad ignore
-# here silently switches the guard off for our code too.
-filterwarnings = [
-    "error::EncodingWarning",
-    # dbt is invoked in-process -- tests/integration/dbt/real_build.py uses
-    # dbtRunner().invoke() -- so dbt.tracking, dbt.compilation, dbt.parser.*
-    # and dbt.utils.* raise inside our pytest process. Nothing under dbt/ in
-    # this repository is importable Python (no __init__.py, SQL and YAML only),
-    # so this prefix is wholly third-party and cannot mask a defect of ours.
-    "ignore::EncodingWarning:dbt\\..*",
-    # Airflow's own config loader, in the isolated venv job. Scoped to the one
-    # module and NOT to the package: `airflow.dags.*` is ours -- imported that
-    # way by tests/processing/test_batch_router.py -- and ignoring the package
-    # would hide a real defect in a DAG.
-    "ignore::EncodingWarning:airflow\\.configuration",
-]
 
 [tool.coverage.run]
 source = [
