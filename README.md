@@ -345,9 +345,9 @@ docker compose up -d
 ```
 
 Flyway applies every migration on first start — there are **40+ versioned
-Flyway migrations**, applied automatically on deploy.
-`docker-compose.override.yml` publishes local ports for development, and
-`scripts/setup.ps1` wraps the same steps on Windows.
+Flyway migrations**, applied automatically on deploy. No separate schema or
+seed step is needed. `docker-compose.override.yml` publishes local ports for
+development.
 
 Deeper operational procedure lives in the runbooks:
 [host maintenance](docs/runbooks/runbook_host_maintenance.md),
