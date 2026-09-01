@@ -273,6 +273,9 @@ Measured on 2026-09-01, before the stage starts:
 | Shared fixtures serving them | 11 |
 | Ad-hoc `INSERT` statements inside test modules | 96 |
 | Module-local seed helpers | 55 |
+| Distinct read-back `SELECT`s written in tests | 161 |
+| …of those, written more than once | **43** |
+| Total retypings of those 43 | **145** |
 
 **The duplication is by name, not merely by shape.** `_insert_artifact` is
 defined separately in `tests/integration/ops/test_maintenance.py`,
@@ -280,6 +283,20 @@ defined separately in `tests/integration/ops/test_maintenance.py`,
 `tests/integration/sql/test_processing_queries.py`; `_insert_detail_claim` in
 two files; `_seed` in three archiver modules; `_make_tar_zst` in three script
 modules.
+
+**And the assertions duplicate worse than the seeds.**
+`SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid`
+is written out **17 times**, across `tests/integration/processing/` and
+`tests/integration/sql/test_ops_views.py`;
+`SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid`
+nine times; `SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid` six.
+
+**These must not become `.sql` files.** A read-back assertion is the test's own
+half of the work, not a statement production issues, and `shared/sql/` feeds
+`production_sql_files()` -- filing one there would demand a Layer 2 test *for
+an assertion*, which is circular, and would inflate the production census with
+statements no service runs. The repair is a shared *test* helper, which is why
+this is its own stage and not a continuation of Stage 7.
 
 **Why this is the same defect as G17 and not a tidiness exercise.** A seed
 `INSERT` written by hand inside a test is a statement that has to agree with
