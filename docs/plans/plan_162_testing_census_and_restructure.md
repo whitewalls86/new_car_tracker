@@ -13,7 +13,7 @@ without a line of production code changing; Stage 3
 [gave the two health-sensor censuses one declared source](#evidence--stage-3-one-declared-source-for-the-health-sensor-censuses-car-47-2026-08-31)
 and found a third census, `DAG_SPECS`, already one DAG short; Stage 4
 [split the 267s dbt job](#evidence--stage-4-splitting-the-267s-dbt-job-car-48-2026-09-01)
-and took CI's wall clock from 292s to 145s, most of it by answering Plan 139
+and took CI's wall clock from 292s to 145-156s, most of it by answering Plan 139
 Stage C's question — the 92s step was 21 Python interpreters starting, not 21
 dbt builds running. The waiver list stands at 116 — neither Stage 3 nor
 Stage 4 closes waivers; Stage 3 closes Plan 139's Stage H and Stage 4 its
@@ -339,11 +339,12 @@ Three exceptions, stated here so they are decisions rather than omissions:
 replaced it is named for what it does. Measured in wall-clock seconds against
 the 267s baseline, not asserted.
 
-**Met by Stage 4, 2026-09-01.** The workflow went 292s to 145s and the job's
-successor 267s to 118s, in four jobs named for what they run.
-[The precise reading](#success-criterion-3-is-met) is worth having over the
-headline number: the dbt job and the unit job are now within runner variance
-of each other rather than the second being demonstrably ahead.
+**Met by Stage 4, 2026-09-01.** The workflow went 292s to 145-156s and the
+job's successor 267s to 118-134s, in four jobs named for what they run.
+[The precise reading](#success-criterion-3-is-met) matters more than the
+headline: the dbt job's cost fell by 55% and stopped dominating, but it is
+still the longest job in the workflow on both post-change runs. The criterion
+was accepted as met on that basis.
 
 **4. ~~Every suite in `tests/integration/` is either invoked by a named CI step
 or declared dormant with a reason.~~ Met by Stage 1 (CAR-45), 2026-08-31.**
@@ -795,7 +796,8 @@ Estimate 2.
 | — plus per-job dependency trim | 201s | 177s | 86s |
 | — plus in-process dbt | **145s** | **118s** | **25s** |
 
-**292s to 145s is a 50% cut, and the 269s job's successor is 118s.** Three
+**292s to 145-156s is a cut of about half, and the 269s job's successor is
+118-134s.** Three
 changes did it, and only the first was the stage as scoped.
 
 #### What the job was, and why the cut is by prerequisite
@@ -957,18 +959,35 @@ to be needed is an ImportError at collection, named and immediate.
 
 The criterion is *"the `dbt build + test` job is no longer the critical path,
 and what replaced it is named for what it does"*. The job is gone; the four
-that replaced it are named for what they run; the workflow went 292s to 145s
-and the job's successor 267s to 118s.
+that replaced it are named for what they run; the workflow went 292s to
+145-156s and the job's successor 267s to 118-134s across two runs.
 
-The third clause is the one worth stating precisely rather than rounding.
-`dbt model tests (real build)` finished at 118s against `Unit tests (pytest)`
-at 112s — no longer a job the rest of CI waits on, but not yet demonstrably
-off the top either, and 7s of that 118 is a temporary measurement step still
-in the workflow at the maintainer's request. **The criterion was accepted as
-met on 2026-09-01 with that reading on the record**: the dbt job and the unit
-job are within runner variance of each other, which is the condition the
-criterion was written to produce. The clean post-rig measurement is recorded
-below when it lands rather than inferred by subtraction.
+The third clause is the one worth stating precisely rather than rounding, and
+**the first attempt to state it here was wrong on one reading — which is this
+plan's own recurring finding, committed by this plan.** On the first run after
+the in-process change, `dbt model tests (real build)` was 118s against `Unit
+tests (pytest)` at 112s, and this section said the two were "within runner
+variance of each other". The next run said 134s against 97s:
+
+| | run 33465499674 | run 33466934324 |
+|---|---:|---:|
+| workflow wall clock | 145s | 156s |
+| `dbt model tests (real build)` | 118s | 134s |
+| `Unit tests (pytest)` | 112s | 97s |
+| gap | 6s | **37s** |
+
+**Two readings, and the dbt job is the longest in both.** It is no longer a
+267-second critical path; it is still the critical path. The honest form of
+the claim is that the job's cost fell by 55% and stopped dominating, not that
+something else overtook it — and one run was never enough to say which, on a
+runner whose variance moves a 25s step to 37s.
+
+**The criterion was accepted as met by the maintainer on 2026-09-01 with this
+reading on the record**, which is a decision about what "no longer the critical
+path" was worth in practice, not a measurement that says something else is
+slower. A stage that wants the dbt job genuinely off the top has a sized
+target waiting: its remaining `Install dependencies` is 18s and its `dbt build`
+16s, against 25-37s of tests.
 
 #### What was deliberately not done
 
@@ -978,9 +997,16 @@ below when it lands rather than inferred by subtraction.
   waivers that Stage 5's G11 sweep deletes outright — the same collision
   [Stage 5b's placement argument](#stage-5b-what-the-split-is-and-why-a-directory-rather-than-a-list)
   is built on. The waiver list is untouched at 116.
-- **`docs/PLANS.md` is untouched**, per this plan's own non-goals.
-- **The measurement rig stays in `ci.yml` and `.github/scripts/` for now**, at
-  the maintainer's instruction, and is deleted on their call.
+- **`docs/PLANS.md` was moved through the `plans` skill**, not edited here.
+  Build-order row 1 keeps its position; only its slice pointer advanced to
+  Stage 5, since Stages 5 through 10 remain. This plan's non-goal is authoring
+  that file mid-stage, and the skill's boundary is what kept the two apart:
+  both authored cells were proposed with sources and approved before the row
+  was touched.
+- **The measurement rig is gone.** `.github/scripts/measure_dbt_invocation_cost.py`
+  and its `ci.yml` step existed to answer Stage C and were deleted once the
+  answer was recorded above. The numbers it produced are in this section; the
+  script is in the history at `e3b4c82` if a later stage wants to re-run it.
 
 #### Cost, and one regression worth recording
 

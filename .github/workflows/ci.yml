@@ -360,22 +360,6 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
-      - name: TEMPORARY - decompose the per-invocation dbt cost (Stage C)
-        # Plan 139 Stage C says measure before proposing. Runs last, after
-        # every assertion in this job, so it cannot affect one. Deleted from
-        # this file once the reading is recorded in the plan document.
-        if: always()
-        working-directory: dbt
-        run: python ../.github/scripts/measure_dbt_invocation_cost.py
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          DUCKDB_PATH: /tmp/ci_analytics.duckdb
-          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          MINIO_ENDPOINT: http://localhost:9000
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-          MINIO_BUCKET: bronze
-
   schema-contracts:
     name: SQL + Airflow metadata contracts
     runs-on: ubuntu-latest
