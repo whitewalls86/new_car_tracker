@@ -4,7 +4,7 @@ All DB calls are mocked via db_cursor patch. Tests verify the correct SQL
 is called with the correct parameters for each scenario.
 """
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,7 +12,7 @@ from processing.writers.srp_writer import write_srp_observations
 
 
 @pytest.fixture
-def mock_cursor():
+def mock_cursor(mocker):
     """Yields a mock cursor and patches db_cursor to return it."""
     cursor = MagicMock()
     cursor.fetchall.return_value = []
@@ -24,8 +24,8 @@ def mock_cursor():
     def fake_db_cursor(error_context="", dict_cursor=False):
         yield cursor
 
-    with patch("processing.writers.srp_writer.db_cursor", fake_db_cursor):
-        yield cursor
+    mocker.patch("processing.writers.srp_writer.db_cursor", fake_db_cursor)
+    return cursor
 
 
 @pytest.fixture

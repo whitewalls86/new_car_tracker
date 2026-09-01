@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for flush_staging_events.
+Layer 2 — SQL smoke tests for flush_staging_events.
 
 Validates the SELECT / DELETE SQL patterns used by flush_staging_events against
 a real DB with Flyway migrations applied. The goal is to catch schema breakage

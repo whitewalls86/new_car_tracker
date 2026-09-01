@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -370,37 +370,39 @@ class TestPartitionPathHelpers:
 
 
 class TestSmallFileDetection:
-    def test_small_file_counted(self):
+    def test_small_file_counted(self, mocker):
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-small.parquet"
         size = 512 * 1024  # 512 KiB — under 1 MiB threshold
 
         client = _mock_paginator([(key, size)])
-        with patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=1,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=1,
+        )
 
         assert result["small_files"] == 1
 
-    def test_large_file_not_counted(self):
+    def test_large_file_not_counted(self, mocker):
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-large.parquet"
         size = 5 * 1024 * 1024  # 5 MiB
 
         client = _mock_paginator([(key, size)])
-        with patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=1,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=1,
+        )
 
         assert result["small_files"] == 0
 
@@ -409,7 +411,7 @@ class TestSmallFileDetection:
 
         assert SMALL_FILE_THRESHOLD == 1 * 1024 * 1024
 
-    def test_mixed_sizes(self):
+    def test_mixed_sizes(self, mocker):
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         entries = [
@@ -418,13 +420,14 @@ class TestSmallFileDetection:
             ("ops/price_observation_events/year=2026/month=6/part-c.parquet", 100),
         ]
         client = _mock_paginator(entries)
-        with patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=0,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=0,
+        )
 
         assert result["small_files"] == 2  # 512 KiB and 100 B
         assert result["total_objects"] == 3
@@ -435,7 +438,7 @@ class TestSmallFileDetection:
 
 
 class TestUnexpectedPathDetection:
-    def test_unexpected_path_detected(self):
+    def test_unexpected_path_detected(self, mocker):
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         good_key = (
@@ -449,19 +452,20 @@ class TestUnexpectedPathDetection:
             (bad_key, 500),
         ]
         client = _mock_paginator(entries)
-        with patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "silver_observations",
-                DATASET_CONFIGS["silver_observations"],
-                sample_files=1,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "silver_observations",
+            DATASET_CONFIGS["silver_observations"],
+            sample_files=1,
+        )
 
         assert bad_key in result["unexpected_paths"]
         assert good_key not in result["unexpected_paths"]
         assert result["total_objects"] == 2
 
-    def test_no_unexpected_paths_when_all_conform(self):
+    def test_no_unexpected_paths_when_all_conform(self, mocker):
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = (
@@ -469,13 +473,14 @@ class TestUnexpectedPathDetection:
             "/obs_year=2026/obs_month=6/obs_day=15/part-a.parquet"
         )
         client = _mock_paginator([(key, 2 * 1024 * 1024)])
-        with patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "silver_observations",
-                DATASET_CONFIGS["silver_observations"],
-                sample_files=1,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "silver_observations",
+            DATASET_CONFIGS["silver_observations"],
+            sample_files=1,
+        )
 
         assert result["unexpected_paths"] == []
 
@@ -484,7 +489,7 @@ class TestUnexpectedPathDetection:
 
 
 class TestRowCountFromMetadata:
-    def test_row_count_matches_fixture_without_full_read(self, tmp_path):
+    def test_row_count_matches_fixture_without_full_read(self, tmp_path, mocker):
         """read_file_metadata returns correct row count from footer metadata only."""
         parquet_path = _make_parquet(tmp_path, "test.parquet", _SILVER_SCHEMA, rows=7)
 
@@ -493,36 +498,39 @@ class TestRowCountFromMetadata:
         # local file, verifying the mechanism works.
         actual_meta = pq.read_metadata(str(parquet_path))
 
-        with patch("pyarrow.parquet.read_metadata", return_value=actual_meta):
-            from scripts.audit_parquet_layout import read_file_metadata
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=actual_meta)
 
-            info = read_file_metadata("bronze", "any/key.parquet", MagicMock())
+        from scripts.audit_parquet_layout import read_file_metadata
+
+        info = read_file_metadata("bronze", "any/key.parquet", MagicMock())
 
         assert info is not None
         assert info.rows == 7
 
-    def test_row_count_zero_for_empty_fixture(self, tmp_path):
+    def test_row_count_zero_for_empty_fixture(self, tmp_path, mocker):
         parquet_path = _make_parquet(tmp_path, "empty.parquet", _SILVER_SCHEMA, rows=0)
         actual_meta = pq.read_metadata(str(parquet_path))
 
-        with patch("pyarrow.parquet.read_metadata", return_value=actual_meta):
-            from scripts.audit_parquet_layout import read_file_metadata
+        mocker.patch("pyarrow.parquet.read_metadata", return_value=actual_meta)
 
-            info = read_file_metadata("bronze", "any/key.parquet", MagicMock())
+        from scripts.audit_parquet_layout import read_file_metadata
+
+        info = read_file_metadata("bronze", "any/key.parquet", MagicMock())
 
         assert info is not None
         assert info.rows == 0
 
-    def test_metadata_read_failure_returns_none(self):
+    def test_metadata_read_failure_returns_none(self, mocker):
         """If pq.read_metadata raises, read_file_metadata returns None without crashing."""
-        with patch("pyarrow.parquet.read_metadata", side_effect=OSError("not found")):
-            from scripts.audit_parquet_layout import read_file_metadata
+        mocker.patch("pyarrow.parquet.read_metadata", side_effect=OSError("not found"))
 
-            info = read_file_metadata("bronze", "missing/key.parquet", MagicMock())
+        from scripts.audit_parquet_layout import read_file_metadata
+
+        info = read_file_metadata("bronze", "missing/key.parquet", MagicMock())
 
         assert info is None
 
-    def test_partition_rows_aggregated_from_all_files(self, tmp_path):
+    def test_partition_rows_aggregated_from_all_files(self, tmp_path, mocker):
         """audit_dataset sums rows from ALL files in a partition, not just sample_files."""
         from scripts.audit_parquet_layout import DATASET_CONFIGS, FileMetaInfo, audit_dataset
 
@@ -536,13 +544,14 @@ class TestRowCountFromMetadata:
         def _fake_meta(bucket, key, fs):
             return FileMetaInfo(rows=10, schema_fingerprint="abc123", ts_min=None, ts_max=None)
 
-        with patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_fake_meta):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=2,  # deliberately lower than file count
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_fake_meta)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=2,  # deliberately lower than file count
+        )
 
         assert len(result["partitions"]) == 1
         part = result["partitions"][0]
@@ -551,7 +560,7 @@ class TestRowCountFromMetadata:
         assert part["metadata_read"] == 5
         assert part["metadata_failures"] == 0
 
-    def test_schema_sampling_limited_by_sample_files(self, tmp_path):
+    def test_schema_sampling_limited_by_sample_files(self, tmp_path, mocker):
         """Schema fingerprints are collected from at most sample_files per partition."""
         from scripts.audit_parquet_layout import (
             DATASET_CONFIGS,
@@ -578,35 +587,37 @@ class TestRowCountFromMetadata:
             _calls[0] += 1
             return FileMetaInfo(rows=5, schema_fingerprint=fp, ts_min=None, ts_max=None)
 
-        with patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_cycling_meta):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=1,  # only first file contributes to schema
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_cycling_meta)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=1,  # only first file contributes to schema
+        )
 
         # With sample_files=1, only the first fingerprint is seen
         assert result["schema_variants"] == 1
         # But row count is still from all 5 files
         assert result["partitions"][0]["rows"] == 25
 
-    def test_rows_null_when_all_metadata_reads_fail(self, tmp_path):
+    def test_rows_null_when_all_metadata_reads_fail(self, tmp_path, mocker):
         """rows is None (not 0) when every footer read fails for a partition."""
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-a.parquet"
         client = _mock_paginator([(key, 2 * 1024 * 1024)])
 
-        with patch(
+        mocker.patch(
             "scripts.audit_parquet_layout.read_file_metadata", return_value=None
-        ):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=3,
-            )
+        )
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=3,
+        )
 
         part = result["partitions"][0]
         assert part["rows"] is None  # not 0
@@ -619,7 +630,7 @@ class TestRowCountFromMetadata:
 
 
 class TestSchemaVariantDetection:
-    def test_two_files_same_schema_one_variant(self, tmp_path):
+    def test_two_files_same_schema_one_variant(self, tmp_path, mocker):
         from scripts.audit_parquet_layout import (
             DATASET_CONFIGS,
             FileMetaInfo,
@@ -639,17 +650,18 @@ class TestSchemaVariantDetection:
         def _same_schema(bucket, key, fs):
             return FileMetaInfo(rows=5, schema_fingerprint=fp, ts_min=None, ts_max=None)
 
-        with patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_same_schema):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=5,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_same_schema)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=5,
+        )
 
         assert result["schema_variants"] == 1
 
-    def test_two_files_different_schema_two_variants(self, tmp_path):
+    def test_two_files_different_schema_two_variants(self, tmp_path, mocker):
         from scripts.audit_parquet_layout import (
             DATASET_CONFIGS,
             FileMetaInfo,
@@ -677,13 +689,14 @@ class TestSchemaVariantDetection:
             return FileMetaInfo(rows=5, schema_fingerprint=_fps[idx], ts_min=None, ts_max=None)
 
         _patch = "scripts.audit_parquet_layout.read_file_metadata"
-        with patch(_patch, side_effect=_alternating_schema):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=5,
-            )
+        mocker.patch(_patch, side_effect=_alternating_schema)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=5,
+        )
 
         assert result["schema_variants"] == 2
 
@@ -720,7 +733,7 @@ class TestSchemaVariantDetection:
         ])
         assert _schema_fingerprint(schema_orig) == _schema_fingerprint(schema_reordered)
 
-    def test_schema_variants_from_real_fixtures(self, tmp_path):
+    def test_schema_variants_from_real_fixtures(self, tmp_path, mocker):
         """Integration: two local Parquet fixtures with different schemas → 2 variants."""
         from scripts.audit_parquet_layout import (
             DATASET_CONFIGS,
@@ -757,13 +770,14 @@ class TestSchemaVariantDetection:
                 ts_max=None,
             )
 
-        with patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_real_meta):
-            result = audit_dataset(
-                client, MagicMock(), "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=5,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_real_meta)
+
+        result = audit_dataset(
+            client, MagicMock(), "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=5,
+        )
 
         assert result["schema_variants"] == 2
 
@@ -955,7 +969,7 @@ class TestMarkdownOutput:
 
 
 class TestNoMutation:
-    def _run_audit(self, client, fs_mock=None):
+    def _run_audit(self, mocker, client, fs_mock=None):
         from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-a.parquet"
@@ -969,47 +983,48 @@ class TestNoMutation:
         if fs_mock is None:
             fs_mock = MagicMock()
 
-        with patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None):
-            audit_dataset(
-                client, fs_mock, "bronze",
-                "price_observation_events",
-                DATASET_CONFIGS["price_observation_events"],
-                sample_files=1,
-            )
+        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+
+        audit_dataset(
+            client, fs_mock, "bronze",
+            "price_observation_events",
+            DATASET_CONFIGS["price_observation_events"],
+            sample_files=1,
+        )
         return client, fs_mock
 
-    def test_put_object_never_called(self):
+    def test_put_object_never_called(self, mocker):
         client = MagicMock()
-        self._run_audit(client)
+        self._run_audit(mocker, client)
         client.put_object.assert_not_called()
 
-    def test_delete_object_never_called(self):
+    def test_delete_object_never_called(self, mocker):
         client = MagicMock()
-        self._run_audit(client)
+        self._run_audit(mocker, client)
         client.delete_object.assert_not_called()
 
-    def test_copy_object_never_called(self):
+    def test_copy_object_never_called(self, mocker):
         client = MagicMock()
-        self._run_audit(client)
+        self._run_audit(mocker, client)
         client.copy_object.assert_not_called()
 
-    def test_fs_rm_never_called(self):
+    def test_fs_rm_never_called(self, mocker):
         client = MagicMock()
         fs_mock = MagicMock()
-        self._run_audit(client, fs_mock)
+        self._run_audit(mocker, client, fs_mock)
         fs_mock.rm.assert_not_called()
 
-    def test_fs_put_never_called(self):
+    def test_fs_put_never_called(self, mocker):
         client = MagicMock()
         fs_mock = MagicMock()
-        self._run_audit(client, fs_mock)
+        self._run_audit(mocker, client, fs_mock)
         # s3fs uses 'open' in write mode or 'put' — neither should be called
         fs_mock.put.assert_not_called()
 
-    def test_never_calls_rename_on_fs(self):
+    def test_never_calls_rename_on_fs(self, mocker):
         client = MagicMock()
         fs_mock = MagicMock()
-        self._run_audit(client, fs_mock)
+        self._run_audit(mocker, client, fs_mock)
         fs_mock.rename.assert_not_called()
         fs_mock.copy.assert_not_called()
         fs_mock.move.assert_not_called()

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -325,15 +325,16 @@ def test_every_result_carries_the_realised_dictionary_size_and_id():
     assert result["dictionary_bytes_per_artifact_at_corpus_scale"] < 0.1
 
 
-def test_a_dictionary_size_that_fails_to_train_is_recorded_not_fatal():
+def test_a_dictionary_size_that_fails_to_train_is_recorded_not_fatal(mocker):
     documents = _corpus(listings=16, months=("2026-03",))
     split = _named_split("s", documents[:48], documents[48:])
 
-    with patch(
+    mocker.patch(
         "scripts.estimate_dictionary_savings.train_dictionary",
         side_effect=RuntimeError("srcSize too small"),
-    ):
-        summary = measure_split(split, dict_sizes_kb=[16, 32])
+    )
+
+    summary = measure_split(split, dict_sizes_kb=[16, 32])
 
     assert [r["error"] for r in summary["results"]] == ["srcSize too small"] * 2
     assert summary["baseline_compressed_bytes"] > 0
@@ -441,21 +442,22 @@ def test_corpus_sample_with_no_months_queries_nothing():
     con.execute.assert_not_called()
 
 
-def test_collect_documents_keeps_raw_bytes_untouched():
+def test_collect_documents_keeps_raw_bytes_untouched(mocker):
     """Decoding to str with errors='replace' would change the measured lengths."""
     payload = b"<html>caf\xe9 not utf-8</html>"
     rows = [{"artifact_id": 1, "listing_id": "a", "capture_month": "2026-03",
              "minio_path": "s3://bronze/x"}]
     totals = Totals()
 
-    with patch("shared.minio.read_html", return_value=payload):
-        documents = collect_documents(rows, totals)
+    mocker.patch("shared.minio.read_html", return_value=payload)
+
+    documents = collect_documents(rows, totals)
 
     assert documents[0].content == payload
     assert totals.fetched == 1
 
 
-def test_a_failed_fetch_is_recorded_and_the_run_continues():
+def test_a_failed_fetch_is_recorded_and_the_run_continues(mocker):
     rows = [
         {"artifact_id": 1, "listing_id": "a", "capture_month": "2026-03",
          "minio_path": "s3://bronze/gone"},
@@ -464,26 +466,28 @@ def test_a_failed_fetch_is_recorded_and_the_run_continues():
     ]
     totals = Totals()
 
-    with patch("shared.minio.read_html", side_effect=[OSError("404"), b"<html>ok</html>"]):
-        documents = collect_documents(rows, totals)
+    mocker.patch("shared.minio.read_html", side_effect=[OSError("404"), b"<html>ok</html>"])
+
+    documents = collect_documents(rows, totals)
 
     assert [d.artifact_id for d in documents] == [2]
     assert totals.failures[0]["stage"] == "fetch"
     assert totals.fetched == 1
 
 
-def test_rows_without_a_path_are_counted_not_fetched():
+def test_rows_without_a_path_are_counted_not_fetched(mocker):
     rows = [{"artifact_id": 1, "listing_id": "a", "capture_month": "2026-03", "minio_path": None}]
     totals = Totals()
 
-    with patch("shared.minio.read_html") as read_html:
-        assert collect_documents(rows, totals) == []
+    read_html = mocker.patch("shared.minio.read_html")
+
+    assert collect_documents(rows, totals) == []
 
     read_html.assert_not_called()
     assert totals.skipped_no_path == 1
 
 
-def test_max_documents_stops_the_fetch_loop():
+def test_max_documents_stops_the_fetch_loop(mocker):
     rows = [
         {"artifact_id": i, "listing_id": "a", "capture_month": "2026-03",
          "minio_path": f"s3://bronze/{i}"}
@@ -491,8 +495,9 @@ def test_max_documents_stops_the_fetch_loop():
     ]
     totals = Totals()
 
-    with patch("shared.minio.read_html", return_value=b"<html/>"):
-        documents = collect_documents(rows, totals, max_documents=2)
+    mocker.patch("shared.minio.read_html", return_value=b"<html/>")
+
+    documents = collect_documents(rows, totals, max_documents=2)
 
     assert len(documents) == 2
 
@@ -509,7 +514,7 @@ def test_sample_in_bypasses_the_lake_entirely(tmp_path):
 
 # ── G. End to end ─────────────────────────────────────────────────────────────
 
-def _end_to_end(tmp_path, months=("2026-03", "2026-04", "2026-05")):
+def _end_to_end(tmp_path, mocker, months=("2026-03", "2026-04", "2026-05")):
     """Write a sample file and the blobs it points at, then run ``main``."""
     documents = _corpus(listings=20, captures=3, months=months)
     rows, blobs = [], {}
@@ -529,19 +534,20 @@ def _end_to_end(tmp_path, months=("2026-03", "2026-04", "2026-05")):
     sample.write_text(json.dumps(rows))
     report_path = tmp_path / "report.json"
 
-    with patch("shared.minio.read_html", side_effect=lambda p: blobs[p]):
-        code = main(
-            [
-                "--sample-in", str(sample),
-                "--dict-sizes", "16",
-                "--json-out", str(report_path),
-            ]
-        )
+    mocker.patch("shared.minio.read_html", side_effect=lambda p: blobs[p])
+
+    code = main(
+        [
+            "--sample-in", str(sample),
+            "--dict-sizes", "16",
+            "--json-out", str(report_path),
+        ]
+    )
     return code, json.loads(report_path.read_text())
 
 
-def test_end_to_end_run_reports_every_split_and_decides_the_gate(tmp_path):
-    code, report = _end_to_end(tmp_path)
+def test_end_to_end_run_reports_every_split_and_decides_the_gate(tmp_path, mocker):
+    code, report = _end_to_end(tmp_path, mocker)
 
     assert [s["split"] for s in report["splits"]] == [
         "leaky_reference",
@@ -559,7 +565,7 @@ def test_end_to_end_run_reports_every_split_and_decides_the_gate(tmp_path):
     assert code == 0
 
 
-def test_only_splits_restricts_measurement_but_still_decides_the_gate(tmp_path):
+def test_only_splits_restricts_measurement_but_still_decides_the_gate(tmp_path, mocker):
     documents = _corpus(listings=20, captures=3)
     rows, blobs = [], {}
     for document in documents:
@@ -577,15 +583,16 @@ def test_only_splits_restricts_measurement_but_still_decides_the_gate(tmp_path):
     sample.write_text(json.dumps(rows))
     report_path = tmp_path / "report.json"
 
-    with patch("shared.minio.read_html", side_effect=lambda p: blobs[p]):
-        main(
-            [
-                "--sample-in", str(sample),
-                "--dict-sizes", "16",
-                "--only-splits", "listing_and_month_disjoint",
-                "--json-out", str(report_path),
-            ]
-        )
+    mocker.patch("shared.minio.read_html", side_effect=lambda p: blobs[p])
+
+    main(
+        [
+            "--sample-in", str(sample),
+            "--dict-sizes", "16",
+            "--only-splits", "listing_and_month_disjoint",
+            "--json-out", str(report_path),
+        ]
+    )
 
     report = json.loads(report_path.read_text())
     assert [s["split"] for s in report["splits"]] == ["listing_and_month_disjoint"]
@@ -601,9 +608,11 @@ def test_only_splits_that_drops_the_gate_split_leaves_the_gate_undecided():
     assert evaluate_gate(summaries)["decided"] is False
 
 
-def test_a_single_month_sample_exits_undecided_rather_than_claiming_a_pass(tmp_path):
+def test_a_single_month_sample_exits_undecided_rather_than_claiming_a_pass(
+    tmp_path, mocker
+):
     """Exit 2, not 0: an unmeasurable gate must not read as a green run in CI."""
-    code, report = _end_to_end(tmp_path, months=("2026-03",))
+    code, report = _end_to_end(tmp_path, mocker, months=("2026-03",))
 
     assert report["gate"]["decided"] is False
     assert code == 2

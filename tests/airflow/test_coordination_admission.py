@@ -229,12 +229,12 @@ class _RecordingHook:
 class _Gate:
     """Drives the real sensor against a settable coordination read."""
 
-    def __init__(self, sensors, monkeypatch):
+    def __init__(self, sensors, mocker):
         self.sensors = sensors
         self.row = _gate_row()
         self.reads = []
         self.writes = []
-        monkeypatch.setattr(sensors, "PostgresHook", lambda **_kwargs: _RecordingHook(self))
+        mocker.patch.object(sensors, "PostgresHook", lambda **_kwargs: _RecordingHook(self))
 
     def poke(self, dag_id="orphan_checker", run_id=RUN_ID, context=None):
         sensor = self.sensors.deploy_intent_sensor(dag_id)
@@ -251,8 +251,8 @@ class _Gate:
 
 
 @pytest.fixture
-def gate(monkeypatch):
-    return _Gate(_load_sensors(), monkeypatch)
+def gate(mocker):
+    return _Gate(_load_sensors(), mocker)
 
 
 def test_the_gate_read_selects_the_columns_this_row_supplies():

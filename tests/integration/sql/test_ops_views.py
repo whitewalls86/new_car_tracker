@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for ops_vehicle_staleness and ops_detail_scrape_queue.
+Layer 2 — SQL smoke tests for ops_vehicle_staleness and ops_detail_scrape_queue.
 
 Both views are plain Postgres views (rebuilt by V049) reading directly from
 ops.price_observations and ops.blocked_cooldown. Tests seed HOT table rows and

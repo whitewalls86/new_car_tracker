@@ -35,7 +35,7 @@ def _host_evidence(generation):
 
 
 def test_complete_is_replay_confirmable_against_real_database(
-    api_client, verify_cur, monkeypatch
+    api_client, verify_cur, mocker
 ):
     """A timed-out client can repeat complete without reopening authorization."""
     verify_cur.execute(
@@ -48,7 +48,7 @@ def test_complete_is_replay_confirmable_against_real_database(
     )
     generation = verify_cur.fetchone()["generation"]
     manifest_sha256 = hashlib.sha256(b"integration manifest").hexdigest()
-    monkeypatch.setattr(
+    mocker.patch.object(
         coordination,
         "collect_release_status",
         lambda _: {"blockers": [], "gates": []},

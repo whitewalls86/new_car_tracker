@@ -1,5 +1,5 @@
 """
-Layer 3 ops API integration test fixtures.
+Layer 4 ops API integration test fixtures.
 
 Tests use FastAPI TestClient against a real Postgres instance — no mocked DB.
 shared/db.py and ops.routers.auth both read env vars at module import time, so

@@ -67,7 +67,7 @@ def test_fs():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def ns(s3_client, monkeypatch):
+def ns(s3_client, mocker):
     """
     Returns a dict with 'minio_prefix' and 'obs_prefix' scoped to a unique
     test run. Patches compact_silver._MINIO_PREFIX so the processor only
@@ -80,7 +80,7 @@ def ns(s3_client, monkeypatch):
         f"{minio_prefix}/source=detail"
         f"/obs_year={_OBS_DATE.year}/obs_month={_OBS_DATE.month}"
     )
-    monkeypatch.setattr("archiver.processors.compact_silver._MINIO_PREFIX", minio_prefix)
+    mocker.patch("archiver.processors.compact_silver._MINIO_PREFIX", minio_prefix)
 
     yield {"minio_prefix": minio_prefix, "obs_prefix": obs_prefix}
 

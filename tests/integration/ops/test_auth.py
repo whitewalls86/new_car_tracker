@@ -1,5 +1,5 @@
 """
-Layer 3 — auth check and observer middleware integration tests.
+Layer 4 — auth check and observer middleware integration tests.
 
 Auth check tests seed an authorized_users row via seed_user_committed, then
 send the raw email in X-Auth-Request-Email.  The route hashes it with the

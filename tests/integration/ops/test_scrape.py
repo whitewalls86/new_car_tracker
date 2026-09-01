@@ -1,5 +1,5 @@
 """
-Layer 3 — scrape coordination integration tests.
+Layer 4 — scrape coordination integration tests.
 
 Covers:
   POST /scrape/rotation/advance

@@ -867,7 +867,7 @@ def _write_parquet(path, rows: list[dict]) -> None:
 
 
 @pytest.fixture
-def local_lake(tmp_path, monkeypatch):
+def local_lake(tmp_path, mocker):
     """Point the metadata query at local Parquet instead of s3://.
 
     The SQL is otherwise only ever exercised against production, which is the
@@ -875,8 +875,8 @@ def local_lake(tmp_path, monkeypatch):
     """
     events = tmp_path / "events.parquet"
     silver = tmp_path / "silver.parquet"
-    monkeypatch.setattr(packer, "_ARTIFACT_EVENTS_PATH", str(events).replace("\\", "/"))
-    monkeypatch.setattr(packer, "_SILVER_PATH", str(silver).replace("\\", "/"))
+    mocker.patch.object(packer, "_ARTIFACT_EVENTS_PATH", str(events).replace("\\", "/"))
+    mocker.patch.object(packer, "_SILVER_PATH", str(silver).replace("\\", "/"))
     return events, silver
 
 

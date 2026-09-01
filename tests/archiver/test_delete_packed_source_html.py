@@ -278,7 +278,7 @@ class TestRefusesToDelete:
         assert result["objects_deleted"] == 3
         assert "refusing to delete" in result["failures"][0]["error"]
 
-    def test_objects_the_read_path_could_not_resolve_are_refused(self, store, monkeypatch):
+    def test_objects_the_read_path_could_not_resolve_are_refused(self, store, mocker):
         """Objects living where the production resolver does not look.
 
         ``read_html``'s fallback derives its search prefix from the key's own
@@ -291,8 +291,8 @@ class TestRefusesToDelete:
         integration tests isolate by artifact_type rather than by prefix. Here
         it is asserted directly: the job refuses rather than deletes.
         """
-        monkeypatch.setattr(pruner, "_HTML_PREFIX", "sandbox/html")
-        monkeypatch.setattr(pruner, "_PACK_PREFIX", "sandbox/html_packs")
+        mocker.patch.object(pruner, "_HTML_PREFIX", "sandbox/html")
+        mocker.patch.object(pruner, "_PACK_PREFIX", "sandbox/html_packs")
 
         keys = []
         members = []

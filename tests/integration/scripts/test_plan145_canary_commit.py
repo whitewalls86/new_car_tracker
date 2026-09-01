@@ -106,7 +106,7 @@ def _to_import_row(listing_id, object_key, *, source="detail",
 
 
 @pytest.fixture()
-def canary_world(monkeypatch, writer_conn, vc):
+def canary_world(writer_conn, vc, mocker):
     """A compare run, an assignment shard and a canary manifest on a fake MinIO,
     with real sequence-allocated artifact ids. Drops every row on teardown."""
     import pyarrow as pa
@@ -164,13 +164,13 @@ def canary_world(monkeypatch, writer_conn, vc):
         [{"listing_id": hint, "vin": "VIN-SNAPSHOT-HINT"}],
     )
 
-    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS3(store))
-    monkeypatch.setattr(minio, "object_exists",
+    mocker.patch.object(mod, "_s3_client", lambda: _FakeS3(store))
+    mocker.patch.object(minio, "object_exists",
                         lambda k: k.split("bronze/")[-1] in store or k in store)
-    monkeypatch.setattr(
+    mocker.patch.object(
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)))
-    monkeypatch.setattr(minio, "read_json", lambda p: (
+    mocker.patch.object(minio, "read_json", lambda p: (
         json.loads(store[p.split("bronze/")[-1]].decode())
         if p.split("bronze/")[-1] in store else None))
 
@@ -481,7 +481,7 @@ def test_the_commit_time_comes_from_the_receipt_not_the_process_clock(
 
 
 def test_a_lost_report_is_repaired_from_the_receipt_after_the_clock_moves(
-        canary_world, vc, monkeypatch):
+        canary_world, vc, mocker):
     """The failure this closes: the transaction commits, the MinIO report write
     fails, and the rerun invents a fresh commit time. canary-flush-verify uses
     that time as its LastModified bound and to pick the queue-event partition,
@@ -497,7 +497,7 @@ def test_a_lost_report_is_repaired_from_the_receipt_after_the_clock_moves(
             raise RuntimeError("MinIO write failed after the commit")
         return good_write(key, data, content_type)
 
-    monkeypatch.setattr(minio, "write_bytes", _boom)
+    mocker.patch.object(minio, "write_bytes", _boom)
     with pytest.raises(RuntimeError, match="after the commit"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", world["run_id"], "--apply"]
@@ -511,7 +511,7 @@ def test_a_lost_report_is_repaired_from_the_receipt_after_the_clock_moves(
 
     # the repair run, later by the wall clock, skips on the receipt and still
     # records when the batch actually landed
-    monkeypatch.setattr(minio, "write_bytes", good_write)
+    mocker.patch.object(minio, "write_bytes", good_write)
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", world["run_id"], "--apply"]
         + world["pin"])) == 0
@@ -532,10 +532,10 @@ def test_the_canary_moves_no_protected_table(canary_world, vc):
 
 
 def test_the_canary_row_budget_refuses_before_any_row_is_committed(
-        canary_world, vc, monkeypatch):
+        canary_world, vc, mocker):
     world = canary_world
     ids = sorted(world["artifact_ids"].values())
-    monkeypatch.setattr(mod, "CANARY_ROW_BUDGET", 2)
+    mocker.patch.object(mod, "CANARY_ROW_BUDGET", 2)
     with pytest.raises(ReconcileError, match="over the fixed 2-row canary budget"):
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", world["run_id"], "--apply"]

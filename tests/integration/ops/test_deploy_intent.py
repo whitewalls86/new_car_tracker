@@ -1,5 +1,5 @@
 """
-Layer 3 — deploy_intent state machine integration tests.
+Layer 4 — deploy_intent state machine integration tests.
 
 Covers GET /deploy/status, POST /deploy/start, POST /deploy/complete.
 

@@ -3,7 +3,7 @@
 All use in-memory PyArrow tables + mocked s3fs. No real MinIO required.
 """
 from datetime import date, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pytest
@@ -44,15 +44,13 @@ def mock_fs():
 
 
 @pytest.fixture(autouse=True)
-def _patch_today():
-    with patch("archiver.processors.compact_silver._today_utc", return_value=_TODAY):
-        yield
+def _patch_today(mocker):
+    mocker.patch("archiver.processors.compact_silver._today_utc", return_value=_TODAY)
 
 
 @pytest.fixture(autouse=True)
-def _patch_bucket():
-    with patch("archiver.processors.compact_silver.BUCKET", "bronze"):
-        yield
+def _patch_bucket(mocker):
+    mocker.patch("archiver.processors.compact_silver.BUCKET", "bronze")
 
 
 def _mock_pq(mocker, table: pa.Table, *, num_rows: int | None = None):

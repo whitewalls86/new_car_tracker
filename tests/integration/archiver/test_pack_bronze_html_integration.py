@@ -57,12 +57,12 @@ def s3_client():
 
 
 @pytest.fixture()
-def ns(s3_client, monkeypatch):
+def ns(s3_client, monkeypatch, mocker):
     """A unique html/ + html_packs/ namespace, removed after the test."""
     run_id = uuid.uuid4().hex[:8]
     root = f"test-pack-{run_id}"
-    monkeypatch.setattr(packer, "_HTML_PREFIX", f"{root}/html")
-    monkeypatch.setattr(packer, "_PACK_PREFIX", f"{root}/html_packs")
+    mocker.patch.object(packer, "_HTML_PREFIX", f"{root}/html")
+    mocker.patch.object(packer, "_PACK_PREFIX", f"{root}/html_packs")
     # Seeded objects are written with whatever dictionary the environment names,
     # and this environment has no registered dictionary to resolve.
     monkeypatch.delenv("HTML_COMPRESSION_DICT_ID", raising=False)
@@ -122,13 +122,13 @@ def _metadata_for(seeded):
     return _fetch
 
 
-def _run(monkeypatch, seeded, **kwargs):
+def _run(mocker, seeded, **kwargs):
     from unittest.mock import MagicMock
 
-    monkeypatch.setattr(packer, "fetch_member_metadata", _metadata_for(seeded))
+    mocker.patch.object(packer, "fetch_member_metadata", _metadata_for(seeded))
     # The stubbed query ignores its connection, so there is nothing to gain
     # from opening a real one.
-    monkeypatch.setattr(
+    mocker.patch(
         "shared.duckdb_s3.get_duckdb_s3_connection", MagicMock(return_value=MagicMock())
     )
     params = {
@@ -155,10 +155,10 @@ def _keys_under(s3_client, prefix: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_pack_round_trips_through_minio_and_deletes_nothing(ns, s3_client, monkeypatch):
+def test_pack_round_trips_through_minio_and_deletes_nothing(ns, s3_client, mocker):
     seeded = _seed(ns, 12)
 
-    result = _run(monkeypatch, seeded)
+    result = _run(mocker, seeded)
 
     assert result["error"] is None
     assert result["packs_written"] == 1
@@ -187,10 +187,10 @@ def test_pack_round_trips_through_minio_and_deletes_nothing(ns, s3_client, monke
         assert hashlib.sha256(extracted).hexdigest() == entry.raw_sha256
 
 
-def test_pack_is_smaller_than_the_objects_it_packs(ns, s3_client, monkeypatch):
+def test_pack_is_smaller_than_the_objects_it_packs(ns, s3_client, mocker):
     seeded = _seed(ns, 24)
 
-    result = _run(monkeypatch, seeded)
+    result = _run(mocker, seeded)
     bucket = result["buckets"][0]
 
     assert bucket["packs"][0]["pack_bytes"] < bucket["source_bytes"]
@@ -199,11 +199,11 @@ def test_pack_is_smaller_than_the_objects_it_packs(ns, s3_client, monkeypatch):
     assert len(_keys_under(s3_client, f"{ns}/html_packs/")) == 2
 
 
-def test_resume_over_real_objects_packs_nothing_twice(ns, s3_client, monkeypatch):
+def test_resume_over_real_objects_packs_nothing_twice(ns, s3_client, mocker):
     seeded = _seed(ns, 8)
-    _run(monkeypatch, seeded)
+    _run(mocker, seeded)
 
-    second = _run(monkeypatch, seeded)
+    second = _run(mocker, seeded)
 
     assert second["packs_written"] == 0
     assert second["buckets"][0]["already_packed"] == 8
@@ -211,9 +211,9 @@ def test_resume_over_real_objects_packs_nothing_twice(ns, s3_client, monkeypatch
     assert len(_keys_under(s3_client, f"{ns}/html_packs/")) == 2
 
 
-def test_ranged_reads_fetch_one_frame_not_the_whole_pack(ns, s3_client, monkeypatch):
+def test_ranged_reads_fetch_one_frame_not_the_whole_pack(ns, s3_client, mocker):
     seeded = _seed(ns, 24)
-    result = _run(monkeypatch, seeded, frame_target_bytes=4096)
+    result = _run(mocker, seeded, frame_target_bytes=4096)
     pack = result["buckets"][0]["packs"][0]
     assert pack["frames"] > 1
 
@@ -237,10 +237,10 @@ def test_ranged_reads_fetch_one_frame_not_the_whole_pack(ns, s3_client, monkeypa
     assert sum(fetched) < pack["pack_bytes"]
 
 
-def test_dry_run_against_real_objects_writes_nothing(ns, s3_client, monkeypatch):
+def test_dry_run_against_real_objects_writes_nothing(ns, s3_client, mocker):
     seeded = _seed(ns, 6)
 
-    result = _run(monkeypatch, seeded, apply=False)
+    result = _run(mocker, seeded, apply=False)
 
     assert result["packs_written"] == 0
     assert _keys_under(s3_client, f"{ns}/html_packs/") == []

@@ -424,50 +424,13 @@ def test_no_dormant_suite_is_quietly_running():
 # ---------------------------------------------------------------------------
 # Rule 2 -- patching is ``mocker``.
 # ---------------------------------------------------------------------------
-MOCKER_WAIVERS = tuple(
-    Waiver(subject, gap="G4", owner=162)
-    for subject in (
-        # unittest.mock.patch -- the 20 files G4 measured.
-        "tests/airflow/test_notifications.py",
-        "tests/airflow/test_pack_bronze_html_dag.py",
-        "tests/archiver/test_compact_silver.py",
-        "tests/integration/airflow/test_hourly_analytics_refresh.py",
-        "tests/integration/airflow/test_scrape_listings.py",
-        "tests/lakehouse/test_register_warehouse.py",
-        "tests/processing/test_detail_writer.py",
-        "tests/processing/test_srp_writer.py",
-        "tests/scraper/processors/test_scrape_detail.py",
-        "tests/scripts/test_audit_parquet_layout.py",
-        "tests/scripts/test_audit_sectioned_html_storage.py",
-        "tests/scripts/test_estimate_dictionary_savings.py",
-        "tests/scripts/test_estimate_recompression_savings.py",
-        "tests/scripts/test_recompress_bronze_html.py",
-        "tests/scripts/test_rewrite_parquet_layout.py",
-        "tests/scripts/test_train_html_dictionary.py",
-        "tests/shared/test_minio_dictionary.py",
-        # monkeypatch.setattr -- the 16 G4 did not count. Every one targets a
-        # module object (a repo module, or httpx), never process state, so the
-        # contract's narrower reading and this check's mechanical one pick out
-        # the same files today.
-        "tests/airflow/test_coordination_admission.py",
-        "tests/archiver/test_delete_packed_source_html.py",
-        "tests/archiver/test_disk_usage.py",
-        "tests/archiver/test_pack_bronze_html.py",
-        "tests/integration/archiver/test_compact_silver_integration.py",
-        "tests/integration/archiver/test_pack_bronze_html_integration.py",
-        "tests/integration/ops/test_coordination_release.py",
-        "tests/integration/scripts/test_plan145_canary_commit.py",
-        "tests/integration/shared/test_read_html_pack_fallback.py",
-        "tests/lakehouse/test_export_volatility_features_metadata.py",
-        "tests/lakehouse/test_iceberg_spike_metadata.py",
-        "tests/lakehouse/test_preflight_local_lakehouse.py",
-        "tests/ops/routers/test_auth.py",
-        "tests/ops/routers/test_users.py",
-        "tests/scripts/test_reconcile_april_detail.py",
-        "tests/scripts/test_seed_lake_snapshot.py",
-        "tests/shared/test_minio_packfallback.py",
-    )
-)
+# Empty since Plan 162 Stage 5 (CAR-49) converted all 34 on 2026-09-01 -- the
+# 17 that imported ``unittest.mock.patch``, the 17 that reached for
+# ``monkeypatch.setattr``, and the two that did both. The venv carve-out this
+# rule's docstring argues against went with them: ``ci.yml`` now installs
+# ``pytest-mock`` into the isolated Airflow venv, so ``mocker`` exists in every
+# interpreter that runs a test here.
+MOCKER_WAIVERS: tuple[Waiver, ...] = ()
 
 _MONKEYPATCH_ALLOWED = frozenset({
     # monkeypatch owns process state and mocker is the wrong tool for it.
@@ -508,14 +471,14 @@ def _patching_mechanisms(path: Path) -> set[str]:
 def test_patching_is_mocker_everywhere():
     """One convention, and no venv carve-out.
 
-    ``tests/integration/airflow/`` is the interesting pair. Its venv installs
+    ``tests/integration/airflow/`` was the interesting pair. Its venv installed
     ``apache-airflow``, ``pytest``, ``psycopg2-binary`` and ``requests``, so
-    ``mocker`` genuinely does not exist in that interpreter -- and that is an
-    argument that the venv is built wrong, not that the convention forks.
-    ``pytest-mock`` depends only on ``pytest``, which that venv already has.
-    Both files are waived by name against G4, like the eighteen others, because
-    a waiver is how a defect waits its turn and an exemption says the code is
-    correct.
+    ``mocker`` genuinely did not exist in that interpreter -- and that was an
+    argument that the venv was built wrong, not that the convention forks.
+    ``pytest-mock`` depends only on ``pytest``, which that venv already had, so
+    Stage 5 added it to the ``pip install`` and converted both files rather
+    than granting an exemption. That is what a waiver is for: it is how a
+    defect waits its turn, and an exemption says the code is correct.
     """
     offenders = {
         _relative(path)
@@ -805,10 +768,16 @@ LAYER_2_WAIVERS = tuple(
         "archiver/sql/lake_snapshot_selectors/no_price_history.sql",
         "archiver/sql/lake_snapshot_selectors/price_changed_30d_only.sql",
         "archiver/sql/lake_snapshot_selectors/price_changed_7d.sql",
+        # price_drop and stale_listing were exposed on 2026-09-01, when Stage 5
+        # tightened the match above to a word boundary. Both had been credited
+        # by a test *method* name that happened to contain the stem; neither
+        # .sql file is executed by anything.
+        "archiver/sql/lake_snapshot_selectors/price_drop.sql",
         "archiver/sql/lake_snapshot_selectors/price_increase.sql",
         "archiver/sql/lake_snapshot_selectors/relisted_vin.sql",
         "archiver/sql/lake_snapshot_selectors/srp_fallback.sql",
         "archiver/sql/lake_snapshot_selectors/stable_state_run.sql",
+        "archiver/sql/lake_snapshot_selectors/stale_listing.sql",
         "archiver/sql/lake_snapshot_selectors/state_change_run.sql",
         "dashboard/sql/data_health_batch_outcomes.sql",
         "dashboard/sql/data_health_block_rate.sql",
@@ -873,16 +842,40 @@ def production_sql_files() -> tuple[str, ...]:
     )
 
 
+def _names(stem: str, text: str) -> bool:
+    """Does *text* name *stem*, as a whole word, in either case?
+
+    ``re.escape`` because a stem is a filename and ``\\b`` because a substring
+    match credits ``price_drop.sql`` for ``test_price_drops_no_filter``.
+    """
+    for candidate in (stem, stem.upper()):
+        if re.search(rf"\b{re.escape(candidate)}\b", text):
+            return True
+    return False
+
+
 def test_every_production_sql_file_is_touched_by_a_layer_2_test():
-    """54 of 76 are not, at the *weakest* available reading.
+    """56 of 76 are not, at the *weakest* available reading.
 
     The reading is deliberately weak: a file counts as covered if some module
     under ``tests/integration/sql/`` so much as names it or its constant. The
     contract is clear that a weak reading is not the rule, and this one is
-    chosen anyway for a specific reason -- 54 files fail it. A stricter check
+    chosen anyway for a specific reason -- 56 files fail it. A stricter check
     can only find more, so nothing is being hidden, and tightening it is worth
     doing when the number is small enough for the difference to be legible.
     Plan 162 owns both halves.
+
+    **The match is on a word boundary, and that is not a detail.** Until Stage 5
+    it was a bare substring test, which credited a ``.sql`` file whenever its
+    stem appeared anywhere in a Layer 2 module -- including inside a longer
+    identifier that had nothing to do with it.
+    ``lake_snapshot_selectors/price_drop.sql`` was credited by the *test method
+    name* ``test_price_drops_no_filter``, ``stale_listing.sql`` by
+    ``test_price_stale_listing_is_also_held_by_the_backoff``, and
+    ``cooldown_events.sql`` by the table name ``staging.blocked_cooldown_events``.
+    None of the three is executed anywhere. A weak reading is a decision; a
+    reading weaker than the one described is a checker that reports a number
+    nobody chose.
 
     The failure this catches is already in the tree and is the sharpest example
     of what the contract calls worse than no test: ``test_ops_queries.py`` and
@@ -899,8 +892,7 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
     untouched = {
         relative
         for relative in production_sql_files()
-        if Path(relative).stem not in layer_2
-        and Path(relative).stem.upper() not in layer_2
+        if not _names(Path(relative).stem, layer_2)
     }
     _assert_exactly(
         untouched,
@@ -915,32 +907,16 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
 # ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------
-LAYER_NUMBER_WAIVERS = tuple(
-    Waiver(subject, gap="G11", owner=162)
-    for subject in (
-        "tests/integration/archiver/test_flush_silver_observations.py: 1, not 4",
-        "tests/integration/archiver/test_flush_staging_events.py: 1, not 4",
-        "tests/integration/ops/conftest.py: 3, not 4",
-        "tests/integration/ops/test_access_requests.py: 3, not 4",
-        "tests/integration/ops/test_auth.py: 3, not 4",
-        "tests/integration/ops/test_deploy_intent.py: 3, not 4",
-        "tests/integration/ops/test_maintenance_api.py: 3, not 4",
-        "tests/integration/ops/test_scrape.py: 3, not 4",
-        "tests/integration/ops/test_search_crud.py: 3, not 4",
-        "tests/integration/ops/test_user_management.py: 3, not 4",
-        "tests/integration/sql/test_dashboard_queries.py: 1, not 2",
-        "tests/integration/sql/test_ops_queries.py: 1, not 2",
-        "tests/integration/sql/test_ops_views.py: 1, not 2",
-        "tests/integration/sql/test_processing_queries.py: 1, not 2",
-        "ci.yml 'Run SQL smoke tests (Layer 1)': 1, not 2",
-        "ci.yml 'Run API integration tests (Layer 3)': 3, not 4",
-    )
-)
+# Empty since Plan 162 Stage 5 (CAR-49) swept all 16 on 2026-09-01. The rule
+# below is the whole of G11 now: it is what stops Plan 84's numbering coming
+# back the next time someone copies a docstring header from an older file.
+LAYER_NUMBER_WAIVERS: tuple[Waiver, ...] = ()
 
 # A module's *own* claim is a leading ``Layer N`` on the first line of its
 # docstring. A ``Layer N`` further in is a cross-reference to another layer --
-# ``test_maintenance_api.py`` points at the Layer 1 tests beside it -- and
-# reading those as claims would fail on prose that is correct.
+# ``tests/ops/routers/test_scrape.py`` points at the Layer 4 integration tests
+# that cover its SQL -- and reading those as claims would fail on prose that is
+# correct.
 _DOCSTRING_CLAIM = re.compile(r"^Layer (\d)\b")
 _STEP_NAME_LAYER = re.compile(r"\(Layer (\d)\)")
 
@@ -1007,7 +983,8 @@ def test_every_layer_number_in_the_code_matches_the_contract():
 # Rule 7 -- the harness must not decide the outcome.
 # ---------------------------------------------------------------------------
 def test_every_pytest_invocation_in_ci_sets_pythonpath():
-    """G13, and one of the two rules here with nothing left to waive.
+    """The one mechanically checkable clause of "the harness must not decide
+    the outcome". The rest of that rule is judgement, and the contract says so.
 
     ``tests/test_planning_docs.py`` passed or failed on one machine, one OS and
     one commit purely on whether the checkout directory name was a valid Python
@@ -1016,6 +993,14 @@ def test_every_pytest_invocation_in_ci_sets_pythonpath():
     ``__init__.py``, so pytest walks up for the package root and where it stops
     depends on the directory's name. ``PYTHONPATH`` settles it. CAR-42 fixed
     the one step that lacked it; this keeps the next one from being added.
+
+    The rule's third instance was ``test_verify_recovery_live_state.py``'s
+    canary command, which quoted ``sys.executable`` with ``shlex.quote`` --
+    POSIX quoting ``cmd.exe`` does not honour, so it failed on Windows and
+    passed in CI. Stage 5 replaced the interpreter with ``exit 3``, a shell
+    builtin that needs no quoting. Nothing here could have caught it: CI is
+    Linux, and the only check that finds this class of defect is running the
+    suite somewhere else.
     """
     without = sorted(
         f"{job}: {step}"

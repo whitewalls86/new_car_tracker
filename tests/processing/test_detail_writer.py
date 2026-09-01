@@ -4,7 +4,7 @@ Covers active, unlisted, and blocked paths plus carousel filtering
 and VIN relisting logic.
 """
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,7 +17,7 @@ FETCHED_AT = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def mock_cursor():
+def mock_cursor(mocker):
     cursor = MagicMock()
     cursor.fetchall.return_value = []
     cursor.fetchone.return_value = None
@@ -29,8 +29,8 @@ def mock_cursor():
     def fake_db_cursor(error_context="", dict_cursor=False):
         yield cursor
 
-    with patch("processing.writers.detail_writer.db_cursor", fake_db_cursor):
-        yield cursor
+    mocker.patch("processing.writers.detail_writer.db_cursor", fake_db_cursor)
+    return cursor
 
 
 @pytest.fixture

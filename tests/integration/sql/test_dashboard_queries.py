@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for dashboard service queries.
+Layer 2 — SQL smoke tests for dashboard service queries.
 
 Imports the exact SQL constants from dashboard.queries (the same module the
 dashboard uses) and executes them against the DuckDB file produced by
