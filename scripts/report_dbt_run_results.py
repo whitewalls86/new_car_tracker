@@ -32,7 +32,7 @@ class NodeTiming:
 
 
 def load_run_results(path: Path) -> dict[str, Any]:
-    with path.open() as f:
+    with path.open(encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             }
             for t in filtered
         ]
-        args.json_out.write_text(json.dumps(payload, indent=2))
+        args.json_out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     return 0
 

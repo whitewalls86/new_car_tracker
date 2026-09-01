@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-07-06 to 2026-07-12</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-07-06 to 2026-07-12. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-07-06-to-2026-07-12">Week of 2026-07-06 to 2026-07-12</h1>
+<p><strong>Window:</strong> 2026-07-06 00:00:00 to 2026-07-12 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-24
+<strong>Commits in window:</strong> 90 (74 non-merge, 16 merges)</p>
+<p>This is a backfill written <strong>43 days after the window closed</strong>. It was an
+unusually large week: normalized storage became the input to adaptive-refresh
+features, production-derived snapshot export grew from a scaffold into an
+atomic filtered writer, and dbt's largest models gained explicit resource and
+incremental contracts. In parallel, a Cloudflare/solver incident drove runtime
+scraper controls that were mostly not tied to numbered plans in their commits.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plans-111-and-112-define-the-feature-layer-and-its-experiment-boundary">Plans 111 and 112 — define the feature layer and its experiment boundary</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_111_adaptive_detail_refresh.md">Plan 111</a> asks which listings
+deserve frequent detail refresh, without changing production policy. <code>411be7f</code>
+added state fingerprints, runs and interpretable volatility features; <code>eded499</code>
+pinned a stable dbt 1.10 stack after dependency drift. <code>d048bf9</code> corrected a
+run-boundary expectation but did not name the plan.</p>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_112_refresh_policy_backtesting.md">Plan 112</a> then separated
+feature definitions from reproducible policy experiments. <code>01b11fd</code> rewrote
+the roadmap around snapshots and evidence rather than an immediate production
+policy. Other roadmap edits (<code>5c72cc0</code>, <code>b86749b</code>, <code>ffab8ec</code>, <code>5cc02fd</code>,
+<code>f4fa967</code>) are unattributed by the commit-text rule.</p>
+<h3 id="plan-120-turn-production-lake-data-into-a-safe-fixture">Plan 120 — turn production lake data into a safe fixture</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_120_ci_lake_snapshot_delivery.md">Plan 120</a> exists so CI and
+local Spark/dbt work can consume a reproducible, production-derived fixture
+without querying production directly. Its ten attributed commits were
+<code>b7a051a</code>, <code>d674c8d</code>, <code>77d0d69</code>, <code>2062d55</code>, <code>d3a8c73</code>, <code>0ae4e5d</code>, <code>bb95f8c</code>,
+<code>e6bf546</code>, <code>d9a92bf</code> and <code>e306ba6</code>.</p>
+<p>The work progressed from an archiver-owned export scaffold through read-only
+source audit, selectors, cohort closure, a profile-gated planning worker and
+fingerprinted cache, then Gate D's filtered Parquet writer. Review corrected
+several load-bearing details: selector dates were anchored to the requested
+window, closure was limited to vehicle-identity edges, generation paths became
+atomic, cache and promotion validation tightened, and a boundary VIN was seeded
+so a selector's evidentiary row could not be filtered out. Progress logging and
+physical production-shaped fixtures made long runs inspectable and meaningful.</p>
+<h3 id="plan-123-make-dbt-resource-use-bounded-and-incremental-semantics-explicit">Plan 123 — make dbt resource use bounded and incremental semantics explicit</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/reference/plan_123_dbt_resource_baseline.md">Plan 123</a> required evidence before
+incrementalizing models merely because they looked expensive. Its twelve named
+commits were <code>755c39c</code>, <code>5ae6f56</code>, <code>37a92f6</code>, <code>13b73e5</code>, <code>e908aec</code>, <code>9cf11ed</code>,
+<code>5de25ff</code>, <code>e468bde</code>, <code>1762764</code>, <code>f216283</code>, <code>3c43aa2</code> and <code>55f8a5a</code>.</p>
+<p>The week added dbt memory/thread guardrails, split hourly and feature cadences,
+incrementalized state and observation fingerprints plus affected-VIN models,
+and extended the full source history into observation runs. Fixture tests were
+converted from shadow SQL assertions into phased builds that exercise bootstrap,
+incremental arrival, correction and control-VIN behavior. Several commits in
+that test-hardening chain do not name Plan 123 and are therefore listed below.</p>
+<h3 id="scraper-availability-and-runtime-controls">Scraper availability and runtime controls</h3>
+<p>A separate production incident raised the detail timeout, hardened Cloudflare
+session replay, corrected browser impersonation, pinned FlareSolverr, and added
+the <code>trawl</code> solver sidecar (<code>6a063f9</code>, <code>b47241d</code>, <code>dc3de90</code>, <code>57208c6</code>,
+<code>262bfbd</code>, <code>e5460b5</code>). <code>63ce9a3</code> moved throttling into runtime settings rather
+than another image rebuild. These commits explain why Plan 122 entered backlog,
+but none names that plan in its own subject or body, so they remain unattributed.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Three index revisions produced these net changes:</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_110_html_storage_optimization.md">110</a></td>
+<td>build order</td>
+<td>absent</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_111_adaptive_detail_refresh.md">111</a></td>
+<td>build order</td>
+<td>absent</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_118_dbt_spark_migration.md">118</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_119_lakehouse_governance.md">119</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_120_ci_lake_snapshot_delivery.md">120</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_121_staging_environment.md">121</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_122_runtime_scraper_fetch_config.md">122</a></td>
+<td>absent</td>
+<td>backlog</td>
+</tr>
+</tbody>
+</table></div>
+<p>Plans 110 and 111 left the live index after their immediate implementation
+work; Plans 118–121 expressed the broader lakehouse execution, governance,
+fixture and staging tracks; Plan 122 captured the operational lesson from the
+timeout incident.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li>Plan 120's Gate D writer existed, but archive packaging, authenticated
+delivery and end-to-end local lakehouse rehearsal belonged to the next week.</li>
+<li>Plan 123 had incremental semantics and tests, but the VM resource baseline
+still had to be filled from production evidence rather than the template.</li>
+<li>Plan 112 had an experiment roadmap but not yet the Lakekeeper/Spark/Iceberg
+substrate or MLflow provenance bridge.</li>
+<li>Plans 118–121 were newly filed implementation tracks, not delivered systems.</li>
+<li>Plan 122 entered backlog because timeout and throttling had been changed in
+code; a complete supported runtime configuration surface was still owed.</li>
+<li>The scraper fixes were operationally urgent but weakly connected to plan
+text: 49 of 74 non-merge commits in the week carry no numbered attribution.</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Forty-nine non-merge commits name no numbered plan in their own subject or
+body. They are still part of the recap; their subjects preserve what changed.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Subject</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>d048bf9</code></td>
+<td>fix: remove next_state_started_at from test_runs_three_runs_correct_boundaries expected rows</td>
+</tr>
+<tr>
+<td><code>1268f0c</code></td>
+<td>fix: pin dbt/Dockerfile (tools profile) to stable 1.10 stack</td>
+</tr>
+<tr>
+<td><code>684c605</code></td>
+<td>fix: support Airflow 3 DagBag tests</td>
+</tr>
+<tr>
+<td><code>5c72cc0</code></td>
+<td>docs: update lakehouse roadmap for delta track</td>
+</tr>
+<tr>
+<td><code>b86749b</code></td>
+<td>more doc work, settling on plans.</td>
+</tr>
+<tr>
+<td><code>4dd57ca</code></td>
+<td>fix: return 400 for malformed snapshot payloads, validate window months</td>
+</tr>
+<tr>
+<td><code>640a147</code></td>
+<td>refactor: extract shared DuckDB/MinIO S3 connection helper, dedupe across scripts</td>
+</tr>
+<tr>
+<td><code>e340fe0</code></td>
+<td>fix: add pytz to archiver runtime requirements</td>
+</tr>
+<tr>
+<td><code>fbfbd61</code></td>
+<td>feat: run initial lake snapshot selectors</td>
+</tr>
+<tr>
+<td><code>6a063f9</code></td>
+<td>fix: increase detail scrape timeout</td>
+</tr>
+<tr>
+<td><code>ffd73b6</code></td>
+<td>fix: aggregate selector counts in SQL, gate source_base_path, wire coverage</td>
+</tr>
+<tr>
+<td><code>ffab8ec</code></td>
+<td>adding docs</td>
+</tr>
+<tr>
+<td><code>63ce9a3</code></td>
+<td>fix: throttle detail scraping via runtime settings</td>
+</tr>
+<tr>
+<td><code>b47241d</code></td>
+<td>fix: harden cloudflare session replay</td>
+</tr>
+<tr>
+<td><code>dc3de90</code></td>
+<td>fix: align curl cffi with chrome 148</td>
+</tr>
+<tr>
+<td><code>57208c6</code></td>
+<td>fix: avoid unsupported chrome 148 impersonation</td>
+</tr>
+<tr>
+<td><code>262bfbd</code></td>
+<td>fix: pin flaresolverr image</td>
+</tr>
+<tr>
+<td><code>e5460b5</code></td>
+<td>chore: add trawl solver sidecar</td>
+</tr>
+<tr>
+<td><code>d6ebebe</code></td>
+<td>style: wrap cloudflare header helper signature</td>
+</tr>
+<tr>
+<td><code>dfd084e</code></td>
+<td>fix: harden lake snapshot seeder/downloader per review findings</td>
+</tr>
+<tr>
+<td><code>40ced38</code></td>
+<td>fix: expose export_ci_lake_snapshot DAG params via DAG(params=...)</td>
+</tr>
+<tr>
+<td><code>4a12dba</code></td>
+<td>fix: anchor price_changed_7d/30d_only to real window_end, not MAX(event_at)</td>
+</tr>
+<tr>
+<td><code>e104f2e</code></td>
+<td>refactor: move lake snapshot selector SQL and metadata out of Python</td>
+</tr>
+<tr>
+<td><code>2ef598a</code></td>
+<td>refactor: split selector config loading out of lake_snapshot_selectors</td>
+</tr>
+<tr>
+<td><code>3dadd3a</code></td>
+<td>fix: make lake-snapshot fixture physically production-shaped for silver</td>
+</tr>
+<tr>
+<td><code>da9506b</code></td>
+<td>fix: install s3fs in CI seed step, consolidate CI deps to requirements files</td>
+</tr>
+<tr>
+<td><code>e6d3954</code></td>
+<td>fix: resolve CI deps in a single pip invocation to avoid version drift</td>
+</tr>
+<tr>
+<td><code>e45363e</code></td>
+<td>fix: unpin apache-airflow to avoid starlette/prometheus-instrumentator conflict</td>
+</tr>
+<tr>
+<td><code>48a30ae</code></td>
+<td>fix: isolate Airflow into its own CI venv instead of unpinning</td>
+</tr>
+<tr>
+<td><code>fa9c477</code></td>
+<td>Add progress logs for snapshot planning worker</td>
+</tr>
+<tr>
+<td><code>b50c94a</code></td>
+<td>Configure logging in the snapshot-worker CLI entrypoint</td>
+</tr>
+<tr>
+<td><code>5cc02fd</code></td>
+<td>add updated docs</td>
+</tr>
+<tr>
+<td><code>a8d410e</code></td>
+<td>Constrain snapshot closure to vehicle identity edges</td>
+</tr>
+<tr>
+<td><code>5c41269</code></td>
+<td>Add boto3 to archiver requirements for planning cache writes</td>
+</tr>
+<tr>
+<td><code>6736e18</code></td>
+<td>Implement Gate D: fingerprint-addressed filtered Parquet writer</td>
+</tr>
+<tr>
+<td><code>fa49505</code></td>
+<td>Fix Gate D publish-atomicity gaps: generation paths, manifest write failures</td>
+</tr>
+<tr>
+<td><code>255ff51</code></td>
+<td>Make selector coverage non-blocking by default; fix stale_listing as-of semantics</td>
+</tr>
+<tr>
+<td><code>1ae6daa</code></td>
+<td>Fix stale_listing evidentiary rows and enforce selector checks in dry-run too</td>
+</tr>
+<tr>
+<td><code>e5af22c</code></td>
+<td>Seed stale_listing's boundary vin into cohort closure</td>
+</tr>
+<tr>
+<td><code>c8ebe14</code></td>
+<td>Bump COHORT_ALGORITHM_VERSION for boundary-vin closure seeding change</td>
+</tr>
+<tr>
+<td><code>f4fa967</code></td>
+<td>Update analytics and staging roadmap plans</td>
+</tr>
+<tr>
+<td><code>b133928</code></td>
+<td>Update Gate D integration expectation</td>
+</tr>
+<tr>
+<td><code>964c49b</code></td>
+<td>Dedupe artifact_id within a single incremental batch</td>
+</tr>
+<tr>
+<td><code>3435721</code></td>
+<td>Fix CI parse error: unit tests need explicit is_incremental override</td>
+</tr>
+<tr>
+<td><code>3560706</code></td>
+<td>Remove stale days_on_market from int_price_history unit test fixtures</td>
+</tr>
+<tr>
+<td><code>4757605</code></td>
+<td>Fix observation-fingerprint dedupe to distinguish true corrections from newer fetches</td>
+</tr>
+<tr>
+<td><code>281ac04</code></td>
+<td>Replace shadow dbt incremental tests with phased lake fixture coverage</td>
+</tr>
+<tr>
+<td><code>d4c0e74</code></td>
+<td>Address review: clarify watermark comment, extend runs full-refresh check to control VIN</td>
+</tr>
+<tr>
+<td><code>e3a2e1a</code></td>
+<td>Fix mismatched expect-row columns in observation_runs unit test</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="merges">Merges</h2>
+<p>Sixteen merges are named and not recapped separately.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th style="text-align:right">PR</th>
+<th>Branch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>4ae87d6</code></td>
+<td style="text-align:right">#139</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+<tr>
+<td><code>c809681</code></td>
+<td style="text-align:right">#140</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+<tr>
+<td><code>b27893d</code></td>
+<td style="text-align:right">#141</td>
+<td>hotfix/flaresolverr-detail-timeout</td>
+</tr>
+<tr>
+<td><code>df4338b</code></td>
+<td style="text-align:right">#142</td>
+<td>fix/403-issues</td>
+</tr>
+<tr>
+<td><code>18148fb</code></td>
+<td style="text-align:right">#143</td>
+<td>fix/403-issues</td>
+</tr>
+<tr>
+<td><code>f3ee1ff</code></td>
+<td style="text-align:right">—</td>
+<td>origin/master into feature/plan-112-refresh-backtesting</td>
+</tr>
+<tr>
+<td><code>80b1574</code></td>
+<td style="text-align:right">#144</td>
+<td>feature/plan-112-refresh-backtesting</td>
+</tr>
+<tr>
+<td><code>b57fa09</code></td>
+<td style="text-align:right">#145</td>
+<td>feature/plan-120-worker-progress-logs</td>
+</tr>
+<tr>
+<td><code>0ba20d5</code></td>
+<td style="text-align:right">#146</td>
+<td>feature/plan-123-dbt-resource-guardrails</td>
+</tr>
+<tr>
+<td><code>1e315b3</code></td>
+<td style="text-align:right">#147</td>
+<td>feature/plan-123-dbt-cadences</td>
+</tr>
+<tr>
+<td><code>5560e3a</code></td>
+<td style="text-align:right">#148</td>
+<td>feature/plan-123-incremental-fingerprints</td>
+</tr>
+<tr>
+<td><code>2ae213e</code></td>
+<td style="text-align:right">#149</td>
+<td>feature/plan-123-affected-vin-incrementals</td>
+</tr>
+<tr>
+<td><code>f6f2b9a</code></td>
+<td style="text-align:right">#150</td>
+<td>feature/plan-123-affected-vin-incrementals</td>
+</tr>
+<tr>
+<td><code>cf61c82</code></td>
+<td style="text-align:right">#151</td>
+<td>feature/plan-123-phase-5-profiling-scaffold</td>
+</tr>
+<tr>
+<td><code>031c3f0</code></td>
+<td style="text-align:right">#152</td>
+<td>feature/plan-123-scrape-volume-incremental</td>
+</tr>
+<tr>
+<td><code>4a65ea7</code></td>
+<td style="text-align:right">#153</td>
+<td>feature/plan-123-observation-runs</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>329 commits</strong> sit after this window's end as of 2026-08-24.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-07-12 23:59:59'   # 329
+</code></pre>
+<p>That raw tail is already covered by the recaps ending July 19, July 26,
+August 2, August 9, August 16 and August 23. None of the following complete
+weeks is genuinely uncovered.</p>
+</main>
+</body>
+</html>

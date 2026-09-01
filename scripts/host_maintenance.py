@@ -281,6 +281,7 @@ def _run_command(
             capture_output=True,
             text=True,
             check=False,
+            encoding="utf-8",
         )
     except OSError as exc:
         raise MaintenanceError(f"unable to run: {' '.join(command)}") from exc

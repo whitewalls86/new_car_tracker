@@ -407,7 +407,7 @@ class TestCheckpoint:
         )
 
         assert ckpt.exists()
-        data = json.loads(ckpt.read_text())
+        data = json.loads(ckpt.read_text(encoding="utf-8"))
         assert key in data["processed_keys"]
 
     def test_checkpoint_not_written_in_dry_run(self, tmp_path, mocker):
@@ -452,7 +452,7 @@ class TestCheckpoint:
         from scripts.recompress_bronze_html import load_checkpoint
 
         ckpt = tmp_path / "ckpt.json"
-        ckpt.write_text("{corrupt json{{")
+        ckpt.write_text("{corrupt json{{", encoding="utf-8")
         result = load_checkpoint(ckpt)
         assert result == set()
 
@@ -577,7 +577,7 @@ class TestSummaryCounts:
         out = tmp_path / "summary.json"
         print_summary(s, dry_run=True, json_out=out)
 
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
         assert data["recompressed"] == 3
         assert data["skipped"] == 1
         assert data["failed"] == 1

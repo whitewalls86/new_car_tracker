@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-07-20 to 2026-07-26</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-07-20 to 2026-07-26. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-07-20-to-2026-07-26">Week of 2026-07-20 to 2026-07-26</h1>
+<p><strong>Window:</strong> 2026-07-20 00:00:00 to 2026-07-26 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-24
+<strong>Commits in window:</strong> 30 (24 non-merge, 6 merges)</p>
+<p>This is a backfill written <strong>29 days after the window closed</strong>. The week's work
+was unusually concentrated: one production correctness defect was diagnosed,
+fixed, briefly reverted after an over-broad detector, reapplied safely and
+cleaned up; in parallel, the first production-scale Iceberg shadow build turned
+an apparent SQL failure into a carefully instrumented memory investigation.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plan-125-production-scale-invalidates-the-easy-explanation">Plan 125 — production scale invalidates the easy explanation</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_125_duckdb_to_iceberg_migration.md">Plan 125</a> aims to make
+Iceberg the canonical analytics layer rather than a sidecar export. Gate C's
+first VM-scale shadow build proved <code>int_latest_observation</code> on 258,374 rows but
+OOMed on the 38.6-million-row observation fingerprints; the subsequent SQL
+error was reproduced as damaged post-OOM session state, not a second dialect
+defect.</p>
+<p>The week then built a scale harness, measured the snapshot and production data
+shapes, disproved its own first synthetic treatment as roughly four times too
+wide, and found that a shape-faithful 1 GiB run still passed. Production
+fan-out and duplicate rates were higher than the fixture, but bounded and not
+enough to explain the failure. An instrumented replay finally captured the OOM
+inside the listing-history window path and corrected a classifier that had
+mislabelled it as an Iceberg write failure. The twelve commits were <code>076344a</code>,
+<code>1a2bc82</code>, <code>b4c5890</code>, <code>cd989e0</code>, <code>23f2e36</code>, <code>4485e9c</code>, <code>be58c0a</code>, <code>e3cb8e2</code>,
+<code>92ff37e</code>, <code>7a5c76c</code>, <code>c4cbe17</code> and <code>b168668</code>.</p>
+<h3 id="plan-128-challenge-pages-must-not-count-as-successful-observations">Plan 128 — challenge pages must not count as successful observations</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_128_false_block_detection.md">Plan 128</a> began from live
+evidence that genuine Cloudflare challenge pages were parsed as active
+listings. That refreshed freshness, cleared the cooldown the scraper had just
+set, defeated exponential backoff and inflated cooldown gauges.</p>
+<p>Phase 1 added challenge detection and Phase 2 added explicit <code>cleared</code> events.
+The first detector used a Cloudflare marker present on every valid page, so its
+merge was reverted and reapplied with a safety gate: real initial activity data
+always wins, and challenge detection is considered only when that data is
+absent. A real three-page corpus now holds the distinction.</p>
+<p>Cleanup added stuck-processing reaping, delisted-cooldown eviction and cohort
+reconciliation. Production exposed two more misses—the dbt accepted-values
+test omitted <code>cleared</code>, and old processing rows whose events had already
+flushed were invisible—both fixed with fixture coverage. The final audit found
+at most 21 corrupted listings out of 52,884, all self-healing, so no destructive
+repair was justified. The twelve commits were <code>a588ccf</code>, <code>da520ec</code>, <code>c043440</code>,
+<code>34de1b8</code>, <code>5943d9a</code>, <code>a360934</code>, <code>1903e7c</code>, <code>aa8f5e1</code>, <code>e6b7bbc</code>, <code>4b1cbf3</code>,
+<code>ec7ebed</code> and <code>0fba488</code>.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Three index revisions occurred. Only one net state changed:</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_128_false_block_detection.md">128</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+</tbody>
+</table></div>
+<p>Plan 125 stayed in build order while its evidence changed substantially.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li>Plan 125's OOM was reproduced and localized, but the correct production heap
+size and final treatment were not decided. The evidence explicitly rejected
+sizing from the unrepresentative synthetic failure.</li>
+<li>Plan 125 still had no merged Spark/Iceberg CI coverage after the previous
+week's cold-fixture failure, and no production reader cutover.</li>
+<li>Plan 128 deliberately chose no one-time freshness repair. Its audit required
+reopening only if the affected population remained non-trivial after July 27.</li>
+<li>Plan 128's document still said <code>Draft</code> at the end of the window even though
+all four phases had shipped; the recap records that mismatch but does not
+change planning state.</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>None. All 24 non-merge commits name Plan 125 or Plan 128 in their own subject.</p>
+<h2 id="merges">Merges</h2>
+<p>Six merges are named and not recapped as separate work.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th style="text-align:right">PR</th>
+<th>Branch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>316cea7</code></td>
+<td style="text-align:right">#179</td>
+<td>plan-128-false-block-detection</td>
+</tr>
+<tr>
+<td><code>b09069a</code></td>
+<td style="text-align:right">#180</td>
+<td>plan-128-fix-challenge-detection</td>
+</tr>
+<tr>
+<td><code>39b54f1</code></td>
+<td style="text-align:right">#181</td>
+<td>plan-128-cleanup</td>
+</tr>
+<tr>
+<td><code>603a66f</code></td>
+<td style="text-align:right">#182</td>
+<td>plan-128-cleanup-reap-fix</td>
+</tr>
+<tr>
+<td><code>db22698</code></td>
+<td style="text-align:right">#183</td>
+<td>plan-128-phase4-resolution</td>
+</tr>
+<tr>
+<td><code>7bcd922</code></td>
+<td style="text-align:right">—</td>
+<td>origin/master into feature/plan-125-portability-audit</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>211 commits</strong> sit after this window's end as of 2026-08-24.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-07-26 23:59:59'   # 211
+</code></pre>
+<p>That raw tail includes the already-covered weeks ending August 2, 9, 16 and
+23. None of the following complete weeks is genuinely uncovered.</p>
+</main>
+</body>
+</html>

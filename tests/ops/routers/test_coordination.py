@@ -152,6 +152,22 @@ def test_begin_drain_endpoint_maps_failures(mock_client, mocker, result, status_
     assert mock_client.post("/coordination/begin-drain").status_code == status_code
 
 
+def test_status_route_is_registered(mock_client, mocker):
+    """G6, Plan 162 Stage 6. `test_status_serializes_timestamps` calls `_status`.
+
+    That covers the serialisation and says nothing about the URL -- and this is
+    the route `scripts/host_maintenance.py` polls as `GET /coordination/status`
+    before it will proceed, so a rename here strands the host maintenance
+    workflow rather than failing anything in this suite.
+    """
+    mocker.patch("ops.routers.coordination._status", return_value={"phase": "none"})
+
+    response = mock_client.get("/coordination/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"phase": "none"}
+
+
 @pytest.mark.parametrize(
     ("path", "helper", "ok_phase"),
     [
@@ -628,7 +644,7 @@ def test_request_endpoint_maps_failures(mock_client, mocker, result, status_code
 
 
 def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
-    sql = Path("db/migrations/V043__coordination_state.sql").read_text()
+    sql = Path("db/migrations/V043__coordination_state.sql").read_text(encoding="utf-8")
 
     assert "CHECK (id = 1)" in sql
     for phase in ("none", "requested", "draining", "active", "validating"):
@@ -642,7 +658,7 @@ def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
 
 
 def test_coordination_event_migration_is_append_only_and_archiver_accessible():
-    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text()
+    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text(encoding="utf-8")
 
     assert "CREATE TABLE staging.coordination_state_events" in sql
     assert "event_id bigserial PRIMARY KEY" in sql
@@ -661,7 +677,7 @@ def test_coordination_event_migration_is_append_only_and_archiver_accessible():
 
 
 def test_host_evidence_migration_is_append_only_and_archiver_accessible():
-    sql = Path("db/migrations/V045__coordination_release_evidence.sql").read_text()
+    sql = Path("db/migrations/V045__coordination_release_evidence.sql").read_text(encoding="utf-8")
 
     assert "CREATE TABLE staging.coordination_release_evidence" in sql
     assert "evidence_id bigserial PRIMARY KEY" in sql
@@ -672,7 +688,7 @@ def test_host_evidence_migration_is_append_only_and_archiver_accessible():
 
 
 def test_every_declared_transition_has_a_durable_event_phase():
-    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text()
+    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text(encoding="utf-8")
 
     phases = {
         phase for transition in coordination._TRANSITIONS.values() for phase in transition[:2]

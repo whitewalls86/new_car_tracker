@@ -796,7 +796,8 @@ def write_outputs(
 
     report_path = out_dir / "stage1_report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
-                           encoding="utf-8")
+    encoding="utf-8",
+                           )
     report["fingerprints"]["stage1_report.json"] = _fingerprint(report_path)
     return report
 

@@ -123,13 +123,13 @@ def test_atomic_write_round_trips_complete_document(tmp_path):
 def test_atomic_replace_failure_retains_last_good_document(tmp_path, mocker):
     path = tmp_path / "snapshot.json"
     atomic_write_snapshot(path, _valid_snapshot())
-    original = path.read_text()
+    original = path.read_text(encoding="utf-8")
     mocker.patch("dbt_runner.analytics_snapshot.os.replace", side_effect=OSError("disk full"))
 
     with pytest.raises(OSError, match="disk full"):
         atomic_write_snapshot(path, _valid_snapshot())
 
-    assert path.read_text() == original
+    assert path.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob("*.tmp"))
 
 

@@ -916,7 +916,17 @@ _REQUIRED_RECAP_SECTIONS = (
     "Merges",
     "Deferred to the next recap",
 )
-_REQUIRED_RECAP_FIELDS = ("**Window:**", "**Recapped:**", "**Commits in window:**")
+_REQUIRED_RECAP_FIELDS = (
+    "**Window:**",
+    "**Recapped:**",
+    "**Commits in window:**",
+    # Plan 138 Stage 1e. The publication marker is required rather than
+    # defaulted: a recap with no marker is a recap nobody decided about, and
+    # both defaults are wrong. Defaulting to true publishes an unread week the
+    # moment it lands; defaulting to false drops a week off the site silently
+    # and nothing says so. Absent is a build failure instead.
+    "**Publish:**",
+)
 
 
 @lru_cache(maxsize=None)
@@ -1062,6 +1072,7 @@ class TestWeeklyRecaps:
             shallow = subprocess.run(
                 ["git", "rev-parse", "--is-shallow-repository"],
                 cwd=REPO_ROOT, capture_output=True, text=True, timeout=30,
+                encoding="utf-8",
             )
         except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
             pytest.skip(f"git is unavailable: {exc}")
@@ -1083,6 +1094,7 @@ class TestWeeklyRecaps:
             ["git", "cat-file", "--batch-check"],
             cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
             input="\n".join(sorted(cited)) + "\n",
+            encoding="utf-8",
         )
         lines = resolved.stdout.splitlines()
         assert len(lines) == len(cited), (

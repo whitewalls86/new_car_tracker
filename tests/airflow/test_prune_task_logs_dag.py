@@ -12,7 +12,7 @@ from prune_task_logs import prune_task_logs  # noqa: E402
 def _log(root: Path, dag: str, run: str, age_days: int, now: datetime) -> Path:
     path = root / f"dag_id={dag}" / f"run_id={run}" / "task_id=task" / "attempt=1.log"
     path.parent.mkdir(parents=True)
-    path.write_text("log")
+    path.write_text("log", encoding="utf-8")
     timestamp = (now - timedelta(days=age_days)).timestamp()
     path.touch()
     import os
@@ -36,7 +36,7 @@ def test_ignores_non_airflow_layout_and_symlinked_run(tmp_path, mocker):
     now = datetime(2026, 8, 17, tzinfo=timezone.utc)
     unrelated = tmp_path / "scheduler" / "latest.log"
     unrelated.parent.mkdir()
-    unrelated.write_text("keep")
+    unrelated.write_text("keep", encoding="utf-8")
     link = tmp_path / "dag_id=linked" / "run_id=linked"
     link.mkdir(parents=True)
 

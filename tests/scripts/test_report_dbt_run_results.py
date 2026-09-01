@@ -131,7 +131,7 @@ class TestMainEndToEnd:
             ]
         )
         path = tmp_path / "run_results.json"
-        path.write_text(json.dumps(run_results))
+        path.write_text(json.dumps(run_results), encoding="utf-8")
         json_out = tmp_path / "out.json"
 
         rc = main(["--path", str(path), "--json-out", str(json_out)])
@@ -143,7 +143,7 @@ class TestMainEndToEnd:
         assert out.index("slow_model") < out.index("fast_model")
         assert "total elapsed_time: 12.500s" in out
 
-        written = json.loads(json_out.read_text())
+        written = json.loads(json_out.read_text(encoding="utf-8"))
         assert [row["name"] for row in written] == ["slow_model", "fast_model"]
 
     def test_empty_resource_type_includes_all_nodes(self, tmp_path, capsys):
@@ -154,7 +154,7 @@ class TestMainEndToEnd:
             ]
         )
         path = tmp_path / "run_results.json"
-        path.write_text(json.dumps(run_results))
+        path.write_text(json.dumps(run_results), encoding="utf-8")
 
         rc = main(["--path", str(path), "--resource-type", ""])
         out = capsys.readouterr().out

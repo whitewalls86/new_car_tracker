@@ -26,7 +26,7 @@ def test_clean_window_run_passes_against_real_relations(tmp_path):
     rc = run(["--window", "itest-clean", "--report", str(report_path)],
              connect=_connect, canary=lambda: None)
     assert rc == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["passed"] is True
     assert report["txid"]["single_transaction"] is True
     assert report["changed_relations"] == {}
@@ -51,7 +51,7 @@ def test_a_committed_write_between_the_snapshots_is_seen_and_fails(pg_conn, tmp_
         rc = run(["--window", "itest-dirty", "--report", str(report_path)],
                  connect=_connect, canary=_canary)
         assert rc == 1
-        report = json.loads(report_path.read_text())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["passed"] is False
         assert report["txid"]["single_transaction"] is True
         changed = report["changed_relations"]

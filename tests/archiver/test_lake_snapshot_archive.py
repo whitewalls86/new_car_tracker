@@ -162,7 +162,7 @@ class TestLoadArchiveManifest:
                archive_content=None):
         full = tmp_path / manifest_key
         full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(json.dumps(manifest))
+        full.write_text(json.dumps(manifest), encoding="utf-8")
         archive_full = tmp_path / archive_key
         archive_full.parent.mkdir(parents=True, exist_ok=True)
         archive_full.write_bytes(
@@ -229,7 +229,7 @@ class TestLoadArchiveManifest:
         )
         full = tmp_path / "archives/fp1/archive_manifest.json"
         full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(json.dumps(manifest))
+        full.write_text(json.dumps(manifest), encoding="utf-8")
         # Deliberately do not write the archive object itself.
         result = load_archive_manifest(str(tmp_path), "archives/fp1/archive_manifest.json", "fp1")
         assert result is None
@@ -240,7 +240,7 @@ class TestLoadArchiveManifest:
         manifest["archive"] = {"path": None, "bytes": None, "sha256": None}
         full = tmp_path / "archives/fp1/archive_manifest.json"
         full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(json.dumps(manifest))
+        full.write_text(json.dumps(manifest), encoding="utf-8")
         result = load_archive_manifest(str(tmp_path), "archives/fp1/archive_manifest.json", "fp1")
         assert result is None
 
@@ -391,11 +391,11 @@ class TestPromoteSnapshotPointers:
         )
         assert promotion["ok"] is True
         latest = json.loads(
-            (tmp_path / "ci_snapshots/adaptive_refresh/latest.json").read_text()
+            (tmp_path / "ci_snapshots/adaptive_refresh/latest.json").read_text(encoding="utf-8")
         )
         alias = json.loads(
             (tmp_path / "ci_snapshots/adaptive_refresh/aliases/adaptive-refresh-2026-07-15.json")
-            .read_text()
+            .read_text(encoding="utf-8")
         )
         assert latest["export_fingerprint"] == "fp1"
         assert latest["archive_sha256"] == "abc"

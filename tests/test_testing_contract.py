@@ -499,30 +499,25 @@ def test_patching_is_mocker_everywhere():
 # ---------------------------------------------------------------------------
 # Rule 3 -- every route is reached through the app's routing table.
 # ---------------------------------------------------------------------------
-ROUTE_WAIVERS = tuple(
-    Waiver(subject, gap="G6", owner=162)
-    for subject in (
-        # container_health has no TestClient anywhere in the repository. Its
-        # two interesting endpoints do have tests -- which call the handlers
-        # directly, and were green throughout the eleven hours
-        # /project-status/{project} was returning 404 in production.
-        "container_health: GET /health",
-        "container_health: GET /metrics",
-        "container_health: GET /oneoff-processes",
-        "container_health: GET /project-status/{project}",
-        # G6 named these two.
-        "ops: POST /maintenance/evict-delisted-cooldowns",
-        "ops: POST /maintenance/reconcile-cooldown-cohorts",
-        # And these six it did not: measured by eye on 2026-08-31, found by
-        # walking app.routes on 2026-08-31.
-        "ops: GET /admin/snapshots/adaptive-refresh/latest",
-        "ops: GET /admin/snapshots/adaptive-refresh/{snapshot_id}",
-        "ops: GET /admin/snapshots/adaptive-refresh/{snapshot_id}/download",
-        "ops: GET /coordination/status",
-        "ops: POST /coordination/begin-validation",
-        "ops: POST /coordination/cancel",
-    )
-)
+# Emptied by Stage 6 (CAR-50) on 2026-09-01, and it stays empty: an empty
+# tuple still fails `_assert_exactly` the moment a route appears unreached.
+#
+# The twelve did not all mean the same thing, which is the finding worth
+# keeping. Four `container_health` routes were a real gap -- the service had no
+# `TestClient` anywhere and no test directory to put one in, which is why G6
+# and G9 were one stage. Three more were real: `/coordination/status` and the
+# two `/maintenance` routes were exercised only by calling their helpers.
+#
+# **The other five were never uncovered.** The three
+# `/admin/snapshots/adaptive-refresh/` reads and the two safe-lifecycle
+# coordination routes had tests going through the routing table and asserting
+# status codes the whole time -- 200, 409 and 503 among them. The rule could
+# not see them: it read only `ast.Constant` first arguments, so
+# `f"{BASE}/latest"` and a `parametrize`-injected `path` both looked like no
+# request at all. Stage 6 widened how the argument is read rather than
+# rewriting five sound tests to suit the instrument, because the second option
+# leaves the next f-string silently uncounted.
+ROUTE_WAIVERS: tuple[Waiver, ...] = ()
 
 # Run in a subprocess, one service at a time. Importing six FastAPI apps into
 # this interpreter would register six sets of Prometheus collectors in one
@@ -580,6 +575,7 @@ def app_routes(service: str) -> tuple[tuple[str, str], ...]:
         result = subprocess.run(
             [sys.executable, "-c", _ROUTE_PROBE, str(REPO_ROOT), service] + extra,
             capture_output=True, text=True,
+            encoding="utf-8",
         )
         if result.returncode == 0:
             found = tuple(
@@ -603,25 +599,123 @@ def app_routes(service: str) -> tuple[tuple[str, str], ...]:
     )
 
 
+def _module_constants(tree: ast.Module) -> dict[str, str]:
+    """``NAME = "/some/prefix"`` at module scope, which tests build paths from."""
+    constants = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, str):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        constants[target.id] = node.value.value
+    return constants
+
+
+def _parametrized_strings(function: ast.FunctionDef) -> dict[str, set[str]]:
+    """Argument name -> the string values ``parametrize`` will inject.
+
+    Needed because ``mock_client.post(path)`` inside a parametrized test is a
+    real request through the routing table, and the path is a ``Name``. Reading
+    only the call site sees a variable and concludes the route is untested,
+    which is how four exemplary coordination tests came to sit under a waiver.
+    """
+    injected: dict[str, set[str]] = {}
+    for decorator in function.decorator_list:
+        if not (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "parametrize"
+            and len(decorator.args) >= 2
+        ):
+            continue
+        names_node, values_node = decorator.args[0], decorator.args[1]
+        if isinstance(names_node, ast.Constant) and isinstance(names_node.value, str):
+            names = [part.strip() for part in names_node.value.split(",")]
+        elif isinstance(names_node, (ast.Tuple, ast.List)):
+            names = [
+                element.value
+                for element in names_node.elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+        else:
+            continue
+        if not isinstance(values_node, (ast.List, ast.Tuple)):
+            continue
+        for row in values_node.elts:
+            cells = row.elts if isinstance(row, (ast.Tuple, ast.List)) else [row]
+            for name, cell in zip(names, cells):
+                if isinstance(cell, ast.Constant) and isinstance(cell.value, str):
+                    injected.setdefault(name, set()).add(cell.value)
+    return injected
+
+
+def _resolve_path(
+    node: ast.AST, constants: dict[str, str], injected: dict[str, set[str]]
+) -> set[str]:
+    """Every string *node* can be at runtime, as far as reading can tell.
+
+    Three forms beyond a bare literal, each of which the repository actually
+    uses and each of which was silently uncounted before Stage 6:
+    ``f"{BASE}/latest"``, ``BASE + "/latest"``, and a parametrized argument.
+    An unresolvable expression yields nothing rather than a guess -- the rule
+    must keep failing closed, because "named somewhere in tests/" is the weak
+    reading docs/TESTING.md explicitly rejects.
+    """
+    if isinstance(node, ast.Constant):
+        return {node.value} if isinstance(node.value, str) else set()
+    if isinstance(node, ast.Name):
+        if node.id in constants:
+            return {constants[node.id]}
+        return set(injected.get(node.id, ()))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _resolve_path(node.left, constants, injected)
+        right = _resolve_path(node.right, constants, injected)
+        return {a + b for a in left for b in right} if left and right else set()
+    if isinstance(node, ast.JoinedStr):
+        combined = {""}
+        for part in node.values:
+            if isinstance(part, ast.FormattedValue):
+                pieces = _resolve_path(part.value, constants, injected)
+            else:
+                pieces = _resolve_path(part, constants, injected)
+            if not pieces:
+                return set()
+            combined = {prefix + piece for prefix in combined for piece in pieces}
+        return combined
+    return set()
+
+
 def _requested_routes(directories: list[Path]) -> set[tuple[str, str]]:
-    """``(METHOD, path)`` literals the tests under *directories* request."""
+    """``(METHOD, path)`` the tests under *directories* request.
+
+    Still only counts a path that reaches an HTTP verb call -- the rule is
+    "reached through the routing table", and loosening it to any path-shaped
+    literal would re-adopt the weakest reading on purpose. What Stage 6 widened
+    is how the *argument* is read, not what counts as a request.
+    """
     hits: set[tuple[str, str]] = set()
     for directory in directories:
         if not directory.exists():
             continue
         for path in sorted(directory.rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            constants = _module_constants(tree)
+            scopes: list[tuple[ast.AST, dict[str, set[str]]]] = []
             for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _HTTP_VERBS
-                    and node.args
-                    and isinstance(node.args[0], ast.Constant)
-                    and isinstance(node.args[0].value, str)
-                    and node.args[0].value.startswith("/")
-                ):
-                    hits.add((node.func.attr.upper(), node.args[0].value.split("?")[0]))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    scopes.append((node, _parametrized_strings(node)))
+            for function, injected in scopes + [(tree, {})]:
+                for node in ast.walk(function):
+                    if not (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in _HTTP_VERBS
+                        and node.args
+                    ):
+                        continue
+                    for value in _resolve_path(node.args[0], constants, injected):
+                        if value.startswith("/"):
+                            hits.add((node.func.attr.upper(), value.split("?")[0]))
     return hits
 
 
@@ -671,10 +765,13 @@ def test_every_route_is_reached_through_the_apps_routing_table():
 
     A test is attributed to a service by the directory it lives in, because
     ``GET /health`` exists six times and a request literal does not say whose
-    it was. That attribution is also why ``tests/test_container_health_app.py``
-    contributes nothing here: it is a Layer 1 test of a service sitting in
-    Layer 0's directory, which is G9, and the two gaps are the same mistake
-    seen from two sides.
+    it was. That attribution is why G6 and G9 were one stage: while
+    ``test_container_health_app.py`` sat at the top level it could not have
+    counted for ``container_health`` even once it grew a ``TestClient``, so
+    the misfiling and the missing coverage were the same mistake seen from two
+    sides. Both closed in Stage 6 -- the file now lives in
+    ``tests/container_health/`` and the routes are reached from
+    ``tests/integration/container_health/``.
     """
     uncovered = set()
     census = []
@@ -984,8 +1081,9 @@ def test_every_layer_number_in_the_code_matches_the_contract():
 # Rule 7 -- the harness must not decide the outcome.
 # ---------------------------------------------------------------------------
 def test_every_pytest_invocation_in_ci_sets_pythonpath():
-    """The one mechanically checkable clause of "the harness must not decide
-    the outcome". The rest of that rule is judgement, and the contract says so.
+    """One of two mechanically checkable clauses of "the harness must not
+    decide the outcome" -- Stage 6b added the other, below. The rest of that
+    rule is judgement, and the contract says so.
 
     ``tests/test_planning_docs.py`` passed or failed on one machine, one OS and
     one commit purely on whether the checkout directory name was a valid Python
@@ -1028,6 +1126,204 @@ def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
                 keys += list(step.get("env", {}))
         return tuple(keys)
     return ()
+
+
+# The second mechanically checkable clause of the same rule, added by Stage 6b
+# after the class the row above calls judgement produced another instance.
+ENCODING_WAIVERS = ()
+
+# Not source, and ``.claude/`` is the one that matters: in the primary checkout
+# it holds every active worktree, so walking it would report each violation
+# once per worktree and make the count depend on how many branches happen to be
+# open. The rest mirror ``[tool.ruff] exclude``.
+_NOT_SOURCE = frozenset({
+    ".claude", ".git", "__pycache__", ".venv", "venv",
+    "node_modules", ".ruff_cache", ".pytest_cache", ".mypy_cache",
+    "dbt_packages", "target",
+})
+
+# ``pathlib`` and nothing else defines these two, so the receiver needs no type
+# inference: an attribute call by this name is a text read or write, whatever
+# expression produced the object. That is the entire reason this check exists
+# rather than a ruff setting -- see the docstring below.
+_TEXT_IO_METHODS = frozenset({"read_text", "write_text"})
+
+# Text-mode subprocess decodes the child's output through the locale, so it is
+# the same defect wearing different clothes: the same command yields str on one
+# machine and raises on another. Only text mode qualifies -- a bytes-mode call
+# has no encoding to state, which is why the text/universal_newlines flags are
+# read rather than the function name alone.
+_SUBPROCESS_CALLS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+_TEXT_MODE_FLAGS = ("text", "universal_newlines")
+
+# Every logging handler that opens a file takes ``encoding`` and defaults to the
+# locale. ``StreamHandler`` is deliberately absent: it wraps an existing stream
+# and has no encoding of its own to state.
+_FILE_LOG_HANDLERS = frozenset({
+    "FileHandler", "RotatingFileHandler", "TimedRotatingFileHandler",
+    "WatchedFileHandler",
+})
+
+
+def _source_files() -> list[Path]:
+    """Every Python file in the repository, minus the directories that are not it."""
+    return sorted(
+        path
+        for path in REPO_ROOT.rglob("*.py")
+        if not _NOT_SOURCE & set(path.relative_to(REPO_ROOT).parts)
+    )
+
+
+def _encoding_free_text_io(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers in *source* where a text operation names no encoding.
+
+    Three shapes, each identified by name rather than by inferring the type of
+    a receiver, because every one of them is unambiguous by name in this
+    repository: the two ``pathlib`` methods, a text-mode subprocess, and a
+    logging handler that opens a file.
+
+    Separated from the check below so the rule itself can be tested. A
+    structural check nothing exercises is a check that quietly stops matching
+    and reports a clean repository either way, which is the failure this file
+    exists to prevent.
+    """
+    tree = ast.parse(source, filename=filename)
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if any(keyword.arg == "encoding" for keyword in node.keywords):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+
+        if isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            name = node.func.id
+        else:
+            continue
+
+        if isinstance(node.func, ast.Attribute) and name in _TEXT_IO_METHODS:
+            found.add(node.lineno)
+        elif name in _SUBPROCESS_CALLS and any(
+            isinstance(keywords.get(flag), ast.Constant)
+            and keywords[flag].value is True
+            for flag in _TEXT_MODE_FLAGS
+        ):
+            found.add(node.lineno)
+        elif name in _FILE_LOG_HANDLERS:
+            found.add(node.lineno)
+    return found
+
+
+def test_the_encoding_rule_sees_the_shape_ruff_cannot():
+    """Stage 6b's exit criterion, kept as an assertion rather than a measurement.
+
+    The first line is the defect that broke master on 2026-09-01, reduced. Ruff
+    reports ``All checks passed`` on it under ``PLW1514 --preview``, verified
+    the same day; if this rule ever agrees with ruff, it has lost the only
+    thing it was built to add and the loss would otherwise be silent.
+
+    The receiver shapes below are the three the repository actually writes.
+    ``Path(...)`` is the one ruff already sees, and it is here so that
+    narrowing this rule to the fixture idiom alone would fail.
+
+    Lines 5 and 6 are the shapes PEP 597's ``EncodingWarning`` found at runtime
+    on 2026-09-01, after this rule had already been written and committed. They
+    are asserted statically now, over this repository's files only -- see the
+    stage's decision record for why the runtime check that discovered them was
+    not kept in CI.
+    """
+    caught = _encoding_free_text_io(
+        'from pathlib import Path\n'
+        '(tmp_path / "a.md").write_text("—")\n'
+        'target.write_text("x")\n'
+        'Path("b.md").read_text()\n'
+        'subprocess.run(cmd, capture_output=True, text=True)\n'
+        'RotatingFileHandler(path, maxBytes=5)\n'
+    )
+    assert caught == {2, 3, 4, 5, 6}, (
+        "the encoding rule no longer sees every shape: expected lines "
+        f"2 through 6, got {sorted(caught)}"
+    )
+
+    clean = _encoding_free_text_io(
+        '(tmp_path / "a.md").write_text("—", encoding="utf-8")\n'
+        'Path("b.md").read_text(encoding="utf-8")\n'
+        'archive.read_bytes()\n'
+        'tarfile.open(path)\n'
+        # Bytes-mode subprocess has no encoding to state, and neither does a
+        # handler that wraps an existing stream. Flagging either would make the
+        # rule fire on correct code, which is how a rule gets switched off.
+        'subprocess.run(cmd, capture_output=True)\n'
+        'logging.StreamHandler(sys.stdout)\n'
+    )
+    assert not clean, (
+        f"the encoding rule fires on calls that are already correct: {sorted(clean)}"
+    )
+
+
+def test_every_text_read_and_write_states_its_encoding():
+    """The clause the row above called judgement, made mechanical.
+
+    ``Path.write_text`` with no ``encoding=`` does not choose an encoding. It
+    asks the operating system, which answers UTF-8 on Linux and cp1252 on
+    Windows. An em-dash is three bytes one way and one byte the other, so a
+    fixture written without an encoding and read back as UTF-8 -- correctly,
+    explicitly -- raises ``UnicodeDecodeError`` on a developer's machine and
+    passes in CI. That is ``tests/scripts/test_build_public_roadmap.py`` on
+    2026-09-01, and it is the benign direction of this rule: green where it is
+    measured, red where the work happens.
+
+    **Ruff's PLW1514 does not cover this and cannot be made to.** It resolves a
+    receiver by type, so it fires on ``Path("b.md").write_text(...)`` and stays
+    silent on ``(tmp_path / "a.md").write_text(...)`` -- with or without a
+    ``Path`` annotation on the fixture. Measured on 2026-09-01 the rule found
+    28 call sites and the repository had 213; the 92 built with ``/`` from a
+    fixture, which is the idiom nearly every test here uses, were all in the
+    silent set, including the one that broke master. Ruff has no plugin
+    interface, so a check that reads these calls has to be Python.
+
+    **The division of labour is deliberate.** ``PLW1514`` is enabled in
+    ``pyproject.toml`` under ``explicit-preview-rules`` and owns ``open`` and
+    ``tempfile.NamedTemporaryFile``, where its type inference is the right
+    instrument and this rule's would not be -- ``tarfile.open`` and
+    ``os.open`` take no encoding and a name-only check would flag them. This
+    rule owns ``read_text`` and ``write_text``, which only ``pathlib``
+    defines, so the name alone is proof and no inference is needed. Between
+    them there is no gap and no double report.
+
+    **Two further shapes are here because a runtime check found them and this
+    one had not.** ``subprocess.run(..., text=True)`` decodes the child's
+    output through the locale, and ``logging.RotatingFileHandler`` writes its
+    file the same way -- 21 sites, one of them the ops log that
+    ``ops/routers/admin.py`` reads. PEP 597's ``EncodingWarning`` surfaced
+    them; it is not in CI, because as an interpreter-wide flag it also judges
+    dbt's and Airflow's own file handling by this repository's policy, and its
+    attribution is unreliable -- the same warning was blamed on the caller
+    locally and on ``configparser`` in CI. Both are recorded in the stage's
+    decision record. The shapes it taught us are checked here instead, over
+    this repository's files, where ownership is not in question.
+
+    What this does **not** close is the rest of the class. Path separators,
+    line endings and case-insensitive filesystems still decide outcomes that
+    only a second platform can see, and CI is ``ubuntu-latest`` in all ten
+    jobs. Stage 6b's decision record says why that is accepted rather than
+    fixed with a Windows runner, and success criterion 2 names it.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in _source_files()
+        for line in _encoding_free_text_io(
+            path.read_text(encoding="utf-8"), filename=str(path)
+        )
+    }
+    _assert_exactly(
+        found,
+        ENCODING_WAIVERS,
+        "these text reads and writes let the machine choose the encoding, so "
+        "their result depends on the locale of whoever runs them:",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1274,6 +1570,7 @@ ALL_WAIVERS = (
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
     + LAYER_NUMBER_WAIVERS
+    + ENCODING_WAIVERS
 )
 
 _ARCHIVE_ROW = re.compile(r"^\| (\d+)(?:\.\d+)? \| ", re.M)

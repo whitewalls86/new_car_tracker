@@ -505,7 +505,10 @@ def test_max_documents_stops_the_fetch_loop(mocker):
 def test_sample_in_bypasses_the_lake_entirely(tmp_path):
     """The two-step run: sample in dbt-runner, measure locally over a tunnel."""
     path = tmp_path / "sample.json"
-    path.write_text(json.dumps([{"artifact_id": 1, "minio_path": "s3://bronze/x"}]))
+    path.write_text(
+        json.dumps([{"artifact_id": 1, "minio_path": "s3://bronze/x"}]),
+        encoding="utf-8",
+    )
 
     rows = load_sample(parse_args(["--sample-in", str(path)]))
 
@@ -531,7 +534,7 @@ def _end_to_end(tmp_path, mocker, months=("2026-03", "2026-04", "2026-05")):
         blobs[path] = document.content
 
     sample = tmp_path / "sample.json"
-    sample.write_text(json.dumps(rows))
+    sample.write_text(json.dumps(rows), encoding="utf-8")
     report_path = tmp_path / "report.json"
 
     mocker.patch("shared.minio.read_html", side_effect=lambda p: blobs[p])
@@ -543,7 +546,7 @@ def _end_to_end(tmp_path, mocker, months=("2026-03", "2026-04", "2026-05")):
             "--json-out", str(report_path),
         ]
     )
-    return code, json.loads(report_path.read_text())
+    return code, json.loads(report_path.read_text(encoding="utf-8"))
 
 
 def test_end_to_end_run_reports_every_split_and_decides_the_gate(tmp_path, mocker):
@@ -580,7 +583,7 @@ def test_only_splits_restricts_measurement_but_still_decides_the_gate(tmp_path, 
         )
         blobs[path] = document.content
     sample = tmp_path / "sample.json"
-    sample.write_text(json.dumps(rows))
+    sample.write_text(json.dumps(rows), encoding="utf-8")
     report_path = tmp_path / "report.json"
 
     mocker.patch("shared.minio.read_html", side_effect=lambda p: blobs[p])
@@ -594,7 +597,7 @@ def test_only_splits_restricts_measurement_but_still_decides_the_gate(tmp_path, 
         ]
     )
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert [s["split"] for s in report["splits"]] == ["listing_and_month_disjoint"]
     assert report["gate"]["decided"] is True
 

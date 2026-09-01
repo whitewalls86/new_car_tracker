@@ -579,11 +579,11 @@ def main(argv: list[str] | None = None) -> int:
     print_stdout_summary(report)
 
     if args.json_out:
-        args.json_out.write_text(json.dumps(report, indent=2))
+        args.json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         LOG.info("Wrote JSON report to %s", args.json_out)
 
     if args.markdown_out:
-        args.markdown_out.write_text(build_markdown_report(report))
+        args.markdown_out.write_text(build_markdown_report(report), encoding="utf-8")
         LOG.info("Wrote Markdown report to %s", args.markdown_out)
 
     return 0

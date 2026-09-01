@@ -134,7 +134,7 @@ def load_checkpoint(path: Path) -> set[str]:
     if not path.exists():
         return set()
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return set(data.get("processed_keys", []))
     except Exception as exc:
         LOG.warning("Failed to load checkpoint %s: %s — starting fresh", path, exc)
@@ -149,7 +149,7 @@ def save_checkpoint(path: Path, processed_keys: set[str], summary: Summary) -> N
             {"processed_keys": sorted(processed_keys), "summary": summary.to_dict()},
             indent=2,
         )
-    )
+    , encoding="utf-8")
     tmp.replace(path)
 
 
@@ -312,7 +312,7 @@ def print_summary(
     if json_out:
         data = summary.to_dict()
         data["mode"] = mode.lower().replace("-", "_")
-        Path(json_out).write_text(json.dumps(data, indent=2))
+        Path(json_out).write_text(json.dumps(data, indent=2), encoding="utf-8")
         LOG.info("Wrote JSON summary to %s", json_out)
 
 

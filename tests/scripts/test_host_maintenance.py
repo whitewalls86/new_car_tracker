@@ -34,7 +34,7 @@ def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
     host_maintenance.append_checkpoint(path, "requested", "/tmp/manifest.json", facts=facts)
     host_maintenance.append_checkpoint(path, "draining", "/tmp/manifest.json", facts=facts)
 
-    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [row["phase"] for row in rows] == ["requested", "draining"]
     assert {row["running_kernel"] for row in rows} == {"6.8.0-test"}
     assert set(rows[0]) == {
@@ -685,7 +685,7 @@ def test_stage_4_abort_criterion_names_only_boundaries_that_exist():
 def test_checkpoint_refuses_symlink(mocker, tmp_path):
     mocker.patch.object(host_maintenance, "checkpoint_record", return_value={})
     link = tmp_path / "history"
-    link.write_text("")
+    link.write_text("", encoding="utf-8")
 
     # Creating a real symlink requires elevated privileges on Windows. The
     # behavior owned here is refusing a path classified as a symlink, not
@@ -996,7 +996,7 @@ def test_prepare_package_plan_pins_downloads_and_classifies_boundaries(mocker, t
     )
 
     plan_path = tmp_path / "package-plan.json"
-    plan = json.loads(plan_path.read_text())
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert (
         result["package_plan_sha256"]
         == host_maintenance.hashlib.sha256(plan_path.read_bytes()).hexdigest()
@@ -1099,10 +1099,10 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
     assert result["package_plan_sha256"] == digest
     mask = ("sudo", "systemctl", "mask", "--now", *host_maintenance.APT_CONTROL_UNITS)
     assert mask in calls
-    assert tuple(json.loads(plan_path.read_text())["apply_command"]) in calls
+    assert tuple(json.loads(plan_path.read_text(encoding="utf-8"))["apply_command"]) in calls
     assert ("sudo", "dpkg", "--audit") in calls
     assert calls[-1] == ("sync",)
-    evidence = json.loads((tmp_path / "update-result.json").read_text())
+    evidence = json.loads((tmp_path / "update-result.json").read_text(encoding="utf-8"))
     assert evidence["apt_automation_masked"] is True
     assert set(evidence["apt_unit_states_before"].values()) == {"enabled"}
     assert evidence["installed_versions"] == {"docker.io": "29.1"}
@@ -1986,9 +1986,9 @@ def test_run_preflight_writes_manifest_config_and_observations(mocker, tmp_path)
         "containers": 1,
         "compose_projects": ["cartracker"],
     }
-    assert json.loads((tmp_path / "running-set.json").read_text()) == manifest
-    assert json.loads((tmp_path / "preflight.json").read_text())["observations"]
-    compose = json.loads((tmp_path / "compose" / "cartracker.json").read_text())
+    assert json.loads((tmp_path / "running-set.json").read_text(encoding="utf-8")) == manifest
+    assert json.loads((tmp_path / "preflight.json").read_text(encoding="utf-8"))["observations"]
+    compose = json.loads((tmp_path / "compose" / "cartracker.json").read_text(encoding="utf-8"))
     assert compose["services"] == {"ops": {"profiles": [], "image": "ops:latest"}}
     assert "environment" not in json.dumps(compose)
 

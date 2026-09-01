@@ -855,9 +855,9 @@ class TestJsonOutput:
         results = {"silver_observations": self._make_mock_result("silver_observations")}
         report = build_json_report(results)
         out = tmp_path / "audit.json"
-        out.write_text(json.dumps(report, indent=2))
+        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
         assert "datasets" in data
         assert "silver_observations" in data["datasets"]
 
@@ -962,9 +962,9 @@ class TestMarkdownOutput:
 
         out = tmp_path / "audit.md"
         md = build_markdown_report(self._make_report())
-        out.write_text(md)
+        out.write_text(md, encoding="utf-8")
 
-        text = out.read_text()
+        text = out.read_text(encoding="utf-8")
         assert "|" in text
         assert "silver_observations" in text
 

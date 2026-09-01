@@ -44,7 +44,7 @@ def _make_snapshot(snapshot_dir, snapshot_id, mtime=None):
     d.mkdir(parents=True)
     archive = d / "snapshot.tar.zst"
     archive.write_bytes(b"zst")
-    (d / "manifest.json").write_text("{}")
+    (d / "manifest.json").write_text("{}", encoding="utf-8")
     if mtime is not None:
         os.utime(archive, (mtime, mtime))
     return archive
@@ -82,7 +82,7 @@ class TestFindNewestSnapshot:
 
     def test_ignores_dirs_without_archive(self, tmp_path):
         (tmp_path / "half-downloaded").mkdir()
-        (tmp_path / "half-downloaded" / "manifest.json").write_text("{}")
+        (tmp_path / "half-downloaded" / "manifest.json").write_text("{}", encoding="utf-8")
         assert find_newest_snapshot(tmp_path) is None
 
 

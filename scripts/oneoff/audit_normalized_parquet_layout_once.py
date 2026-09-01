@@ -68,10 +68,10 @@ def main() -> int:
 
     Path("/tmp/audit_parquet_layout_after_normalize.json").write_text(
         json.dumps(report, indent=2)
-    )
+    , encoding="utf-8")
     Path("/tmp/audit_parquet_layout_after_normalize.md").write_text(
         audit.build_markdown_report(report)
-    )
+    , encoding="utf-8")
     return 0
 
 

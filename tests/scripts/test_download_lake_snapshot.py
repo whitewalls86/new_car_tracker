@@ -40,7 +40,7 @@ def _build_snapshot(tmp_path, snapshot_id="adaptive-refresh-2026-07-07-000000"):
         },
     }
     manifest_path = build_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path, archive, manifest
 
 
@@ -56,7 +56,7 @@ class TestDownloadLocal:
         assert dest_archive.exists()
         assert dest_archive.read_bytes() == archive.read_bytes()
         dest_manifest = dest_archive.parent / "manifest.json"
-        assert json.loads(dest_manifest.read_text()) == manifest
+        assert json.loads(dest_manifest.read_text(encoding="utf-8")) == manifest
 
     def test_infers_archive_path_from_manifest_when_omitted(self, tmp_path):
         manifest_path, archive, _ = _build_snapshot(tmp_path)
@@ -68,7 +68,7 @@ class TestDownloadLocal:
     def test_fails_on_checksum_mismatch(self, tmp_path):
         manifest_path, archive, manifest = _build_snapshot(tmp_path)
         manifest["archive"]["sha256"] = "0" * 64
-        manifest_path.write_text(json.dumps(manifest))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         out_dir = tmp_path / "out"
 
         with pytest.raises(ChecksumMismatchError):
@@ -77,7 +77,7 @@ class TestDownloadLocal:
     def test_checksum_mismatch_leaves_no_bad_or_tmp_archive(self, tmp_path):
         manifest_path, archive, manifest = _build_snapshot(tmp_path)
         manifest["archive"]["sha256"] = "0" * 64
-        manifest_path.write_text(json.dumps(manifest))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         out_dir = tmp_path / "out"
 
         with pytest.raises(ChecksumMismatchError):

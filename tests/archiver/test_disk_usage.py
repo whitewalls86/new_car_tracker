@@ -163,7 +163,7 @@ class TestWriteTextfile:
     def test_overwrites_in_place(self, tmp_path):
         disk_usage.write_textfile(str(tmp_path), "first\n")
         disk_usage.write_textfile(str(tmp_path), "second\n")
-        assert (tmp_path / disk_usage.TEXTFILE_NAME).read_text() == "second\n"
+        assert (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8") == "second\n"
 
     def test_a_failed_write_leaves_no_partial_temp_file(self, tmp_path, mocker):
         def boom(src, dst):
@@ -192,7 +192,7 @@ class TestRunDiskUsage:
     def test_daily_run_skips_every_high_inode_volume(self, tmp_path, measured):
         result = disk_usage.run_disk_usage(include_slow=False, directory=str(tmp_path))
         published = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
         for volume in disk_usage.HIGH_INODE_VOLUMES:
             assert (disk_usage.VOLUME_METRIC, volume) not in published
@@ -201,7 +201,7 @@ class TestRunDiskUsage:
     def test_weekly_run_includes_every_high_inode_volume(self, tmp_path, measured):
         result = disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         published = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
         for volume in disk_usage.HIGH_INODE_VOLUMES:
             assert (disk_usage.VOLUME_METRIC, volume) in published
@@ -212,12 +212,12 @@ class TestRunDiskUsage:
         files makes node-exporter reject one of them (node_exporter#1885)."""
         disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         weekly = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
 
         result = disk_usage.run_disk_usage(include_slow=False, directory=str(tmp_path))
         daily = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
 
         for volume in disk_usage.HIGH_INODE_VOLUMES:
@@ -230,11 +230,11 @@ class TestRunDiskUsage:
         stale in silence -- the exact failure this metric exists to expose."""
         disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         first = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
         disk_usage.run_disk_usage(include_slow=False, directory=str(tmp_path))
         second = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
 
         root = (disk_usage.MEASURED_AT_METRIC, "/usr")
@@ -262,7 +262,7 @@ class TestRunDiskUsage:
             disk_usage.DAILY_VOLUMES
         ) + len(disk_usage.HIGH_INODE_VOLUMES)
         published = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
         assert published[(disk_usage.PATH_METRIC, "/usr")] == 500
 
@@ -281,7 +281,7 @@ class TestRunDiskUsage:
             + list(disk_usage.DAILY_VOLUMES)
             + list(disk_usage.HIGH_INODE_VOLUMES)
         )
-        text = (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+        text = (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         assert disk_usage.parse_previous(text) == {}
 
     def test_root_paths_are_measured_under_the_mount_prefix(self, tmp_path, mocker):
@@ -298,6 +298,6 @@ class TestRunDiskUsage:
         assert "/measure/volumes/cartracker_parquet_data" in seen
         # The label stays the real host path, not the container's view of it.
         published = disk_usage.parse_previous(
-            (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
+            (tmp_path / disk_usage.TEXTFILE_NAME).read_text(encoding="utf-8")
         )
         assert (disk_usage.PATH_METRIC, "/usr") in published

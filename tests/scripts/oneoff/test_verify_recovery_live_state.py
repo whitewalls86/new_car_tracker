@@ -100,7 +100,7 @@ def test_clean_run_passes_in_one_transaction_and_rolls_back(tmp_path):
              connect=lambda: conn, canary=lambda: None)
 
     assert rc == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["window"] == "april-cutover-2026"
     assert report["passed"] is True
     assert report["txid"]["single_transaction"] is True
@@ -117,7 +117,7 @@ def test_a_mutation_between_the_snapshots_fails_the_proof(tmp_path):
              canary=lambda: store.mutate("ops.blocked_cooldown"))
 
     assert rc == 1
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["passed"] is False
     assert "ops.blocked_cooldown" in report["changed_relations"]
     before = report["changed_relations"]["ops.blocked_cooldown"]["before"]["rows"]
@@ -134,7 +134,7 @@ def test_snapshots_not_in_one_transaction_fail_even_with_no_mutation(tmp_path):
              connect=lambda: _Conn(store), canary=lambda: None)
 
     assert rc == 1
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["txid"]["single_transaction"] is False
     assert report["changed_relations"] == {}     # nothing changed; the txn did
     assert report["passed"] is False
@@ -156,7 +156,7 @@ def test_a_failing_canary_command_fails_the_check(tmp_path):
              connect=lambda: _Conn(store))
 
     assert rc == 1
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["canary"]["returncode"] == 3
     assert report["passed"] is False
 

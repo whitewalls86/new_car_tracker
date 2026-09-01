@@ -48,7 +48,7 @@ def _dag_files():
 
 
 def _tree(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(), filename=str(path))
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 def _kwarg(call: ast.Call, name: str):
@@ -180,7 +180,9 @@ class TestSensorsNeverHoldASlot:
         tree = _tree(DAGS_DIR / "sensors.py")
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name in SENSOR_FACTORIES:
-                src = ast.get_source_segment((DAGS_DIR / "sensors.py").read_text(), node)
+                src = ast.get_source_segment(
+                    (DAGS_DIR / "sensors.py").read_text(encoding="utf-8"), node
+                )
                 assert "pool" not in src, f"{node.name} sets a pool"
 
 
@@ -207,7 +209,7 @@ class TestTheHoldIsNotDeclarative:
 
         The pool is therefore created once, by hand, and only an operator ever
         changes it. See the docstring in airflow/dags/pools.py."""
-        compose = (REPO_ROOT / "docker-compose.yml").read_text()
+        compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         assert "pools set" not in compose and "pools import" not in compose, (
             "docker-compose.yml creates or resets an Airflow pool. That makes "
             "the maintenance hold auto-releasing."

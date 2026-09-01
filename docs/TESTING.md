@@ -81,10 +81,12 @@ service import cannot take the planning assertions down with it.
 
 **Needs:** nothing. No database, no MinIO, no service.
 
-The top level of `tests/` is Layer 0's home and is not a dumping ground.
-`tests/test_container_health_app.py` and `tests/test_container_health_collector.py`
-sit there today and are unit tests of a service — see
-[the gap list](#the-gap-list).
+The top level of `tests/` is Layer 0's home and is not a dumping ground. The
+two `container_health` unit tests that sat here until Stage 6 (CAR-50) moved to
+`tests/container_health/` on 2026-09-01, which was G9. Where a test lives is
+not filing tidiness: the route rule attributes a test to a service by its
+directory, so those files could not have counted for `container_health` even
+once they grew a `TestClient`.
 
 ### Layer 1 — Unit tests
 
@@ -333,11 +335,20 @@ Calling the handler function proves the function works. It proves nothing about
 the URL, the method, the prefix, or whether the router was included at all.
 
 `container_health` is the worked example. Its `/project-status/{project}` 404d
-for roughly eleven hours on 2026-08-30 with nothing reporting it — and
-`tests/test_container_health_app.py` *does* cover both of its interesting
-endpoints, by calling `app.active_oneoff_processes()` and `app.project_status()`
-directly. There is no `TestClient` anywhere in the repository for that service.
-A handler-level test could not have caught the failure, and did not.
+for roughly eleven hours on 2026-08-30 with nothing reporting it — and its unit
+tests *did* cover both of its interesting endpoints, by calling
+`app.active_oneoff_processes()` and `app.project_status()` directly. A
+handler-level test could not have caught the failure, and did not.
+
+**Repaired in Stage 6 (CAR-50), 2026-09-01**, and the shape of the repair is
+the part worth copying. The service has no database, so its Layer 4 suite
+stands up a strict fake of `docker-socket-proxy` on loopback serving responses
+recorded from the real proxy: nothing is mocked, and the whole path runs
+through `TestClient` → router → `DockerApi` → `urllib` → HTTP. What a recording
+cannot notice is the real API changing shape underneath it, so
+`scripts/verify_container_health_docker_contract.py` replays the same corpus
+through the real proxy in its own CI job — the split Plan 141 already uses for
+Promtail. One corpus, two consumers, neither importing the other.
 
 **3. The thing under test is not the thing you mock.**
 
@@ -456,7 +467,7 @@ Measured on 2026-08-31 (`*.py` excluding `__init__.py`):
 | `scraper` | 10 | 9 | 1 | Plan 84 deferred it; **re-examined below** |
 | `dbt_runner` | 4 | 3 | 1 | Plan 84 deferred it; **re-examined below** |
 | `shared` | 14 | 11 | 1 | Meets the floor |
-| `container_health` | 4 | 2 (misplaced) | 0 | **Below the floor** — no `TestClient`, no Layer 4 |
+| `container_health` | 4 | 2 | 2 | Meets the floor — every route reached, Layer 4 added in Stage 6 |
 | `dashboard` | 7 | 0 | 0 | **Below the floor** — its SQL is covered by Layer 2, its Python by nothing |
 
 **Plan 84's deferral of `dbt_runner` and `scraper` is closed, split:**
@@ -498,7 +509,8 @@ the suite does not implement:
 | Every service directory has a row in the "enough" table | `test_every_service_directory_has_a_row_in_the_enough_table` | Compare this document's table to the service directories on disk |
 | Every `.sql` file is executed by a Layer 2 test | `test_every_production_sql_file_is_touched_by_a_layer_2_test` | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
 | Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops Plan 84's numbering coming back |
-| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps. This is the one mechanically checkable clause of *the harness must not decide the outcome*; the rest of that rule is judgement, and the row below says so |
+| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps. One of two mechanically checkable clauses of *the harness must not decide the outcome*; the rest of that rule is judgement, and the row below says so |
+| Every text read and write names its encoding | `test_every_text_read_and_write_states_its_encoding`, `test_the_encoding_rule_sees_the_shape_ruff_cannot` | AST-walk every `read_text`/`write_text` call and require `encoding=`. The second clause of the same rule, added by Plan 162 Stage 6b after a missing `encoding=` made a fixture read UTF-8 on Linux and cp1252 on Windows. `open` and `NamedTemporaryFile` are ruff's `PLW1514` instead, which reads them by type; this rule reads the two `pathlib` methods by name, because ruff resolves a receiver by type and is blind to `(tmp_path / "a.md").write_text(...)` |
 | Coverage measures every service directory, and the number it produces is consumed | `test_every_service_directory_is_measured_by_coverage`, `test_the_coverage_number_the_unit_job_produces_is_consumed` | Compare `[tool.coverage.run] source` to the service directories on disk; require `--cov-fail-under` on every `ci.yml` step that passes `--cov` |
 | Every `scripts/` directory is classified, and the classification is what coverage does | `test_every_script_directory_is_classified`, `test_every_unmeasured_script_bucket_is_omitted_from_coverage` | Compare *Where scripts sit* to the subdirectories on disk, both directions; then compare each bucket's stated answer to `[tool.coverage.run] omit` |
 
@@ -572,23 +584,23 @@ Every entry is a measured violation of the contract above, as of 2026-08-31.
 Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 
 An entry is deleted when it is repaired, not marked closed: a violations table
-that keeps its dead rows is a list you have to read twice to use. Six rows have
-gone that way, all to Plan 162: **G1 and G2** to Stage 1 (CAR-45) and **G10**
-to Stage 2 (CAR-46) on 2026-08-31, and **G4, G11 and G13** to Stage 5 (CAR-49)
-on 2026-09-01. What the run of those 73 tests found, what unblinding coverage
-exposed, and what the 34 mock conversions and 16 layer renames turned up are in
+that keeps its dead rows is a list you have to read twice to use. Eight rows
+have gone that way, all to Plan 162: **G1 and G2** to Stage 1 (CAR-45) and
+**G10** to Stage 2 (CAR-46) on 2026-08-31, **G4, G11 and G13** to Stage 5
+(CAR-49) on 2026-09-01, and **G6 and G9** to Stage 6 (CAR-50) on 2026-09-01.
+What the run of those 73 tests found, what unblinding coverage exposed, what
+the 34 mock conversions and 16 layer renames turned up, and why five of G6's
+twelve routes turned out never to have been uncovered at all are in
 [`docs/plans/plan_162_testing_census_and_restructure.md`](plans/plan_162_testing_census_and_restructure.md),
-§Stage 1, §Stage 2 and §Stage 5. The numbering never reuses a letter, so a
-deleted row leaves a gap in the sequence and the plan documents stay the place
-the history lives.
+§Stage 1, §Stage 2, §Stage 5 and §Stage 6. The numbering never reuses a letter,
+so a deleted row leaves a gap in the sequence and the plan documents stay the
+place the history lives.
 
 | # | Violation | Measure | Owner |
 |---|---|---|---|
 | G5 | **Inline SQL at `.execute()` call sites in 10 production modules**, against six that use the loader: `ops/routers/{coordination,deploy,scrape,users}.py`, `archiver/processors/{pack_bronze_html,delete_packed_source_html,flush_silver_observations,flush_staging_events}.py`, `shared/db.py`, `shared/duckdb_s3.py` | `.execute(` with a literal first argument | Plan 162 |
-| G6 | **Twelve routes reached by no test through any routing table**, not the four measured by eye: all four of `container_health`'s, including `/health` and `/metrics` (there is no `TestClient` in that service at all), and eight of `ops`' — the two `/maintenance` routes already named, plus `GET /coordination/status`, `POST /coordination/begin-validation`, `POST /coordination/cancel` and the three `/admin/snapshots/adaptive-refresh/` reads. The three coordination routes are the same surface whose drain hung Plan 142's first deploy | `tests/test_testing_contract.py`: each app's real `app.routes` versus the request literals in that service's own test directories | Plan 162 |
 | G7 | **`dashboard/`: 7 modules, 0 test files.** Its SQL is covered by Layer 2 through `dashboard.queries`; its Python is covered by nothing | — | Plan 162 |
 | G8 | **`scraper/`: Plan 84's four-month-old deferral, now lifted.** One integration file — orphaned until Stage 1 gave it a CI step, and still the whole of the service's coverage above Layer 1 | — | Plan 162 |
-| G9 | `tests/test_container_health_app.py` and `tests/test_container_health_collector.py` are Layer 1 tests sitting in Layer 0's directory. `container_health` has no `tests/container_health/` and no Layer 4 at all | — | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G14 | **56 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 19 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 names it **as a whole word**. Was 54 until 2026-09-01, when Stage 5 found the match was a bare substring and three files were being credited by identifiers that merely contained their stem | Plan 162 |
 

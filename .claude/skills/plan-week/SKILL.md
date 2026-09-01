@@ -276,12 +276,23 @@ Two mechanical traps:
 `docs/recaps/<sunday>.md`, and these headings verbatim — the suite checks for
 them, and stable headings are what make the files comparable week to week.
 
+**Set `**Publish:** false` when the window holds no commits, `true` otherwise.**
+Plan 138 Stage 1e renders the published recaps to the public site, and this
+marker is the whole of what it reads — the generator does not decide, and it
+fails rather than guessing when the marker is absent. A no-commit week is a
+real record and stays in the repository; what it is not is a page worth
+advertising, and eleven of the first thirty-one weeks were empty. You are
+setting a default, not a verdict: a week with commits that should stay
+internal anyway is a `false` you write deliberately, and nothing here
+overrides it later.
+
 ```markdown
 # Week of <mon> to <sun>
 
 **Window:** <mon> 00:00:00 to <sun> 23:59:59, local author time
 **Recapped:** <the date you are writing>
 **Commits in window:** N (M non-merge, K merges)
+**Publish:** <true|false>
 
 ## What shipped
 
@@ -356,13 +367,26 @@ body, which is fine, but check.
 
 ```bash
 LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
+python scripts/build_public_recaps.py
 git status --short
 ```
 
-`git status` must show **only** the new file under `docs/recaps/`. If
-`docs/PLANS.md`, `docs/planning/completed_plans.md` or any plan document is
-modified, you have crossed the boundary this skill exists to hold — revert it
-and report what happened.
+**Regenerating is part of writing a recap, not a separate chore.** Plan 138
+Stage 1e renders `docs/recaps/` to static HTML under `ops/static_ops/recaps/`,
+and CI's `--check` fails on a recap that was written but never projected. That
+failure arrives on the next pull request, belonging to whoever opened it rather
+than to the week that caused it. Regenerate here, where the input just changed
+and the marker you set is the reason the output looks the way it does.
+
+A recap marked `**Publish:** false` produces no page, so on an empty week the
+command will correctly write nothing new.
+
+`git status` must show **only** the new file under `docs/recaps/` and whatever
+the generator wrote under `ops/static_ops/recaps/`. If `docs/PLANS.md`,
+`docs/planning/completed_plans.md` or any plan document is modified, you have
+crossed the boundary this skill exists to hold — revert it and report what
+happened. The projection is generated output, not state: it is the one thing
+outside `docs/recaps/` this skill may write, and only by running that command.
 
 Then report, briefly:
 
@@ -384,5 +408,8 @@ Then report, briefly:
 - **write anywhere under `docs/` except `docs/recaps/`.** Not `PLANS.md`, and
   not the decision log — the log holds decisions, recaps hold events, and one
   week described in two places is the duplication Plan 146 removed.
+- **hand-edit anything under `ops/static_ops/recaps/`.** That directory is
+  generated, and the only way this skill may touch it is by running
+  `scripts/build_public_recaps.py`.
 - **grow a list of special cases.** If a commit seems to need an exception, the
   rule is wrong. Fix the rule or record the gap in the recap.

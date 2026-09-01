@@ -12,12 +12,20 @@ checker failed to *observe* is not an entry Promtail *dropped*.
 
 from __future__ import annotations
 
-import pytest
+import json
 
+import pytest
+import yaml
+
+from scripts import verify_promtail_contract as checker
 from scripts.verify_promtail_contract import (
     Observation,
     _check_group,
+    _config_document,
     _parse_entries,
+    _promtail_image,
+    _stages_for,
+    main,
 )
 
 _BANNER = [
@@ -224,3 +232,186 @@ def test_a_complete_observation_stops_retrying(complete):
     _, _, attempts = _check_group("ops", group, runner)
 
     assert attempts == (1 if complete else 3)
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage 6: the rest of the checker, which is also daemon-free
+# ---------------------------------------------------------------------------
+#
+# Everything above tests the verdict. What follows tests how the replay is set
+# up, which is where a silent failure lives: a checker pointed at the wrong
+# image, or replaying stages production does not use, agrees with itself and
+# reports nothing.
+
+_CONFIG = {
+    "scrape_configs": [
+        {
+            "job_name": "ops",
+            "pipeline_stages": [{"json": {"expressions": {"level": "level"}}}],
+        },
+        {
+            "job_name": "docker-operations",
+            "pipeline_stages": [
+                {"docker": {}},
+                {"regex": {"expression": "(?P<level>INFO|ERROR)"}},
+                {"labels": {"level": None}},
+            ],
+        },
+    ]
+}
+
+
+class TestPromtailImage:
+    def test_the_image_is_read_from_the_compose_file(self, tmp_path, mocker):
+        """The check is only worth anything against the tag production runs.
+
+        Pinning it here instead would let compose move to a new Promtail while
+        CI went on agreeing with the old one -- the exact drift this script was
+        written to catch, one level up.
+        """
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(
+            yaml.safe_dump({"services": {"promtail": {"image": "grafana/promtail:9.9"}}}),
+            encoding="utf-8",
+        )
+        mocker.patch.object(checker, "_COMPOSE", compose)
+
+        assert _promtail_image() == "grafana/promtail:9.9"
+
+
+class TestStagesFor:
+    def test_a_file_source_replays_that_service_s_own_stages(self):
+        stages = _stages_for(_CONFIG, "ops", "application_file")
+
+        assert stages == [{"json": {"expressions": {"level": "level"}}}]
+
+    def test_a_docker_source_replays_the_shared_operations_stages(self):
+        stages = _stages_for(_CONFIG, "scraper", "docker")
+
+        assert {"regex": {"expression": "(?P<level>INFO|ERROR)"}} in stages
+
+    def test_the_docker_envelope_stage_is_dropped(self):
+        """`docker: {}` unwraps a container JSON envelope that `-stdin` never
+        has. Left in, every replayed line fails to parse and the whole corpus
+        reads as dropped -- a total false failure rather than a subtle one.
+        """
+        stages = _stages_for(_CONFIG, "scraper", "docker")
+
+        assert not any("docker" in stage for stage in stages)
+
+
+class TestConfigDocument:
+    def test_the_synthetic_job_carries_the_service_and_source_labels(self):
+        """`_parse_entries` filters output by the `service` label, so if these
+        were not set the checker would discard every entry it just produced and
+        call the batch incomplete."""
+        document = _config_document(_CONFIG, "ops", "application_file")
+
+        scrape = document["scrape_configs"][0]
+        labels = scrape["static_configs"][0]["labels"]
+        assert scrape["job_name"] == "stdin"
+        assert labels == {"service": "ops", "source": "application_file"}
+
+    def test_the_document_carries_the_real_pipeline_stages(self):
+        document = _config_document(_CONFIG, "ops", "application_file")
+
+        assert document["scrape_configs"][0]["pipeline_stages"] == [
+            {"json": {"expressions": {"level": "level"}}}
+        ]
+
+    def test_it_is_serialisable_as_the_yaml_promtail_will_be_handed(self):
+        """The document is written to a file and mounted; an unserialisable
+        value would fail inside the container, where the error is a Go parse
+        message rather than a Python one."""
+        document = _config_document(_CONFIG, "ops", "application_file")
+
+        assert yaml.safe_load(yaml.safe_dump(document)) == document
+
+
+@pytest.fixture
+def wired(tmp_path, mocker):
+    """`main` with its three file reads and the daemon replaced."""
+    config = tmp_path / "promtail.yml"
+    config.write_text(yaml.safe_dump(_CONFIG), encoding="utf-8")
+    fixtures = tmp_path / "corpus.json"
+    mocker.patch.object(checker, "_PROMTAIL_CONFIG", config)
+    mocker.patch.object(checker, "_FIXTURES", fixtures)
+    mocker.patch.object(checker, "_promtail_image", return_value="grafana/promtail:test")
+
+    def write_cases(cases):
+        fixtures.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+
+    return write_cases
+
+
+class TestMain:
+    def test_a_corpus_that_agrees_exits_zero(self, wired, mocker):
+        wired([_case("kept", "line-a", True, level="INFO")])
+        mocker.patch.object(
+            checker, "_run",
+            return_value=_observation(("line-a", {"level": "INFO"})),
+        )
+
+        assert main() == 0
+
+    def test_a_mismatch_exits_one(self, wired, mocker):
+        wired([_case("kept", "line-a", True, level="INFO")])
+        mocker.patch.object(
+            checker, "_run",
+            return_value=_observation(("line-a", {"level": "ERROR"})),
+        )
+
+        assert main() == 1
+
+    def test_a_line_recovered_by_a_retry_is_inconclusive_not_a_failure(
+        self, wired, mocker
+    ):
+        """Plan 160's whole point, asserted at the exit code rather than only
+        inside `_check_group`.
+
+        The distinction is *recovery*, not absence: a line missing from every
+        attempt is a real drop and does turn CI red. One that comes back on a
+        retry was never dropped, only unobserved, and must not.
+        """
+        wired([_case("kept", "line-a", True, level="INFO")])
+        mocker.patch.object(
+            checker, "_run",
+            side_effect=[
+                _observation(complete=False),
+                _observation(("line-a", {"level": "INFO"})),
+            ],
+        )
+
+        assert main() == 0
+
+    def test_a_line_missing_from_every_attempt_does_turn_ci_red(self, wired, mocker):
+        """The other side of the same distinction, so neither can be loosened
+        without the other failing."""
+        wired([_case("kept", "line-a", True, level="INFO")])
+        mocker.patch.object(
+            checker, "_run", return_value=_observation(complete=False)
+        )
+
+        assert main() == 1
+
+    def test_cases_are_grouped_into_one_replay_per_service_and_source(
+        self, wired, mocker
+    ):
+        """Each replay starts a container. Grouping is what keeps the job at a
+        handful of runs rather than one per fixture line."""
+        cases = [
+            _case("a", "line-a", True, level="INFO"),
+            _case("b", "line-b", True, level="INFO"),
+        ]
+        cases[1]["source_type"] = "docker"
+        cases[1]["service"] = "scraper"
+        wired(cases)
+        run = mocker.patch.object(
+            checker, "_run",
+            side_effect=lambda *args, **kwargs: _observation(
+                ("line-a", {"level": "INFO"}), ("line-b", {"level": "INFO"})
+            ),
+        )
+
+        assert main() == 0
+        assert run.call_count == 2

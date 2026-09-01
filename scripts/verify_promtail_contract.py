@@ -166,6 +166,7 @@ def _run(
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            encoding="utf-8",
         )
         collected: list[str] = []
         lock = threading.Lock()

@@ -128,7 +128,7 @@ def load_selector_configs(
     a bad config fails loudly at import time rather than surfacing as a
     confusing runtime KeyError.
     """
-    raw = yaml.safe_load(config_path.read_text())
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if (
         not isinstance(raw, dict)
         or "selectors" not in raw

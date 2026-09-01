@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-03-16 to 2026-03-22</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-03-16 to 2026-03-22. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-03-16-to-2026-03-22">Week of 2026-03-16 to 2026-03-22</h1>
+<p><strong>Window:</strong> 2026-03-16 00:00:00 to 2026-03-22 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-30
+<strong>Commits in window:</strong> 95 (77 non-merge, 18 merges)</p>
+<p>This is a backfill written <strong>161 days after the window closed</strong>. It is an
+unusually active week: the measured commit-body/stat read was about 18.5k
+tokens. The repository gained its first planning index while the running
+system expanded from a scraper pipeline into an operated data product with an
+admin UI, dashboard, asynchronous jobs, health signals and installation
+support.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p>The week's opening commits established the operating surface. <code>d512157</code>
+implemented Plan 11's validated search-config admin UI, moved legacy state
+views into dbt, expanded intermediate and mart models, and introduced
+<code>docs/PLANS.md</code>. <code>683ef1d</code> delivered Plan 10's durability controls: stale-run
+termination, stuck-artifact recovery, a <code>pipeline_errors</code> table and a shared
+Error Handler workflow. The <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/planning/completed_plans.md">completed-plan ledger</a>
+records why these controls mattered: automated work needed explicit recovery
+and an inspectable failure path rather than permanently running rows.</p>
+<p>The analytics surface followed. Plan 9 moved from Metabase query notes to a
+four-section Streamlit dashboard in <code>8ba5bbf</code>; Plan 12 added dealer extraction
+and propagated dealer identity into marts; Plans 15, 18 and 20 added Telegram
+alerts, active-run progress, refresh controls, dbt timings, Postgres sessions
+and lock visibility. The dashboard was repeatedly corrected so rotation,
+freshness, inventory and unlisted metrics described the intended target set
+rather than all observations in the raw tables.</p>
+<p>Plans 6, 18 and 19 changed orchestration. <code>45cc84e</code>, <code>e60ae34</code> and <code>9fd997c</code>
+moved SRP work behind an asynchronous job API and n8n Job Poller, expanded the
+worker pool, and added orphan/failed-job recovery. <code>a486889</code> prevented detail
+scrapes from overlapping search/detail runs, while <code>c071b3e</code> exposed progress
+counts. Follow-up fixes ensured a zero-pending poll still emitted a row,
+separated schedules, tracked jobs with working credentials, and stopped a
+newly requested run from blocking its own rotation guard.</p>
+<p>Data correctness and cost became explicit plan work. Plans 14 and 22 removed
+orphan dbt models and centralized staleness configuration. Plans 24 and 25
+re-queued dealer-unenriched vehicles, carried numeric <code>customer_id</code> through
+detail observations and repaired the dealer join. Plans 26, 27 and 32 added
+slot-based discovery, failure-rate alerts and a force-stale detail pool.
+Plan 37 repaired carousel URLs and VIN validation, mapped carousel discoveries
+back to VINs, filtered them to configured make/model targets and included
+their earliest observations in days-on-market.</p>
+<p>The unattributed anti-detection and performance commits still shipped
+material work. The scraper moved from Playwright to Patchright with rotating
+Chrome fingerprints, ZIPs, viewports, pacing and page order. dbt staging
+models became incremental, on-target filtering reached both marts and the
+dashboard, slow view joins were removed, and detail batches were capped at
+1,500 VINs to fit the half-hour operating window. Plan 23 also supplied a
+schema dump, environment template, setup script and seed config, while Plan
+17 rewrote the README around the system that now existed.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>The planning index was created and revised 35 times during the window. Its net
+historical state placed Plans 0–4, 6–13, 15, 17–23, 26, 28, 31, 32 and 37
+directly into the in-index archive from an absent pre-index state. This is a
+bootstrap of the new planning record as well as a record of work completed
+during the week; it should not be read as 26 independent state transitions
+from backlog through build.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>Plan 24 shipped in <code>0377460</code> but never appeared in <code>docs/PLANS.md</code> at any
+revision. That was a historical filing defect. As of 2026-08-30, the
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/planning/completed_plans.md">completed-plan ledger</a> has recovered Plan 24,
+Plan 6 and the other work implicated here. No planning-state edit is owed
+today.</p>
+<p>Several technical threads continued into the next week: dbt materialization,
+parallel detail claiming, workflow import, dashboard decomposition and admin
+operations. They are not treated as unfinished omissions here because their
+subsequent commits belong to the next recap.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Forty-two non-merge commits name at least one plan in their subject or body.
+For denominator reconciliation, they are:</p>
+<pre><code class="language-text">d512157 Plans 0–11 roadmap; Plan 11 admin UI
+683ef1d Plan 10
+84c066f Plan 9
+c6bfaf5 Plan 9
+d667c31 Plan 12
+4f3ec83 Plan 12
+5959dbc Plans 9, 14 and 15
+f496f03 Plans 14, 15 and 16
+16b28de Plan 16
+45cc84e Plan 6
+e60ae34 Plan 6
+9fd997c Plan 6
+a486889 Plan 19
+c071b3e Plan 18
+d432d11 Plans 14 and 22
+b4b7abe Plan 22
+c7ffbb4 Plans 17 and 23
+759d2ba Plan 23
+a33be62 Plan 23
+0377460 Plan 24
+72fb6e9 Plan 25
+1fbe940 Plan 25
+9dc84ae Plan 25
+c81ec78 Plan 26
+b37b1d3 Plan 26
+5fbdd49 Plans 15 and 27
+5b4f90e Plan 20
+56db0ca Plan 26
+096139f Plan 25
+795fcc1 Plan 26
+b1bb006 Plan 27
+dda97b7 Plan 27
+7e49fab Plan 32
+988bdf6 Plan 25
+1429b2b Plans 28 and 31
+ef1f4fc Plans 25–34
+e52cdea Plan 35
+f8ad64e Plan 36
+13153e4 Plan 37
+2f3cac1 Plan 37
+bc675da Plan 37
+ca12121 Plan 37
+</code></pre>
+<p>The other 35 are unattributed and are still part of the week's shipped work:</p>
+<pre><code class="language-text">d2086bf Fix listing_state inference, drop legacy tables, refresh Metabase queries
+8ba5bbf Add Streamlit dashboard, dealer pipeline, dbt incremental optimization
+4064848 docs: clean up PLANS.md — move completed items to table, slim detail sections
+f0db5b2 Clean up PLANS.md — trim completed detail sections, fix numbering
+517961b Fix Job Poller: Check Pending Jobs always returns a row when all done
+64f94aa Update n8n workflow exports — Job Poller fix, detail scrape timing
+cc84d00 Dashboard: add full_details_stale series to price freshness chart
+fc70904 Fix ops_vehicle_staleness accepted_values test — add dealer_unenriched
+928ceec Fix dealer_unenriched check — use EXISTS on detail_observations instead of dealers.street
+e44aedb Add search scrape success rate chart to Pipeline Health dashboard
+9adcb2b Fix carousel parsing — cars.com renamed spark-* components to fuse-*
+b0b2ee8 Fix SRP parser: support fuse-card alongside spark-card
+1a188e0 Optimize dealer_name lookup in mart_deal_scores — CTE instead of LATERAL
+694788f Optimize dbt build: 2min → 45s, mart_deal_scores 75s → 8s
+75273e6 Fix detail scrape gate blocking on error artifacts
+aad50ed Fix Error Handler SQL injection on error messages with multiple single quotes
+6bd4855 Fix search scrape pipeline: scrape_jobs INSERT + remove phantom Mark Run Done
+f42edc6 Fix search scrape rotation firing too often + detail scrape orphan recovery
+035c332 Update PLANS.md: mark 25.2, 25.3, 28, 31 done
+0a8c60f Add search scrape rotation schedule to Pipeline Health tab
+4a7db9f Redesign Pipeline Health top section into two summary tables
+41a90cb Fix rotation schedule: scope artifact counts to slot's search keys
+f982e7d Fix rotation self-blocking and filter invalid VINs from detail_observations
+24c53b0 Fix scrape job tracking and broken DB credentials in scraper
+019308f Fixing some logic holes
+6176fd4 Code review fixes + extract vehicle attributes from detail pages
+31c8cac SRP anti-detection: Patchright, ZIP rotation, fingerprint profiles, human pacing, random page order
+32e6c2f Dashboard: add processor activity section; Job Poller: aggregate error alerts
+2edce6b Add scrape_targets seed + filter carousel hints by make AND model; include detail-only VINs in active listings
+9f0a1a1 Dashboard: filter all queries to on-target scrape targets only
+cb6510e Dashboard: filter all queries to on-target scrape targets only
+4f3ef5f Filter mart_vehicle_snapshot to on-target scrape targets only
+a5c1419 Materialize staging views as incremental tables
+fe053d9 Cap detail scrape batch size to 1500 VINs (~15 min at 100/min)
+3c9d63d Dashboard: eliminate int_vehicle_attributes view joins for performance
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p><code>34df4cb</code> names Plans 25.2 and 25.3. The other merge branches do not name a
+plan; merges are listed but not recapped.</p>
+<ul>
+<li><code>42775d2</code> — PR #3 from <code>claude/srp-playwright-cleanup-deals</code>.</li>
+<li><code>cc279a5</code> — PR #4 from <code>claude/srp-playwright-cleanup-deals</code>.</li>
+<li><code>f7abedb</code> — PR #5 from <code>claude/srp-playwright-cleanup-deals</code>.</li>
+<li><code>50b146a</code> — PR #6 from <code>claude/quirky-mendel</code>.</li>
+<li><code>34df4cb</code> — branch merge titled <code>Plan 25.2 + 25.3: Bridge dealer ID systems</code>;
+no PR is named.</li>
+<li><code>691f8bd</code> — PR #8 from <code>claude/nice-dubinsky</code>.</li>
+<li><code>97b2e71</code> — PR #9 from <code>claude/nice-dubinsky</code>.</li>
+<li><code>4c9d40c</code> — PR #10 from <code>claude/nice-dubinsky</code>.</li>
+<li><code>eeb3a50</code> — PR #11 from <code>claude/nice-dubinsky</code>.</li>
+<li><code>4959a57</code> — PR #12 from <code>claude/nice-dubinsky</code>.</li>
+<li><code>8b6e907</code> — PR #13 from <code>dev/srp-anti-detection</code>.</li>
+<li><code>a329de7</code> — PR #14 from <code>dev/srp-anti-detection</code>.</li>
+<li><code>a0e2695</code> — PR #15 from <code>dev/srp-anti-detection</code>.</li>
+<li><code>ece9a5c</code> — PR #16 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>bd007b4</code> — PR #17 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>5c1c570</code> — PR #18 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>4a03b77</code> — PR #19 from <code>dev/detail-batch-sizing</code>.</li>
+<li><code>57c0dc7</code> — PR #20 from <code>dev/dashboard-fixes</code>.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>1,254 commits</strong> sit after this window's end as of 2026-08-30.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-03-22 23:59:59'   # 1254
+</code></pre>
+<p>That raw tail includes the following backfilled week and every later week
+through the current partial week. The week ending March 29 is covered in this
+batch, and the existing series covers March 30 through August 23. No following
+complete week is genuinely uncovered; the week ending August 30 is in
+progress.</p>
+</main>
+</body>
+</html>
