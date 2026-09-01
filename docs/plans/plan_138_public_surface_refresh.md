@@ -18,7 +18,7 @@ reconciled overviews and the assigned replacement claims.
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
 | **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01, soaking and undeployed** — and *unreachable*: the 20 generated pages ship in `ops/static_ops/recaps/` but nothing serves `/recaps` until Stage 2 item 3. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
-| **1h** Ask at closeout whether the landed work moved a surface (CAR-61) | **Raised 2026-09-01, ready.** The only pullable Stage 1 slice. 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it — which is the class every Gate 0 defect came from. Adds one cheap question to the `close-out` skill, in the same mechanism/name/quantity taxonomy 1c already uses, that proposes and never writes |
+| **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
 | **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
 | **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
 | **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
@@ -1541,6 +1541,53 @@ taxonomy above; its three outcomes are written into the skill including the
 requirement to record a "no"; the step is demonstrated on a real closeout whose
 answer is "no" and one whose answer is "yes"; and the skill's "what this must
 never do" section names silently editing a public surface.
+
+#### Stage 1h evidence — 2026-09-01 (CAR-61)
+
+**Built 2026-09-01, PR #335, `a4166ee`.** `.claude/skills/close-out/SKILL.md`,
++67/−5.
+
+| Gate 1h check | Where |
+|---|---|
+| Named step, in the taxonomy | `### Did this work move a public surface?`, quoting the question and citing `public-surface-check` as its source |
+| Three outcomes, including recording a "no" | The "no" has a literal one-line shape; "yes, and small" lands with the closeout and then trips the commit gate; "yes, and larger" is a `ticket-now` ticket |
+| "Never do" names silently editing a surface | Added, counting a skipped question — or one answered and not recorded — as the same failure one step earlier |
+| Demonstrated on a "no" **and** a "yes" | **Unmet.** See the two paragraphs below: the "no" was run from recall, and the "yes" is owed |
+
+**The step sits at Phase 2 position 3, before the plan-document edit**, because
+its answer becomes a line in that edit. Phase 3's write order gained the surface
+correction as item 2, running `public-surface-check` rather than bypassing the
+hook: the two gates compose, neither replaces the other.
+
+**The "no" half is weaker than it looks, and the reason is worth recording.**
+This closeout did ask the question and did answer it — but the `close-out` skill
+it loaded came from the **main worktree**, whose copy predates this slice, so
+the instructions on screen still had five Phase 2 items and no surface step. The
+question got asked because its author remembered writing it twenty minutes
+earlier. That is recall, not a check, and **a step that only fires for the
+person who just wrote it is exactly the failure mode this stage exists to
+prevent.** The demonstration is therefore owed a closeout run against a merged
+skill file, on a branch that did not author it.
+
+**CAR-59 could not serve as the "yes" after all.** It is the right shape — 1f
+changed both surfaces materially — but it completed at 18:10Z, twenty-eight
+minutes before this slice started, so its closeout ran without the step. The
+"yes" half is owed to the next closeout that answers yes; **Stage 2 (CAR-62) is
+the likely one**, since it moves the public root and the recap routes and both
+surfaces make claims about what is reachable and what requires authentication.
+
+**What the question caught anyway.** Running it by hand surfaced a gap in its
+own scope: this closeout's `docs/PLANS.md` slice cell is **published copy** —
+Plan 138 sits at build-order row 3, inside the generator's `MAX_ITEMS = 4`, so
+the cell becomes the `summary` field in `ops/static_ops/project-updates.json`
+and is served from the landing page. The step watches `README.md` and
+`ops/templates/info.html` only. **Stage 1d created a third public channel that
+neither 1c's gate nor 1h's question covers**, and closing that is not this
+slice's to do.
+
+**Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work** — the diff is one skill file, this plan document,
+`docs/PLANS.md` and its regenerated projection.
 
 
 ## Stage 2 — Make the landing page discoverable
