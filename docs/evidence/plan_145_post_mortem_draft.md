@@ -37,9 +37,10 @@ without losing anything that matters — took **four distinct designs, two
 reverted merge commits, one thrown-away uncommitted implementation, 23 merged
 pull requests, 76 non-merge commits, 9,410 lines of script and 7,107 lines of
 test** to delete 14,670,223,837 bytes in a command that ran for under a minute.
-Every design died the same death: it trusted an identity key that measurement
-then disproved. The final method worked because it stopped joining on metadata
-altogether and
+Three designs were discarded — of an unnamed input, of identity and of cost
+respectively — see §3 for why "each died on identity" is the plan's own
+overstatement, and for the correction to which design was actually built. The
+final method worked because it stopped joining on metadata altogether and
 flattened the population into one directory of bytes first — an idea the
 maintainer proposed, in plain language, after saying he felt like he was
 "talking to a wall."
@@ -54,12 +55,12 @@ maintainer proposed, in plain language, after saying he felt like he was
 | 2026-08-17 | [Plan 137](../plans/plan_137_legacy_bronze_parquet_disposition.md) created — legacy Parquet disposition, never scheduled |
 | 2026-08-21 | **Plan 145 created** (`136cb9f`, PR #227). Supersedes 132 and 137: "three investigations turn out to be one April 2026 cutover seen from three sides." Goal: delete **1,299** objects / 13.79 GiB. Stage 0 gates 0a–0f closed the same day |
 | 2026-08-26 15:28 | First implementation merged — PR #255, `b21fd48`: a backfill processor, an April ledger script, and **changes to the production `detail_writer` and `silver_writer`** |
-| 2026-08-26 17:23–17:50 | Design 2 is **pulled onto the VM, rebuilt and health-gated into production** — then the ledger scan cannot start, because the legacy Parquet prefix is written down nowhere. See §3.1 |
+| 2026-08-26 17:23–17:50 | **Design 1's implementation** is **pulled onto the VM, rebuilt and health-gated into production** — then the ledger scan cannot start, because the legacy Parquet prefix is written down nowhere. See §3.1 |
 | 2026-08-26 19:36 | PR #256, `45f13a5` — "build complete April reconciliation ledger" |
 | 2026-08-26 21:49 | **Both reverted**, one minute apart (`f946f88`, `1601379`). 1,443 + 662 lines removed, including a 435-line implementation plan |
-| 2026-08-26 | **Design 2** (`7504f88`): the selective-recovery design is discarded for a staged recovery/write/repack/delete workflow |
+| 2026-08-26 22:41 | **Design 2** (`7504f88`), written **52 minutes after the reverts**: the selective-recovery design is discarded for a staged recovery/write/repack/delete workflow. This design was never implemented |
 | 2026-08-27 12:09 | Implementation restarts. Within 90 minutes the sidecar `listing_id` defect surfaces |
-| 2026-08-27 | **Design 3** (`5c1162c`, PR #258): refuse all metadata, re-derive from bytes. Two-store union, 24.8 core-hours |
+| 2026-08-27 | **Design 3** (`5c1162c`, PR #258): refuse all metadata, re-derive from bytes. Two-store union, an estimated 24.8 core-hours |
 | 2026-08-27 16:30 | The maintainer proposes flattening. **Design 4** (`57baacd`) lands the same day |
 | 2026-08-27 15:00–19:08 | Stage 2 `materialize --apply` — 4h10m, 807,797 objects |
 | 2026-08-27 19:57–20:10 | Stage 3a `dedupe --apply` — 13 min, 371,095 distinct objects deleted |
@@ -101,15 +102,45 @@ Counting the discarded pre-implementation design, there were four:
 
 | # | design | dated | what it assumed | how it died |
 |---|---|---|---|---|
-| 1 | **Selective recovery** | 2026-08-21 | Stage 0f showed only 270 of 355,845 unmatched captures witness a price change, so recover ~11,600 information-bearing rows and drop the rest | Discarded 2026-08-26 as under-ambitious once deletion became the stated goal |
-| 2 | **Metadata reconciliation** | 2026-08-26 | The pack sidecar's `listing_id` could carry a join between legacy Parquet and production | **Disproved:** sidecar `listing_id` is wrong for 194,639 of 371,095 content matches |
-| 3 | **Two-store union by content hash** | 2026-08-27 | Refuse all metadata; parse the union of both stores deduplicated by hash | Correct but overbuilt — 24.8 core-hours, and it carried a two-store reconciliation through every stage |
+| 1 | **Selective recovery** | 2026-08-21 | Stage 0f showed only 270 of 355,845 unmatched captures witness a price change, so recover ~11,600 information-bearing rows and drop the rest | **The only design that reached production.** Its five-file implementation plan is exactly what `b21fd48` built; merged, deployed, health-gated, and then un-runnable because no document named the legacy prefix. Reverted 21:49; superseded 52 minutes later once the goal had also hardened from recovery to disposal |
+| 2 | **Metadata reconciliation** | 2026-08-26 **22:41** | The pack sidecar's `listing_id` could carry a join between legacy Parquet and production | **Disproved before a line of code:** sidecar `listing_id` is wrong for 194,639 of 371,095 content matches. Written after the reverts, never implemented |
+| 3 | **Two-store union by content hash** | 2026-08-27 | Refuse all metadata; parse the union of both stores deduplicated by hash | **Never run.** Correct in instinct but overbuilt — costed at an estimated 24.8 core-hours, and it carried a two-store reconciliation through every stage. Its `parse` mode was reverted before commit |
 | 4 | **Flatten first** | 2026-08-27 | Materialize, delete the twins, unpack — then everything downstream reads *one* store | **It did not die.** It carried the plan to completion on 2026-08-30 |
 
-Two of these produced code that was thrown away: design 2's merged
+Two of these produced code that was thrown away: design 1's merged
 implementation (reverted) and design 3's `parse` mode, which the Stage 3 handoff
 records as *"reverted before commit; the patch is in the session scratchpad
 only. Do not go looking for it."*
+
+**The plan's own sentence overstates its own table, and this document repeated
+it.** *"Each time because a measurement contradicted an identity key"* holds for
+exactly one of the three changes. Design 1 died because its input was never
+named, and was then superseded because the stated goal had hardened from recovery
+to disposal. Design 3 was discarded because it was costed at an estimated 24.8
+core-hours and carried a two-store reconciliation through every stage. Only
+design 2 died on a disproved key — and it never reached code.
+
+**Corrected 2026-09-01, against git.** The first two revisions of this document
+attributed `b21fd48` (PR #255, merged 15:28) to design 2. That is wrong by seven
+hours: design 2 is `7504f88`, committed 22:41, *after* the 21:49 reverts. The
+merged implementation builds design 1's own "Files Changed" table, five files for
+five, and its ledger joins **on content hash, not on metadata** —
+`build_april_ledger.py`'s docstring reads *"Join legacy rows to sidecars by
+content hash, never by artifact ID."* Design 2 is therefore the one design in
+this plan that was never built, and the byte-hash instinct the narrative credits
+to design 3 was present in the first file merged. The error mattered because it
+made the plan look like a story of dawning realisation; it was closer to a story
+of an instinct that was right early and took three more designs to make
+affordable.
+
+The compressed version is memorable, it survived unchanged into the archived
+plan, it was repeated in the [2026-08-30 recap](../recaps/2026-08-30.md), and it
+was repeated in this document's first two revisions. That is how a framing
+becomes a fact. §7 and §8 already record two places where the plan's own
+explanation of something was wrong; this is the third, and it is the plan's
+explanation of *itself*. The accurate form: identity is the through-line, and
+design 4 won by making identity reconciliation unnecessary rather than by
+solving it.
 
 ### 3.1 What the 2026-08-26 revert looked like from inside — recovered
 
@@ -117,7 +148,7 @@ One local transcript covers **2026-08-26 17:23–17:50**, four hours before the
 reverts. It is short and it is damning, and it changes the previous revision's
 claim that this episode is reconstructible from git alone.
 
-Design 2's implementation was not merely merged. It was **merged, pulled onto
+Design 1's implementation was not merely merged. It was **merged, pulled onto
 the VM, rebuilt into the `archiver` and `processing` images, and health-gated
 into production** — the maintainer's opening line is *"The code is merged, I'll
 pull on the VM."* The deploy succeeded. `docker exec cartracker-archiver python
@@ -142,16 +173,23 @@ which one it was. The assistant's own reading: *"None of these jump out as
 most likely candidate"* — a guess, one message after warning against guessing.
 The transcript ends there, at 17:50, with the ledger scan never run.
 
-**What this establishes, and what it does not.** It establishes that the
-design-2 implementation reached production and was then found to be
-**un-runnable against the population it existed to reconcile**, because the
-plan it was built from — Plan 137 — described the legacy lake only in prose and
-never pinned an object prefix. It does not establish that this is *why* the
-maintainer reverted four hours later; both revert commits carry bare
-`git revert` messages, PR #255 and #256 have **zero review comments**, and no
-transcript covers 17:50–21:49. But it is the last recorded state of that work
-before it was removed, and it is a much better lead for §13's first open
-question than "git alone."
+**What this establishes.** The implementation reached production and was then
+found **un-runnable against the population it existed to reconcile**, because
+the plan it was built from — Plan 137 — described the legacy lake only in prose
+and never pinned an object prefix.
+
+**And it is enough to settle why it was reverted.** No document states a reason:
+both revert commits carry bare `git revert` messages, PR #255 and #256 have
+**zero review comments**, no transcript covers 17:50–21:49, and the plan rewrite
+52 minutes later records only that the implementations *"were reverted before
+this rewrite"* and *"are not inputs to this design."* An earlier revision of this
+document treated that as an open question. It is not one, and the distinction
+matters: **an unstated reason is not an unknown one.** The work had just failed
+in production, and — see the diffstat below — it had restructured two live
+production write paths to get there. Backing that out the same evening is the
+ordinary call. What is genuinely unrecorded is narrower: whether repairing the
+input was ever weighed against replacing the design, and what the four hours
+were spent on.
 
 **The guess was right, and design 4 still refused to make it.** The legacy root
 is `html/`, exactly the prefix the assistant picked. That is not the
@@ -170,7 +208,7 @@ That is the entire lesson of 2026-08-26, compiled into a comment above a
 constant, three days later: the failure mode of guessing an input location is
 not an error, it is a **silent zero**. Design 4 also pins `BASELINE_OBJECTS =
 1172`, `BASELINE_ROWS = 951821` and a status census as *assertions about
-production*, "restated so drift is a stop rather than a shrug." Design 2 had
+production*, "restated so drift is a stop rather than a shrug." Design 1 had
 none of that and could not have; nobody had yet been burned.
 
 **The revert diffstat sharpens what was being backed out.** The plan calls it
@@ -558,9 +596,22 @@ flusher or `stg_observations.sql`).
 
 **The two moments the plan existed for were its two fastest.** The apply — ten
 minutes for 701,375 rows — and the deletion itself, under a minute for 13.66 GiB.
-Roughly thirty hours of measured compute, four days of design and 7,000 lines of
-test stood behind eleven minutes of writing and deleting. The cost was never in
-the destructive step; it was in earning the right to take it.
+Roughly thirty hours of measured compute and 7,107 lines of test stood behind
+eleven minutes of writing and deleting. The cost was never in the destructive
+step; it was in earning the right to take it.
+
+**And the whole of it fits in three days.** First implementation commit
+(`b21fd48`, 2026-08-26 15:28) to the deletion completing (2026-08-29 22:53) is
+**79h25m** — four designs, two reverted merges, 23 pull requests and every run in
+the table above. The plan document is dated five days earlier, but nothing was
+worked on it in between; that gap is calendar the document spent idle while other
+plans were being built, not planning effort, and counting it inflates the span.
+Measure from first implementation.
+
+**Thirty of those 79 hours are the table above running**, and the stages are
+strictly sequential — nothing parses until it is unpacked, nothing unpacks until
+the twins are deleted. That is a hard floor under the elapsed time that no
+amount of getting the design right the first time would have lowered.
 
 **The parse's tail is worth a sentence in the narrative.** Units 1–1,170 (the
 materialized shards) finished in 7h20m. Units 1,171–1,204 — the 32 unpacked pack
@@ -905,9 +956,13 @@ was recorded.
 
 ## 12. Draft lessons — for the maintainer to cut or keep
 
-1. **Every design that failed, failed on identity.** Bytes and hashes never lied;
-   every derived key did. The plan only stabilised once it stopped joining and
-   started flattening.
+1. **Identity is the through-line, not the cause of every death — and the plan
+   overstated it.** Of the three discarded designs, one died on identity, one on
+   scope and one on cost (§3). But identity is the only failure that reached
+   production and forced a revert, and the design that shipped won by making
+   identity reconciliation *unnecessary* rather than by solving it. The
+   defensible form of the lesson is about keys, not designs: bytes and hashes
+   never lied; every derived key did.
 2. **A defect invisible in production can still be the most expensive thing in
    the repo.** The `any_value` reduction has never served a wrong byte and cost
    three design revisions.
@@ -942,7 +997,7 @@ was recorded.
    stabs at this, each of them better, but each of them convoluted, when what
    we're really trying to do is pretty simple."*
 11. **A plan that describes its input in prose has not specified its input.**
-   Design 2 was built, merged, deployed to production and health-gated before
+   Design 1 was built, merged, deployed to production and health-gated before
    anyone discovered that the legacy Parquet prefix — the location of the
    1,299 objects the whole plan exists to delete — was written down nowhere
    except Plan 137's prose. Stage 0 had closed six gates; none of them was
@@ -988,9 +1043,10 @@ was recorded.
    was the *missing*-report case; the one that met the world was the ambiguous
    one.
 18. **The thing a plan exists to do can be the cheapest thing in it.** The
-   deletion ran for under a minute. Behind it: four designs, thirty hours of
-   compute, 9,410 lines of script, 7,107 lines of test, 23 pull requests and nine
-   review rounds. None of that cost is in the destructive step. All of it is in
+   deletion ran for under a minute. Behind it, inside three days: four designs,
+   thirty hours of compute, 9,410 lines of script, 7,107 lines of test, 23 pull
+   requests and nine review rounds. None of that cost is in the destructive
+   step. All of it is in
    earning the right to take it — and that ratio, not the 20.14 GiB, is the
    honest headline.
 19. **A confident extrapolation off four samples was wrong, in public, in the
@@ -1009,13 +1065,19 @@ are recorded here rather than the questions deleted, because in two cases what
 the answer turned out to be matters less than the fact that the question was
 asked before the run rather than after it.
 
-- **Was the 2026-08-26 revert the right call, and what did it cost?** Still open.
-  §3.1 recovers what the work looked like four hours before it was reverted; the
-  decision itself is still missing. PR #255 and #256 carry **zero review
-  comments**, both reverts are bare `git revert` messages, and 17:50–21:49 is
-  unrecorded. The tracker is the remaining source, and it is thin: CAR-13 is a
-  single **3-point** issue reading "Plan 145 — close Stage 0d/0e, build backfill
-  write path," which is the design that was reverted, described in one line.
+- **Was the 2026-08-26 revert the right call, and what did it cost?** **The
+  first half is answered; only the cost is open.** The revert was right on its
+  face: the merged work had restructured two live production write paths — 471
+  changed lines in `detail_writer.py`, 69 in `silver_writer.py`, plus
+  `processing/queries.py` and a new backfill SQL statement — to serve a backfill
+  that had just proved un-runnable, and leaving that in place buys nothing.
+  Earlier revisions of this document called the reason unrecorded, which
+  conflated *nobody wrote it down* with *nobody knows*; only the first is true,
+  and it is unremarkable. What is open is the **cost**: whether repairing the
+  input rather than replacing the design was ever weighed, what 17:50–21:49 was
+  spent on, and whether any of the 1,443 reverted lines should have survived.
+  The tracker is thin — CAR-13 is a single **3-point** issue reading "Plan 145 —
+  close Stage 0d/0e, build backfill write path."
 
 - **Would forcing an unpacked shard into the early probes have been cheap?**
   Still open, and Stage 6 added no evidence either way. If yes, the block-page
@@ -1025,9 +1087,10 @@ asked before the run rather than after it.
   design?** Now *countable*, if still not settled. Flattening cost 6h26m to build
   the loose population (materialize, dedupe, unpack) and a further 5h03m to
   remove it again (repack, prune) — about 11.5 hours of the plan's ~30, on top of
-  a parse that had to read every byte once regardless. Design 3 costed 24.8
-  core-hours for the same answer, so flattening was still the cheaper of the two
-  designs that were actually specified. Neither was ever compared against the
+  a parse that had to read every byte once regardless. Design 3 was **costed at
+  an estimated 24.8 core-hours and never run**, so flattening was cheaper than
+  the only rival that was ever specified — but the comparison is a measured span
+  against a projection, which is a weaker claim than it reads as. Neither was ever compared against the
   third option nobody wrote down: a targeted reparse of only the captures silver
   lacks.
 
