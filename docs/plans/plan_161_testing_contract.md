@@ -438,6 +438,7 @@ difference between the two passes is itself informative.
 |---|---|---|
 | 21 files mix two mocking styles | **10 files mix two patching mechanisms**; 10 more use `unittest.mock.patch`, none of them legitimately | The first pass counted `from unittest.mock import MagicMock` as a competing style. It is a value constructor, not a patching mechanism |
 | 16 modules still carry inline SQL | **10 modules** carry inline SQL at an `.execute()` call site | The first pass counted `SELECT`-shaped lines, which matched docstrings and comments |
+| 10 modules carry inline SQL at an `.execute()` call site | **66 sites in 15 modules** (Plan 162 Stage 7, 2026-09-01) | The second pass was measured by reading, and the measure it recorded — "`.execute(` with a literal first argument" — is blind by construction. `execute_values(cur, sql, rows)` carries its statement *second*; `ops/routers/maintenance.py:152` is a literal `INSERT` sitting there, in a module this list never named. Two of the ten do not belong either: `shared/db.py`'s only match is inside `db_cursor`'s own docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup, which name no schema to drift from |
 | `/project-status/{project}` and `/oneoff-processes` are the only two routes with no reference anywhere in `tests/` | Both have had unit tests since `4d6ed4a` (2026-08-26). **Four routes are reached by no test through any routing table**, those two among them | Fixed between the planning session and this one — and the correction *strengthens* the argument, because the tests that exist call the handlers directly and were green throughout the 404 |
 | 32 of 35 routes are at least named by a test | **83 of 87** | The first pass counted a subset of services |
 
@@ -456,6 +457,36 @@ finding of this ticket:
 This is the sharpest available argument for criterion 3. Nothing failed. The
 tests were written, reviewed, merged and maintained, and no mechanism existed
 that could notice they never ran.
+
+### The question this document did not ask
+
+**Added 2026-09-01, from Plan 162 Stage 7.** Question 5 asks what a *service*
+owes before it ships, and question 6 asks what "enough" means *per service*.
+Both answers are keyed to a Python package: `service_packages()` derives the
+eight top-level packages that hold an `__init__.py`, and
+`test_every_service_directory_has_a_row_in_the_enough_table` asserts the
+"enough" table's rows equal that set **in both directions**.
+
+**The dbt project is not one of them.** `dbt/` is a Dockerfile, SQL and YAML;
+`dbt_runner` — the service that *invokes* dbt — has a row, and the 22 models it
+builds do not. Adding a `dbt` row today fails as a phantom. So the one
+mechanism this document gave the repository for stating an obligation
+structurally cannot express one for the surface that holds most of its
+analytical logic.
+
+The consequence is measurable: **17 of 22 models have a dbt unit test and five
+do not**, and no rule requires one. `tests/dbt/` asserts that every model
+carries a cadence tag — derived, and exactly the right shape — so the only
+obligation this repository mechanically enforces on a dbt model is a
+*scheduling* one. A new mart with no test ships green.
+
+This is a gap in the questions, not an error in the answers, which is why it is
+recorded here rather than in the table above. It matters more from 2026-09-01
+than it did when this document was written, because [Plan
+125](plan_125_duckdb_to_iceberg_migration.md) moves the analytics layer onto
+Spark/Iceberg and Plan 118 was superseded into it — so logic will keep moving
+*from* `.sql` files, which Plan 162 counts, *into* dbt models, which nothing
+counts. Plan 162 owns the repair as its dbt-contract stage.
 
 ## What this unblocks
 

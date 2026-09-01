@@ -137,9 +137,14 @@ order:
 | **8** | The services below the floor | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
+| **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
 
 **4 + 50 + 12 + 56 = 122.** The stages account for the whole waiver list; no
-entry is left without a stage that deletes it.
+entry is left without a stage that deletes it. Stage 7 later raised its own
+column from 56 to 66 + 23 across two new rules — see [Stage 7 grew two
+gaps](#stage-7-grew-two-gaps-while-closing-one), and note that a stage
+discovering more than it was scoped for is the instrument working, not the
+arithmetic failing.
 
 ### Why this order
 
@@ -208,6 +213,108 @@ selector that reads the new prefix is Stage 10.
 and invalidates two issues already filed against the old numbers — CAR-50 names
 Stage 6 and CAR-52 names Stage 8 in their titles. A letter costs nothing and
 breaks nothing.
+
+### Stage 7 grew two gaps while closing one
+
+**Added 2026-09-01, mid-stage.** Stage 7 was scoped at 56 Layer 2 waivers and
+"G5's ten modules". Both numbers were wrong, and both were wrong the same way
+the census was wrong about G14: **the measure was fitted to the code in front
+of it.**
+
+G5 measured 66 sites in 15 modules, not 10. The gap list's own stated measure —
+"`.execute(` with a literal first argument" — cannot see
+`execute_values(cur, sql, rows)`, which carries its statement second, and
+`ops/routers/maintenance.py:152` is a literal `INSERT` sitting exactly there.
+Two of the named ten did not belong: `shared/db.py`'s only match is inside
+`db_cursor`'s docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL` /
+`LOAD` / `SET` session setup, which name no schema and so cannot drift from
+one. Closed the same day; `INLINE_SQL_WAIVERS` is `()`.
+
+**G15 is what closing G5 revealed.** A statement bound to a name and executed
+from there is invisible to both instruments at once: Rule 5b does not fire
+because it is not at the call site, and Rule 5's denominator cannot count it
+because there is no `.sql` file. Stage 7 extracted six of these by hand and
+only because someone happened to read the files; the measured cost of that
+blind spot was 23 more in 11 modules, six of them in `ops/routers/admin.py`, a
+router the stage never touched precisely because every one of its statements is
+assigned before it is executed.
+
+**The scan surface was the third instance of the same error.** Both new rules
+scan `service_packages()`, which is the right predicate for "what is a service"
+and the wrong one for "what is production Python". `airflow/` and `scripts/`
+hold neither an `__init__.py` nor, therefore, any rule — and they hold 26 more
+sites, 22 of them in Plan 125's Iceberg and Spark scripts, which Gates C and D
+productionize. The repair is a second derivation reading Stage 5b's declared
+bucket table, **not** an `__init__.py`: `service_packages()` drives seven rules,
+and making `scripts` a package would demand an "enough" row for something that
+is not a service and send the route rule looking for `scripts.app`.
+
+The lesson is the one this plan keeps relearning about its own instruments, and
+it is worth stating as a design rule rather than a third anecdote: **a
+denominator that is listed, or scoped to what exists when it is written, will
+be wrong.** G14 was undercounted at 54, G5 at 10, the scan surface at eight
+packages, and `executemany` was left out because it matched nothing that day.
+The rules that have never been wrong are the derived ones —
+`service_packages()`, `_test_directories()`, `production_sql_files()`.
+
+### Stage 11 answers a question Plan 161 did not ask
+
+**Added 2026-09-01.** [Plan 161](plan_161_testing_contract.md) asked what a
+*service* owes before it ships and keyed the answer to a Python package. The
+dbt project is not one: `dbt/` is a Dockerfile, SQL and YAML, `dbt_runner` —
+the service that invokes dbt — has the "enough" row, and the 22 models it
+builds have none. `test_every_service_directory_has_a_row_in_the_enough_table`
+asserts the table equals `service_packages()` in both directions, so **adding a
+`dbt` row today fails as a phantom.** The obligation is not unmet; it is
+inexpressible.
+
+What that costs, measured: **17 of 22 models have a dbt unit test and five do
+not**, and no rule requires one. `tests/dbt/` asserts every model carries a
+cadence tag, so the only obligation this repository mechanically enforces on a
+model is a *scheduling* one. A new mart with no test ships green.
+
+**Two things make this urgent rather than tidy.** The first is that
+`_SQL_EXEMPT_ROOTS` exempts `dbt/` from the Layer 2 census by design — correct,
+because Layer 3 is dbt's instrument — so a `.sql` file whose logic moves into a
+mart leaves a counted surface for an uncounted one, and **the count drops for
+something that is not a repair.** That is the same failure as Stage 5's
+substring bug: the list shrinking for free. The second is that
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md) absorbed Plan 118 and moves
+the analytics layer onto Spark/Iceberg, so that migration is not hypothetical —
+it is the plan of record.
+
+Stage 11 therefore owns three things:
+
+1. **What the dbt project owes**, and a mechanism that can hold it — the
+   "enough" table's derivation admits a non-package surface, or a second table
+   does.
+2. **G16: a `.sql` file may only leave `production_sql_files()` by naming the
+   dbt model that absorbed it.** The denominator may shrink; it may not shrink
+   silently.
+3. **The execution recorder, scoped here and built later.** Recording *what
+   text executed against which engine* is the only mechanism that closes the
+   remaining class at once: it kills the paraphrase, the weak name-match
+   reading, and a statement whose test executes it against an engine production
+   no longer uses. Two hard parts are already known — `.format()` templates
+   record rendered but are stored as templates, and the suites run in separate
+   CI jobs so aggregation needs an artifact and a gate job.
+
+**The recorder splits along a seam worth respecting.** *Capture* is
+engine-local, cheap, and worth doing while DuckDB is still authoritative,
+because a baseline taken after [Plan 125 Gate D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
+is not a baseline. The *cross-engine assertion* — "this ran on the engine
+production uses for it" — needs two live engines to design honestly and belongs
+at that gate. Building both against one live engine and one hypothetical would
+fit the design to what exists today, which is the error recorded two sections
+above.
+
+**One exposure number here is conditional and should not be quoted flat.** 26
+`.sql` files are covered only by a DuckDB-bound test — every `dashboard/sql/*`
+plus both `dbt_runner/sql/*` snapshots. Whether they move engines at all is
+decided by Plan 125 Gate D2: under "serving extracts from Iceberg" they do,
+under "DuckDB as a non-authoritative Iceberg reader/cache" — which that plan
+currently calls the lower-risk first cut — they do not, and `duckdb_con`
+remains the correct fixture.
 
 ### Stage 6b was added by the failure this plan predicted
 
