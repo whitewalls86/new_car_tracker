@@ -345,6 +345,7 @@ def _run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "scripts/build_public_recaps.py", *args],
         cwd=REPO_ROOT, capture_output=True, text=True,
+        encoding="utf-8",
     )
 
 

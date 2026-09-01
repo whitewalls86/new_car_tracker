@@ -122,6 +122,7 @@ def measure_path(path: str, timeout: int = DEFAULT_DU_TIMEOUT_SECONDS) -> Dict[s
         proc = subprocess.run(
             ["du", "-s", "-x", "--block-size=1", path],
             capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8",
         )
     except FileNotFoundError:
         return {"bytes": None, "error": "du is not available in this image"}

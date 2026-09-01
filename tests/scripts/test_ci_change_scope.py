@@ -149,6 +149,7 @@ def test_command_line_contract(changed, expected):
         capture_output=True,
         check=True,
         text=True,
+        encoding="utf-8",
     )
     assert completed.stdout.splitlines() == expected
 
@@ -159,6 +160,7 @@ def test_malformed_input_exits_two_without_classifying():
         input="docs/PLANS.md",
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert completed.returncode == 2
     assert completed.stdout == ""

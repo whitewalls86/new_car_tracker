@@ -34,6 +34,7 @@ def _pytest(node: str | None = None) -> tuple[int, str]:
          "-p", "no:cacheprovider"],
         cwd=REPO_ROOT, capture_output=True, text=True,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        encoding="utf-8",
     )
     return result.returncode, result.stdout
 

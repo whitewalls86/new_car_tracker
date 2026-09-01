@@ -575,6 +575,7 @@ def app_routes(service: str) -> tuple[tuple[str, str], ...]:
         result = subprocess.run(
             [sys.executable, "-c", _ROUTE_PROBE, str(REPO_ROOT), service] + extra,
             capture_output=True, text=True,
+            encoding="utf-8",
         )
         if result.returncode == 0:
             found = tuple(
@@ -1131,6 +1132,8 @@ def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
 # after the class the row above calls judgement produced another instance.
 ENCODING_WAIVERS = ()
 
+PYPROJECT = "pyproject.toml"
+
 # Not source, and ``.claude/`` is the one that matters: in the primary checkout
 # it holds every active worktree, so walking it would report each violation
 # once per worktree and make the count depend on how many branches happen to be
@@ -1258,6 +1261,36 @@ def test_every_text_read_and_write_states_its_encoding():
         ENCODING_WAIVERS,
         "these text reads and writes let the machine choose the encoding, so "
         "their result depends on the locale of whoever runs them:",
+    )
+
+
+def test_the_runtime_encoding_guard_is_enabled_in_ci():
+    """The other half of the guard, and the half that can vanish silently.
+
+    The rule above is complete over the repository and blind to any shape it
+    does not name. PEP 597's ``EncodingWarning`` is the opposite: raised from
+    inside CPython, so it sees ``subprocess.run(text=True)`` and
+    ``logging.RotatingFileHandler`` -- the two shapes that were missed when
+    this stage first scoped itself -- but only on lines a test actually
+    executes. Neither is a superset of the other, so both are kept.
+
+    It takes two settings in two files to work, and **removing either one
+    fails open**: no warning is raised, every test still passes, and the guard
+    is gone with nothing to show for it. That is precisely the silent-instrument
+    failure this document exists to prevent, so the settings are asserted here
+    rather than trusted.
+    """
+    workflow = yaml.safe_load(_read(WORKFLOW))
+    assert str(workflow.get("env", {}).get("PYTHONWARNDEFAULTENCODING")) == "1", (
+        f"{WORKFLOW} no longer sets PYTHONWARNDEFAULTENCODING=1 at the workflow "
+        f"level. Without it CPython never raises EncodingWarning and the "
+        f"filterwarnings entry below has nothing to turn into a failure."
+    )
+
+    filters = tomllib.loads(_read(PYPROJECT))["tool"]["pytest"]["ini_options"]
+    assert "error::EncodingWarning" in filters.get("filterwarnings", []), (
+        f"{PYPROJECT} no longer turns EncodingWarning into an error, so CI "
+        f"would print the warning and pass."
     )
 
 

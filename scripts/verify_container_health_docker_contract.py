@@ -131,7 +131,7 @@ class ContractError(RuntimeError):
 def _run(*args: str, check: bool = True) -> str:
     result = subprocess.run(
         ["docker", *args], capture_output=True, text=True, check=False
-    )
+    , encoding="utf-8")
     if check and result.returncode != 0:
         raise ContractError(f"docker {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout.strip()

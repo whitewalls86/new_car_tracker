@@ -214,6 +214,7 @@ class TestBuildPrefixes:
             capture_output=True,
             text=True,
             cwd=str(_REPO_ROOT),
+            encoding="utf-8",
         )
         assert result.returncode != 0
 
@@ -223,6 +224,7 @@ class TestBuildPrefixes:
             capture_output=True,
             text=True,
             cwd=str(_REPO_ROOT),
+            encoding="utf-8",
         )
         assert result.returncode != 0
 

@@ -38,7 +38,7 @@ STAMP_NAME = "public-surface-stamp"
 def _git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], capture_output=True, text=True, check=False
-    ).stdout
+    , encoding="utf-8").stdout
 
 
 def staged_digest(paths: list[str]) -> str:

@@ -471,8 +471,13 @@ Three exceptions, stated here so they are decisions rather than omissions:
   `test_every_text_read_and_write_states_its_encoding` requires `encoding=` on
   every `read_text` and `write_text` in the repository, and fails on
   `(tmp_path / "a.md").write_text("—")` — the exact call ruff answers
-  `All checks passed` on. **What remains unmechanisable is everything else the
-  harness decides: path separators, line endings, case-insensitive filename
+  `All checks passed` on. It is backed by a second, independent mechanism:
+  PEP 597's `EncodingWarning`, switched on in CI and turned into a failure,
+  which catches the shapes no static rule names — it found 21 `subprocess` and
+  logging sites the static rule is blind to. The two fail in opposite
+  directions, one complete over the code and one complete over shapes, and
+  neither substitutes for the other. **What remains unmechanisable is
+  everything else the harness decides: path separators, line endings, case-insensitive filename
   collisions, and locale-dependent collation.** Those have no textual signature
   to match on — the code that breaks on them is not distinguishable, by reading,
   from code that does not — so the only instrument that sees them is an actual
@@ -1947,8 +1952,59 @@ owns `open` and `tempfile.NamedTemporaryFile`, where type inference is the
 right approach and a name-only rule would be wrong — `tarfile.open` and
 `os.open` take no encoding and would be false positives. The new rule owns
 `read_text` and `write_text`, which only `pathlib` defines, so the method name
-is proof on its own and no inference is needed. No gap between them, and no
-call reported twice.
+is proof on its own and no inference is needed. No gap between them across
+those two shapes, and no call reported twice.
+
+**That last sentence was first written as "no gap between them" without
+qualification, and it was wrong.** The two static instruments between them
+cover `open`, `NamedTemporaryFile`, `read_text` and `write_text` — the shapes
+somebody thought to name. They do not cover the encoding class, and the way
+that was found is worth recording: this stage had already been committed when
+PEP 597 was checked, and turning its `EncodingWarning` on found **21 more
+sites in two shapes neither instrument can see** — `subprocess.run(text=True)`
+without an encoding, which decodes a child process's output through the
+locale, and `logging.RotatingFileHandler`. Ten of the 21 are production or
+scripts, including three in `dbt_runner/app.py` capturing dbt's output and one
+in `archiver/processors/disk_usage.py`.
+
+The `RotatingFileHandler` instance mattered more than its count. It writes the
+ops log that `ops/routers/admin.py` reads, and this stage had just pinned that
+reader to an explicit UTF-8 — so the sweep had made the pair *inconsistent*
+where it had previously been merely undefined. Fixing only what a static rule
+can see is how that happens.
+
+#### The runtime half, and why both are kept
+
+[PEP 597](https://peps.python.org/pep-0597/) is Final in Python 3.10 and adds
+`EncodingWarning`, raised from inside CPython whenever a text operation falls
+back to the locale encoding. It is opt-in: `PYTHONWARNDEFAULTENCODING=1`, now
+set workflow-wide in `ci.yml`, with `filterwarnings = ["error::EncodingWarning"]`
+in `pyproject.toml` turning it into a failure. Inert locally unless a developer
+opts in the same way.
+
+**It is not a replacement for the static rule, and the reason is measured
+rather than argued.** An encoding-less `write_text` was planted in a helper
+that no test calls:
+
+| Instrument | Verdict on an unexecuted line |
+|---|---|
+| `EncodingWarning` as an error | **1 passed** — never saw it |
+| `test_every_text_read_and_write_states_its_encoding` | **failed**, naming the line |
+
+So the two fail in opposite directions. The static rule is **complete over the
+code and limited to the shapes it names**; `EncodingWarning` is **complete over
+shapes and limited to the lines a test executes** — and CI coverage is 75.95%,
+which is the size of its blind spot. Ruff keeps a cell of its own for the same
+reason: an `open` on a line nothing runs. Dropping any one of the three loses
+real coverage, so all three are kept.
+
+**The runtime half can fail open, so it is asserted rather than trusted.**
+Deleting the environment variable or the `filterwarnings` entry raises no
+warning, fails no test and leaves no trace —
+`test_the_runtime_encoding_guard_is_enabled_in_ci` exists for that, and it was
+verified by breaking each half in turn and confirming the test fails on each,
+then passes again once restored. An instrument that cannot report its own
+absence is the failure mode this plan was written about.
 
 `explicit-preview-rules` is what makes enabling the preview-gated `PLW1514`
 affordable. `preview = true` alone also turns on every other preview rule in
@@ -1999,6 +2055,13 @@ mixed endings afterwards and has none.
 Twenty-four lines went over the 100-character limit once the keyword was added
 and were wrapped — fifteen sharing one shape, nine individually.
 
+The 21 `subprocess` and logging sites were swept the same way afterwards, and
+the whole suite then ran green under `PYTHONWARNDEFAULTENCODING=1` with the
+warning as an error — **3403 passed**, which is what makes the runtime guard
+safe to leave switched on rather than a red build waiting to happen. Only the
+non-integration suite could be run locally; the integration jobs meet the flag
+for the first time in CI.
+
 #### What was deliberately not done
 
 - **No Windows runner**, for the reasons recorded above. This is the stage's
@@ -2012,7 +2075,11 @@ and were wrapped — fifteen sharing one shape, nine individually.
   every machine that had it, but it is an interpreter start-up flag: a developer
   running `pytest` without it still diverges, so it moves the harness dependency
   rather than removing it. Explicit `encoding=` needs no environment to be
-  correct.
+  correct. `PYTHONWARNDEFAULTENCODING` is a different proposition and is set:
+  it changes no behaviour, it only makes the fallback audible.
+- **The remaining `subprocess` shapes were not swept.** Only text-mode calls
+  are, because a bytes-mode call has no encoding to state. A call that becomes
+  text-mode later is caught by the runtime guard the first time a test runs it.
 - **The 3.15 upgrade was not scheduled here.** PEP 686 will retire this class,
   but that is a version bump with its own consequences and it is not Plan 162's
   to make.

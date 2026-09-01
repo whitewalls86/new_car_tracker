@@ -32,6 +32,10 @@ asyncio_mode = "auto"
 markers = [
     "integration: tests that require a real Postgres database",
 ]
+# Only fires when the interpreter was started with PYTHONWARNDEFAULTENCODING=1
+# (ci.yml sets it workflow-wide), so this is inert locally unless a developer
+# opts in the same way. Plan 162 Stage 6b.
+filterwarnings = ["error::EncodingWarning"]
 
 [tool.coverage.run]
 source = [

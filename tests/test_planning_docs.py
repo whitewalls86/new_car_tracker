@@ -1072,6 +1072,7 @@ class TestWeeklyRecaps:
             shallow = subprocess.run(
                 ["git", "rev-parse", "--is-shallow-repository"],
                 cwd=REPO_ROOT, capture_output=True, text=True, timeout=30,
+                encoding="utf-8",
             )
         except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
             pytest.skip(f"git is unavailable: {exc}")
@@ -1093,6 +1094,7 @@ class TestWeeklyRecaps:
             ["git", "cat-file", "--batch-check"],
             cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
             input="\n".join(sorted(cited)) + "\n",
+            encoding="utf-8",
         )
         lines = resolved.stdout.splitlines()
         assert len(lines) == len(cited), (

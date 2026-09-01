@@ -63,6 +63,7 @@ def _worker_catalog_env(**host_env) -> dict:
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, f"compose config failed: {result.stderr}"
     doc = yaml.safe_load(result.stdout)

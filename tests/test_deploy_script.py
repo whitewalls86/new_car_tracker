@@ -377,6 +377,7 @@ class TestRedeployScriptContract:
             input=json.dumps(document),
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         out = result.stdout
