@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/public_surface_gate.py\""
+            "command": "sh -c 'f=\"$0\"; [ -f \"$f\" ] || exit 0; if command -v python3 >/dev/null 2>&1; then exec python3 \"$f\"; else exec python \"$f\"; fi' \"$CLAUDE_PROJECT_DIR/scripts/public_surface_gate.py\""
           }
         ]
       }
