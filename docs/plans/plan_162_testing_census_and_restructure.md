@@ -3,7 +3,7 @@
 ## Status
 
 **Stages 0, 1, 2 and 3 are complete (CAR-40, CAR-45, CAR-46 and CAR-47, all
-2026-08-31); Stages 4 and 5 are complete (CAR-48 and CAR-49, both
+2026-08-31); Stages 4, 5 and 5b are complete (CAR-48, CAR-49 and CAR-55, all
 2026-09-01).** The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
@@ -294,6 +294,58 @@ and both `compare_gate_*_parity.py` against Plan 125, and
 `estimate_dictionary_savings.py` against Plan 129 — **six scripts belonging to
 plans that are still open.** Spent is a property of the owning plan's state, not
 of how finished a script looks.
+
+### Stage 10 inherits a question Stage 5b raised and declined
+
+**Scoped 2026-09-01, from a question asked while reviewing Stage 5b's CI
+change. Recorded here rather than acted on, because it is Stage E's subject
+and Stage E already has a rule for it.**
+
+`ci_change_scope.py` classifies the **cumulative** PR diff — `base.sha` to
+`head.sha` — so a documentation commit pushed onto a PR that has already gone
+green re-runs the whole workflow, because the cumulative diff still contains
+the production paths verified two pushes ago. Classifying the *incremental*
+diff instead would skip it.
+
+**The saving is about two minutes** — PR #325's full workflow was 127s wall
+clock after Stage 4. That is the number any design here has to beat, and it is
+small.
+
+**The cost is four conditions, not one diff.** A skip is only sound if all of
+them hold, and three of them are invisible when they do not:
+
+1. **The reference commit must be verified, not merely green.** The previous
+   push may itself have skipped the heavy jobs, so the reference has to be the
+   most recent ancestor where they actually concluded `success` rather than
+   `skipped` — an Actions API walk with `actions: read`, or a marker written
+   when heavy passes and read back later.
+2. **The base must not have moved.** `actions/checkout` builds
+   `refs/pull/N/merge` on a `pull_request` event, so the workflow tests
+   `merge(base, head)` and not `head`. If `master` advances between the
+   verified run and the new push, the merged tree differs even for a
+   documentation-only diff and the earlier verdict does not carry. This is the
+   dangerous one: green, fast, and not verifying the tree being merged.
+3. **Rebases and force-pushes must fail closed**, via an ancestry check rather
+   than a SHA equality that can match a commit no longer on the branch.
+4. **The selection logic needs its own tests**, in Python beside
+   `ci_change_scope.py` rather than in workflow shell, because it is riskier
+   than the path classification it would sit on top of.
+
+**Stage E's rule already decides this, and the answer is not yet.** Promotion
+to job skipping requires an observation window with zero unexplained misses and
+a benefit larger than runner variance; a false negative costs time and a false
+positive suppresses evidence. Incremental gating is a false-positive risk by
+construction. It also weakens exactly what Stage E told it not to: the current
+fast path's proof is strong *because* it is cumulative — "every changed path in
+this PR is under `docs/`" is a claim about a tree, and going incremental turns
+it into a claim about a chain of runs.
+
+**The cheaper target, if Stage 10 wants a win here first, is
+content-addressed skipping for `docker-build`** — key the build on a hash of
+the Dockerfiles, requirements and service sources and reuse the layer cache
+when it matches. That is a claim about content rather than about run history,
+so it carries none of the four conditions above, and `docker-build` is the job
+`promtail-config` waits on.
 
 ### Stage 3 carries a constraint worth knowing before it starts
 
@@ -1362,3 +1414,194 @@ Which inverts the reading of the `scrape_listings` incident above. The 0.18
 points were not an instrument gap to be engineered away. **The instrument was
 working**: it complained because a unit test had been moved out of the job that
 measures unit tests, and it was right to.
+
+### Evidence — Stage 5b, separating production scripts from spent ones (CAR-55), 2026-09-01
+
+**Fourteen scripts and seven test files moved, as renames.** `scripts/oneoff/`
+holds the work whose owning plan has archived; `tests/scripts/oneoff/` mirrors
+it. Everything else stayed at `scripts/`, and `git log --follow` carries the
+history rather than a manifest recording it. Shipped in `e954306`, PR #325.
+
+| | before | after |
+|---|---|---|
+| Statements in the denominator | 19,733 | **13,588** |
+| Reported coverage | 75.91% | **77.66%** |
+| `--cov-fail-under` | 74 | **75** |
+
+[Run 33474748500](https://github.com/whitewalls86/new_car_tracker/actions/runs/33474748500),
+all ten jobs green in 127s: `Required test coverage of 75% reached. Total
+coverage: 77.66%`, with `Documentation tests` the only skip — which is the
+correct classification for a branch that touches production paths, and the
+first exercise of the new `heavy` gate.
+
+**Linux and this checkout read the same number**, 13,588 statements and 3,035
+missed on both. Stage 2 found seven statements that differed between Linux and
+Windows and set the floor two points low to absorb them; that spread did not
+appear here, and the two points of headroom carried forward on the same
+reasoning rather than on a new measurement.
+
+#### The classification needed a third step the design did not name
+
+The stage's design section above says the bucket falls out of a join —
+docstring plan number against `completed_plans.md`, overridden by the
+binding-reference grep. That is two of the three steps actually required.
+
+**Nine Python scripts declare no plan, not five.** Four beyond the design's
+list — `diff_log_analysis.py`, `estimate_recompression_savings.py`,
+`recompress_bronze_html.py` and `rewrite_parquet_layout.py` — so the residual
+the design called "four files to read" was really nine.
+
+**What closed the gap was a reverse join: the script's own name, grepped back
+through the archive and every plan document.** It settled six of the nine with
+no judgement at all. `estimate_recompression_savings.py` is the clearest case —
+Plan 116's archive row names the script outright, so the archive already
+contained the answer, read from the other end. Only three files
+(`backfill_unlisted_silver.py`, `diff_semantic_duplicate_html.py`,
+`audit_normalized_parquet_layout_once.py`) were genuinely read by hand.
+
+**The reverse join belongs in the method, not only in this section.** A script
+that declares its plan is the easy case; a script that does not is exactly the
+one whose classification a future reader will have to reconstruct, and the
+archive is where the answer already lives.
+
+#### Three claims in the design section above were wrong
+
+Recorded rather than quietly fixed, because the stage's own thesis is that an
+unasserted claim goes false without anyone noticing.
+
+**"No deploy surface is edited" is wrong by one.** `docker-compose.yml`
+defines a profile-gated `april-processor` service whose documented invocation
+is `python -m scripts.reconcile_april_detail`. One comment line was edited. The
+20-reference count across 11 surfaces also missed four:
+`docker-compose.lakehouse.a3.yml`, `maintenance-running-set.txt`,
+`healthcheck-exemptions.txt`, and `.claude/settings.json`, which is what binds
+`public_surface_gate.py` through a `PreToolUse` hook.
+
+**There are 39 Python scripts, not 35.**
+
+**`scripts/ops/` found no members and was not created.** The maintenance
+bucket's rule was "human-invoked, durable, named in a live runbook", and
+`host_maintenance.py` is the only script that satisfies it — but
+`ops/routers/coordination.py:14` does `from scripts.host_maintenance import
+HOST_VALIDATION_GATES` at module import, so the binding-reference override
+keeps it in production. Shipped as a two-bucket split. The third bucket is not
+deferred; it was dissolved by the same kind of override that dissolved the
+coupling finding, and a future script that is durable, human-invoked and
+imported by nothing can revive it.
+
+#### The coupling finding ran the other way a second time
+
+The design section records a coupling worry that the archive join dissolved:
+two production scripts importing scripts that *looked* spent, where the owning
+plans turned out to be open. The inverse case is the one it did not anticipate.
+
+`lake_snapshot_common.py` and `seed_lake_snapshot.py` both belong to Plan 120,
+which **is** archived, and neither is invoked by a workflow step. The stated
+rule — archived owning plan, no binding reference — puts both in `oneoff/`.
+They are imported by `download_lake_snapshot.py`, which an ops route documents,
+and by `preflight_local_lakehouse_snapshot.py`, which a Compose file names. So
+**a full import walk, not the reference grep alone, is what keeps them in
+production**; the rule as written would have moved them and broken two
+production imports. Nothing in the shipped split crosses a bucket boundary,
+verified in both directions across all 39 scripts.
+
+#### Three repairs found on the way
+
+**`verify_testing_contract_mutations.py` could not run at all.** Stage 5 closed
+G4 and deleted its row, and reworded G14 from "54 of 76" to "56 of 76", leaving
+three mutations anchored on text that no longer existed. The script aborted on
+its own staleness guard before reaching them — **the identical failure this
+plan already records against Stage 1**, where Stage 1's deletions stranded
+mutations on the removed G1 and G2 rows. Re-anchored to G6 and G14 as written.
+The guard worked twice; what has not been established is a habit of running the
+verifier after deleting a gap row.
+
+**Two moved test files anchored their paths by counting parents.**
+`test_audit_sectioned_html_storage.py` computed a fixture directory as
+`__file__.parent.parent` and broke outright, twelve failures.
+`test_estimate_recompression_savings.py` was the worse of the two: its
+subprocess cases pass `cwd=Path(__file__).parents[2]` and assert only
+`returncode != 0`, so "the script is not where I looked" and "argparse
+rejected the flags" are the same result — a wrong `cwd` would have left both
+cases **passing for the wrong reason**, invisibly. Both now resolve `tests/` by
+name.
+
+**One markdown link, and the line it drew.** Historical documents were
+deliberately not rewritten: a prose mention of `scripts/x.py` inside an
+archived plan records where the file sat when that plan ran, and editing it
+manufactures history. A markdown *link* is a different object — it is a promise
+that the target resolves, and `test_no_markdown_link_in_docs_is_dangling`
+asserts it. One link in `plan_147_scrape_state_ownership.md` was repointed and
+the prose around it left alone. Code, config and the two Plan 145 runbooks were
+rewritten because they have to execute.
+
+#### What the contract gained
+
+Two assertions, both proven able to fail by new entries in the mutation
+verifier, which now catches 23 of 23:
+
+- `test_every_script_directory_is_classified` — both directions: a script
+  directory the contract places nowhere, and a bucket the contract describes
+  that does not exist.
+- `test_every_unmeasured_script_bucket_is_omitted_from_coverage` — the prose
+  and `[tool.coverage.run] omit` are one statement. The dangerous direction is
+  the second: a bucket coverage omits while the contract calls it measured is
+  code that silently stopped being graded.
+
+`docs/TESTING.md` gained a *Where scripts sit* section and one row in *Where
+the newer suites sit*. One row rather than two, because one new test directory
+exists. `test_every_test_directory_is_assigned_a_layer` would in fact have been
+satisfied without it — `_layer_of` inherits from the nearest declared ancestor,
+so `tests/scripts/oneoff/` reads as Layer 1 through `tests/scripts/` — and the
+row was added anyway, because a bucket that exists to be classified should say
+its own layer rather than inherit one.
+
+#### The CI zones compose, which was a second pass
+
+`ci_change_scope.py` first shipped here with two mutually exclusive scopes,
+`docs_only` and `oneoff_only`, and a changeset spanning both fell through to
+the full workflow — a spent script edited alongside the note explaining why,
+which is an ordinary shape of change in this repository and the one the
+classifier helped with least.
+
+It now maps a changeset to the job groups it needs, and the zones compose:
+
+| changeset | `docs_tests` | `unit` | `heavy` |
+|---|---|---|---|
+| `docs/` only | yes | -- | -- |
+| `scripts/oneoff/` only | -- | yes | -- |
+| both | -- | yes | -- |
+| anything unclassified | -- | yes | yes |
+| empty, malformed, or no base sha | -- | yes | yes |
+
+`docs_tests` fires only when the unit suite is not running, because
+`pytest tests/` already contains `test_planning_docs.py` — the documentation
+job is a substitute for the unit run, never an addition to it. Moving the
+decision into the classifier also took the double negative out of six job
+conditions, which now read `needs.changes.outputs.heavy == 'true'`.
+
+**Fail-open is stated once.** The workflow's shell defaults are `unit=true
+heavy=true`, and every path that fails to classify leaves them standing.
+`test_paths_in_neither_zone_can_never_narrow_the_run` asserts that as a
+property over every mixture of zones, comparing against the whole decision row
+rather than the `heavy` flag alone.
+
+The question this raised and declined — classifying the incremental diff rather
+than the cumulative one — is scoped for Stage 10
+[above](#stage-10-inherits-a-question-stage-5b-raised-and-declined).
+
+#### What was deliberately not done
+
+- **`tests/integration/scripts/` was not split**, though all three of its files
+  are Plan 145's. `test_every_integration_suite_is_invoked_by_a_ci_step`
+  derives the invoked set from the literal path in each `ci.yml` step, so a new
+  subdirectory would have needed its own step or a `DORMANT_SUITES` entry —
+  cost for no coverage benefit, since the integration jobs are not what the
+  ratchet measures.
+- **`verify_testing_contract_mutations.py` stayed at `scripts/`** although
+  Plan 161 has archived. Plan 162 edits it, and this stage edited it twice. The
+  rule "the owning plan archived" is beaten by "an open plan maintains it",
+  which is the one place the archive join needed a human answer rather than a
+  better query.
+- **`docs/PLANS.md` was moved through the `plans` skill**, not edited here.
+  Row 1 keeps its build-order position; only its slice pointer advanced.
