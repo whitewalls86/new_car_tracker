@@ -367,13 +367,26 @@ body, which is fine, but check.
 
 ```bash
 LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
+python scripts/build_public_recaps.py
 git status --short
 ```
 
-`git status` must show **only** the new file under `docs/recaps/`. If
-`docs/PLANS.md`, `docs/planning/completed_plans.md` or any plan document is
-modified, you have crossed the boundary this skill exists to hold — revert it
-and report what happened.
+**Regenerating is part of writing a recap, not a separate chore.** Plan 138
+Stage 1e renders `docs/recaps/` to static HTML under `ops/static_ops/recaps/`,
+and CI's `--check` fails on a recap that was written but never projected. That
+failure arrives on the next pull request, belonging to whoever opened it rather
+than to the week that caused it. Regenerate here, where the input just changed
+and the marker you set is the reason the output looks the way it does.
+
+A recap marked `**Publish:** false` produces no page, so on an empty week the
+command will correctly write nothing new.
+
+`git status` must show **only** the new file under `docs/recaps/` and whatever
+the generator wrote under `ops/static_ops/recaps/`. If `docs/PLANS.md`,
+`docs/planning/completed_plans.md` or any plan document is modified, you have
+crossed the boundary this skill exists to hold — revert it and report what
+happened. The projection is generated output, not state: it is the one thing
+outside `docs/recaps/` this skill may write, and only by running that command.
 
 Then report, briefly:
 
@@ -395,5 +408,8 @@ Then report, briefly:
 - **write anywhere under `docs/` except `docs/recaps/`.** Not `PLANS.md`, and
   not the decision log — the log holds decisions, recaps hold events, and one
   week described in two places is the duplication Plan 146 removed.
+- **hand-edit anything under `ops/static_ops/recaps/`.** That directory is
+  generated, and the only way this skill may touch it is by running
+  `scripts/build_public_recaps.py`.
 - **grow a list of special cases.** If a commit seems to need an exception, the
   rule is wrong. Fix the rule or record the gap in the recap.
