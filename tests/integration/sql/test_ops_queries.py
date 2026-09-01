@@ -199,12 +199,7 @@ class TestDeployIntentQueries:
         assert row is not None
 
     def test_release_intent(self, cur):
-        cur.execute("""
-            UPDATE deploy_intent
-            SET intent = 'none', requested_at = NULL, requested_by = NULL
-            WHERE id = 1
-            RETURNING intent
-        """)
+        cur.execute(CLEAR_DEPLOY_INTENT)
         row = cur.fetchone()
         assert row is not None
 
@@ -218,7 +213,7 @@ class TestAuthQueries:
     def test_auth_check_lookup(self, cur, seed_authorized_user):
         _user_id, email_hash = seed_authorized_user
         cur.execute(
-            "SELECT role FROM authorized_users WHERE email_hash = %s",
+            SELECT_USER_ROLE,
             (email_hash,),
         )
         row = cur.fetchone()
@@ -226,7 +221,7 @@ class TestAuthQueries:
 
     def test_auth_check_miss(self, cur):
         cur.execute(
-            "SELECT role FROM authorized_users WHERE email_hash = %s",
+            SELECT_USER_ROLE,
             ("nonexistent_hash",),
         )
         row = cur.fetchone()
@@ -240,41 +235,32 @@ class TestAuthQueries:
 class TestUserManagementQueries:
 
     def test_list_authorized_users(self, cur):
-        cur.execute("""
-            SELECT id, email_hash, role, display_name, created_at
-            FROM authorized_users ORDER BY role, created_at
-        """)
+        cur.execute(SELECT_AUTHORIZED_USERS)
         rows = cur.fetchall()
         assert isinstance(rows, list)
 
     def test_update_user_role(self, cur, seed_authorized_user):
         user_id, _hash = seed_authorized_user
         cur.execute(
-            "UPDATE authorized_users SET role = %s WHERE id = %s",
+            UPDATE_USER_ROLE,
             ("observer", user_id),
         )
         assert cur.rowcount == 1
 
     def test_revoke_user(self, cur, seed_authorized_user):
         user_id, _hash = seed_authorized_user
-        cur.execute("DELETE FROM authorized_users WHERE id = %s", (user_id,))
+        cur.execute(DELETE_AUTHORIZED_USER, (user_id,))
         assert cur.rowcount == 1
 
     def test_list_access_requests(self, cur):
-        cur.execute("""
-            SELECT id, email_hash, display_name, requested_role, requested_at, status,
-                   resolved_at, resolved_by
-            FROM access_requests
-            ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, requested_at DESC
-        """)
+        cur.execute(SELECT_ACCESS_REQUESTS)
         rows = cur.fetchall()
         assert isinstance(rows, list)
 
     def test_get_pending_request_details(self, cur, seed_access_request):
         req_id, _hash = seed_access_request
         cur.execute(
-            """SELECT email_hash, requested_role, display_name, notification_email
-               FROM access_requests WHERE id = %s AND status = 'pending'""",
+            SELECT_PENDING_REQUEST_DETAILS,
             (req_id,),
         )
         row = cur.fetchone()
@@ -285,18 +271,12 @@ class TestUserManagementQueries:
         admin_hash = "admin_approver_hash"
         # Upsert into authorized_users
         cur.execute(
-            """INSERT INTO authorized_users (email_hash, role, display_name, created_by)
-               VALUES (%s, %s, %s, %s)
-               ON CONFLICT (email_hash) DO UPDATE
-                   SET role = EXCLUDED.role, created_by = EXCLUDED.created_by""",
+            UPSERT_AUTHORIZED_USER,
             (email_hash, "viewer", "Approved User", admin_hash),
         )
         # Update request status
         cur.execute(
-            """UPDATE access_requests
-               SET status = 'approved', resolved_at = now(), resolved_by = %s,
-                   notification_email = NULL
-               WHERE id = %s""",
+            APPROVE_ACCESS_REQUEST,
             (admin_hash, req_id),
         )
         assert cur.rowcount == 1
@@ -304,10 +284,7 @@ class TestUserManagementQueries:
     def test_deny_access_request(self, cur, seed_access_request):
         req_id, _hash = seed_access_request
         cur.execute(
-            """UPDATE access_requests
-               SET status = 'denied', resolved_at = now(), resolved_by = %s,
-                   notification_email = NULL
-               WHERE id = %s AND status = 'pending'""",
+            DENY_ACCESS_REQUEST,
             ("admin_hash", req_id),
         )
         assert cur.rowcount == 1
@@ -315,9 +292,7 @@ class TestUserManagementQueries:
     def test_check_pending_access_request(self, cur, seed_access_request):
         _req_id, email_hash = seed_access_request
         cur.execute(
-            "SELECT status FROM access_requests"
-            " WHERE email_hash = %s AND status = 'pending'"
-            " ORDER BY requested_at DESC LIMIT 1",
+            SELECT_PENDING_REQUEST_FOR_EMAIL,
             (email_hash,),
         )
         row = cur.fetchone()
@@ -326,9 +301,7 @@ class TestUserManagementQueries:
     def test_insert_access_request(self, cur):
         email_hash = f"newhash_{uuid.uuid4().hex[:12]}"
         cur.execute(
-            """INSERT INTO access_requests
-                   (email_hash, requested_role, display_name, notification_email)
-               VALUES (%s, %s, %s, %s)""",
+            INSERT_ACCESS_REQUEST,
             (email_hash, "observer", "New User", None),
         )
         assert cur.rowcount == 1
@@ -336,8 +309,7 @@ class TestUserManagementQueries:
     def test_get_notification_email(self, cur, seed_access_request):
         req_id, _hash = seed_access_request
         cur.execute(
-            """SELECT notification_email FROM access_requests
-               WHERE id = %s AND status = 'pending'""",
+            SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL,
             (req_id,),
         )
         row = cur.fetchone()
