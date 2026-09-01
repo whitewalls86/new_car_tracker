@@ -2234,10 +2234,32 @@ publishes on `git pull` and that `redeploy.sh ops` is the wrong tool for it, and
 the `plans` skill's note on the slice cell — already the one place that knew the
 cell is published copy — now says the edit reaches the page on the next pull.
 
-**Public surfaces: no mechanism, name or quantity either surface states was
-changed by this work.** The move is internal; `/static_ops/project-updates.json`
-became `/static_ops/generated/project-updates.json`, which is a fetch URL inside
-the page rather than a claim the page makes.
+**Public surfaces: yes, and small — and the first answer here was wrong.** This
+section originally recorded a "no", reasoning that the move is internal and that
+`/static_ops/project-updates.json` becoming `/static_ops/generated/project-updates.json`
+is a fetch URL rather than a claim. Both halves of that are true and the
+conclusion was still wrong, because it only looked at the two files.
+
+The closeout's question found the surface the diff does not touch. `docs/PLANS.md`
+row 3's **Next executable slice** cell is published copy — 1h's evidence above
+records exactly that — and it read *"gives Stage 1e's 20 generated pages a URL"*.
+That is the unreachability claim this slice disproved, rendered into
+`#work-planned` on the live page. The cell was corrected through the `plans`
+skill and the projection regenerated.
+
+**The near miss is the point.** The wrong answer was not careless: it checked
+`README.md` and `ops/templates/info.html`, which is what the question names, and
+the false claim was on neither. It was in a generated projection *of* a file this
+slice edited. A surface can be moved by a build step two hops away from the diff.
+
+**Closed out 2026-09-01 against PR #337**, four commits, CI green across ten
+jobs. `Documentation tests` skipped, correctly: `scripts/ci_change_scope.py`
+routes a code-touching changeset to the unit job, where both generators'
+`--check` and committed-artifact assertions already run — checked rather than
+assumed, because those two `--check` steps exist only in the skipped job.
+
+**Six of seven exit checks met.** Gate 7's runtime half is owed to the deploy and
+is the only thing between this slice and `Done`. Cost: estimate 1, actual 1.
 
 
 ---
