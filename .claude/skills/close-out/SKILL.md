@@ -67,8 +67,14 @@ Present, in this order:
    below it, so ask it before you write that text.
 4. **The plan document edit**, as the exact text you propose to add and where.
 5. **The `PLANS.md` consequence**, chosen from:
-   - **nothing** — the slice is done, the plan continues. *This is the common
-     case and should be proposed without apology.*
+   - **nothing** — the slice is done, the plan continues, and the row's
+     **Next executable slice** cell still names something true. *This is the
+     common case and should be proposed without apology.*
+   - **the slice pointer moves, the plan does not** — the row stays where it
+     is and its slice cell now names the wrong next step. Propose the exact
+     replacement text. **This is not a lesser version of "nothing"**: that cell
+     is published copy on the landing page, so it is `plans` operation 5 and it
+     goes through that skill like any other `PLANS.md` edit.
    - **build order → closeout** — deployed, evidence pending. Needs a `Lands`
      date and a gate, and neither is yours to invent.
    - **closeout → archive** — the gate closed. Needs the archive description
@@ -236,10 +242,15 @@ Only after approval, and only what was approved.
    then stages a surface, so `public_surface_gate.py` blocks it until
    `public-surface-check` has read the diff and stamped it. Run that skill; do
    not bypass the hook.
-3. **`docs/PLANS.md`, via the `plans` skill** — only if phase 2 proposed a
-   transition and the user approved it. Pass the approved values through and
-   tell that skill they were approved in the open session, with their source.
-   Never edit `PLANS.md` directly from here.
+3. **`docs/PLANS.md`, via the `plans` skill** — for a transition *or* a
+   slice-pointer update, whichever phase 2 proposed and the user approved. Pass
+   the approved values through and tell that skill they were approved in the
+   open session, with their source. **Never edit `PLANS.md` directly from
+   here**, and that includes a one-cell pointer edit: `plans` is where this
+   repository keeps the fact that the build order's top four rows are published
+   through `ops/static_ops/project-updates.json`, along with the regeneration
+   step and the check that proves it. An edit made from here reaches none of
+   that.
 4. **Linear** — set the issue to `Done`, post the closeout comment. Leave the
    estimate alone.
 

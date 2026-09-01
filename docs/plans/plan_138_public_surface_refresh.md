@@ -1576,14 +1576,41 @@ minutes before this slice started, so its closeout ran without the step. The
 the likely one**, since it moves the public root and the recap routes and both
 surfaces make claims about what is reachable and what requires authentication.
 
-**What the question caught anyway.** Running it by hand surfaced a gap in its
-own scope: this closeout's `docs/PLANS.md` slice cell is **published copy** —
-Plan 138 sits at build-order row 3, inside the generator's `MAX_ITEMS = 4`, so
-the cell becomes the `summary` field in `ops/static_ops/project-updates.json`
-and is served from the landing page. The step watches `README.md` and
-`ops/templates/info.html` only. **Stage 1d created a third public channel that
-neither 1c's gate nor 1h's question covers**, and closing that is not this
-slice's to do.
+**What the question caught anyway, and the gap was narrower than "nobody
+knew".** Running it by hand surfaced that this closeout's `docs/PLANS.md` slice
+cell is **published copy** — Plan 138 sits at build-order row 3, inside the
+generator's `MAX_ITEMS = 4`, so the cell becomes the `summary` field in
+`ops/static_ops/project-updates.json` and is served from the landing page.
+
+The first reading was that nothing covered it. That was wrong, and the truth is
+worse: **the `plans` skill states the fact exactly** — *"The build order's Next
+executable slice cell is the published summary for a planned plan, so a one-cell
+edit changes public copy"* — and carries the regeneration step and the check
+beside it. It simply had **no operation that edits that cell**. Its four were
+move, add a closeout row, archive, and record a soak. Meanwhile `close-out`
+routed `PLANS.md` to `plans` *only for a transition*, and its own Phase 2 menu
+offered nothing / → closeout / → archive / → superseded — no entry for "the
+pointer moves and the plan does not."
+
+So the pointer update fell through the seam: written from the skill that did not
+know it was publishing, never reaching the skill that did. Two correct
+documents, neither wrong on its own, with the case living between them. **That
+is the same shape as the drift this whole plan exists to remove**, one level up
+— a claim standing still while the thing it describes moved.
+
+**Closed in the same session it was found.** `plans` gained operation 5,
+*Update a plan's next executable slice*, so the edit now lands where the
+publication fact and its `--check` already live; its frontmatter and its
+"never author mid-transition" rule name slice pointers alongside gates and soak
+results.
+`close-out`'s Phase 2 menu gained the missing fifth option, and its Phase 3 now
+routes **every** `PLANS.md` edit through `plans`, one-cell pointer edits
+included. The publication rule was not copied into `close-out` — two copies of
+it is how they would drift apart.
+
+**1h's own question still does not cover the channel**, and should not: it is
+scoped to the two surfaces this plan owns. The projection is Stage 1d's, and it
+is now covered by the skill that writes it.
 
 **Public surfaces: no mechanism, name or quantity either surface states was
 changed by this work** — the diff is one skill file, this plan document,
