@@ -22,6 +22,11 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from archiver.queries import (
+    DELETE_SILVER_OBSERVATIONS_UP_TO_ID,
+    SELECT_MAX_SILVER_OBSERVATION_ID,
+    SELECT_SILVER_OBSERVATIONS_UP_TO_ID,
+)
 from shared.db import get_conn
 from shared.minio import BUCKET, get_s3fs
 
@@ -135,7 +140,7 @@ def flush_silver_observations() -> Dict[str, Any]:
     try:
         # 1. Snapshot boundary
         with conn.cursor() as cur:
-            cur.execute("SELECT MAX(id) FROM staging.silver_observations")
+            cur.execute(SELECT_MAX_SILVER_OBSERVATION_ID)
             max_id = cur.fetchone()[0]
 
         if max_id is None:
@@ -146,8 +151,7 @@ def flush_silver_observations() -> Dict[str, Any]:
         cols_sql = ", ".join(_DB_COLUMNS)
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT {cols_sql} FROM staging.silver_observations"  # noqa: S608
-                f" WHERE id <= %s ORDER BY id",
+                SELECT_SILVER_OBSERVATIONS_UP_TO_ID.format(columns=cols_sql),
                 (max_id,),
             )
             raw_rows = cur.fetchall()
@@ -195,9 +199,7 @@ def flush_silver_observations() -> Dict[str, Any]:
 
         # 5. Delete flushed rows
         with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM staging.silver_observations WHERE id <= %s", (max_id,)
-            )
+            cur.execute(DELETE_SILVER_OBSERVATIONS_UP_TO_ID, (max_id,))
             deleted = cur.rowcount
         conn.commit()
 

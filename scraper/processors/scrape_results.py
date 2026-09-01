@@ -20,6 +20,7 @@ from scraper.processors.cf_session import (
     make_cf_session,
 )
 from scraper.processors.fingerprint import human_delay, random_zip
+from scraper.queries import ENQUEUE_RESULTS_ARTIFACT, INSERT_RESULTS_ARTIFACT_EVENT
 
 logger = logging.getLogger(__name__)
 
@@ -313,22 +314,12 @@ def _fetch_page(url: str,
 
         with db_cursor(error_context="scrape_results: insert artifacts_queue") as cur:
             cur.execute(
-                """
-                INSERT INTO ops.artifacts_queue
-                    (minio_path, artifact_type, run_id,
-                     fetched_at, status, search_key)
-                VALUES (%s, 'results_page', %s, %s, 'pending', %s)
-                RETURNING artifact_id
-                """,
+                ENQUEUE_RESULTS_ARTIFACT,
                 (minio_path, run_id or None, fetched_at, search_key),
             )
             queue_artifact_id = cur.fetchone()[0]
             cur.execute(
-                """
-                INSERT INTO staging.artifacts_queue_events
-                    (artifact_id, status, minio_path, artifact_type, fetched_at, run_id)
-                VALUES (%s, 'pending', %s, 'results_page', %s, %s)
-                """,
+                INSERT_RESULTS_ARTIFACT_EVENT,
                 (queue_artifact_id, minio_path, fetched_at, run_id or None),
             )
     except Exception as _minio_err:

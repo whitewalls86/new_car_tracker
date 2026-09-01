@@ -29,6 +29,11 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from archiver.queries import (
+    DELETE_STAGING_ROWS_UP_TO_PK,
+    SELECT_STAGING_MAX_PK,
+    SELECT_STAGING_ROWS_UP_TO_PK,
+)
 from shared.db import get_conn
 from shared.minio import BUCKET, get_s3fs
 
@@ -321,7 +326,7 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
     try:
         # 1. Establish snapshot boundary
         with conn.cursor() as cur:
-            cur.execute(f"SELECT MAX({pk}) FROM {table}")  # noqa: S608
+            cur.execute(SELECT_STAGING_MAX_PK.format(pk=pk, table=table))
             max_pk = cur.fetchone()[0]
 
         if max_pk is None:
@@ -332,7 +337,7 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
         cols_sql = ", ".join(db_columns)
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT {cols_sql} FROM {table} WHERE {pk} <= %s ORDER BY {pk}",  # noqa: S608
+                SELECT_STAGING_ROWS_UP_TO_PK.format(columns=cols_sql, table=table, pk=pk),
                 (max_pk,),
             )
             raw_rows = cur.fetchall()
@@ -381,7 +386,7 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
         # 5. Delete flushed rows
         with conn.cursor() as cur:
             cur.execute(
-                f"DELETE FROM {table} WHERE {pk} <= %s",  # noqa: S608
+                DELETE_STAGING_ROWS_UP_TO_PK.format(table=table, pk=pk),
                 (max_pk,),
             )
             deleted = cur.rowcount

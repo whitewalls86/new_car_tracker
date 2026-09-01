@@ -6,6 +6,7 @@ DB with Flyway migrations applied. The goal is to catch schema breakage (column
 renames, dropped tables, type mismatches) — not to validate business logic.
 """
 import ast
+import json
 import uuid
 from pathlib import Path
 
@@ -13,10 +14,54 @@ import pytest
 
 from ops import coordination_drain
 from ops.queries import (
+    ACQUIRE_COORDINATION_LOCK,
+    ADVANCE_COORDINATION_STATE,
+    APPROVE_ACCESS_REQUEST,
+    AUTHORIZE_COORDINATION_STATE,
+    CANCEL_COORDINATION_STATE,
+    CLAIM_DETAIL_SCRAPE_BATCH,
+    CLEAR_DEPLOY_INTENT,
+    COMPLETE_COORDINATION_STATE,
+    DELETE_AUTHORIZED_USER,
+    DELETE_DETAIL_SCRAPE_CLAIMS,
+    DENY_ACCESS_REQUEST,
+    INSERT_ACCESS_REQUEST,
     INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH,
+    INSERT_COMPLETION_RECEIPT,
+    INSERT_COORDINATION_RELEASE_EVIDENCE,
+    INSERT_COORDINATION_STATE_EVENT,
+    MARK_ROTATION_SLOT_QUEUED,
+    MARK_SEARCH_CONFIG_QUEUED,
+    RECORD_DETAIL_FETCHES,
+    RELEASE_COORDINATION_STATE,
+    RELEASE_DEPLOY_COORDINATION,
+    REQUEST_COORDINATION_STATE,
+    REQUEST_DEPLOY_COORDINATION,
+    SELECT_ACCESS_REQUESTS,
+    SELECT_AUTHORIZED_USERS,
+    SELECT_COMPLETION_RECEIPT,
+    SELECT_COORDINATION_STATE,
+    SELECT_COORDINATION_STATE_ACTOR,
+    SELECT_COORDINATION_STATE_FOR_DEPLOY,
+    SELECT_COORDINATION_STATE_KIND,
     SELECT_COORDINATION_STATE_METRICS,
+    SELECT_DEPLOY_INTENT_STATUS,
+    SELECT_LAST_QUEUED_AT,
+    SELECT_LEGACY_SEARCH_CONFIG,
+    SELECT_NEXT_ROTATION_SLOT,
+    SELECT_PENDING_REQUEST_DETAILS,
+    SELECT_PENDING_REQUEST_FOR_EMAIL,
+    SELECT_PENDING_REQUEST_ID_FOR_EMAIL,
+    SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL,
+    SELECT_RELEASE_EVIDENCE,
+    SELECT_ROTATION_SLOT_CONFIGS,
     SELECT_USER_ROLE,
+    SET_DEPLOY_INTENT,
+    UPDATE_USER_ROLE,
+    UPSERT_AUTHORIZED_USER,
 )
+from ops.routers.coordination import _TRANSITIONS, COORDINATION_LOCK_ID
+from ops.routers.deploy import STALE_LOCK_MINUTES
 
 pytestmark = pytest.mark.integration
 
@@ -615,3 +660,410 @@ class TestExtractedOpsStatements:
             [(str(uuid.uuid4()), "cleared", 3)],
         )
         assert cur.rowcount == 1
+
+
+# ===========================================================================
+# ops/routers/*.py — Plan 162 Stage 7
+#
+# The four routers held 49 statements at their .execute() call sites, which no
+# test could import and so no test could execute. They are .sql files now, and
+# these four classes run them. Every constant below comes from ops.queries --
+# the module the routers themselves import -- so a column renamed underneath
+# production fails here rather than passing against a copy.
+# ===========================================================================
+
+def _column_names(cur) -> list[str]:
+    """The result columns in the order the server returned them.
+
+    Order matters to two of these statements: deploy.py reads its coordination
+    row positionally.
+    """
+    return [description[0] for description in cur.description]
+
+
+def _open_coordination_request(cur, kind: str = "host_maintenance") -> int:
+    """Move the singleton row out of 'none' so a transition has somewhere to go.
+
+    coordination_state carries a CHECK tying phase to kind/targets/scope: a
+    phase other than 'none' requires all three to be populated. Every
+    transition statement below therefore needs a real request first, which is
+    also how production reaches them.
+    """
+    cur.execute(
+        REQUEST_COORDINATION_STATE,
+        (
+            kind,
+            json.dumps(["host"]),
+            json.dumps(["host"]),
+            "layer-2-test",
+            "Plan 162 Stage 7 smoke test",
+            json.dumps([]),
+            None,
+            None,
+        ),
+    )
+    return cur.fetchone()["generation"]
+
+
+class TestCoordinationStatements:
+    """ops/routers/coordination.py — the Plan 142 state machine."""
+
+    def test_acquire_coordination_lock(self, cur):
+        cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+        # pg_advisory_xact_lock returns void; the row proves it was taken, and
+        # the fixture's rollback releases it.
+        assert _column_names(cur) == ["pg_advisory_xact_lock"]
+
+    def test_select_coordination_state(self, cur):
+        cur.execute(SELECT_COORDINATION_STATE)
+        row = cur.fetchone()
+        # V043 seeds the singleton, so this reads a real row rather than
+        # proving only that the statement parses.
+        assert row is not None
+        assert set(row) == {
+            "kind",
+            "phase",
+            "generation",
+            "requested_by",
+            "reason",
+            "targets",
+            "scope",
+            "requested_at",
+            "draining_at",
+            "active_at",
+            "validating_at",
+            "completed_at",
+            "expected_work",
+            "manifest_location",
+            "operator_notes",
+            "updated_at",
+        }
+
+    def test_the_two_confirming_reads_stay_different_widths(self, cur):
+        """The 4-column and 3-column reads are near-duplicates, on purpose.
+
+        /request has no prior actor to attribute, so it does not select
+        requested_by. Consolidating them would widen one of the two.
+        """
+        cur.execute(SELECT_COORDINATION_STATE_ACTOR)
+        assert _column_names(cur) == ["phase", "generation", "kind", "requested_by"]
+        cur.execute(SELECT_COORDINATION_STATE_KIND)
+        assert _column_names(cur) == ["phase", "generation", "kind"]
+
+    def test_insert_coordination_state_event(self, cur):
+        cur.execute(
+            INSERT_COORDINATION_STATE_EVENT,
+            (1, "none", "requested", "deploy", "layer-2-test"),
+        )
+        assert cur.rowcount == 1
+
+    def test_insert_coordination_release_evidence(self, cur):
+        cur.execute(
+            INSERT_COORDINATION_RELEASE_EVIDENCE,
+            (
+                1,
+                "layer-2-test",
+                json.dumps({"preflight": {"verdict": "pass", "reason": "smoke"}}),
+                json.dumps({"preflight": "0" * 64, "manifest": "1" * 64}),
+            ),
+        )
+        assert set(cur.fetchone()) == {"evidence_id", "submitted_at"}
+
+    def test_select_release_evidence(self, cur):
+        # generation 0 is never issued -- V045 requires generation >= 1 -- so
+        # this asserts the statement's shape against the real table.
+        cur.execute(SELECT_RELEASE_EVIDENCE, (0,))
+        assert cur.fetchall() == []
+
+    def test_request_coordination_state_bumps_the_generation(self, cur):
+        cur.execute(SELECT_COORDINATION_STATE_ACTOR)
+        before = cur.fetchone()["generation"]
+        assert _open_coordination_request(cur) == before + 1
+
+    def test_every_transition_names_a_real_timestamp_column(self, cur):
+        """All four _TRANSITIONS values, in the order production walks them.
+
+        {timestamp_column} is interpolated rather than bound because it names a
+        column, so nothing but this test proves the four names exist. Running
+        them in sequence from a fresh request is also the only order the
+        phase/kind CHECK permits.
+        """
+        _open_coordination_request(cur)
+        for operation, (_, target, timestamp_column) in _TRANSITIONS.items():
+            if target == "none":
+                statement = RELEASE_COORDINATION_STATE.format(
+                    timestamp_column=timestamp_column
+                )
+                cur.execute(statement)
+            else:
+                statement = ADVANCE_COORDINATION_STATE.format(
+                    timestamp_column=timestamp_column
+                )
+                cur.execute(statement, (target,))
+            assert cur.fetchone() is not None, operation
+        cur.execute(SELECT_COORDINATION_STATE_ACTOR)
+        assert cur.fetchone()["phase"] == "none"
+
+    def test_complete_holds_the_generation_and_cancel_bumps_it(self, cur):
+        """The one difference between two otherwise identical statements.
+
+        complete_coordination_state.sql must not bump: the completion receipt
+        is written against the generation that just finished.
+        """
+        generation = _open_coordination_request(cur)
+        cur.execute(COMPLETE_COORDINATION_STATE)
+        assert cur.fetchone()["generation"] == generation
+
+        generation = _open_coordination_request(cur)
+        cur.execute(CANCEL_COORDINATION_STATE)
+        assert cur.fetchone()["generation"] == generation + 1
+
+    def test_completion_receipt_round_trip(self, cur):
+        digest = uuid.uuid4().hex + uuid.uuid4().hex  # V046 requires 64 chars
+        cur.execute(SELECT_COMPLETION_RECEIPT, (1, digest))
+        assert cur.fetchone() is None
+        cur.execute(INSERT_COMPLETION_RECEIPT, (1, digest))
+        cur.execute(SELECT_COMPLETION_RECEIPT, (1, digest))
+        assert cur.fetchone()["generation"] == 1
+
+    def test_authorize_coordination_state_refuses_a_stale_generation(self, cur):
+        generation = _open_coordination_request(cur)
+        cur.execute(
+            ADVANCE_COORDINATION_STATE.format(timestamp_column="draining_at"),
+            ("draining",),
+        )
+        assert cur.fetchone() is not None
+        cur.execute(AUTHORIZE_COORDINATION_STATE, (generation,))
+        assert cur.rowcount == 1
+        # The row is 'active' now, so the same authorization matches nothing.
+        cur.execute(AUTHORIZE_COORDINATION_STATE, (generation,))
+        assert cur.rowcount == 0
+
+
+class TestDeployFacadeStatements:
+    """ops/routers/deploy.py — the legacy deploy_intent facade."""
+
+    def test_select_deploy_intent_status(self, cur):
+        cur.execute(SELECT_DEPLOY_INTENT_STATUS)
+        row = cur.fetchone()
+        # V002 seeds the singleton, and both CTEs are unconditional aggregates,
+        # so a row comes back even with nothing in flight.
+        assert row is not None
+        assert set(row) == {
+            "intent",
+            "requested_at",
+            "requested_by",
+            "number_running",
+            "min_started_at",
+            "pause_long_jobs",
+        }
+
+    def test_the_two_four_column_reads_are_not_interchangeable(self, cur):
+        """deploy.py reads its coordination row positionally.
+
+        Its statement selects (kind, phase, ...) while coordination.py's selects
+        (phase, generation, kind, ...). The two look like duplicates and are
+        kept apart because merging them silently swaps row[0] and row[1].
+        """
+        cur.execute(SELECT_COORDINATION_STATE_FOR_DEPLOY)
+        assert _column_names(cur) == ["kind", "phase", "generation", "requested_by"]
+        cur.execute(SELECT_COORDINATION_STATE_ACTOR)
+        assert _column_names(cur) == ["phase", "generation", "kind", "requested_by"]
+
+    def test_set_deploy_intent_is_a_lock(self, cur):
+        cur.execute(SET_DEPLOY_INTENT, ("layer-2-test", True, STALE_LOCK_MINUTES))
+        assert cur.fetchone()["intent"] == "pending"
+        # Held and still fresh, so the second attempt returns no row at all --
+        # which is exactly how _set_intent decides it lost.
+        cur.execute(SET_DEPLOY_INTENT, ("layer-2-test", True, STALE_LOCK_MINUTES))
+        assert cur.fetchone() is None
+
+    def test_clear_deploy_intent(self, cur):
+        cur.execute(SET_DEPLOY_INTENT, ("layer-2-test", False, STALE_LOCK_MINUTES))
+        assert cur.fetchone() is not None
+        cur.execute(CLEAR_DEPLOY_INTENT)
+        assert cur.fetchone()["intent"] == "none"
+
+    def test_request_then_release_deploy_coordination(self, cur):
+        cur.execute(
+            REQUEST_DEPLOY_COORDINATION,
+            (json.dumps(["ops"]), json.dumps(["services"]), "layer-2-test"),
+        )
+        generation = cur.fetchone()["generation"]
+        cur.execute(RELEASE_DEPLOY_COORDINATION)
+        assert cur.fetchone()["generation"] == generation + 1
+
+
+class TestUserManagementStatements:
+    """ops/routers/users.py — authorization and the access-request queue."""
+
+    def test_no_pending_request_for_an_unknown_email(self, cur):
+        cur.execute(SELECT_PENDING_REQUEST_FOR_EMAIL, ("no-such-email-hash",))
+        assert cur.fetchone() is None
+        cur.execute(SELECT_PENDING_REQUEST_ID_FOR_EMAIL, ("no-such-email-hash",))
+        assert cur.fetchone() is None
+
+    def test_access_request_approval_path(self, cur):
+        email_hash = uuid.uuid4().hex
+        cur.execute(
+            INSERT_ACCESS_REQUEST,
+            (email_hash, "viewer", "Layer 2", "nobody@example.invalid"),
+        )
+        cur.execute(SELECT_PENDING_REQUEST_FOR_EMAIL, (email_hash,))
+        assert cur.fetchone()["status"] == "pending"
+
+        cur.execute(SELECT_PENDING_REQUEST_ID_FOR_EMAIL, (email_hash,))
+        request_id = cur.fetchone()["id"]
+        cur.execute(SELECT_PENDING_REQUEST_DETAILS, (request_id,))
+        row = cur.fetchone()
+        assert set(row) == {
+            "email_hash",
+            "requested_role",
+            "display_name",
+            "notification_email",
+        }
+
+        cur.execute(
+            UPSERT_AUTHORIZED_USER,
+            (row["email_hash"], row["requested_role"], row["display_name"], None),
+        )
+        cur.execute(APPROVE_ACCESS_REQUEST, (None, request_id))
+        assert cur.rowcount == 1
+
+        cur.execute(SELECT_USER_ROLE, (email_hash,))
+        assert cur.fetchone()["role"] == "viewer"
+        cur.execute(SELECT_PENDING_REQUEST_ID_FOR_EMAIL, (email_hash,))
+        assert cur.fetchone() is None
+
+    def test_access_request_denial_is_idempotent(self, cur):
+        email_hash = uuid.uuid4().hex
+        cur.execute(
+            INSERT_ACCESS_REQUEST,
+            (email_hash, "observer", None, "nobody@example.invalid"),
+        )
+        cur.execute(SELECT_PENDING_REQUEST_ID_FOR_EMAIL, (email_hash,))
+        request_id = cur.fetchone()["id"]
+
+        cur.execute(SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL, (request_id,))
+        assert cur.fetchone()["notification_email"] == "nobody@example.invalid"
+
+        cur.execute(DENY_ACCESS_REQUEST, (None, request_id))
+        assert cur.rowcount == 1
+        # The 'pending' predicate deny keeps and approve does not is the guard:
+        # a repeated denial matches nothing.
+        cur.execute(DENY_ACCESS_REQUEST, (None, request_id))
+        assert cur.rowcount == 0
+        cur.execute(SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL, (request_id,))
+        assert cur.fetchone() is None
+
+    def test_select_access_requests_puts_pending_first(self, cur):
+        cur.execute(INSERT_ACCESS_REQUEST, (uuid.uuid4().hex, "viewer", None, None))
+        cur.execute(SELECT_ACCESS_REQUESTS)
+        rows = cur.fetchall()
+        assert set(rows[0]) == {
+            "id",
+            "email_hash",
+            "display_name",
+            "requested_role",
+            "requested_at",
+            "status",
+            "resolved_at",
+            "resolved_by",
+        }
+        assert rows[0]["status"] == "pending"
+
+    def test_upsert_regrants_without_overwriting_the_display_name(self, cur):
+        email_hash = uuid.uuid4().hex
+        cur.execute(UPSERT_AUTHORIZED_USER, (email_hash, "viewer", "Layer 2", None))
+        cur.execute(UPSERT_AUTHORIZED_USER, (email_hash, "observer", "ignored", None))
+
+        cur.execute(SELECT_AUTHORIZED_USERS)
+        rows = {row["email_hash"]: row for row in cur.fetchall()}
+        assert set(rows[email_hash]) == {
+            "id",
+            "email_hash",
+            "role",
+            "display_name",
+            "created_at",
+        }
+        assert rows[email_hash]["role"] == "observer"
+        # DO UPDATE sets role and created_by only, so the name survives.
+        assert rows[email_hash]["display_name"] == "Layer 2"
+
+        user_id = rows[email_hash]["id"]
+        cur.execute(UPDATE_USER_ROLE, ("power_user", user_id))
+        assert cur.rowcount == 1
+        cur.execute(DELETE_AUTHORIZED_USER, (user_id,))
+        assert cur.rowcount == 1
+
+
+class TestScrapeStatements:
+    """ops/routers/scrape.py — rotation claiming and detail claims."""
+
+    def test_select_last_queued_at(self, cur):
+        cur.execute(SELECT_LAST_QUEUED_AT)
+        assert _column_names(cur) == ["max"]
+
+    def test_rotation_slot_claim_round_trip(self, cur):
+        slot = 999_000
+        keys = sorted(f"layer2-{uuid.uuid4().hex}" for _ in range(2))
+        for order, key in enumerate(keys):
+            cur.execute(
+                "INSERT INTO search_configs (search_key, params, rotation_slot,"
+                " rotation_order) VALUES (%s, '{}'::jsonb, %s, %s)",
+                (key, slot, order),
+            )
+
+        # A never-queued config exists now, so some slot must be due.
+        cur.execute(SELECT_NEXT_ROTATION_SLOT, (1439,))
+        assert _column_names(cur) == ["rotation_slot"]
+        assert cur.fetchone() is not None
+
+        cur.execute(MARK_ROTATION_SLOT_QUEUED, (slot,))
+        assert cur.rowcount == 2
+        cur.execute(SELECT_ROTATION_SLOT_CONFIGS, (slot,))
+        rows = cur.fetchall()
+        assert [row["search_key"] for row in rows] == keys
+        assert set(rows[0]) == {"search_key", "params"}
+
+        # Claimed, so the slot this test created is no longer due.
+        cur.execute(SELECT_NEXT_ROTATION_SLOT, (1439,))
+        assert slot not in {row["rotation_slot"] for row in cur.fetchall()}
+
+    def test_legacy_search_config_claim(self, cur):
+        cur.execute(
+            "INSERT INTO search_configs (search_key, params) VALUES (%s, '{}'::jsonb)",
+            (f"layer2-{uuid.uuid4().hex}",),
+        )
+        cur.execute(SELECT_LEGACY_SEARCH_CONFIG, (1439,))
+        row = cur.fetchone()
+        assert row is not None
+        assert set(row) == {"search_key", "params"}
+        cur.execute(MARK_SEARCH_CONFIG_QUEUED, (row["search_key"],))
+        assert cur.rowcount == 1
+
+    def test_claim_detail_scrape_batch(self, cur):
+        """Executes the whole CTE -- anti-join, INSERT and ON CONFLICT.
+
+        An empty queue returns no rows and still parses and plans every branch,
+        which is what a schema change to ops.ops_detail_scrape_queue or to
+        detail_scrape_claims would break.
+        """
+        cur.execute(CLAIM_DETAIL_SCRAPE_BATCH, (5, str(uuid.uuid4())))
+        assert cur.description is not None
+        assert len(cur.fetchall()) <= 5
+
+    def test_release_claims_writes_the_fetch_guard(self, cur):
+        run_id = str(uuid.uuid4())
+        listing_id = str(uuid.uuid4())
+        cur.execute(
+            "INSERT INTO detail_scrape_claims (listing_id, claimed_by, status)"
+            " VALUES (%s::uuid, %s, 'running')",
+            (listing_id, run_id),
+        )
+        cur.execute(DELETE_DETAIL_SCRAPE_CLAIMS, ([listing_id], run_id))
+        assert cur.rowcount == 1
+        # No observation exists for a fresh uuid, so this asserts the column
+        # Plan 147 added is still there rather than asserting a row count.
+        cur.execute(RECORD_DETAIL_FETCHES, ([listing_id],))
+        assert cur.rowcount == 0

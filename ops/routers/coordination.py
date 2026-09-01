@@ -11,6 +11,23 @@ from pydantic import BaseModel, Field
 from ops.coordination_contract import HOST_TARGET, expand_targets
 from ops.coordination_drain import collect_drain_status
 from ops.coordination_release import collect_release_status
+from ops.queries import (
+    ACQUIRE_COORDINATION_LOCK,
+    ADVANCE_COORDINATION_STATE,
+    AUTHORIZE_COORDINATION_STATE,
+    CANCEL_COORDINATION_STATE,
+    COMPLETE_COORDINATION_STATE,
+    INSERT_COMPLETION_RECEIPT,
+    INSERT_COORDINATION_RELEASE_EVIDENCE,
+    INSERT_COORDINATION_STATE_EVENT,
+    RELEASE_COORDINATION_STATE,
+    REQUEST_COORDINATION_STATE,
+    SELECT_COMPLETION_RECEIPT,
+    SELECT_COORDINATION_STATE,
+    SELECT_COORDINATION_STATE_ACTOR,
+    SELECT_COORDINATION_STATE_KIND,
+    SELECT_RELEASE_EVIDENCE,
+)
 from scripts.host_maintenance import HOST_VALIDATION_GATES
 from shared.db import db_cursor
 from shared.job_counter import job_snapshot
@@ -27,27 +44,6 @@ _TRANSITIONS = {
     "begin-validation": ("active", "validating", "validating_at"),
     "complete": ("validating", "none", "completed_at"),
 }
-
-_STATUS_SQL = """
-    SELECT kind, phase, generation, requested_by, reason, targets, scope, requested_at,
-           draining_at, active_at, validating_at, completed_at, expected_work,
-           manifest_location, operator_notes, updated_at
-      FROM coordination_state
-     WHERE id = 1
-"""
-
-_EVENT_INSERT_SQL = """
-    INSERT INTO staging.coordination_state_events
-        (generation, prior_phase, phase, kind, actor)
-    VALUES (%s, %s, %s, %s, %s)
-"""
-
-_HOST_EVIDENCE_INSERT_SQL = """
-    INSERT INTO staging.coordination_release_evidence
-        (generation, actor, gate_results, evidence_digests)
-    VALUES (%s, %s, %s::jsonb, %s::jsonb)
-    RETURNING evidence_id, submitted_at
-"""
 
 
 class CoordinationRequest(BaseModel):
@@ -103,11 +99,8 @@ def _submit_host_evidence(payload: HostEvidenceRequest) -> tuple[str, dict[str, 
         return "invalid", {"reason": invalid}
     try:
         with db_cursor(error_context="Coordination-HostEvidence", dict_cursor=True) as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT phase, generation, kind, requested_by
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_ACTOR)
             row = cur.fetchone()
             if row is None:
                 return "error", None
@@ -117,7 +110,7 @@ def _submit_host_evidence(payload: HostEvidenceRequest) -> tuple[str, dict[str, 
             if state["generation"] != payload.generation:
                 return "stale", {"reason": "evidence generation is stale"}
             cur.execute(
-                _HOST_EVIDENCE_INSERT_SQL,
+                INSERT_COORDINATION_RELEASE_EVIDENCE,
                 (
                     payload.generation,
                     state["requested_by"],
@@ -158,7 +151,7 @@ def record_transition_event(
     if not actor:
         raise ValueError("coordination transition actor is empty")
     cur.execute(
-        _EVENT_INSERT_SQL,
+        INSERT_COORDINATION_STATE_EVENT,
         (generation, prior_phase, phase, kind, actor),
     )
 
@@ -203,7 +196,7 @@ def _status() -> dict[str, Any]:
     """Return the authoritative coordination record; never synthesize none."""
     try:
         with db_cursor(error_context="Coordination-Status", dict_cursor=True) as cur:
-            cur.execute(_STATUS_SQL)
+            cur.execute(SELECT_COORDINATION_STATE)
             row = cur.fetchone()
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable.")
@@ -236,11 +229,8 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
     scope_json = sorted(scope)
     try:
         with db_cursor(error_context="Coordination-Request") as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT phase, generation, kind
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_KIND)
             row = cur.fetchone()
             if row is None:
                 return "error", None
@@ -255,17 +245,7 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
                 )
                 return "conflict", None
             cur.execute(
-                """UPDATE coordination_state
-                      SET kind = %s, phase = 'requested', generation = generation + 1,
-                          targets = %s::jsonb,
-                          scope = %s::jsonb, requested_by = %s, reason = %s,
-                          requested_at = now(), draining_at = NULL,
-                          active_at = NULL, validating_at = NULL,
-                          completed_at = NULL, expected_work = %s::jsonb,
-                          manifest_location = %s, operator_notes = %s,
-                          updated_at = now()
-                    WHERE id = 1
-                RETURNING generation""",
+                REQUEST_COORDINATION_STATE,
                 (
                     payload.kind,
                     json.dumps(targets_json),
@@ -312,11 +292,8 @@ def _transition(operation: str) -> str:
     source, target, timestamp_column = _TRANSITIONS[operation]
     try:
         with db_cursor(error_context=f"Coordination-{operation}") as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT phase, generation, kind, requested_by
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_ACTOR)
             row = cur.fetchone()
             if row is None:
                 return "error"
@@ -335,19 +312,11 @@ def _transition(operation: str) -> str:
 
             if target == "none":
                 cur.execute(
-                    f"""UPDATE coordination_state
-                            SET kind = NULL, phase = 'none', targets = '[]'::jsonb,
-                                scope = '[]'::jsonb, {timestamp_column} = now(),
-                                updated_at = now()
-                          WHERE id = 1
-                      RETURNING generation"""
+                    RELEASE_COORDINATION_STATE.format(timestamp_column=timestamp_column)
                 )
             else:
                 cur.execute(
-                    f"""UPDATE coordination_state
-                            SET phase = %s, {timestamp_column} = now(), updated_at = now()
-                          WHERE id = 1
-                      RETURNING generation""",
+                    ADVANCE_COORDINATION_STATE.format(timestamp_column=timestamp_column),
                     (target,),
                 )
             changed = cur.fetchone()
@@ -377,11 +346,8 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
     """Release only after fresh stack and durable host validation evidence."""
     try:
         with db_cursor(error_context="Coordination-Complete", dict_cursor=True) as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT phase, generation, kind, requested_by
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_ACTOR)
             row = cur.fetchone()
             if row is None:
                 return "error", None
@@ -390,8 +356,7 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
                 if payload.generation is None or payload.manifest_sha256 is None:
                     return "conflict", {"failing_gates": ["coordination_expected"]}
                 cur.execute(
-                    """SELECT generation FROM coordination_completion_receipts
-                         WHERE generation = %s AND manifest_sha256 = %s""",
+                    SELECT_COMPLETION_RECEIPT,
                     (payload.generation, payload.manifest_sha256),
                 )
                 receipt = cur.fetchone()
@@ -409,10 +374,7 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
                 return "conflict", {"failing_gates": stack_blockers, "release": stack}
 
             cur.execute(
-                """SELECT gate_results
-                     FROM staging.coordination_release_evidence
-                    WHERE generation = %s
-                    ORDER BY evidence_id DESC""",
+                SELECT_RELEASE_EVIDENCE,
                 (state["generation"],),
             )
             evidence_rows = cur.fetchall()
@@ -432,20 +394,12 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
             if state["generation"] != payload.generation:
                 return "conflict", {"failing_gates": ["completion_generation"]}
 
-            cur.execute(
-                """UPDATE coordination_state
-                      SET kind = NULL, phase = 'none', targets = '[]'::jsonb,
-                          scope = '[]'::jsonb, completed_at = now(), updated_at = now()
-                    WHERE id = 1
-                RETURNING generation"""
-            )
+            cur.execute(COMPLETE_COORDINATION_STATE)
             changed = cur.fetchone()
             if changed is None:
                 return "error", None
             cur.execute(
-                """INSERT INTO coordination_completion_receipts
-                       (generation, manifest_sha256)
-                     VALUES (%s, %s)""",
+                INSERT_COMPLETION_RECEIPT,
                 (changed["generation"], payload.manifest_sha256),
             )
             record_transition_event(
@@ -471,11 +425,8 @@ def _cancel() -> str:
     """Cancel before mutation authorization; never auto-release active work."""
     try:
         with db_cursor(error_context="Coordination-Cancel") as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT phase, generation, kind, requested_by
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_ACTOR)
             row = cur.fetchone()
             if row is None:
                 return "error"
@@ -490,14 +441,7 @@ def _cancel() -> str:
                 )
                 return "conflict"
             prior_phase, _, kind, actor = row
-            cur.execute(
-                """UPDATE coordination_state
-                      SET kind = NULL, phase = 'none', generation = generation + 1,
-                          targets = '[]'::jsonb,
-                          scope = '[]'::jsonb, completed_at = now(), updated_at = now()
-                    WHERE id = 1
-                RETURNING generation"""
-            )
+            cur.execute(CANCEL_COORDINATION_STATE)
             changed = cur.fetchone()
             if changed is None:
                 return "error"
@@ -525,8 +469,8 @@ def _authorize() -> tuple[str, dict[str, Any] | None]:
     """Authorize only from a locked, current-generation confirming read."""
     try:
         with db_cursor(error_context="Coordination-Authorize", dict_cursor=True) as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(_STATUS_SQL)
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE)
             row = cur.fetchone()
             if row is None:
                 return "error", None
@@ -555,9 +499,7 @@ def _authorize() -> tuple[str, dict[str, Any] | None]:
                 return "blocked", evidence
 
             cur.execute(
-                """UPDATE coordination_state
-                      SET phase = 'active', active_at = now(), updated_at = now()
-                    WHERE id = 1 AND phase = 'draining' AND generation = %s""",
+                AUTHORIZE_COORDINATION_STATE,
                 (state["generation"],),
             )
             if cur.rowcount != 1:

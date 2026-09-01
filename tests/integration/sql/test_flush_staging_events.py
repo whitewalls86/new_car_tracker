@@ -12,6 +12,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+from archiver.processors.flush_staging_events import _TABLE_CONFIGS
+from archiver.queries import (
+    DELETE_STAGING_ROWS_UP_TO_PK,
+    SELECT_STAGING_MAX_PK,
+    SELECT_STAGING_ROWS_UP_TO_PK,
+)
+
 pytestmark = pytest.mark.integration
 
 _NOW = datetime(2026, 4, 21, 12, 0, 0, tzinfo=timezone.utc)
@@ -272,3 +279,103 @@ class TestDeleteUpToMax:
             "SELECT event_id FROM staging.artifacts_queue_events WHERE event_id = %s", (id2,)
         )
         assert cur.fetchone() is not None
+
+
+# ===========================================================================
+# Statements imported from archiver.queries — Plan 162 Stage 7
+# ===========================================================================
+
+# The parametrisation is _TABLE_CONFIGS itself, not a list of table names
+# copied out of it. A staging table added to the flush is covered here the day
+# it is added; a list retyped here would leave the eighth table untested and
+# still green, which is the same failure as a retyped statement one level up.
+_CONFIG_IDS = [config["table"] for config in _TABLE_CONFIGS]
+
+
+class TestExtractedStagingFlushStatements:
+    """The three statements of the flush, as ``_flush_one`` itself holds them.
+
+    Everything above retypes SQL that resembles what the processor runs, table
+    by table. Until Plan 162 Stage 7 there was no alternative: all three
+    statements were f-strings at their ``cur.execute()`` call sites, so no test
+    could import them. These execute ``archiver.queries``' constants — the same
+    objects ``_flush_one`` executes — filled from the same ``_TABLE_CONFIGS``
+    entries production fills them from. The relation and primary-key names are
+    identifiers, so they are formatted in rather than bound; every value they
+    can take is in this parametrisation.
+
+    Postgres (``cur``), not DuckDB: the flush reads and deletes the
+    ``staging.*`` tables over psycopg2, and only the Parquet write in between
+    touches MinIO — that half is pyarrow, not SQL.
+
+    Two of the seven tables the flush serves —
+    ``staging.coordination_state_events`` and
+    ``staging.coordination_release_evidence`` — appear in this file for the
+    first time here, because the paraphrases above were written against five.
+    """
+
+    @pytest.mark.parametrize("config", _TABLE_CONFIGS, ids=_CONFIG_IDS)
+    def test_select_max_pk_plans_for_every_flushed_table(self, cur, config):
+        cur.execute(
+            SELECT_STAGING_MAX_PK.format(pk=config["pk"], table=config["table"])
+        )
+        assert "max" in cur.fetchone()
+
+    @pytest.mark.parametrize("config", _TABLE_CONFIGS, ids=_CONFIG_IDS)
+    def test_every_column_the_flush_projects_exists(self, cur, config):
+        """db_columns against the real tables — the drift this rule exists for.
+
+        A column dropped or renamed by a migration fails here, in the exact
+        projection the flush issues for that table, rather than in production.
+        The boundary is ``-1`` so no seeded row is needed: an empty result
+        still proves the statement parsed and every named column resolved.
+        """
+        cur.execute(
+            SELECT_STAGING_ROWS_UP_TO_PK.format(
+                columns=", ".join(config["db_columns"]),
+                table=config["table"],
+                pk=config["pk"],
+            ),
+            (-1,),
+        )
+        returned = {description[0] for description in cur.description}
+        assert set(config["db_columns"]) == returned
+
+    @pytest.mark.parametrize("config", _TABLE_CONFIGS, ids=_CONFIG_IDS)
+    def test_delete_up_to_pk_plans_for_every_flushed_table(self, cur, config):
+        cur.execute(
+            DELETE_STAGING_ROWS_UP_TO_PK.format(table=config["table"], pk=config["pk"]),
+            (-1,),
+        )
+        assert cur.rowcount == 0
+
+    def test_the_three_statements_round_trip_one_real_row(self, cur):
+        """One table end to end, in the order ``_flush_one`` runs them."""
+        config = next(
+            c for c in _TABLE_CONFIGS if c["table"] == "staging.artifacts_queue_events"
+        )
+        event_id = _insert_aq_event(cur)
+
+        cur.execute(
+            SELECT_STAGING_MAX_PK.format(pk=config["pk"], table=config["table"])
+        )
+        max_pk = cur.fetchone()["max"]
+        assert max_pk == event_id
+
+        cur.execute(
+            SELECT_STAGING_ROWS_UP_TO_PK.format(
+                columns=", ".join(config["db_columns"]),
+                table=config["table"],
+                pk=config["pk"],
+            ),
+            (max_pk,),
+        )
+        rows = cur.fetchall()
+        assert [r[config["pk"]] for r in rows] == sorted(r[config["pk"]] for r in rows)
+        assert event_id in {r[config["pk"]] for r in rows}
+
+        cur.execute(
+            DELETE_STAGING_ROWS_UP_TO_PK.format(table=config["table"], pk=config["pk"]),
+            (max_pk,),
+        )
+        assert cur.rowcount == len(rows)

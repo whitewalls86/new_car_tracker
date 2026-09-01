@@ -11,6 +11,17 @@ from typing import Any, Dict, List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ops.queries import (
+    CLAIM_DETAIL_SCRAPE_BATCH,
+    DELETE_DETAIL_SCRAPE_CLAIMS,
+    MARK_ROTATION_SLOT_QUEUED,
+    MARK_SEARCH_CONFIG_QUEUED,
+    RECORD_DETAIL_FETCHES,
+    SELECT_LAST_QUEUED_AT,
+    SELECT_LEGACY_SEARCH_CONFIG,
+    SELECT_NEXT_ROTATION_SLOT,
+    SELECT_ROTATION_SLOT_CONFIGS,
+)
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
@@ -43,11 +54,7 @@ def advance_rotation(
     """
     with db_cursor(error_context="advance_rotation") as cur:
         # Guard: check time since last search config was queued
-        cur.execute("""
-            SELECT MAX(last_queued_at)
-            FROM search_configs
-            WHERE enabled = true
-        """)
+        cur.execute(SELECT_LAST_QUEUED_AT)
         row = cur.fetchone()
         last_queued = row[0] if row else None
         if last_queued:
@@ -62,41 +69,18 @@ def advance_rotation(
                 }
 
         # Find the next due slot
-        cur.execute("""
-            SELECT rotation_slot
-            FROM search_configs
-            WHERE enabled = true
-              AND rotation_slot IS NOT NULL
-              AND (last_queued_at IS NULL
-                   OR last_queued_at < now() - make_interval(mins => %s))
-            GROUP BY rotation_slot
-            ORDER BY MIN(COALESCE(last_queued_at, '1970-01-01'::timestamptz)), rotation_slot
-            LIMIT 1
-        """, (min_idle_minutes,))
+        cur.execute(SELECT_NEXT_ROTATION_SLOT, (min_idle_minutes,))
         slot_row = cur.fetchone()
 
         if slot_row is None:
             # Fallback: try legacy single-config (no rotation_slot)
-            cur.execute("""
-                SELECT search_key, params
-                FROM search_configs
-                WHERE enabled = true
-                  AND rotation_slot IS NULL
-                  AND (last_queued_at IS NULL
-                       OR last_queued_at < now() - make_interval(mins => %s))
-                ORDER BY rotation_order NULLS LAST, search_key
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            """, (min_idle_minutes,))
+            cur.execute(SELECT_LEGACY_SEARCH_CONFIG, (min_idle_minutes,))
             row = cur.fetchone()
 
             if not row:
                 return {"slot": None, "configs": [], "run_id": None}
 
-            cur.execute(
-                "UPDATE search_configs SET last_queued_at = now() WHERE search_key = %s",
-                (row[0],),
-            )
+            cur.execute(MARK_SEARCH_CONFIG_QUEUED, (row[0],))
             raw_params = row[1]
             params = json.loads(raw_params) if isinstance(raw_params, str) else dict(raw_params)
             return {
@@ -112,18 +96,9 @@ def advance_rotation(
         slot = slot_row[0]
 
         # Claim all configs in this slot
-        cur.execute("""
-            UPDATE search_configs
-            SET last_queued_at = now()
-            WHERE enabled = true AND rotation_slot = %s
-        """, (slot,))
+        cur.execute(MARK_ROTATION_SLOT_QUEUED, (slot,))
 
-        cur.execute("""
-            SELECT search_key, params
-            FROM search_configs
-            WHERE enabled = true AND rotation_slot = %s
-            ORDER BY rotation_order NULLS LAST, search_key
-        """, (slot,))
+        cur.execute(SELECT_ROTATION_SLOT_CONFIGS, (slot,))
         rows = cur.fetchall()
 
     configs = []
@@ -167,32 +142,7 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
     run_id = str(uuid.uuid4())
 
     with db_cursor(error_context="claim_batch") as cur:
-        cur.execute("""
-            WITH batch AS (
-                SELECT q.*
-                FROM ops.ops_detail_scrape_queue q
-                LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id
-                   AND c.status = 'running'
-                WHERE c.listing_id IS NULL
-                ORDER BY q.priority, q.listing_id
-                LIMIT %s
-            ),
-            claimed AS (
-                INSERT INTO detail_scrape_claims
-                    (listing_id, claimed_by, claimed_at, status)
-                SELECT b.listing_id, %s, now(), 'running'
-                FROM batch b
-                ON CONFLICT (listing_id) DO UPDATE
-                    SET claimed_by = EXCLUDED.claimed_by,
-                        claimed_at = EXCLUDED.claimed_at,
-                        status     = 'running'
-                    WHERE detail_scrape_claims.status != 'running'
-                RETURNING listing_id
-            )
-            SELECT b.* FROM batch b
-            JOIN claimed c ON c.listing_id = b.listing_id
-        """, (batch_size, run_id))
+        cur.execute(CLAIM_DETAIL_SCRAPE_BATCH, (batch_size, run_id))
 
         rows = cur.fetchall()
         if cur.description is None:
@@ -248,22 +198,13 @@ def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
 
     with db_cursor(error_context="release_claims") as cur:
         if listing_ids:
-            cur.execute(
-                "DELETE FROM detail_scrape_claims"
-                " WHERE listing_id = ANY(%s::uuid[]) AND claimed_by = %s",
-                (listing_ids, run_id),
-            )
+            cur.execute(DELETE_DETAIL_SCRAPE_CLAIMS, (listing_ids, run_id))
         if fetched_ids:
             # Same cursor, so this commits or rolls back with the DELETE above:
             # a released claim and its recorded fetch are never separated.
             # ops connects as PGUSER=cartracker, the owner of
             # ops.price_observations, so no additional grant is needed.
-            cur.execute(
-                "UPDATE ops.price_observations"
-                " SET last_detail_fetched_at = now()"
-                " WHERE listing_id = ANY(%s::uuid[])",
-                (fetched_ids,),
-            )
+            cur.execute(RECORD_DETAIL_FETCHES, (fetched_ids,))
 
     return {
         "run_id": run_id,

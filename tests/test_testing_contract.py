@@ -903,9 +903,6 @@ LAYER_2_WAIVERS = tuple(
         "processing/sql/upsert_price_observation.sql",
         "processing/sql/upsert_tracked_model.sql",
         "processing/sql/upsert_vin_to_listing.sql",
-        "scraper/sql/get_blocked_cooldown_attempts.sql",
-        "scraper/sql/insert_blocked_cooldown_event.sql",
-        "scraper/sql/upsert_blocked_cooldown.sql",
     )
 )
 
@@ -998,70 +995,12 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
 # ---------------------------------------------------------------------------
 # Rule 5b -- no production module holds SQL at its .execute() call site.
 # ---------------------------------------------------------------------------
-INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G5", owner=162)
-    for subject in (
-        "archiver/processors/flush_silver_observations.py:138",
-        "archiver/processors/flush_silver_observations.py:148",
-        "archiver/processors/flush_silver_observations.py:198",
-        "archiver/processors/flush_staging_events.py:324",
-        "archiver/processors/flush_staging_events.py:334",
-        "archiver/processors/flush_staging_events.py:383",
-        "ops/routers/coordination.py:106",
-        "ops/routers/coordination.py:107",
-        "ops/routers/coordination.py:239",
-        "ops/routers/coordination.py:240",
-        "ops/routers/coordination.py:257",
-        "ops/routers/coordination.py:315",
-        "ops/routers/coordination.py:316",
-        "ops/routers/coordination.py:337",
-        "ops/routers/coordination.py:346",
-        "ops/routers/coordination.py:380",
-        "ops/routers/coordination.py:381",
-        "ops/routers/coordination.py:392",
-        "ops/routers/coordination.py:411",
-        "ops/routers/coordination.py:435",
-        "ops/routers/coordination.py:445",
-        "ops/routers/coordination.py:474",
-        "ops/routers/coordination.py:475",
-        "ops/routers/coordination.py:493",
-        "ops/routers/coordination.py:528",
-        "ops/routers/coordination.py:557",
-        "ops/routers/deploy.py:120",
-        "ops/routers/deploy.py:121",
-        "ops/routers/deploy.py:135",
-        "ops/routers/deploy.py:193",
-        "ops/routers/deploy.py:194",
-        "ops/routers/deploy.py:209",
-        "ops/routers/scrape.py:115",
-        "ops/routers/scrape.py:121",
-        "ops/routers/scrape.py:170",
-        "ops/routers/scrape.py:251",
-        "ops/routers/scrape.py:261",
-        "ops/routers/scrape.py:46",
-        "ops/routers/scrape.py:65",
-        "ops/routers/scrape.py:80",
-        "ops/routers/scrape.py:96",
-        "ops/routers/users.py:140",
-        "ops/routers/users.py:149",
-        "ops/routers/users.py:167",
-        "ops/routers/users.py:202",
-        "ops/routers/users.py:229",
-        "ops/routers/users.py:242",
-        "ops/routers/users.py:256",
-        "ops/routers/users.py:285",
-        "ops/routers/users.py:294",
-        "ops/routers/users.py:303",
-        "ops/routers/users.py:328",
-        "ops/routers/users.py:336",
-        "ops/routers/users.py:80",
-        "ops/routers/users.py:88",
-        "scraper/processors/scrape_detail.py:184",
-        "scraper/processors/scrape_detail.py:194",
-        "scraper/processors/scrape_results.py:315",
-        "scraper/processors/scrape_results.py:326",
-    )
-)
+# Empty since Plan 162 Stage 7 (CAR-51). Seeded at 66 sites in 15 modules on
+# 2026-09-01 and drained the same day, each by the extraction it was waiting
+# for. The rule below is the whole of G5 now: it is what stops SQL returning
+# to a call site, where it cannot be imported and only a paraphrase can
+# cover it.
+INLINE_SQL_WAIVERS: tuple[Waiver, ...] = ()
 
 # Every name in this stack that takes a SQL string, whether or not it is used
 # here today. Scoping the set to what the repository currently calls is the
