@@ -2,7 +2,7 @@
 
 ## Status
 
-**Stages 0–6 are complete. Stage 6b is next.** The census enumerated
+**Stages 0–6b are complete. Stage 7 is next.** The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
@@ -16,11 +16,23 @@ and took CI's wall clock from 292s to about 155s, most of it by answering Plan 1
 Stage C's question — the 92s step was 21 Python interpreters starting, not 21
 dbt builds running; and Stage 5
 [swept the 34 mock conversions and the 16 layer renames](#evidence--stage-5-the-mechanical-sweeps-car-49-2026-09-01),
-closing G4, G11 and G13. **The waiver list stands at 68**, down from 116:
-Stage 5 deleted exactly the 50 it was scoped to and added 2 back, having found
-[the Layer 2 check crediting files by substring](#the-instrument-was-weaker-than-its-own-docstring).
-Neither Stage 3 nor Stage 4 closes waivers; Stage 3 closes Plan 139's Stage H
-and Stage 4 its Stages B and C.
+closing G4, G11 and G13; and Stage 6b
+[mechanised the encoding-sensitive I/O guard](#evidence--stage-6b-mechanising-the-encoding-sensitive-io-guard-car-60-2026-09-01),
+fixing 234 sites across three shapes and closing G13's class with a rule that
+fails on the exact call ruff cannot see. **The list stood at 68 after Stage 5 and stands at 56
+now**, down from 116: Stage 5 deleted exactly the 50 it was scoped to and added
+2 back, having found
+[the Layer 2 check crediting files by substring](#the-instrument-was-weaker-than-its-own-docstring),
+and Stage 6 emptied the 12 route waivers. Neither Stage 3 nor Stage 4 closes
+waivers; Stage 3 closes Plan 139's Stage H and Stage 4 its Stages B and C.
+Stage 6b closes none either — it adds a rule whose list starts empty.
+
+**Every count in this section is the number an instrument reports, not a
+number this document remembers.** The 68 above survived here for a day after
+Stage 6 made it 56, and was caught during Stage 6b's closeout by importing the
+waiver tuples rather than reading this paragraph. That is this plan's own
+subject matter happening to this plan, and it is left on the record rather than
+quietly corrected.
 
 This document was written as a deliberate stub on 2026-08-30, when
 [Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
@@ -47,7 +59,7 @@ today. **Stage 1 has since cleared the CI-invocation row and Stage 5 the
 mocker and layer-numbering rows. Stage 5 also corrected the Layer 2 row
 upward, from 54 to 56 — see
 [the instrument note](#the-instrument-was-weaker-than-its-own-docstring).
-**The live total is 68.**
+**The live total is 56.**
 
 | Rule | Waivers | Gap |
 |---|---|---|
@@ -118,9 +130,9 @@ order:
 | **3** | **The two health-sensor censuses read one declared source. Complete — CAR-47, 2026-08-31** | Plan 139 Stage H | -- |
 | **4** | **Split the 267s `dbt build + test` job. Complete — CAR-48, 2026-09-01** | Plan 139 Stages B, C | -- |
 | **5** | **The mechanical sweeps. Complete — CAR-49, 2026-09-01** | G4, G11, G13 | 50 |
-| **5b** | Separate production scripts from spent ones. `scripts/ops/` and `scripts/oneoff/`, the coverage denominator reads the split, and `ci_change_scope.py` gains its second prefix | — | -- |
-| **6** | Route coverage. Build `container_health`'s test home, then fill it | G6, G9 | 12 |
-| **6b** | Encoding-sensitive I/O, mechanised. Close G13's *class*, not another instance | G13's class | -- |
+| **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
+| **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
+| **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
 | **7** | SQL execution, from both directions. The largest stage | G14, G5 | 56 |
 | **8** | The services below the floor | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
@@ -2050,8 +2062,8 @@ reports a clean repository whether or not it still works.
 
 #### What was swept, and why the sweep is safe rather than merely large
 
-All **213** sites were fixed; none were waived. The waiver list stays at 68.
-Waiving instead would have taken it to 281 and broken the one property the
+All **213** sites were fixed; none were waived. The waiver list stays at 56.
+Waiving instead would have taken it to 269 and broken the one property the
 plan's three waiver assertions exist to protect — that the list only shrinks.
 
 **The sweep cannot change behaviour, and that is provable rather than hoped
@@ -2113,7 +2125,7 @@ module was found. The shapes are checked statically over this repository's
 files, and CI never had to arbitrate dbt's file handling at all. Nothing in the
 `ci.yml` diff survives; the only workflow change in the merged branch is none.
 
-**The waiver list is unchanged at 68.** `ENCODING_WAIVERS` is empty and joins
+**The waiver list is unchanged at 56.** `ENCODING_WAIVERS` is empty and joins
 `ALL_WAIVERS`, so the three assertions that keep the list honest now cover this
 rule too: a waiver here that stopped describing a violation would fail, as would
 one naming a missing gap entry or an archived owner.
