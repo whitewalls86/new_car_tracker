@@ -16,8 +16,8 @@ reconciled overviews and the assigned replacement claims.
 | **1a** README rewrite (CAR-38, PR #320) | Merged to `master` at `a458877`, **soaking** — merged is not closed, per the truth contract's §4 |
 | **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
-| **1d** Public roadmap projection | Not started. The landing page carries the section and its list ids; the generator and `project-updates.json` do not exist yet |
-| **1e** Weekly recap projection | Not started |
+| **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
+| **1e** Weekly recap projection | **Ready** — 1d's generator, `--check` convention and static-artifact pattern exist to copy. Its link classifier now has three classes to handle, not one: the recaps hold 128 `../plans/`, 4 `../planning/` and 1 `../reference/` link |
 | **1f** Reconcile against the published writings | **Audit done 2026-08-31**, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open |
 
 **The two public surfaces are now in different states, and the distinction
@@ -824,6 +824,34 @@ completed item is assembled differently from a planned one.
   **Gate 1d requires a human to read the four rows actually published.** Four
   rows is a cheap review; the alternative — a new column in an archive Plan 146
   owns — is a change to someone else's file for a four-row problem.
+
+**Revised 2026-09-01, during Stage 1d's build.** The paragraph above is kept as
+written because its reasoning still holds and the mechanism it describes is
+still the fallback. What it missed is a third option it did not consider: not a
+column in Plan 146's archive, but a **`## Public summary` section in the plan's
+own document**, which is nobody else's file. The generator prefers that section
+and falls back to extraction where there is none.
+
+The change is worth more than the four rows that prompted it, for two reasons.
+
+- **It moves the writing to the moment the writer is already there.** The
+  archive Description is authored at the `closeout → archive` transition, by a
+  person with the whole plan in their head. Asking for a second, shorter,
+  outward-facing sentence at that moment costs almost nothing. Asking a
+  generator to manufacture one later, from prose written for a different
+  reader, is where §4 was going to be breached.
+- **It makes Gate 1d self-extinguishing.** The generator prints the plans it had
+  to extract, and that list is the gate's worklist. Under the original design
+  the same four rows needed re-reading on every build, forever; under this one
+  the gate shrinks each time a plan archives with its section written, and a
+  build where every published plan authored its own copy needs no read at all.
+
+`.claude/skills/close-out/SKILL.md` carries the rules for writing one, and the
+generator caps a published summary at 320 characters — which fails the build
+rather than publishing a paragraph, and points at writing the section as the
+fix. The 118 plans archived before this existed have no section and are not
+being backfilled; they reach the feed through extraction if they reach it at
+all, and the gate names them when they do.
 
 The script supports `--check`: regenerate in memory, compare with the committed
 JSON, and exit non-zero on drift. CI runs that mode and also validates unique

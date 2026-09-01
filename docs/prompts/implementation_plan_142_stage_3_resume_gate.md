@@ -6,10 +6,10 @@
 `feature/plan-142-stage-3-resume-gate`, after PR #251 landed Stage 2.
 
 This is a working document: it breaks
-[Stage 3](plan_142_planned_host_maintenance.md#stage-3--make-plan-140-the-resume-gate)
+[Stage 3](../plans/plan_142_planned_host_maintenance.md#stage-3--make-plan-140-the-resume-gate)
 into reviewable commit slices and records the decisions taken before any code
 was written. The design prose and as-built evidence stay in
-[plan_142_planned_host_maintenance.md](plan_142_planned_host_maintenance.md);
+[plan_142_planned_host_maintenance.md](../plans/plan_142_planned_host_maintenance.md);
 this file is deleted or archived when Stage 3 closes.
 
 ## What Stage 3 owes

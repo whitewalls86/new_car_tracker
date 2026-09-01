@@ -1,6 +1,6 @@
 ---
 name: close-out
-description: "Close a finished Cartracker Linear issue — gather its evidence, record what it actually cost against its estimate, write the plan document's evidence section, and move the plan's row in docs/PLANS.md if and only if the plan itself changed state. Use when the user says an issue or slice is done, finished, shipped, or ready to close. This skill gathers and proposes first and writes nothing until the user approves: it never decides that a gate has closed, and it never moves a row on the strength of a summary it wrote itself."
+description: "Close a finished Cartracker Linear issue — gather its evidence, record what it actually cost against its estimate, write the plan document's evidence section and, when the plan archives, its public summary, and move the plan's row in docs/PLANS.md if and only if the plan itself changed state. Use when the user says an issue or slice is done, finished, shipped, or ready to close. This skill gathers and proposes first and writes nothing until the user approves: it never decides that a gate has closed, and it never moves a row on the strength of a summary it wrote itself."
 ---
 
 # Closing out a finished slice
@@ -68,11 +68,64 @@ Present, in this order:
      case and should be proposed without apology.*
    - **build order → closeout** — deployed, evidence pending. Needs a `Lands`
      date and a gate, and neither is yours to invent.
-   - **closeout → archive** — the gate closed. Needs the archive description.
+   - **closeout → archive** — the gate closed. Needs the archive description
+     **and the plan's public summary** — see below. Propose both together.
    - **anything → superseded** — needs what superseded it.
 5. **What you could not verify**, named explicitly.
 
 Then **stop**. Do not write. Do not call another skill.
+
+### The public summary, written once, when the plan archives
+
+A plan that reaches the archive can appear on the public landing page. Stage 1d
+of Plan 138 generates that feed from the archive table, and its generator
+prefers a `## Public summary` section in the plan's own document over cutting a
+sentence out of the archive row.
+
+The two are written **at the same moment and for different readers**, which is
+the whole point of writing them together:
+
+| | Archive Description | `## Public summary` |
+|---|---|---|
+| Reader | someone who knows this system | someone who has never seen it |
+| Length | as long as the evidence needs | one or two sentences |
+| Names | migrations, services, columns, object paths | none of those |
+
+So when phase 2 proposes **closeout → archive**, propose both texts, one after
+the other, and let the user argue with them side by side. The archive
+description is the record; the public summary is what a stranger reads on
+`cartracker.info`.
+
+The section goes in the plan document, in the same shape as an archive cell so
+the same parser reads it:
+
+```markdown
+## Public summary
+
+**Scrape state ownership** — Separated the timestamp that says a listing was
+fetched from the one that says it was enriched, so a stalled processor no
+longer causes the same listings to be re-fetched every fifteen minutes.
+```
+
+Three rules, and the first is the one that gets broken:
+
+- **Write it for someone who has never read this repository.** No column
+  names, no service names, no migration versions, no object prefixes, no PR
+  numbers. If a sentence needs one of those to make sense, it is the archive
+  description and not this.
+- **Say what changed for the system, not what the work touched.** "Deleted
+  1,172 legacy objects across six relations" is the archive's sentence;
+  "reclaimed 20 GB of duplicated storage" is this one.
+- **Under 320 characters.** The generator fails the build over that rather than
+  publishing a paragraph, and the fix is shorter copy, not a wider cap.
+
+A plan whose work has no public meaning — an internal register, a
+documentation reshuffle — should say so and get no section. The generator
+falls back to extraction and names the plan in its output, which is Gate 1d's
+worklist rather than an error.
+
+Nothing here changes `completed_plans.md`. That file is Plan 146's and gains no
+column; a plan's own document is the plan's to write in.
 
 ### Deciding a gate has closed is not yours
 
@@ -123,6 +176,10 @@ Only after approval, and only what was approved.
    not revising what the plan intended. Do not rewrite the plan's problem
    statement, stages, or design because the work turned out differently; a plan
    that needs redesigning is a separate conversation.
+   **If phase 2 proposed closeout → archive**, add the approved
+   `## Public summary` section in the same edit, then regenerate the public
+   projection with `python scripts/build_public_roadmap.py` and commit its
+   output — CI's `--check` fails on a stale artifact.
 2. **`docs/PLANS.md`, via the `plans` skill** — only if phase 2 proposed a
    transition and the user approved it. Pass the approved values through and
    tell that skill they were approved in the open session, with their source.
@@ -181,5 +238,8 @@ Report:
 - **overwrite `estimate` with the actual**, or derive an actual from elapsed
   calendar time.
 - **rewrite a plan's design** because the work diverged from it.
+- **write a `## Public summary` the user has not approved.** It is public copy
+  on a public page, and it is the one thing here a reader outside this project
+  will ever see.
 - **close more than one issue per invocation.** Each has its own evidence and
   its own stop.

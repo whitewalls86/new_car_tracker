@@ -7,7 +7,7 @@ local development can use for dbt, PySpark, Delta, MLflow, and adaptive-refresh
 testing.
 
 Detailed implementation design:
-[implementation_plan_120_ci_lake_snapshot_delivery.md](implementation_plan_120_ci_lake_snapshot_delivery.md)
+[implementation_plan_120_ci_lake_snapshot_delivery.md](../prompts/implementation_plan_120_ci_lake_snapshot_delivery.md)
 
 This plan breaks fixture export and delivery out of Plan 112. Plan 112 should
 consume stable snapshots; it should not own the infrastructure for producing
@@ -112,7 +112,7 @@ scripts.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
-[implementation_plan_120_ci_lake_snapshot_delivery.md](implementation_plan_120_ci_lake_snapshot_delivery.md#implementation-sequence).
+[implementation_plan_120_ci_lake_snapshot_delivery.md](../prompts/implementation_plan_120_ci_lake_snapshot_delivery.md#implementation-sequence).
 
 | Area | Status | Notes |
 |------|--------|-------|

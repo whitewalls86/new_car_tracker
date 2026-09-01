@@ -1,5 +1,11 @@
 # Plan 139: Test Suite Construction and Maintenance
 
+## Public summary
+
+**Test suite maintenance** — Made test coverage visible on every change instead
+of measured and thrown away, and fixed a test database that did not match the
+shape of the real one.
+
 ## Status
 
 **Stages F and G added 2026-08-25**, both about instruments rather than

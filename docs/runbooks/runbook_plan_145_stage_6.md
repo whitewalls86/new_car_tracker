@@ -10,7 +10,7 @@ work on another month.
 `64631de`, in tmux `plan145-stage-6`, logs at `~/plan145-s6-*.log`. All four
 modes behaved as designed and the timings here are measured, not budgeted. See
 *Evidence — the Stage 6 dry runs* in the plan. **Nothing has been packed,
-retired, pruned or deleted.** See [the handoff](../plans/plan_145_stage_6_handoff.md)
+retired, pruned or deleted.** See [the handoff](../prompts/plan_145_stage_6_handoff.md)
 for why each piece is shaped the way it is.
 
 **Rebuild the archiver image before anything else.** It bakes code in rather
