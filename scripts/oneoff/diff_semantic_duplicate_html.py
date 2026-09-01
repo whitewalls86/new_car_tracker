@@ -4,9 +4,9 @@ Answers the question: where exactly do Cars.com pages differ between consecutive
 scrapes of a listing whose parsed vehicle state was unchanged?
 
 Run inside the dbt_runner container:
-    python scripts/diff_semantic_duplicate_html.py
-    python scripts/diff_semantic_duplicate_html.py --context 10
-    python scripts/diff_semantic_duplicate_html.py --listing-id <id>
+    python scripts/oneoff/diff_semantic_duplicate_html.py
+    python scripts/oneoff/diff_semantic_duplicate_html.py --context 10
+    python scripts/oneoff/diff_semantic_duplicate_html.py --listing-id <id>
 """
 from __future__ import annotations
 

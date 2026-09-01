@@ -11,7 +11,7 @@ import uuid
 
 import pytest
 
-from scripts.verify_recovery_live_state import run
+from scripts.oneoff.verify_recovery_live_state import run
 from shared.db import get_conn
 
 pytestmark = pytest.mark.integration

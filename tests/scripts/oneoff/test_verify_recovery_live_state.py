@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 
-from scripts.verify_recovery_live_state import RELATIONS, run
+from scripts.oneoff.verify_recovery_live_state import RELATIONS, run
 
 
 class _Store:

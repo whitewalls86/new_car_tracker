@@ -139,6 +139,7 @@ def _assert_exactly(found: set[str], waivers: tuple[Waiver, ...], rule: str) -> 
 _LAYER_HEADING = re.compile(r"^### Layer (\d) — (.+?)\s*$", re.M)
 _LIVES_IN = re.compile(r"^\*\*Lives in:\*\* `([^`]+)`", re.M)
 _SUITE_ROW = re.compile(r"^\| `(tests/[^`]+)` \| (\d) \|", re.M)
+_SCRIPT_BUCKET_ROW = re.compile(r"^\| `(scripts/[^`]*)` \| (yes|\*\*no\*\*) \|", re.M)
 
 
 @lru_cache(maxsize=None)
@@ -1042,6 +1043,80 @@ def coverage_sources() -> frozenset[str]:
     source = config["tool"]["coverage"]["run"]["source"]
     assert source, f"{COVERAGE_CONFIG} declares an empty coverage source list"
     return frozenset(source)
+
+
+@lru_cache(maxsize=None)
+def coverage_omissions() -> frozenset[str]:
+    """``[tool.coverage.run] omit``, as written. Absent is empty, not an error."""
+    config = tomllib.loads(_read(COVERAGE_CONFIG))
+    return frozenset(config["tool"]["coverage"]["run"].get("omit", ()))
+
+
+@lru_cache(maxsize=None)
+def script_buckets() -> dict[str, bool]:
+    """Each ``scripts/`` bucket the contract declares, to "is it measured?"."""
+    rows = {
+        path.rstrip("/"): answer == "yes"
+        for path, answer in _SCRIPT_BUCKET_ROW.findall(_read(CONTRACT))
+    }
+    assert "scripts" in rows, (
+        f"{CONTRACT} no longer says whether the top level of scripts/ is "
+        f"measured. See 'Where scripts sit, and what the directory declares'."
+    )
+    return rows
+
+
+def test_every_script_directory_is_classified():
+    """A script directory nobody placed is three guesses, not one gap.
+
+    ``scripts/`` carries production tooling and spent tooling in the same
+    tree, and the path is the only thing that says which. A subdirectory the
+    contract does not classify is read one way by ``[tool.coverage.run]``,
+    another by ``scripts/ci_change_scope.py``, and a third by whoever opens it
+    -- and nothing makes them agree. Plan 162 Stage 5b split the tree; this is
+    what stops the next bucket arriving undeclared.
+    """
+    on_disk = {
+        _relative(path)
+        for path in (REPO_ROOT / "scripts").iterdir()
+        if path.is_dir() and path.name != "__pycache__"
+    }
+    unclassified = sorted(on_disk - set(script_buckets()))
+    assert not unclassified, (
+        f"{CONTRACT} classifies no script directory {unclassified}. Add a row "
+        f"to 'Where scripts sit, and what the directory declares' saying "
+        f"whether it is in the coverage denominator and what belongs in it."
+    )
+
+    phantom = sorted(
+        bucket for bucket in script_buckets()
+        if not (REPO_ROOT / bucket).is_dir()
+    )
+    assert not phantom, (
+        f"{CONTRACT} classifies script directories that do not exist: "
+        f"{phantom}. A bucket described but absent is a rule about nothing."
+    )
+
+
+def test_every_unmeasured_script_bucket_is_omitted_from_coverage():
+    """The prose and the config are one statement, asserted in both directions.
+
+    A bucket the contract calls unmeasured that coverage still counts is a
+    denominator nobody chose; one that coverage omits while the contract calls
+    it measured is code that silently stopped being graded. The second is the
+    dangerous direction and the reason this asserts both.
+    """
+    for bucket, measured in sorted(script_buckets().items()):
+        omitted = any(
+            pattern.rstrip("*").rstrip("/") == bucket
+            for pattern in coverage_omissions()
+        )
+        assert omitted is not measured, (
+            f"{CONTRACT} calls `{bucket}/` "
+            f"{'measured' if measured else 'unmeasured'}, but "
+            f"{COVERAGE_CONFIG}'s [tool.coverage.run] omit "
+            f"{'omits' if omitted else 'does not omit'} it."
+        )
 
 
 def test_every_service_directory_is_measured_by_coverage():

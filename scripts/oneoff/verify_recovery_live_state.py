@@ -60,8 +60,8 @@ so still its own connection. ``compose run --rm`` is ephemeral, so mount a
 directory for the report or it dies with the container::
 
     docker compose run --rm -v /home/ubuntu:/out april-processor \\
-      python -m scripts.verify_recovery_live_state --window <name> \\
-        --canary-cmd "python -m scripts.reconcile_april_detail canary-commit \\
+      python -m scripts.oneoff.verify_recovery_live_state --window <name> \\
+        --canary-cmd "python -m scripts.oneoff.reconcile_april_detail canary-commit \\
           --apply --run-id <run> --expect-manifest-sha256 <sha> --expect-rows 505" \\
         --report /out/p145-v040-<name>.json
 """
@@ -76,7 +76,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-# ``python scripts/verify_recovery_live_state.py`` puts ``scripts/`` rather than
+# ``python scripts/oneoff/verify_recovery_live_state.py`` puts ``scripts/`` rather than
 # the repository root on sys.path. Keep the documented direct invocation working
 # while retaining package imports for tests and ``python -m`` usage.
 if __package__ in (None, ""):

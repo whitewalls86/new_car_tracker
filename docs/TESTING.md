@@ -177,8 +177,39 @@ the newer suites were already instances of them and are now named as such.
 | `tests/integration/airflow/` | 4 | Runs in the **isolated Airflow venv** (`apache-airflow==3.2.0`), because Airflow's starlette pin conflicts with the FastAPI services' |
 | `tests/lakehouse/` | 1 | Unit tests of `scripts/` lakehouse tooling; the source is not a `lakehouse/` package |
 | `tests/integration/lakehouse/` | 4 | **Dormant by decision** — Plan 125 pulled the job (`863a2f2`) rather than patch its fixture problem. Declared in `DORMANT_SUITES`, not waived; see [Waivers](#waivers) for why that distinction is structural |
-| `tests/scripts/` | 1 | Unit tests of one-shot and recovery scripts |
+| `tests/scripts/` | 1 | Unit tests of `scripts/` — production tooling that CI, an image, a Compose file or an ops route invokes |
+| `tests/scripts/oneoff/` | 1 | Unit tests of `scripts/oneoff/`, whose owning plans have archived. **Runs in the unit job like any other Layer 1 suite**; what its subjects leave is the coverage denominator, not the suite. Spent is a statement about a plan's state, never a licence to stop testing — `reconcile_april_detail.py` is well covered *because* it deleted 14.6 GB of production data |
 | `tests/integration/scripts/` | 4 | Recovery scripts against a real database — rollback, receipt and protected-table properties |
+
+### Where scripts sit, and what the directory declares
+
+`scripts/` is two things, and the path is the declaration — there is no
+manifest to keep in step, `git log --follow` records a reclassification, and
+`[tool.coverage.run]` and `scripts/ci_change_scope.py` each read the prefix for
+free.
+
+| Directory | In the coverage denominator? | What belongs there |
+|---|---|---|
+| `scripts/` | yes | Production. Invoked by CI, an image, a Compose file, an ops route or a harness hook — or imported by something that is |
+| `scripts/oneoff/` | **no** | Spent. The owning plan has archived and nothing binding names it. An entry here should cite that plan in its docstring, so the bucket cannot outlive its reasons |
+
+**The safe failure direction is the point.** A new script lands in
+production-land and is measured **by default**; leaving the instrument takes a
+deliberate move. Nobody drops something out of coverage by forgetting.
+
+**A script directory the contract does not classify fails
+`test_every_script_directory_is_classified`.** An unplaced directory is not a
+documentation gap: coverage, the CI scope classifier and a reader all have to
+guess what it is, and they can guess differently.
+
+**Spent is a property of the owning plan's state, not of how finished a script
+looks.** The `audit_`, `estimate_` and `spike_` prefixes classify nothing:
+`audit_adaptive_refresh_features.py` reads as forensics and is baked into
+`dbt_runner/Dockerfile`. Classification is the archive join —
+docstring plan number against
+[`completed_plans.md`](planning/completed_plans.md), the script's own name
+grepped back through the archive and the plan documents when it declares none —
+and a binding reference or an import from production wins over both.
 
 ---
 
@@ -469,6 +500,7 @@ the suite does not implement:
 | Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops Plan 84's numbering coming back |
 | Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps. This is the one mechanically checkable clause of *the harness must not decide the outcome*; the rest of that rule is judgement, and the row below says so |
 | Coverage measures every service directory, and the number it produces is consumed | `test_every_service_directory_is_measured_by_coverage`, `test_the_coverage_number_the_unit_job_produces_is_consumed` | Compare `[tool.coverage.run] source` to the service directories on disk; require `--cov-fail-under` on every `ci.yml` step that passes `--cov` |
+| Every `scripts/` directory is classified, and the classification is what coverage does | `test_every_script_directory_is_classified`, `test_every_unmeasured_script_bucket_is_omitted_from_coverage` | Compare *Where scripts sit* to the subdirectories on disk, both directions; then compare each bucket's stated answer to `[tool.coverage.run] omit` |
 
 ### Specified here, not yet asserted
 

@@ -4569,7 +4569,7 @@ class _Stage5Roots(NamedTuple):
     ``--probe`` routes every slice-2 read and write to a parallel ``*_probe``
     prefix, exactly as slice 1 does for ``compare`` (search ``PROBE_SUFFIX`` in
     ``run_compare``). Slice 1 open-codes ``PREFIX + suffix`` at each of three
-    uses in ``run_compare`` (``scripts/reconcile_april_detail.py:3195-3197``);
+    uses in ``run_compare`` (``scripts/oneoff/reconcile_april_detail.py:3195-3197``);
     slice 2 needs the same routing in more places, so it is derived once here
     and threaded. The two derivations produce the same values two ways -- if a
     fifth Stage-5 prefix is ever added, both places have to move together.
@@ -5362,7 +5362,7 @@ def _print_apply_report(run_id: str, results: Sequence[dict[str, Any]],
 #                      every-stratum selection Phase B's write canary commits.
 #
 # The V040 live-state proof is a separate script,
-# scripts/verify_recovery_live_state.py, because it runs inside a
+# scripts/oneoff/verify_recovery_live_state.py, because it runs inside a
 # maintainer-opened maintenance window with production writers quiesced.
 
 CONTROL_PREFIX = "recovery/plan145/control"

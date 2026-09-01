@@ -1176,7 +1176,7 @@ def load_sample(args: argparse.Namespace) -> list[dict[str, Any]]:
         LOG.info("Loaded %d sample rows from %s", len(rows), args.sample_in)
         return rows
 
-    from scripts.audit_semantic_duplicate_html_hashes import connect_duckdb, fetch_sample
+    from scripts.oneoff.audit_semantic_duplicate_html_hashes import connect_duckdb, fetch_sample
 
     LOG.info("Querying the lake for %d duplicate groups...", args.groups)
     rows = fetch_sample(connect_duckdb(), args)

@@ -494,7 +494,7 @@ cost forty requests and returned nothing forty times.
 
 #### August 2026, measured
 
-[`scripts/audit_fruitless_detail_fetches.py`](../../scripts/audit_fruitless_detail_fetches.py)
+[`scripts/audit_fruitless_detail_fetches.py`](../../scripts/oneoff/audit_fruitless_detail_fetches.py)
 `--since 2026-08-01 --until 2026-09-01`, run in `cartracker-archiver`:
 
 | Measure | Observed |

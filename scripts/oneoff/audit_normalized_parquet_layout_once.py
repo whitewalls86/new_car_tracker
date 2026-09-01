@@ -1,6 +1,6 @@
 """One-off audit for normalized Parquet prefixes.
 
-This reuses scripts.audit_parquet_layout but swaps the dataset configs from the
+This reuses scripts.oneoff.audit_parquet_layout but swaps the dataset configs from the
 legacy prefixes to the normalized prefixes created by rewrite_parquet_layout.py.
 It is intentionally read-only for MinIO and writes reports to /tmp.
 """
