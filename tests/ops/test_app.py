@@ -1,5 +1,10 @@
 
 
+from types import MappingProxyType
+
+from ops.public_stats import PresentationSnapshot
+
+
 def test_get_health(mock_client):
     response = mock_client.get("/health")
     assert response.status_code == 200
@@ -34,10 +39,26 @@ def test_get_admin(mock_client):
     assert response.headers["location"] == "/admin/searches/"
 
 
-def test_get_base_url(mock_client):
+def test_get_base_url_is_no_longer_the_admin_redirect(mock_client, mocker):
+    """Plan 138 Stage 2 gave ``/`` to the public landing page.
+
+    Caddy sent ``/`` to Streamlit before this stage, so this redirect was
+    reachable only from inside the network. The contract now lives in
+    tests/ops/routers/test_public_routes.py; this asserts the handover.
+    """
+    mocker.patch(
+        "ops.routers.info.public_stats_cache.get",
+        return_value=PresentationSnapshot(
+            stats=MappingProxyType({}),
+            status="not_ready",
+            stale=True,
+            last_success_at=None,
+        ),
+    )
+
     response = mock_client.get("/", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/admin/searches/"
+
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
