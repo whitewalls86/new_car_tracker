@@ -15,7 +15,8 @@ cannot drift apart. Assertions are membership-based: the shared fixture packs
 every selector's scenarios into one bucket, so selectors legitimately see more
 than one entity — each test checks its known entity is (or is not) present.
 
-Requires MINIO_ENDPOINT (set by the CI `dbt` job, which seeds the fixture and
+Requires MINIO_ENDPOINT (set by the CI `Lake integration tests (MinIO)` job,
+which seeds the fixture and
 starts MinIO). Skipped everywhere else.
 """
 import os

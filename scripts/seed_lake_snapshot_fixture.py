@@ -62,8 +62,8 @@ Two design rules make this safe to share:
   * Reserved partition. Everything is written under obs_year=2099/obs_month=1
     (silver) and year=2099/month=1 (ops). No production flush or other CI seed
     writes to 2099, so this fixture never collides with the empty-schema
-    compilation seed the CI `dbt` job also writes (which uses 2026 partitions).
-    Do NOT reuse the 2099 partition for any other seed data.
+    compilation seed the CI dbt-building jobs also write (which uses 2026
+    partitions). Do NOT reuse the 2099 partition for any other seed data.
 
   * Physically production-shaped. The Arrow schema is imported from the real
     writers (never re-declared), and rows are written with the same
@@ -1051,7 +1051,7 @@ def _seed_ops() -> List[str]:
 
 
 # Phases: "base" is the original single-shot fixture (silver + all three ops
-# tables), seeded once by the CI `dbt` job before the real `dbt build`.
+# tables), seeded once by each CI dbt-building job before its `dbt build`.
 # The remaining phases are each a second wave for one real-build incremental
 # test, seeded only after the base phase has already been built once, and
 # written under distinct filenames so they land alongside (not over) the base
