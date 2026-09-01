@@ -172,7 +172,7 @@ def parse_previous(text: str) -> Dict[Tuple[str, str], float]:
 
 def read_previous(directory: str) -> Dict[Tuple[str, str], float]:
     try:
-        with open(os.path.join(directory, TEXTFILE_NAME), "r") as handle:
+        with open(os.path.join(directory, TEXTFILE_NAME), "r", encoding="utf-8") as handle:
             return parse_previous(handle.read())
     except FileNotFoundError:
         return {}
@@ -225,7 +225,8 @@ def write_textfile(directory: str, text: str) -> str:
     os.makedirs(directory, exist_ok=True)
     destination = os.path.join(directory, TEXTFILE_NAME)
     handle = tempfile.NamedTemporaryFile(
-        mode="w", dir=directory, prefix=f".{TEXTFILE_NAME}.", delete=False,
+        mode="w", encoding="utf-8", dir=directory, prefix=f".{TEXTFILE_NAME}.",
+        delete=False,
     )
     try:
         with handle:

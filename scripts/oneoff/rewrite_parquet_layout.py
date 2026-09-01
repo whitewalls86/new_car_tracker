@@ -352,7 +352,7 @@ def load_baseline_audit(path: Path) -> dict[str, dict]:
     Partition rows from the Phase 3 audit are summed across all day partitions
     for the same source+month (silver) or year+month (ops).
     """
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     result: dict[str, dict] = {}
     for dataset_name, ds_data in data.get("datasets", {}).items():
         agg: dict = {}
@@ -929,7 +929,7 @@ def main(argv: list[str] | None = None) -> int:
     _print_summary(unit_results, mode)
 
     if args.json_out:
-        args.json_out.write_text(json.dumps(report, indent=2))
+        args.json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         LOG.info("Wrote report to %s", args.json_out)
 
     failed = sum(1 for r in unit_results if r.status == "failed")

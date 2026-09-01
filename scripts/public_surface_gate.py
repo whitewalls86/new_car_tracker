@@ -73,7 +73,7 @@ def main() -> int:
 
     digest = staged_digest(touched)
     stamp = stamp_path()
-    if stamp.exists() and stamp.read_text().strip() == digest:
+    if stamp.exists() and stamp.read_text(encoding="utf-8").strip() == digest:
         return 0
 
     print(

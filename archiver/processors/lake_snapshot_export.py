@@ -242,7 +242,7 @@ def _write_success_marker(root: str, base_path: Optional[str]) -> None:
     marker_path = f"{root.rstrip('/')}/_SUCCESS"
     if base_path:
         os.makedirs(root, exist_ok=True)
-        with open(marker_path, "w"):
+        with open(marker_path, "w", encoding="utf-8"):
             pass
     else:
         get_s3fs().pipe_file(marker_path, b"")

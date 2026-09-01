@@ -1172,7 +1172,7 @@ def load_sample(args: argparse.Namespace) -> list[dict[str, Any]]:
     has nothing to do with the measurements being iterated on.
     """
     if args.sample_in:
-        rows = json.loads(Path(args.sample_in).read_text())
+        rows = json.loads(Path(args.sample_in).read_text(encoding="utf-8"))
         LOG.info("Loaded %d sample rows from %s", len(rows), args.sample_in)
         return rows
 
@@ -1182,7 +1182,7 @@ def load_sample(args: argparse.Namespace) -> list[dict[str, Any]]:
     rows = fetch_sample(connect_duckdb(), args)
     LOG.info("Sample: %d rows", len(rows))
     if args.sample_out:
-        Path(args.sample_out).write_text(json.dumps(rows, indent=2, default=str))
+        Path(args.sample_out).write_text(json.dumps(rows, indent=2, default=str), encoding="utf-8")
         LOG.info("Wrote sample rows to %s", args.sample_out)
     return rows
 
@@ -1216,7 +1216,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print_report(report)
 
     if args.json_out:
-        Path(args.json_out).write_text(json.dumps(report, indent=2, default=str))
+        Path(args.json_out).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         LOG.info("Wrote report to %s", args.json_out)
 
     # A reconstruction miss is an extractor bug, not a finding: fail loudly.

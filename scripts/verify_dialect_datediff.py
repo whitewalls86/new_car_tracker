@@ -133,7 +133,7 @@ def generate(path: str) -> int:
         cases.append({"a": a, "b": b, "duckdb_hours": hours, "duckdb_days": days})
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(cases, fh, indent=1)
         fh.write("\n")
 
@@ -173,14 +173,14 @@ def check(cases_path: str, dialect_path: str) -> int:
 
     from shared.iceberg_catalog import spark_conf_for_dbt_session
 
-    with open(dialect_path) as fh:
+    with open(dialect_path, encoding="utf-8") as fh:
         source = fh.read()
     hours_body = extract_macro_body(source, "spark__datediff_hours")
     days_body = extract_macro_body(source, "spark__datediff_days")
     print(f"spark__datediff_hours := {' '.join(hours_body.split())}")
     print(f"spark__datediff_days  := {' '.join(days_body.split())}")
 
-    with open(cases_path) as fh:
+    with open(cases_path, encoding="utf-8") as fh:
         cases: List[Case] = json.load(fh)
     print(f"loaded {len(cases)} cases with DuckDB expected values from {cases_path}")
 
