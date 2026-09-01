@@ -159,8 +159,13 @@ without naming the rollback window it buys is not.
 
 It exceeded 120 s in this session's foreground, and the runbook records 5+ minutes
 before being killed. Whatever measures the reclaim must not depend on it.
-`du -x -d1 /var/lib` and the per-path panels Plan 135 Stage 4 already publishes
-are the instruments that work.
+
+**The instrument already exists.** `/var/lib/containerd` is on the `disk_usage`
+watchlist (`archiver/processors/disk_usage.py:55`, Plan 135 Stage 4), walked
+daily by the `disk_usage` DAG and published to a per-path panel. That DAG is how
+the growth was known to be a problem before this plan was written, and it is what
+will show whether the reclaim rule works. This plan adds a policy to an
+already-measured quantity — it does not need to build the measurement.
 
 ## Stages
 
@@ -210,9 +215,9 @@ weekly off-peak cron. Reuse it rather than inventing a second maintenance idiom.
 Schedule clear of `disk_usage`'s Sunday slow walk, which already runs 20+ minutes
 against the high-inode volumes.
 
-**Exit:** the job runs on schedule, reclaims what Stage 1 predicted, and
-`/var/lib/containerd` is visible in the Plan 135 per-path panels so the effect is
-legible without an SSH session.
+**Exit:** the job runs on schedule, reclaims what Stage 1 predicted, and the
+existing `/var/lib/containerd` panel shows the reclaim as a step rather than a
+continued climb.
 
 ## Files
 
@@ -220,8 +225,9 @@ legible without an SSH session.
 - `maintenance-running-set.txt` — read, not modified; the classes are the input
 - `docs/runbooks/runbook_storage_maintenance.md` — §2's table currently measures
   `/var/lib/docker`; it needs the containerd path and the policy this plan sets
-- `archiver/processors/disk_usage.py` — only if `/var/lib/containerd` is not
-  already on the watchlist
+- `archiver/processors/disk_usage.py` — **read only.** `/var/lib/containerd` is
+  already on the watchlist at line 55; this plan consumes that series and adds
+  nothing to it
 
 ## Out of scope
 
@@ -249,8 +255,8 @@ legible without an SSH session.
    Compose service protects its image without editing the reclaim job.
 3. A scheduled run reclaims image content without deleting any image the manifest
    classifies as `aux-paused` or `on-demand`.
-4. `/var/lib/containerd` is readable from the Plan 135 panels, so the next person
-   does not need `du` over `/var/lib` to see the trend.
+4. The existing `/var/lib/containerd` panel shows the store stepping down on the
+   job's schedule instead of climbing to the next manual intervention.
 
 ## Intersections
 
