@@ -152,6 +152,22 @@ def test_begin_drain_endpoint_maps_failures(mock_client, mocker, result, status_
     assert mock_client.post("/coordination/begin-drain").status_code == status_code
 
 
+def test_status_route_is_registered(mock_client, mocker):
+    """G6, Plan 162 Stage 6. `test_status_serializes_timestamps` calls `_status`.
+
+    That covers the serialisation and says nothing about the URL -- and this is
+    the route `scripts/host_maintenance.py` polls as `GET /coordination/status`
+    before it will proceed, so a rename here strands the host maintenance
+    workflow rather than failing anything in this suite.
+    """
+    mocker.patch("ops.routers.coordination._status", return_value={"phase": "none"})
+
+    response = mock_client.get("/coordination/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"phase": "none"}
+
+
 @pytest.mark.parametrize(
     ("path", "helper", "ok_phase"),
     [
