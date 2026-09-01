@@ -17,7 +17,7 @@ reconciled overviews and the assigned replacement claims.
 | **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
-| **1e** Weekly recap projection | **Ready** — 1d's generator, `--check` convention and static-artifact pattern exist to copy. Its link classifier now has three classes to handle, not one: the recaps hold 128 `../plans/`, 4 `../planning/` and 1 `../reference/` link |
+| **1e** Weekly recap projection (CAR-58, PR #331) | **Built 2026-09-01, in review** — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1f** Reconcile against the published writings | **Audit done 2026-08-31**, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open |
 
 **The two public surfaces are now in different states, and the distinction
@@ -923,6 +923,82 @@ survives; and no recap outside the published set produced output.
 **Gate 1e:** the publication policy is written down and committed, the generator
 refuses an unclassifiable link rather than emitting it, and `--check` fails on a
 new recap that has not been regenerated.
+
+#### Stage 1e evidence — 2026-09-01 (CAR-58)
+
+`scripts/build_public_recaps.py` emits `ops/static_ops/recaps/` — 20 pages and a
+newest-first `index.html` — from the 31 files in `docs/recaps/`. CI runs
+`--check` in the documentation job, beside 1d's.
+
+**The publication policy, decided here: a per-file marker.** Each recap carries
+`**Publish:** true|false` in its header block, and that marker is the whole of
+what the generator reads. Neither candidate policy in the table above was taken.
+
+- **A published-from date** is one decision and self-maintaining, but it can only
+  cut the corpus at one point, and the weeks worth withholding are *scattered
+  through* it rather than bunched at the start. Eleven of the thirty-one weeks
+  hold no commits — `2026-02-08` through `2026-03-08`, then `05-17`, `06-07`
+  through `06-28`, and `08-02` — so every date that clears the early empties
+  still publishes five or six later ones.
+- **A central allow-list** can say "not this week", but it lives away from the
+  thing it describes and needs an edit every week that Plan 146's gate produces
+  a recap. That is the second place that goes stale.
+
+The marker travels with the file `plan-week` writes, so the decision is made
+where the week is written. It is **required, not defaulted**: a recap with no
+marker fails the build, because both defaults are wrong — `true` publishes an
+unread week the moment it lands, `false` drops one off the site silently.
+`_REQUIRED_RECAP_FIELDS` in `tests/test_planning_docs.py` enforces its presence
+alongside `**Window:**` and `**Recapped:**`, reusing a check the documentation
+job already ran rather than adding a new one.
+
+**Zero commits was the seeding rule, not the policy.** The initial 20/11 split
+was set by commit count and then committed as explicit data. A week with commits
+that should stay internal is now a `false` someone writes deliberately, and
+nothing recomputes it. `.claude/skills/plan-week/SKILL.md` carries the rule for
+new recaps and says so in those terms.
+
+**The section above under-counted the link classes, and missed one entirely.**
+Measured against the corpus: 128 `../plans/`, 4 `../planning/` and 1
+`../reference/` — the stage table's row was right and the prose here said 129
+and named two directories. The fourth class is the one neither said: **six
+sibling links between recaps** (`2026-08-02` and `2026-08-09` linking forward to
+later weeks), which resolve to `docs/recaps/*.md` and are not covered by a rule
+about `../`. They resolve to the neighbouring *page* when that week is published
+and fall back to GitHub when it is not — a published page must never link to one
+the projection deliberately did not build. All six point forward in time, so no
+cross-boundary case exists in the corpus today; the rule exists because the next
+one need not be so tidy.
+
+**Links are rewritten in the token stream, not in the text.** A regex over
+Markdown cannot tell a link from the same characters inside a fenced code block,
+and the corpus holds 42 of those, full of shell commands and paths. Walking
+markdown-it's tokens also gives the heading ids the one internal anchor needs:
+`2026-08-30.md`'s `#merges` resolves to `<h2 id="merges">`.
+
+**`MarkdownIt("commonmark")` enables raw HTML, and the first draft of this
+generator shipped it.** The preset sets `html=True`, because the CommonMark spec
+admits raw HTML — so a recap containing a `<script>` tag would have had it copied
+verbatim onto a public page, which is exactly what Stage 4 item 3 and Stage 3c's
+CSP bar. The generator now passes `html=False` explicitly. It was caught by the
+test asserting the property rather than by reading the code, and the docstring
+that had confidently called it "the default" was wrong. Regenerating after the
+fix produced byte-identical output, which is the evidence that the corpus holds
+no HTML tags today.
+
+**Gate 1e is met.** The policy is committed, in the marker and in this section.
+The generator raises `RecapBuildError` rather than emitting an unclassifiable
+link — covered for absolute paths, `mailto:`, `tel:`, foreign schemes, targets
+that do not exist in the tree and targets that escape the repository. `--check`
+fails in all three directions, each driven through the real subprocess CI runs:
+a new recap nobody regenerated, a page whose recap stopped being published, and
+a page edited by hand. `tests/scripts/test_build_public_recaps.py` is 45 tests.
+
+**Not done here, and deliberately.** No route serves these pages yet — Stage 2
+opens the path and Stage 3d presents them. The artifacts are committed and the
+ops image picks them up through its existing `COPY`, so nothing was added to
+`ops/requirements.txt`; `markdown-it-py` is a build-time dependency and is
+declared in `requirements-dev.txt` and named in the CI job.
 
 ### 1f. Reconcile against the published writings
 

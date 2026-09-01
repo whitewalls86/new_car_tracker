@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-06-29 to 2026-07-05</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-06-29 to 2026-07-05. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-06-29-to-2026-07-05">Week of 2026-06-29 to 2026-07-05</h1>
+<p><strong>Window:</strong> 2026-06-29 00:00:00 to 2026-07-05 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-24
+<strong>Commits in window:</strong> 39 (30 non-merge, 9 merges)</p>
+<p>This is a backfill written <strong>50 days after the window closed</strong>. It is the week
+July began by changing the physical storage contract: silver small files gained
+a compactor, bronze compression was measured rather than guessed, and the
+Parquet lake moved to normalized month-level paths. A separate production fix
+stopped successfully scraped but dealer-unenriched listings from being fetched
+again every fifteen minutes.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plan-109-compact-the-silver-small-file-stream">Plan 109 — compact the silver small-file stream</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_109_silver_compaction.md">Plan 109</a> exists because a five-minute
+flush cadence produced roughly 150 Parquet files per source per day, multiplying
+query overhead and weakening compression. <code>2a0037c</code> added daily, sorted,
+watermark-protected compaction with a reader-safe temporary-file sequence and a
+bounded backlog drain. Review follow-ups <code>be01ca7</code>, <code>2ce776a</code> and <code>b8bd1c1</code>
+made delete failure abort publication, isolated integration prefixes, and
+bypassed PyArrow's conflicting Hive inference. Those follow-ups name no plan
+and remain in the unattributed ledger.</p>
+<h3 id="plan-115-a-successful-scrape-must-close-its-retry-circuit">Plan 115 — a successful scrape must close its retry circuit</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_115_detail_unenriched_circuit_breaker.md">Plan 115</a> fixed a
+production loop where <code>customer_id IS NULL</code> meant both “never fetched” and
+“successfully fetched without dealer metadata.” <code>dd14e04</code> added
+<code>last_detail_scraped_at</code>, made only detail writes advance it, and suppressed
+another detail attempt for seven days. The same commit removed roughly 145
+seconds of unit-test TCP timeouts by mocking external I/O. <code>9c9f6eb</code> updated
+direct integration-test callers for the new write contract.</p>
+<h3 id="plan-116-measure-recompression-before-building-a-migration">Plan 116 — measure recompression before building a migration</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_116_estimate_recompression_savings.md">Plan 116</a> was a read-only
+gate for Plan 110's proposed bronze rewrite. <code>6212e85</code> added the estimator;
+<code>6f4cda5</code> replaced a prefix-wide buffered listing with a streaming paginator;
+and <code>cffc1bd</code> recorded the production result: level 9 saved a consistent 8%
+across May and June, too little to justify rewriting millions of old objects.
+The decision was to improve new writes and pursue higher-value storage work.</p>
+<h3 id="plan-110-normalize-storage-before-experiments-depend-on-it">Plan 110 — normalize storage before experiments depend on it</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_110_html_storage_optimization.md">Plan 110</a> broadened from HTML
+compression into storage-layout hygiene and Iceberg readiness. Its seven named
+commits were <code>9723180</code>, <code>dd52f31</code>, <code>313f58c</code>, <code>0c2f6f8</code>, <code>2767ac9</code>, <code>39b118d</code>
+and <code>b63a24a</code>.</p>
+<p>The implementation raised new bronze writes to zstd level 9, supplied an
+operator-only recompression tool, audited Parquet using listings and footers,
+selected a normalized month-level layout, and built a non-destructive rewrite
+with baseline checks and write-before-rename publication. The unnumbered
+<code>18c2121</code> then cut writers and dbt readers over to <code>silver_normalized/</code> and
+<code>ops_normalized/</code>; <code>1e35c99</code> moved CI fixtures, while <code>3e2d308</code> removed physical
+partition columns so historical rewrites and fresh flushes shared one schema.</p>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_117_storage_and_adaptive_refresh_roadmap.md">Plan 117</a> connected
+that storage work to the next feature, experiment and production-policy stages.
+<code>58a87af</code> made Plans 110–113 a single evidence-driven arc: normalized storage,
+interpretable features, reproducible backtesting, then conservative deployment.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Three index revisions introduced six build-order entries:</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_110_html_storage_optimization.md">110</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_111_adaptive_detail_refresh.md">111</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_112_refresh_policy_backtesting.md">112</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td>113</td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td>114</td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_115_detail_unenriched_circuit_breaker.md">115</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+</tbody>
+</table></div>
+<p>Plan 109 shipped in the window but produced no net state change in the index.
+Plan 116 also opened, measured its question and closed without appearing in a
+net transition above.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li>Plan 110's normalized cutover landed, but the later window still had to prove
+the feature layer and experimental substrate on top of it.</li>
+<li>Plan 109's implementation was present, but production backlog drainage and
+longer-running verification were not recorded in this week.</li>
+<li>Plan 115 fixed one requeue cause; its seven-day horizon meant the circuit
+breaker still depended on downstream ownership of “fetched” state, a boundary
+that later Plan 147 would revisit more generally.</li>
+<li>Plans 111–114 were newly filed work. None of their principal deliverables
+shipped in this window.</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Eighteen non-merge commits name no numbered plan in their own subject or body.
+They are included in the narrative above where their work is clear.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Subject</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>be01ca7</code></td>
+<td>fix: address three code review findings in compact_silver</td>
+</tr>
+<tr>
+<td><code>2ce776a</code></td>
+<td>fix: ruff lint errors in compact_silver files</td>
+</tr>
+<tr>
+<td><code>b8bd1c1</code></td>
+<td>fix: use pq.ParquetFile().read() to bypass hive partition inference</td>
+</tr>
+<tr>
+<td><code>9c9f6eb</code></td>
+<td>fix: update integration processing tests for last_detail_scraped_at upsert param</td>
+</tr>
+<tr>
+<td><code>f687daa</code></td>
+<td>fix: ruff lint errors in analysis scripts (E501, E741, I001)</td>
+</tr>
+<tr>
+<td><code>6f4cda5</code></td>
+<td>fix: use boto3 paginator in iter_prefix to avoid blocking s3fs.ls</td>
+</tr>
+<tr>
+<td><code>1be9ba0</code></td>
+<td>docs: fix Phase 6 deploy intent and compose service names</td>
+</tr>
+<tr>
+<td><code>d41d6bd</code></td>
+<td>docs: fix Phase 6 Steps 4+5 to use host curl for archiver endpoints</td>
+</tr>
+<tr>
+<td><code>54c9760</code></td>
+<td>docs: fix Phase 6 Step 10/11 ordering — validate before unpausing DAGs</td>
+</tr>
+<tr>
+<td><code>713b5e3</code></td>
+<td>docs: fix rollback completeness after Step 10 controlled flush</td>
+</tr>
+<tr>
+<td><code>924cd3c</code></td>
+<td>docs: remove fake CLI flags from Phase 6 Option B recovery</td>
+</tr>
+<tr>
+<td><code>6171a8d</code></td>
+<td>docs: add ops_normalized validation to Phase 6 Step 10 and rollback</td>
+</tr>
+<tr>
+<td><code>4088829</code></td>
+<td>docs: check all five ops/ prefixes in Step 10 and fix flushed=0 wording</td>
+</tr>
+<tr>
+<td><code>d19ccd1</code></td>
+<td>finalizing audit script for furture use.</td>
+</tr>
+<tr>
+<td><code>18c2121</code></td>
+<td>Implement normalized parquet cutover</td>
+</tr>
+<tr>
+<td><code>1e35c99</code></td>
+<td>ci: update MinIO seed paths to normalized layout</td>
+</tr>
+<tr>
+<td><code>c724d08</code></td>
+<td>Pin dbt core below 2 in runner</td>
+</tr>
+<tr>
+<td><code>3e2d308</code></td>
+<td>fix: drop Hive partition cols from rewritten Parquet physical schema</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="merges">Merges</h2>
+<p>Nine merges are named and not recapped separately.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th style="text-align:right">PR</th>
+<th>Branch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0d33512</code></td>
+<td style="text-align:right">#130</td>
+<td>feature/plan-109-silver-compaction</td>
+</tr>
+<tr>
+<td><code>a8d2622</code></td>
+<td style="text-align:right">#131</td>
+<td>bugfix/detail-unenriched-circuit-breaker</td>
+</tr>
+<tr>
+<td><code>7ee58c7</code></td>
+<td style="text-align:right">#132</td>
+<td>feature/plan-116-estimate-recompression-savings</td>
+</tr>
+<tr>
+<td><code>6310858</code></td>
+<td style="text-align:right">#133</td>
+<td>feature/storage-refresh-implementation-plans</td>
+</tr>
+<tr>
+<td><code>1217f9f</code></td>
+<td style="text-align:right">#134</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+<tr>
+<td><code>3cd7fde</code></td>
+<td style="text-align:right">#135</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+<tr>
+<td><code>a6ece65</code></td>
+<td style="text-align:right">#136</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+<tr>
+<td><code>5f7237e</code></td>
+<td style="text-align:right">#137</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+<tr>
+<td><code>11f736d</code></td>
+<td style="text-align:right">#138</td>
+<td>feature/plan-110-storage-layout-hygiene</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>419 commits</strong> sit after this window's end as of 2026-08-24.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-07-05 23:59:59'   # 419
+</code></pre>
+<p>That raw tail includes the July 6–12 recap being written alongside this one
+and the already-covered weeks ending July 19, July 26, August 2, August 9,
+August 16 and August 23. Once both files in this backfill are present, none of
+the following complete weeks is genuinely uncovered.</p>
+</main>
+</body>
+</html>

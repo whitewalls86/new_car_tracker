@@ -61,8 +61,8 @@ applying a provenance label to it devalues every genuine one.
 
 | File | Holds |
 |---|---|
-| `docs/PLANS.md` | closeout, build order, backlog, superseded — four tables, one index |
-| `docs/planning/completed_plans.md` | the archive. Newest first, **prepend-only**, one row per plan |
+| `docs/PLANS.md` | closeout, build order, backlog, superseded — four tables, one index. **Public: its top four build-order rows are published** |
+| `docs/planning/completed_plans.md` | the archive. Newest first, **prepend-only**, one row per plan. **Public: its top four rows are published** |
 | `docs/plans/plan_NNN_*.md` | the plan's own document, and the authority when it and the index disagree |
 | `tests/test_planning_docs.py` | what "correct" means. 33 assertions, ~0.2s |
 | `docs/planning/plans_decision_log.md` | narrative. You do not write here; the user may |
@@ -260,8 +260,33 @@ Three hard limits:
 
 ```bash
 LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
+python scripts/build_public_roadmap.py --check
 git diff
 ```
+
+**Both of this skill's files are generator input, and the test above cannot
+see it.** Plan 138 Stage 1d publishes `docs/PLANS.md`'s build order and
+`docs/planning/completed_plans.md` to the landing page through
+`ops/static_ops/project-updates.json`. The build order's **Next executable
+slice** cell *is* the published `summary` for a planned plan, so a one-cell
+edit changes public copy.
+
+If `--check` reports the artifact stale, run
+`python scripts/build_public_roadmap.py` and leave its output in the diff.
+Regenerating is not authoring: the generator is deterministic and reads only
+values already placed and approved. It is the same kind of derived-state
+upkeep as the archive row count above.
+
+Only the first four rows of each side are published (`MAX_ITEMS = 4`), so not
+every edit moves the artifact — but do not try to reason about which do.
+**Archiving always does**, because the archive is prepended and a new row is
+therefore always in the top four; a build-order insert renumbers and can carry
+a plan across the boundary in either direction. Run the check and believe it.
+
+This is how it goes wrong: `tests/test_planning_docs.py` passes on a stale
+artifact, so a green run there is not evidence. The assertion that catches it
+lives in `tests/scripts/test_build_public_roadmap.py`, which the unit job runs
+and this operation does not.
 
 Read every changed line. Then report, briefly:
 

@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-07-13 to 2026-07-19</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-07-13 to 2026-07-19. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-07-13-to-2026-07-19">Week of 2026-07-13 to 2026-07-19</h1>
+<p><strong>Window:</strong> 2026-07-13 00:00:00 to 2026-07-19 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-24
+<strong>Commits in window:</strong> 88 (63 non-merge, 25 merges)</p>
+<p>This is a backfill written <strong>36 days after the window closed</strong>. It records a
+week in which the lakehouse stopped being an architectural intention and
+became a working, repeatedly corrected system: Lakekeeper, Spark, Iceberg,
+production-derived snapshots and MLflow provenance were joined into one local
+rehearsal path, then the harder DuckDB-to-Iceberg migration began.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plan-124-contain-browser-failures-inside-the-solver">Plan 124 — contain browser failures inside the solver</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_124_trawl_memory_guardrails.md">Plan 124</a> was opened after a
+browser process consumed enough memory to threaten the host. <code>2d09363</code> added
+container memory, swap and PID limits plus tests and the plan document;
+<code>678f31f</code> raised the browser allowance after the first limits proved unstable,
+and <code>8354e14</code> aligned the tests and documentation. None of those three commits
+names Plan 124 in its own text, so they remain in the unattributed ledger even
+though their changes are described here.</p>
+<h3 id="plan-112-prove-the-open-lakehouse-foundation">Plan 112 — prove the open-lakehouse foundation</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_112_refresh_policy_backtesting.md">Plan 112</a> needed a
+reproducible experiment substrate before adaptive-refresh policy work could be
+trusted. The week audited the existing features, stood up an isolated
+Lakekeeper REST catalog, proved Spark/Iceberg writes and time travel against
+MinIO, rehearsed a real volatility-feature export, added a one-command local
+snapshot-to-lakehouse path, and attached MLflow provenance. The eleven commits
+that name the plan are <code>67a1d1d</code>, <code>cf92f02</code>, <code>74ab140</code>, <code>448ef35</code>, <code>79050b0</code>,
+<code>6c801e0</code>, <code>b9ce29a</code>, <code>c243cfd</code>, <code>89043b1</code>, <code>062aaaf</code> and <code>10bc4c9</code>.</p>
+<p>The correction chain matters as much as the first implementation. It fixed
+Lakekeeper image and health assumptions, bootstrapped the empty catalog,
+created the CI bucket before warehouse registration, moved Spark from S3A to
+Iceberg's S3FileIO, made cleanup use the catalog's real UUID path, removed an
+x86-only <code>JAVA_HOME</code>, and separated the production analytics volume from the
+CI Compose path. Those fixes are named in the unattributed section rather than
+silently absorbed into the plan count.</p>
+<h3 id="plan-120-make-production-derived-fixtures-portable">Plan 120 — make production-derived fixtures portable</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_120_ci_lake_snapshot_delivery.md">Plan 120</a> separates expensive
+snapshot production from Plan 112's consumption of stable fixtures. Gate E
+packaged and uploaded fingerprinted archives, and Gate F added an authenticated
+ops/admin download path with alias and manifest cross-checks. The three
+attributed commits were <code>92d610c</code>, <code>c1e7195</code> and the shared local-rehearsal
+commit <code>89043b1</code>. Follow-ups hardened the archive prefix, identity checks,
+OAuth bypass for the authenticated download, MinIO dependency, cache reuse and
+error handling.</p>
+<h3 id="plan-125-begin-making-iceberg-the-analytics-contract">Plan 125 — begin making Iceberg the analytics contract</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_125_duckdb_to_iceberg_migration.md">Plan 125</a> exists because
+Plan 112 proved an Iceberg sidecar but left DuckDB as the real analytics
+contract. The week kept Lakekeeper behind catalog-neutral configuration,
+audited 22 models and their readers, proved dbt-spark against Iceberg, ported
+the ten-model volatility chain to exact parity, verified late-arrival behavior,
+and measured rather than guessed the first Gate C shape decisions.</p>
+<p>The work also withdrew a lakehouse CI job after its cold-start fixture problem
+survived an attempted patch; the local and VM proofs remained valid, but no
+longer masqueraded as CI coverage. The thirteen attributed commits were
+<code>066be10</code>, <code>e063f94</code>, <code>76aac3f</code>, <code>498f7a6</code>, <code>0bb36c8</code>, <code>96926e6</code>, <code>5bae544</code>,
+<code>3f75283</code>, <code>430fd15</code>, <code>b63c4f6</code>, <code>863a2f2</code>, <code>ff33c99</code> and <code>9f34557</code>.</p>
+<p>Two future streaming documents also entered the record: Plan 126 framed a
+small replayable event backbone around the existing staging-event seam, and
+Plan 127 reserved adaptive scrape control for after that transport and its
+inputs are stable. Their authoring commits (<code>396911a</code>, <code>ac0f2c9</code>) name no plan
+number and therefore remain unattributed below.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Four revisions of <code>docs/PLANS.md</code> changed the index during the window:</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>87</td>
+<td>backlog</td>
+<td>superseded</td>
+</tr>
+<tr>
+<td>118</td>
+<td>build order</td>
+<td>superseded</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_124_trawl_memory_guardrails.md">124</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_125_duckdb_to_iceberg_migration.md">125</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_126_basic_event_streaming.md">126</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_127_streaming_adaptive_scrape_control.md">127</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+</tbody>
+</table></div>
+<p>The state changes match the architectural handoff: Plan 125 replaced Plan
+118's broader migration placeholder, while Plan 126 replaced the Kafka-shaped
+Plan 87 with an event-semantics-first design.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li>Plan 112 paused after foundation proof; adaptive-refresh model and policy
+work still depended on Plan 125 making Iceberg a real analytics contract.</li>
+<li>Plan 120 had shipped archive delivery, but its later completion gates and
+production verification were not closed in this window.</li>
+<li>Plan 125 Gate C still owed production-scale evidence and the actual reader
+cutover. The week ended with partition specifications decided but not applied.</li>
+<li>Plans 126 and 127 were future designs only. The transport plan depended on a
+stable Plan 125 substrate; adaptive scrape control depended on the transport
+and on settled feedback semantics.</li>
+<li>Plan 124 had limits in code, but production verification and the corrected
+distinction between host-wide and container-local OOMs came later.</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Thirty-seven non-merge commits name no numbered plan in their own subject or
+body. Each is included in the work above or described by its subject here; the
+missing fact is the durable plan attribution, not the work.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Subject</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>2d09363</code></td>
+<td>Add Trawl memory guardrails</td>
+</tr>
+<tr>
+<td><code>64df879</code></td>
+<td>Align audit script not_null checks with schema.yml and doc</td>
+</tr>
+<tr>
+<td><code>678f31f</code></td>
+<td>Increase trawl memory limits to fix unstable browsers.</td>
+</tr>
+<tr>
+<td><code>8354e14</code></td>
+<td>fixed tests to match new defaults, and updated docs.</td>
+</tr>
+<tr>
+<td><code>78b157b</code></td>
+<td>fixing doc wording on lakehouse_subtrate doc</td>
+</tr>
+<tr>
+<td><code>d530ec2</code></td>
+<td>fix lakekeeper image</td>
+</tr>
+<tr>
+<td><code>91f68a2</code></td>
+<td>Fixing Lakehouse healthcheks.</td>
+</tr>
+<tr>
+<td><code>24dfada</code></td>
+<td>fixing the health check to check on infra not catalog.</td>
+</tr>
+<tr>
+<td><code>7ff95ff</code></td>
+<td>fix dependencies for pytest.</td>
+</tr>
+<tr>
+<td><code>5a5244a</code></td>
+<td>Fix Lakekeeper warehouse payload schema + run A2 round-trip in lakehouse-worker</td>
+</tr>
+<tr>
+<td><code>057b2cb</code></td>
+<td>Fix lakehouse-worker build: pin base image to bookworm for openjdk-17</td>
+</tr>
+<tr>
+<td><code>c0a4e22</code></td>
+<td>Fix CI lakehouse job: create bronze bucket before warehouse registration</td>
+</tr>
+<tr>
+<td><code>efbcc62</code></td>
+<td>Fix warehouse registration: bootstrap the Lakekeeper server first</td>
+</tr>
+<tr>
+<td><code>6d3eeb4</code></td>
+<td>Fix Lakekeeper warehouse payload schema + run A2 round-trip via S3FileIO</td>
+</tr>
+<tr>
+<td><code>ec68a12</code></td>
+<td>Fix cleanup: drop PURGE, derive MinIO prefix from real table location</td>
+</tr>
+<tr>
+<td><code>fa9f739</code></td>
+<td>Fix lakehouse-worker JAVA_HOME: resolve arch-suffixed JVM path dynamically</td>
+</tr>
+<tr>
+<td><code>c0bf40e</code></td>
+<td>Mark Gate A2 verified: real VM run results, close out hedged docs language</td>
+</tr>
+<tr>
+<td><code>5741988</code></td>
+<td>Fix Gate A3: split analytics volume mount out of CI-shared compose file</td>
+</tr>
+<tr>
+<td><code>09b0a22</code></td>
+<td>Fix Gate A3: add missing pytz dependency for DuckDB timestamp conversion</td>
+</tr>
+<tr>
+<td><code>0a73077</code></td>
+<td>Fix Gate A3: duckdb .arrow() returns a RecordBatchReader, not a Table</td>
+</tr>
+<tr>
+<td><code>a0a6b55</code></td>
+<td>Fix Gate A3: add setuptools for the distutils shim PySpark 3.5.3 needs</td>
+</tr>
+<tr>
+<td><code>bc2305d</code></td>
+<td>Mark Gate A3 verified: real VM run results, close out A3 open items</td>
+</tr>
+<tr>
+<td><code>99205d1</code></td>
+<td>Fix A4 local harness: MinIO cred defaults, drop expected/ from seed check</td>
+</tr>
+<tr>
+<td><code>9c8c0ba</code></td>
+<td>Add .cache/ to .gitignore</td>
+</tr>
+<tr>
+<td><code>0846459</code></td>
+<td>Constrain Gate F alias-referenced keys to the known archive prefix</td>
+</tr>
+<tr>
+<td><code>43dbc78</code></td>
+<td>Cross-check alias/manifest snapshot_id against the requested snapshot_id</td>
+</tr>
+<tr>
+<td><code>1a55627</code></td>
+<td>Route snapshot downloads around browser OAuth</td>
+</tr>
+<tr>
+<td><code>687e6c4</code></td>
+<td>Add ops MinIO client dependency</td>
+</tr>
+<tr>
+<td><code>8a1c6fa</code></td>
+<td>Allow snapshot manifests reused by archive cache</td>
+</tr>
+<tr>
+<td><code>7b7fd49</code></td>
+<td>Address review: broaden Gate F error handling, fix stale docs claims</td>
+</tr>
+<tr>
+<td><code>1700761</code></td>
+<td>Add Docker build context ignore rules</td>
+</tr>
+<tr>
+<td><code>fcaaa1f</code></td>
+<td>Address review: clean CLI input errors, runbook table-lifecycle + Smoke B network caveats</td>
+</tr>
+<tr>
+<td><code>5a9a9a5</code></td>
+<td>Use Python 3.12 for MLflow image build</td>
+</tr>
+<tr>
+<td><code>4c1eff1</code></td>
+<td>Package MLflow provenance client in image</td>
+</tr>
+<tr>
+<td><code>396911a</code></td>
+<td>Add streaming roadmap plans</td>
+</tr>
+<tr>
+<td><code>ac0f2c9</code></td>
+<td>Document reference-table snapshot and streaming path</td>
+</tr>
+<tr>
+<td><code>ff5ee6b</code></td>
+<td>Fix Gate A review findings: vacuous parity, stale examples, weak guard</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="merges">Merges</h2>
+<p>Twenty-five merges are named and not recapped as separate work.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th style="text-align:right">PR</th>
+<th>Branch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>8dcab21</code></td>
+<td style="text-align:right">#154</td>
+<td>hotfix/plan-124-trawl-memory-guardrails</td>
+</tr>
+<tr>
+<td><code>624a387</code></td>
+<td style="text-align:right">#155</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>3f0394d</code></td>
+<td style="text-align:right">#156</td>
+<td>fix/trawl-resources</td>
+</tr>
+<tr>
+<td><code>344da84</code></td>
+<td style="text-align:right">—</td>
+<td>remote-tracking reconciliation merge</td>
+</tr>
+<tr>
+<td><code>bc98fc7</code></td>
+<td style="text-align:right">#157</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>3b9c95d</code></td>
+<td style="text-align:right">#158</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>3c07f1a</code></td>
+<td style="text-align:right">#159</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>ff02f2c</code></td>
+<td style="text-align:right">#160</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>82660ce</code></td>
+<td style="text-align:right">#161</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>59161c3</code></td>
+<td style="text-align:right">#162</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>51a7833</code></td>
+<td style="text-align:right">#163</td>
+<td>feature/plan-112-iceberg-preflight</td>
+</tr>
+<tr>
+<td><code>616a1d7</code></td>
+<td style="text-align:right">#165</td>
+<td>feature/plan-120-gate-e-archive-packaging</td>
+</tr>
+<tr>
+<td><code>d19e1d5</code></td>
+<td style="text-align:right">#166</td>
+<td>feature/plan-112-a4-local-snapshot-lakehouse</td>
+</tr>
+<tr>
+<td><code>d13c905</code></td>
+<td style="text-align:right">#167</td>
+<td>feature/plan-120-gate-f-snapshot-downloads</td>
+</tr>
+<tr>
+<td><code>05d2493</code></td>
+<td style="text-align:right">#168</td>
+<td>feature/plan-120-gate-f-snapshot-downloads</td>
+</tr>
+<tr>
+<td><code>bf04734</code></td>
+<td style="text-align:right">#169</td>
+<td>feature/plan-120-gate-f-snapshot-downloads</td>
+</tr>
+<tr>
+<td><code>89116a7</code></td>
+<td style="text-align:right">#170</td>
+<td>feature/plan-120-gate-f-snapshot-downloads</td>
+</tr>
+<tr>
+<td><code>c8c90d7</code></td>
+<td style="text-align:right">#171</td>
+<td>feature/plan-112-a4-local-rehearsal-runner</td>
+</tr>
+<tr>
+<td><code>2ceb617</code></td>
+<td style="text-align:right">#172</td>
+<td>feature/plan-112-mlflow-tracking-bridge</td>
+</tr>
+<tr>
+<td><code>aa7288e</code></td>
+<td style="text-align:right">#173</td>
+<td>feature/plan-112-mlflow-tracking-bridge</td>
+</tr>
+<tr>
+<td><code>1740e81</code></td>
+<td style="text-align:right">#174</td>
+<td>feature/plan-112-mlflow-tracking-bridge-clean</td>
+</tr>
+<tr>
+<td><code>4148749</code></td>
+<td style="text-align:right">#175</td>
+<td>docs/plan-112-consolidation-plan-125</td>
+</tr>
+<tr>
+<td><code>03723ad</code></td>
+<td style="text-align:right">#176</td>
+<td>feature/plan-125-catalog-neutral-preflight</td>
+</tr>
+<tr>
+<td><code>3f9b00e</code></td>
+<td style="text-align:right">#177</td>
+<td>docs/plans-126-127-streaming</td>
+</tr>
+<tr>
+<td><code>daad69d</code></td>
+<td style="text-align:right">#178</td>
+<td>feature/plan-125-portability-audit</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>241 commits</strong> sit after this window's end as of 2026-08-24.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-07-19 23:59:59'   # 241
+</code></pre>
+<p>That raw tail includes the July 20–26 recap being written alongside this one
+and the already-covered weeks ending August 2, 9, 16 and 23. Once both files in
+this backfill are present, none of the following complete weeks is genuinely
+uncovered.</p>
+</main>
+</body>
+</html>

@@ -9,3 +9,4 @@ boto3
 zstandard
 pyyaml
 prometheus-fastapi-instrumentator
+markdown-it-py

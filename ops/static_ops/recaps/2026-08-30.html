@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-08-24 to 2026-08-30</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-08-24 to 2026-08-30. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-08-24-to-2026-08-30">Week of 2026-08-24 to 2026-08-30</h1>
+<p><strong>Window:</strong> 2026-08-24 00:00:00 to 2026-08-30 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-31
+<strong>Commits in window:</strong> 276 (216 non-merge, 60 merges)</p>
+<p>This is the largest week in the repository's history by a wide margin — 276
+commits against 155 the week before, and roughly 98k tokens to read. Four plans
+were archived, one was created and archived inside the same week, and eleven new
+plan documents entered the index.</p>
+<p>Two things ran end to end. <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_145_april_cutover_reconciliation.md">Plan 145</a>
+went from a discarded design to 1,172 deleted legacy Parquet objects in five
+days, taking April from 24.48 GiB to 4.34 GiB. And
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_142_planned_host_maintenance.md">Plan 142</a>'s coordination contract
+was built, deployed, and immediately taught three defects by its own first
+production run — one of which, a week later, deadlocked a deploy for nineteen
+minutes and became a plan of its own.</p>
+<p>A note on the count. Seven non-merge commits appear twice under different shas:
+the same patch replayed onto a second branch, with one copy on master's lineage
+and one on an abandoned side branch. <code>git log --all</code> counts both. Verified with
+<code>git patch-id --stable</code>; the pairs are named under
+<a href="#merges">Merges</a>. The distinct-change count is therefore 209, not 216, and
+every sha is still cited below.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="linear-as-the-weekly-execution-layer">Linear as the weekly execution layer</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_149_linear_execution_layer.md">Plan 149</a> is a bounded experiment:
+the repository stays authoritative, and Linear is tried as the daily work
+surface for one cycle at a time. The week opened by writing the plan (<code>86b5197</code>),
+recording Stage 0's bootstrap evidence (<code>468b4ff</code>) and moving the row to closeout,
+since nothing but observation is owed (<code>3ecda99</code>).</p>
+<p>The correction that followed is the useful part. Linear had generated its first
+cycle from the Monday <em>after</em> the workspace was bootstrapped, so the week the
+board was actually in use fell outside every cycle; cycles were shifted onto the
+Monday grid and issue estimation switched from <code>notUsed</code> to <code>fibonacci</code>, which
+had been storing points that counted toward nothing (<code>263e702</code>, <code>c13ad4a</code>). Three
+Linear-writing skills — <code>ticket-now</code>, <code>fill-cycle</code> and <code>close-out</code> — landed in
+the same commit, each structured as the mirror of the <code>plans</code> skill: they write
+Linear and never repository state.</p>
+<p>The GitHub automation table then turned out to describe neither the real triggers
+nor the real targets, and merge was set to <code>Done</code> rather than <code>Soaking</code> — the
+auto-transition the plan's own deviation note forbids (<code>59c6080</code>, <code>b4699ef</code>). A
+deliberate empty commit probed whether branch-name linkage alone fires the
+trigger (<code>121e48b</code>, <code>cdc435e</code>); branch linkage works, the status automations did
+not, and three explanations were eliminated rather than confirmed (<code>d12372e</code>,
+<code>3504b74</code>).</p>
+<p>That reading was itself corrected on the 29th (<code>9c258b6</code>). The merge automation
+<em>does</em> work — CAR-21 moved to Soaking two seconds after PR #265 merged — and the
+difference is that its PR title carried <code>(CAR-21)</code>. CAR-22 is the negative
+control: two PRs, zero attachments, four days in Ready. The working rule is now
+that every PR title names its issue. The same read found the eight-issue seeding
+cap measured in the wrong unit (Cycle 1 seeded 8 and ran to 21) and the estimate
+scale's day-mapping off by roughly 3x.</p>
+<h3 id="service-health-and-the-absent-service-gap">Service health, and the absent-service gap</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_140_service_health_contract.md">Plan 140</a> closed. Stage 4a had to
+land before 4b, because demoting the health sensors alone would have created
+silence: <code>ct-container-unhealthy</code> does not fire for a <em>stopped</em> container, since
+the status filter admits only running, restarting and paused, so a service that
+is gone leaves the metric rather than reading 0 (<code>bd07963</code>). The expected-service
+set is consumed from Plan 142's <code>maintenance-running-set.txt</code> rather than
+restated — an earlier draft inferred it from restart policy, which reproduces the
+same 28 names today and silently drops the restart-gap class. Stage 4b then set
+<code>soft_fail=True</code> on <code>http_health_sensor</code> only, so a timeout skips rather than
+fails. The DAG integrity contract was inverted to assert the new wiring rather
+than merely lose the old (<code>15c5553</code>).</p>
+<p>The fire test is the first time the absent-service path could be observed at all:
+flaresolverr stopped at 02:32:36Z, the metric read 0 with the series count
+holding at 28, and the alert fired at 02:38:00Z. Before Stage 4a the exporter
+would have published 27 series and said nothing (<code>c21a877</code>). Two stale
+&quot;deploy pending&quot; markers inside the already-archived document were corrected
+later in the week (<code>749fc80</code>) — found while running the <code>close-out</code> skill, and
+the same class of error as trusting a status marker over deployed reality.</p>
+<h3 id="the-structured-log-contract">The structured log contract</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_141_structured_log_ingestion_contract.md">Plan 141</a> existed
+because Plan 135's log bounds were live but the <em>contract</em> was not: the JSON
+formatter emitted four fields and dropped anything a caller passed via <code>extra=</code>,
+and alert rules matched on unanchored text. Stages 0–3 landed the ingestion
+policy, the Promtail pipeline, the dashboards and the CI contract check
+(<code>8688fd9</code>, <code>e5f1969</code>), and a logging health check split four out-of-scope gaps
+across their real owners rather than widening one plan — Plan 141 keeps the
+formatter fix, Plan 142 gains durable transition history, and Plans 154 and 155
+are new (<code>0681ea2</code>, <code>4cca77b</code>).</p>
+<p>Five review findings were closed before Stage 4 deployed (<code>0299fbe</code>), the worst
+of which would have NaN'd every <code>cartracker_*</code> analytics gauge at first restart:
+<code>validate_snapshot</code> demanded exact set equality with <code>METRIC_NAMES</code>, so adding
+five metric names invalidated the file already on disk. The deployment queue was
+sequenced so every restarting step preceded every soak that starts, because Plan
+136 Stage 3b was reading trawl's memory curve under scrape load (<code>0371526</code>).</p>
+<p>Stage 4 deployed 2026-08-25 19:52 UTC, and the soak clock was recorded from the
+deploy rather than the merge — CAR-10 was marked &quot;Soaking&quot; when PR #247 merged
+while production still ran PR #241 (<code>edd036d</code>, <code>e8bcdc0</code>). The same commit
+recorded a defect in one of the stage's own acceptance instruments. Stage 4 was
+accepted after an 80,658-second window (<code>1d96980</code>, <code>c60b1fb</code>) and the plan
+archived (<code>1e735f2</code>).</p>
+<h3 id="scoped-coordination-and-host-maintenance">Scoped coordination and host maintenance</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_142_planned_host_maintenance.md">Plan 142</a> is the largest build of
+the week at fifty commits. It exists because the repository had a deploy
+procedure and a storage runbook but no durable procedure for pausing production,
+updating Ubuntu, rebooting the VM, proving host and stack healthy, and resuming.
+Reframed on the 25th, Stage 1 replaces deploy intent with one scoped coordination
+contract rather than adding a second state machine (<code>75d47fb</code>, <code>fdf7a62</code>).</p>
+<p>Stage 1 built the scoped requester and V043 (<code>3b0d6dd</code>), gated Airflow admission
+by scope across eighteen DAGs (<code>4ec8d35</code>), made every service report truthful
+drain evidence (<code>35c524d</code>, <code>f799184</code>), enforced mutation drain contracts
+(<code>40568e2</code>), aggregated scoped drain evidence (<code>96c76fa</code>), classified service
+execution lifecycles ahead of Plan 152 (<code>d285265</code>, <code>90221e3</code>), guarded
+authorization (<code>5ddbc62</code>), hardened compatibility (<code>0d690d0</code>, <code>6f1e4bb</code>) and
+published health signals with their alert rules (<code>8f953c7</code>).</p>
+<p><strong>Then it met a real database.</strong> Stage 1 deployed 19:52 on the 25th, and its
+first real invocation hung — 950 passing tests had all run against mocks
+(<code>abcec56</code>). Three defects came out of that hour:</p>
+<ul>
+<li>Three drain queries named the wrong schema. <code>detail_scrape_claims</code> is in <code>ops</code>,
+and <code>task_instance</code>/<code>dag_run</code> are in <code>airflow</code>, which is not on the ops role's
+search_path. <code>_database_count</code> turns the error into <code>unknown</code>, unknown fails
+closed, and the operator saw &quot;still draining&quot; rather than &quot;your SQL is wrong&quot;
+(<code>5260d3d</code>). A fail-closed gate that cannot distinguish busy from broken
+presents a defect as patience. No test layer could have caught it: the unit
+test patches <code>_database_count</code>, and CI's Postgres has no Airflow tables at all
+(<code>2c96cf8</code>).</li>
+<li>The contract could not gate the deploy that installed it — seven drain sources
+read endpoints shipping in the same release. Recorded as a migration artifact
+rather than a property of the contract, with the narrower recurring rule
+written down.</li>
+<li><code>ct-coordination-stale</code> fired on the healthy steady state within minutes,
+because <code>noDataState: Alerting</code> turned the <em>absence</em> of a window into a page,
+carrying the released window's stale labels (<code>6258184</code>).</li>
+</ul>
+<p>After the fixes it worked: twelve sources <code>known</code>, the full
+draining → active → validating → released lifecycle, and redeploy.sh driving it
+cleanly twice more unprompted.</p>
+<p>Phase B's one-hour maintenance-pool hold ran 20:14:57–21:14:57 and released
+clean, draining 44 pooled tasks in 74.5s with zero failures (<code>e3b578f</code>). Its
+finding <em>removes</em> work: peak concurrency was exactly 16, the pool's slot count,
+so <code>max_active_runs=1</code> on <code>orphan_checker</code> — which the plan had named as the fix
+if the herd misbehaved — is not required. The hold's signature in the trawl
+memory curve turned out not to be the anticipated trough but the <em>absence</em> of the
+15-minute detail batch spikes, cleanly separable from listing-scrape drift
+(<code>4e4b0e2</code>).</p>
+<p>Stage 2 built the host-maintenance client end to end (<code>0116d3e</code>, <code>fc6a7d0</code>,
+<code>fe8294e</code>, <code>8df9e8e</code>, <code>8d74a56</code>, <code>4cb2476</code>, <code>6123a62</code>, <code>7aa0b42</code>, <code>9a44efc</code>,
+<code>3ab92e5</code>, <code>38dd5cd</code>, <code>5bf84bc</code>, <code>23268c7</code>, <code>bc78a31</code>, <code>9c5f2e6</code>), and Stage 3
+the resume gate — split by what each side can actually observe, because ops runs
+in a container and cannot see the running kernel or <code>systemctl --failed</code>
+(<code>9c592a1</code>, <code>bfa5616</code>, <code>37f077d</code>, <code>4d6ed4a</code>, <code>2e38bf6</code>, <code>d1309a3</code>, <code>7778861</code>,
+<code>14d9ef0</code>, <code>d629ffc</code>, <code>34828a7</code>, <code>f8bb219</code>).</p>
+<p>Five unit tests that failed on Windows while passing on Linux CI were corrected
+at the boundary where the host assumption entered rather than by adding a Windows
+CI leg (<code>b80f387</code>, <code>0bee614</code>, <code>f49aeff</code>). Among them, <code>CoordinationCollector</code> had
+no <code>describe()</code>, so <code>prometheus_client</code> ran a real PostgreSQL query at import.</p>
+<p>Stage 4's window was scoped against the plan, the machinery and the live host
+before being scheduled — and is <strong>not runnable yet</strong> (<code>0ab43e4</code>). Five things
+block it and four are defects in stages this plan already calls built: Stage 3 is
+built but not deployed, <code>validate-host</code> cannot pass a deferred-reboot window at
+all because this host's kernels arrive from <code>unattended-upgrades</code>, a live
+<code>docker compose run</code> one-off makes <code>stop</code> refuse after production is gated, and
+<code>oauth2-proxy</code>'s documented healthcheck exemption fails the release gate because
+no runtime code reads <code>healthcheck-exemptions.txt</code>. Three of the four share a
+shape: a slice proven against the case it was written for, meeting a neighbouring
+case in production.</p>
+<h3 id="the-solver-image-pinned-and-soaked">The solver image, pinned and soaked</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_136_solver_recycle_and_liveness.md">Plan 136</a> had a memory
+baseline to take before it could cut over. Stage 3a's read on the 25th answered
+it: a monotonic +40.5 MiB/h climb — ~971 MiB/day — from 1395 to 3256 MiB over 46
+hours, no plateau and no involuntary recycle to bound it (<code>437b0c7</code>). Two things
+in that read were worth more than the slope. The runbook carried ~590 MiB/day, so
+every operator reading that page had the wrong clock by 65%. And at 5-minute
+resolution the series topped out at 80.0% of cap while raw 15s peaks were already
+84–86.5%, understating it by ~280 MiB.</p>
+<p>Stage 3b pinned <code>TRAWL_IMAGE</code> to the v1.4.2 multi-arch index digest — not the
+arm64 manifest, which would break x86 CI — and put the pin in <code>docker-compose.yml</code>
+rather than <code>.env</code>, since an <code>.env</code> override is exactly what had hidden six weeks
+of drift behind <code>:latest</code> (<code>0a3bdb7</code>). The 48-hour soak was accepted on the 27th
+with the verdict <strong>slowed, not yet bounded</strong>: restarts 0, zero oom-kills, a
+99.87% solve rate against the old build's 95.7–96.1%, real daily reclaim the old
+build never did — but both peak and floor still drift up over the two cycles
+observed. The plan moved to closeout with a re-measure gate on 2026-09-17 rather
+than a verdict now (<code>a7137d0</code>).</p>
+<p>Four runbook instructions that actively misled during the 25th's window were
+corrected from having been run, not from having been read (<code>9705595</code>) — including
+a <code>grep -ioE 'solved|403'</code> that reported 12 403s over a window where the counter
+reported zero.</p>
+<h3 id="closing-plan-123s-verification-gates">Closing Plan 123's verification gates</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_123_dbt_incrementalization_and_resource_governance.md">Plan 123</a>
+had been sitting on production verification that was open and unrecorded from
+2026-07-10 — the reason the closeout table grew a <code>Lands</code> column at all. The
+missing instrument arrived as a side effect of Plan 136 Stage 3a (<code>819386a</code>).
+The hourly DAG runtime drop is confirmed (135.1s → 82.1s, −39%, sustained across
+six weeks) and the 8GB DuckDB budget confirmed sufficient at 3.53 GiB peak RSS.
+The third item was converted to a residual risk rather than quietly counted as
+verified: the OOM short-circuit asks for proof against a real SIGKILL, and the
+guardrail prevents the event that would prove the guardrail.</p>
+<h3 id="test-suite-findings-and-one-that-grew-into-its-own-plan">Test-suite findings, and one that grew into its own plan</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_139_test_suite_maintenance.md">Plan 139</a> gained three stages, each
+from a defect that shipped. Stage F records that CI's database does not model
+production schemas — Flyway creates an empty <code>airflow</code> schema while Airflow owns
+the tables and CI points at SQLite, so two of the three search_path queries could
+not have run in any layer (<code>aa6b7fb</code>, <code>2805b28</code>). Stage H records a census that
+drifted in two files counting different units: 13 DAG <em>files</em> wiring a health
+sensor against 14 sensor <em>tasks</em> in the DagBag, so Plan 134's deletion updated one
+and missed the other, and the marker split hid it — there was no local command
+that would have caught it (<code>dfd506f</code>).</p>
+<p>Stage G tracked the Promtail contract checker's false failures (<code>2155e23</code>,
+<code>b71f89e</code>), then outgrew the stage. A fourth occurrence produced two runs of the
+same branch disagreeing with each other, and a verdict that is not a function of
+its inputs is not a stage. It became
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_160_promtail_contract_checker_reliability.md">Plan 160</a>
+(<code>72b6be6</code>), and Stage G's evidence was removed from Plan 139 before rebasing
+rather than left to read as a duplicate refuting itself (<code>354f535</code>).</p>
+<p>Plan 160's defect is one line of design: <code>_run()</code> keys results by line text and
+scores anything missing as &quot;corpus says retained, Promtail dropped it&quot;, so
+&quot;dropped by policy&quot; and &quot;not observed&quot; produce an identical signal. Reality has
+three states and the checker encoded two. The fix moves from
+<code>subprocess.run(input=...)</code> to <code>Popen</code> — <code>input=</code> closed stdin the instant the
+lines were written and <code>-stdin</code> treats EOF as <em>shut down now</em>, so the race was
+created at maximum pressure — and splits the verdict so a varying absence is
+inconclusive rather than a contract violation (<code>cf549a7</code>).</p>
+<p>Stage 0 then contradicted the plan's own premise, which is recorded as a marked
+correction rather than smoothed: the race was said to need a loaded machine and
+would not reproduce idle. It reproduced on the first unloaded run and in 12 of 20,
+and eight CPU burners <em>lowered</em> the rate to 3 in 10 (<code>99a68b7</code>). Stage G's 10/10
+clean local runs were not measuring what they appeared to. Against the fixed
+checker the same loop went 12 failures to 0. The first green CI run is recorded
+as weaker evidence than the twenty local runs, and the row moved to closeout with
+a two-week observation gate (<code>e88d176</code>).</p>
+<h3 id="april-recovery-seventy-six-commits-and-2014-gib-reclaimed">April recovery: seventy-six commits, and 20.14 GiB reclaimed</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_145_april_cutover_reconciliation.md">Plan 145</a> is the week's
+centre of mass. Its goal and success criteria never changed; its <em>method</em> changed
+three times, each because a measurement contradicted an identity key the previous
+method relied on.</p>
+<p>The week began with a design that reconciled the legacy Parquet to production
+through metadata joins (<code>c4685e5</code>, <code>b21fd48</code>, <code>625f211</code>, <code>45f13a5</code>, <code>32dc609</code>),
+which was then reverted wholesale (<code>f946f88</code>, <code>1601379</code>) and rewritten
+(<code>7504f88</code>). The disproof: the pack sidecar's <code>listing_id</code> is wrong for 194,639
+of 371,095 content matches — right <code>fetched_at</code>, wrong listing — while silver
+corroborates the <em>legacy</em> listing_id in 194,734 of 194,734 sampled disagreements
+(<code>5c1162c</code>). A second revision refused all metadata and re-derived everything
+from bytes at 24.8 core-hours; correct but overbuilt, carrying a two-store union
+through every stage to avoid a question unpacking answers for free. The third
+revision flattens the population first (<code>57baacd</code>).</p>
+<p>From there it ran:</p>
+<ul>
+<li><strong>Stage 1</strong>, the frozen census (<code>3f6e6d4</code>): 1,172 objects, 14,670,223,837 bytes,
+951,821 rows reproduced exactly, zero hash mismatches over 807,797 non-empty
+bodies. It also pinned down that the Plan 72 writer archived <code>b&quot;&quot;</code> when the page
+file was already gone while still copying the database sha256 — so for 43,014
+rows the stored hash is real and the bytes are not.</li>
+<li><strong>Stage 2</strong>, materializing the bodies as ordinary <code>.html.zst</code> objects behind a
+new <code>april-processor</code> container (<code>47f5a35</code>, <code>0b2437e</code>), with object keys derived
+from content hash so a crashed run resumes rather than duplicates.</li>
+<li><strong>Stage 3</strong>, dedupe and unpack (<code>6bc5d87</code>, <code>958dca3</code>, <code>e17c0a7</code>): 371,095
+distinct objects deleted against a rate gate, then every pack member verified
+against its sidecar hash and written back under its original key to preserve the
+<code>minio_path → artifact_id</code> join.</li>
+<li><strong>Stage 4</strong>, the parse (<code>0d3b481</code>, <code>6ac8242</code>, <code>051f7d0</code>), with identity resolved
+in three tiers because the unpack manifest's sidecar <code>listing_id</code> is wrong for
+313,701 of 457,084 named members.</li>
+<li><strong>Stage 5</strong>, compare / assign / apply / canary, which took nine review rounds
+(<code>0a7aad4</code>, <code>1eb5ba9</code>, <code>4799a67</code>, <code>6daa70b</code>, <code>76e7409</code>, <code>7c7290e</code>, <code>746409a</code>,
+<code>cd0b463</code>, <code>561f82e</code>, <code>58a1e27</code>, <code>72b15ec</code>, <code>6c1ef5a</code>, <code>bfb280b</code>, <code>0d80645</code>,
+<code>89a83ca</code>, <code>2470850</code>, <code>8ba3f82</code>, <code>56f7e91</code>, <code>e434b8f</code>, <code>8b0fcc1</code>, <code>5a5cce7</code>,
+<code>4fafbe6</code>, <code>67cbc82</code>, <code>0c77b2a</code>, <code>7410016</code>, <code>5802cb5</code>, <code>7db6262</code>, <code>34541a7</code>,
+<code>f75d37e</code>, <code>713db1c</code>, <code>86ebe41</code>, <code>953fa25</code>, <code>b69f572</code>, <code>9e0d952</code>, <code>e4bbefd</code>,
+<code>0158863</code>, <code>f51102b</code>, <code>a920001</code>).</li>
+<li><strong>Stage 5b</strong> (<code>dd6aa26</code>, <code>5ccb5ad</code>), a packer defect found before Stage 6 could
+write anything: the <code>obs</code> CTE reduced silver with <code>any_value(listing_id)</code> and no
+<code>source</code> filter, so one detail artifact's ~6.7 candidate listings collapsed to
+an arbitrary one. Correct for 31.4% of April members, 8.4% of July. Nothing on
+the read path consults it, so no artifact was ever served wrongly — but sidecar
+identity was unusable for joins, which is what cost this plan three revisions.
+Identity and placement were split rather than merged, so not one member moved.</li>
+<li><strong>Stage 6</strong>, the repack, retirement, prune and deletion (<code>b579a81</code>, <code>104019c</code>,
+<code>44b505f</code>, <code>0eade3c</code>, <code>d7d4e7a</code>, <code>11856de</code>, <code>c30fb1c</code>, <code>7af6eda</code>).</li>
+</ul>
+<p>Four findings from the week are worth carrying forward.</p>
+<p>The <strong>compression question</strong> was settled, unsettled, re-settled and finally
+answered by the run itself. The sidecar trust boundary was
+first corrected and tracked as CAR-28 (<code>24eb9d6</code>) — only <code>listing_id</code> is
+unusable, since <code>fetched_at</code> measures 100.00% exact against
+<code>artifacts_queue_events</code> for June's 1,124,122 members. An in-memory bench then
+said the scrambled ordering wins by 19.4% (<code>71db6c6</code>, <code>27749ce</code>); that claim was
+withdrawn once both bench tests
+turned out to be biased in opposite directions (<code>f0f8f3d</code>, <code>e2a8a65</code>), bounded to
+a subset rather than a second full pass (<code>07c7a38</code>, <code>74ac0a1</code>), and then run for
+real. <code>pack-trial --apply</code> <strong>split</strong>: drawn in current order true ordering is
+27.50% larger; drawn in true order it is 4.76% smaller. A 32-point swing from
+sample selection alone, larger than the effect under test (<code>d7d4e7a</code>). The
+decision rule was fixed before the run, so the incumbent carries — and a single
+sample, which the plan originally specified, would have produced a confident
+wrong answer.</p>
+<p>The <strong>full apply</strong> committed 341,903 artifacts and 701,375 silver rows across 70
+receipts on 2026-08-29, in ten minutes (<code>a920001</code>). The V040 live-state proof ran
+twice, the first window passing and being rolled back deliberately. The
+arithmetic proves the canary exclusion in both directions: the batches wrote
+exactly 234 artifacts and 505 rows short of the assign census, and the two sum to
+precisely that census.</p>
+<p>The <strong>corrected Stage 6 gate</strong> was confirmed cell by cell (<code>11856de</code>). Figures
+derived from the assign and apply censuses and marked &quot;derived, not yet measured&quot;
+came back exact: 139,604 members with no queue event, 133,548 materialized,
+6,056 old pack members, 325,414 with no listing, 657,629 with one. Three
+independent measurements of the same population agree.</p>
+<p><strong>End state</strong> (<code>7af6eda</code>): the prune deleted and verified 983,043 objects with 0
+refused; the deletion removed all 1,172 legacy Parquet by exact key in under a
+minute, 0 refused, 0 absent, 0 errors. April went from 24.48 GiB to <strong>4.34 GiB</strong> —
+20.14 GiB reclaimed, more than the 13.66 the plan set out to delete, because the
+flattening created a loose population the prune then removed. The plan was
+archived the next morning, with Plan 156 moved into the build order in the same
+transition since its only trigger had been Plan 145 Stage 5 (<code>066d3e2</code>).</p>
+<p>A post-mortem was filed under <code>docs/evidence/</code> and brought up to date twice, once
+because its own &quot;where it stands&quot; section was overtaken within hours of being
+written, and once to fold in what this machine's session transcripts hold that
+the plan documents do not (<code>dd076b7</code>, <code>dfba51d</code>).</p>
+<h3 id="separating-fetch-from-enrichment">Separating fetch from enrichment</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_147_scrape_state_ownership.md">Plan 147</a> was written after Plan
+142 Stage 0 found that pausing <code>results_processing</code> for a maintenance window
+would put the detail scraper into a re-scrape loop. <code>last_detail_scraped_at</code> is
+the guard that stops a re-fetch, but it is written by the processing service two
+hops downstream and behind an async queue; when that chain breaks, the claim rows
+are deleted, nothing sets the timestamp, and the same ~100 listings are re-claimed
+every fifteen minutes.</p>
+<p>A pre-implementation accuracy pass corrected five statements and caught one
+latent design defect (<code>8e51d0e</code>): Stage 1 as written reopened the very loop it
+closes, because it rebuilt the staleness view to read a column that only Stage 2
+teaches anything to write.</p>
+<p>V048 expanded the one column into two — <code>last_detail_fetched_at</code>, scraper-owned;
+<code>last_detail_enriched_at</code>, processor-owned — as an expand, not a rename, because
+Flyway here is forward-only with no staging environment (<code>2b03853</code>). Stage 2
+moved the guard next to the fetch, setting the fetch timestamp on the same cursor
+that deletes the claim rows (<code>4fdc0e3</code>), with one deliberate deviation from the
+plan's literal wording: the writers pass a single parameter bound to both columns,
+so the two are physically unable to disagree rather than asserted to agree.</p>
+<p>The production evidence is what makes this plan finished rather than shipped.
+V048 applied at 05:35:06 UTC and the load-bearing check is that <em>nothing moved</em> —
+V040's rule and V048's COALESCE rule evaluated side by side across all 51,081
+live rows found zero rows classified differently (<code>f099361</code>). Two rows did
+diverge, and they turned out to be post-migration writes by the Stage-1-era
+image, which corrected two claims the plan made. Stage 2's deploy showed the
+guard operating for the first time: 100 listings claimed, fetched and released,
+and none of them back in the queue (<code>86ec5f6</code>). Stage 3 answered its own question
+from data already in the lake rather than building the gauge it specified — the
+population escalating backoff would target is 13 listings and 278 requests a
+month, so the follow-up is declined on evidence rather than deferred again
+(<code>4284a2d</code>) — and verified the plan's whole point in production: <code>results_processing</code>
+paused 81 minutes with the scraper running, five batches, 2,000 listings, zero
+repeats (<code>eb938ce</code>). That retired the only reason <code>scrape_detail_pages.claim_batch</code>
+sat in Plan 142's maintenance pool.</p>
+<p>V049 contracted the pair (<code>564db85</code>), and the backfill inside it is the whole
+reason the migration is more than a <code>DROP COLUMN</code>: 41 legacy-only rows were held
+only by the COALESCE it removes. The plan closed the same day (<code>ab2aabf</code>,
+<code>567147f</code>), with two things recorded because they were nearly missed — the deploy
+order inverted from Stages 1–3 and the timestamps show it was followed, and a
+post-deploy check framed as an invariant returned 272 because the framing was
+wrong, not the database.</p>
+<h3 id="the-safety-mechanism-that-stopped-a-deploy">The safety mechanism that stopped a deploy</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_158_coordination_gate_deadlock.md">Plan 158</a> was created and
+archived inside this week. It was found on the 30th while deploying Plan 147
+Stage 2: the deploy hung for nineteen minutes with every production DAG parked,
+would have hung indefinitely, and was aborted by hand (<code>4ecee69</code>).</p>
+<p><code>_DeployIntentSensor.poke()</code> returned early on <code>intent != &quot;none&quot;</code>, and
+<code>redeploy.sh</code> sets intent to <code>pending</code> <em>before</em> it drains — so during every
+deploy the <code>INSERT INTO coordination_gate_observations</code> beneath that return was
+unreachable. The drain then waits on exactly that table. The confirming evidence
+is that the table was empty for generation 17 and for every generation that has
+ever existed: the INSERT had never once executed in production. It had not bitten
+before because the count is zero whenever no affected run is live at the instant
+intent is declared, which is a race whose losing branch is unbounded.</p>
+<p>The archaeology is instructive: commit <code>4ec8d35</code> — Plan 142 Stage 1, six days
+earlier in this same week — extended a sensor whose original body was a bare
+<code>SELECT intent FROM deploy_intent</code>, adding the coordination query beneath that
+pre-existing return. Each half was correct and tested; the seam was neither.</p>
+<p>Stage 0 wrote recognition and recovery into the runbook first, because the
+deadlock was live until Stage 1 shipped (<code>220395a</code>). Stage 1 moved the write
+above both returns with admission behaviour unchanged, asserted over the full
+cross product of intent × phase × scope (<code>748165e</code>). Stage 2 bounded the one wait
+in the deploy that had no timeout — <code>_prepare_coordination</code> polled in a <code>while :</code>
+with no deadline, so the operator was the timeout (<code>ac3d140</code>). Stage 3's method
+was rewritten before it ran, because the incident's real cause was a stray
+one-shot container holding the drain, not the timing of the declaration, and
+reproducing the failure means reproducing the <em>hold</em> (<code>08bc8b5</code>).</p>
+<p>It was then proved in production (<code>398e943</code>): four observation rows written at
+generation 23 across the 15:30 fire while a decoy still held the drain open,
+authorization landing within 9s of the last blocker clearing. Two corrections
+came from running the checked-in protocol — <code>dbt/Dockerfile</code> sets
+<code>ENTRYPOINT [&quot;dbt&quot;]</code>, so the documented decoy ran <code>dbt sleep 900</code> and exited, and
+the protocol's claim of zero fleet change was wrong because both service
+Dockerfiles <code>COPY . .</code>. The plan archived, re-filing what it found: evidence to
+Plan 152 for its trigger, and a new
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_159_unhealthy_container_escalation.md">Plan 159</a> for the
+observability gap it declined to claim — that same container's healthcheck failed
+1,727 consecutive times across fourteen hours with nothing surfacing it
+(<code>2128755</code>).</p>
+<h3 id="the-archiver-endpoints-that-never-signalled-failure">The archiver endpoints that never signalled failure</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md">Plan 134</a> was a
+two-line sketch that predated four months of change. Its Stage 0 survey corrected
+three claims and dissolved one of its five endpoints entirely (<code>0056740</code>).
+<code>/compact/silver/run</code>'s predicate is not <code>error</code>: <code>compact_silver</code> catches
+per-partition exceptions into a <code>failed</code> counter and returns <code>&quot;error&quot;: None</code>, so
+a run where every partition failed is a 200. And <code>/cleanup/parquet/run</code> needs no
+predicate at all — its query has been the stub <code>SELECT 0, 0 WHERE FALSE</code> since
+V036 dropped <code>raw_artifacts</code>, so 133 green daily runs did nothing, while
+<code>cleanup_artifacts</code> has never produced a single <code>dag_run</code> row. That whole dead
+chain was deleted together, along with the three registries that knew about it
+(<code>056cde7</code>, <code>33b275e</code>).</p>
+<p>The retrospective answered something sharper than &quot;how often does this fail&quot;
+(<code>79c837e</code>): twice in three weeks, and Airflow reported 128 consecutive successes
+across both. During 2026-08-08 to 08-13, MinIO returned <code>XMinioStorageFull</code> on
+the silver flush for five days across 112 green runs, with dbt building on stale
+data throughout. The survey also caught its own method error — Plan 141's labels
+only exist from 2026-08-25, so a query pinned to <code>source=&quot;application_file&quot;</code> sees
+five days rather than ninety.</p>
+<p>Stage 1 added warning-only failure predicates on flush and compact, shaped as
+pure functions on the summary dict, each documenting what it deliberately does
+<em>not</em> fail on — no count is ever the predicate, because a quiet hour legitimately
+flushes zero rows (<code>585c56f</code>). And it repaired the pager, which turned out to be
+the larger half (<code>0306629</code>, <code>a05168b</code>): <code>hourly_analytics_refresh</code>'s notify task
+had 12 failures and zero successes because it read <code>ti.dag_run</code> and
+<code>ti.execution_date</code>, neither of which exists on Airflow 3's
+<code>RuntimeTaskInstance</code>. Both lines arrived in one commit on 2026-05-08 and were
+then copied twice — <code>dbt_build</code> has failed 268 times since, and
+<code>pack_bronze_html</code>'s has never fired and was latent. One shared
+<code>notifications.py</code> replaces all three, because three copies is how one commit
+silenced the fleet. Stage 1 deployed on the 30th with a seven-day observation
+window (<code>1d78528</code>, <code>b28aebb</code>).</p>
+<h3 id="public-surface-and-the-planning-index">Public surface, and the planning index</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md">Plan 138</a> committed two overview
+documents that had sat untracked across several sessions, since Stage 0 cannot
+cite what is uncommitted (<code>2eb7c7e</code>), then recorded them as named Stage 0 sources
+with a boundary and a gate (<code>e4083a9</code>). The boundary matters: the architectural
+overview documents the anti-detection path and both print production object
+prefixes, which the non-goals already bar from public surfaces. Gate 0b requires
+one section reconciled first — it says FlareSolverr performs the browser
+bootstrap, while <code>docker-compose.yml</code> marks that container vestigial and names
+<code>trawl</code> as the live path.</p>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_146_planning_system.md">Plan 146</a> kept the index honest through a
+week that moved faster than it. It archived Plan 123 and deleted the temporary
+deployment queue, which had become actively wrong (<code>33b24dd</code>); reconciled rows an
+hour after writing them when Phase B closed (<code>49fff9b</code>, <code>e6362a8</code>); reconciled
+active states and build order mid-week (<code>0082959</code>, <code>fb3704e</code>); trued the index up
+against the plan documents when five rows had drifted (<code>c593cae</code>); and ran a
+final truth pass on the 30th (<code>6eb8ead</code>). That last one found something worth
+keeping: Plan 142's blocker said the Stage 3 resume gate was undeployed and both
+images stale, but <code>ops</code> had been rebuilt incidentally on Plan 147's deploy and
+had been serving all three coordination endpoints for eleven hours while
+<code>container-health</code> still 404'd. The fleet had drifted in the <em>helpful</em>
+direction, and nothing reported the split. Weekly recaps were backfilled to
+2026-06-14 and then to the repository's start (<code>1465fa6</code>, <code>cb4de08</code>, <code>58e68a3</code>).</p>
+<p>A <code>commit-plan-attribution</code> skill was added mid-week so future recaps can resolve
+a plan from the commit message alone (<code>148af5e</code>) — it declares no plan of its own,
+which is itself an attribution.</p>
+<h3 id="new-plans-and-four-retired">New plans, and four retired</h3>
+<p>Eleven plan documents were created this week.
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_150_analytics_product_and_bi_serving_layer.md">Plan 150</a>, the
+analytics product and BI serving roadmap (<code>3692ecd</code>).
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md">Plan 151</a>,
+distributed tracing and runtime topology (<code>4375760</code>).
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_152_scheduled_worker_lifecycle.md">Plan 152</a>, scheduled worker
+lifecycle (<code>0177953</code>), which gained its missing trigger evidence a week later
+from Plan 158's stray container.
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_154_container_log_coverage.md">Plan 154</a> and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_155_log_dashboards.md">Plan 155</a>, split out of Plan 141's logging
+health check: 16 of 26 expected-running services have no Loki path, and three
+panels serve 26 services with no per-service dimension.
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_156_block_page_detection.md">Plan 156</a>, block-page detection
+(<code>0be4ef3</code>) — the detail parser keys only on Cloudflare's &quot;Just a moment…&quot; title,
+so an Akamai &quot;Access Denied&quot; at 430 bytes becomes a silver observation for a live
+listing with every vehicle field NULL. It stayed in the backlog until Plan 145
+Stage 5 finished, because that comparison is only meaningful while the parser is
+unmodified.
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_157_april_reprocessing_enrichment.md">Plan 157</a>, April
+reprocessing enrichment (<code>464c91c</code>), blocked on Plan 125 — Plan 145 stays
+append-only by design, so it leaves April with three field-coverage shapes.</p>
+<p>The last three came out of a planning conversation that stalled.
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_161_testing_contract.md">Plan 161</a> names why:
+<code>docs/ARCHITECTURE.md:179</code> carries a Testing Strategy section that is a
+description of what was true in April, not a contract anything is held to, and it
+is already false in four checkable ways — so a census against an unenforceable
+document produces a list of differences and no decisions (<code>e9a3053</code>).
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_162_testing_census_and_restructure.md">Plan 162</a> is deliberately a
+stub for the same reason (<code>4673902</code>), carrying only preliminary readings.
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_163_documented_code_quality_fixes.md">Plan 163</a> is a register
+rather than a project — somewhere to put fixes too small to justify keeping a
+stale plan alive, which is what had happened for four months (<code>ea48278</code>).</p>
+<p>Plans 103 and 107 are superseded by 161 and 162; Plans 73 and 106 are absorbed
+into 163. All four go to Superseded rather than the archive: they were replaced,
+not delivered, and the archive would credit them for work done under other plans.
+One of 106's items is recorded as an obsolete landmine rather than a to-do —
+C1 asked that <code>/ready</code> return 200 across services, and the premise has since
+inverted.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Thirty-nine revisions touched <code>docs/PLANS.md</code> in the window — more than five a
+day. Comparing the last index revision before the window with the last one inside
+it:</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>From</th>
+<th>To</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>73</td>
+<td>backlog</td>
+<td>superseded</td>
+</tr>
+<tr>
+<td>103</td>
+<td>backlog</td>
+<td>superseded</td>
+</tr>
+<tr>
+<td>106</td>
+<td>backlog</td>
+<td>superseded</td>
+</tr>
+<tr>
+<td>107</td>
+<td>backlog</td>
+<td>superseded</td>
+</tr>
+<tr>
+<td>123</td>
+<td>closeout</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>136</td>
+<td>build</td>
+<td>closeout</td>
+</tr>
+<tr>
+<td>140</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>141</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>145</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>147</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>149</td>
+<td>(absent)</td>
+<td>closeout</td>
+</tr>
+<tr>
+<td>150, 151, 152, 154, 155, 156</td>
+<td>(absent)</td>
+<td>build</td>
+</tr>
+<tr>
+<td>157, 159</td>
+<td>(absent)</td>
+<td>backlog</td>
+</tr>
+<tr>
+<td>160</td>
+<td>(absent)</td>
+<td>closeout</td>
+</tr>
+<tr>
+<td>161, 162, 163</td>
+<td>(absent)</td>
+<td>build</td>
+</tr>
+</tbody>
+</table></div>
+<p>Plan 158 does not appear because it entered and left inside the window: created
+in the build order at position 1 on 2026-08-30 and archived the same day. The
+archive gained six rows — 123, 140, 141, 145, 147 and 158 — taking its stated
+count from 110 to 116.</p>
+<p>One caveat on this table, and it is a defect rather than a footnote.
+<code>scripts/audit_plan_state_history.py</code>'s <code>STATE_BY_HEADING</code> map has no entry for
+<code>## Current closeout</code>, which is what the section has been called since <code>b76fb44</code>
+on 2026-08-17. Run as written, the script reports every closeout plan as
+<code>(absent)</code> — Plan 136 reads as leaving the index entirely, and Plans 149 and 160
+as never arriving. The table above was produced with that heading added to the
+map. The gap predates this window and belongs to
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_146_planning_system.md">Plan 146</a>, whose Stage 1 owns the script.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li><strong>Plan 142's maintenance window is not runnable.</strong> Five blockers, four of them
+defects in stages the plan already calls built: Stage 3 undeployed on
+<code>container-health</code>, <code>validate-host</code> unable to pass a deferred-reboot window at
+all, a live one-off making <code>stop</code> refuse, and <code>oauth2-proxy</code>'s exemption failing
+the release gate because nothing at runtime reads
+<code>healthcheck-exemptions.txt</code>.</li>
+<li><strong>Plan 145 leaves a verification gap, stated rather than smoothed.</strong>
+<code>canary-flush-verify</code> proves the lake round trip by key for 234 artifacts; the
+other 341,669 rest on receipts plus the flushers' delete-on-success contract.
+Also, <code>recovery/plan145/parsed/</code> (1,204 objects, 329 MB) must not be pruned —
+it is Plan 157's sole input, and regenerating it costs a ~17-hour reparse.</li>
+<li><strong>Plan 134's Stages 2 and 3 are owed</strong>, gated on the seven-day observation
+window closing 2026-09-06. The row stays in the build order rather than moving
+to closeout precisely because code is still owed.</li>
+<li><strong>Plan 136's verdict is deferred</strong>, not reached: slowed but not bounded, with a
+re-measure on 2026-09-17 deciding whether 3c/3d are built at all.</li>
+<li><strong>Plan 160 is observing to 2026-09-13.</strong> One green CI run is explicitly
+recorded as weaker evidence than the twenty local runs.</li>
+<li><strong>Three commits from the 29th are on branches that have not merged</strong>:
+<code>c593cae</code> and <code>9c258b6</code> on <code>docs/plan-149-cycle-1-findings</code>, and <code>dfba51d</code> on
+<code>docs/plan-145-post-mortem-transcript-evidence</code>. Their work is recapped above
+because it is in the window; none of it is on <code>origin/master</code> as of the recap
+date.</li>
+<li><strong>Plan 149's Cycle 1 measures table is deliberately empty.</strong> The read waits for
+the cycle close on 2026-08-31, one day after this window.</li>
+<li><strong>The state-history script's heading map is stale</strong>, as described above. Nothing
+currently fails when it is, which is the part worth fixing.</li>
+</ul>
+<p>Every plan document created this week appears in a state change, so the &quot;document
+in no table&quot; defect that Plan 146 exists to prevent did not occur.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Three non-merge commits carry no plan reference in their subject or body. All
+three are recapped above under the work they did; what is missing is the link to
+a stated <em>why</em>, not the work.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Subject</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cb4de08</code></td>
+<td>docs: add weekly recaps through August 23</td>
+<td>No body. The <code>--stat</code> shows seven files under <code>docs/recaps/</code>; the recap-backfill work belongs to Plan 146 Stage 6, which <code>1465fa6</code> and <code>58e68a3</code> say explicitly and this one does not.</td>
+</tr>
+<tr>
+<td><code>86b5197</code></td>
+<td>docs: plan Linear execution layer</td>
+<td>No body. The subject names the plan by title rather than number, and the <code>--stat</code> creates <code>docs/plans/plan_149_linear_execution_layer.md</code>. I read it as Plan 149 on the title, not on the diff.</td>
+</tr>
+<tr>
+<td><code>15c5553</code></td>
+<td>Update DAG integrity contract for the Stage 4 demotion</td>
+<td>Body names a stage but no plan. It sits between two Plan 140 commits and updates the contract <code>bd07963</code> changed; I read it as Plan 140 on that reading, which is a neighbouring-commit inference, not the commit's own text.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Two further commits state that they belong to no plan, which is an answer rather
+than a gap: <code>148af5e</code> (&quot;No plan — repository commit hygiene requested during Plan
+142 implementation&quot;), <code>32dc609</code> (&quot;No plan -- pure ruff formatting cleanup&quot;) and
+<code>58e68a3</code> (&quot;No plan — historical weekly recap backfill requested&quot;).</p>
+<h2 id="merges">Merges</h2>
+<p>Sixty merges. Fifty-eight are pull-request merges (#237–#297, with #244, #275 and
+#277 not appearing); two are branch-integration merges rather than PRs.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>PR</th>
+<th>Branch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>3f0c09c</code></td>
+<td>#237</td>
+<td>recap/2026-08-23</td>
+</tr>
+<tr>
+<td><code>e4422e3</code></td>
+<td>#238</td>
+<td>docs/plan-149-linear-execution-layer</td>
+</tr>
+<tr>
+<td><code>d0d3d84</code></td>
+<td>#239</td>
+<td>docs/plan-150-analytics-product-bi</td>
+</tr>
+<tr>
+<td><code>8bd2e54</code></td>
+<td>#240</td>
+<td>docs/plan-149-stage-0-evidence</td>
+</tr>
+<tr>
+<td><code>73f9d4d</code></td>
+<td>#241</td>
+<td>plan-140-stage-4-retire-dag-sensors</td>
+</tr>
+<tr>
+<td><code>30b180d</code></td>
+<td>#242</td>
+<td>docs/plan-140-stage-4-evidence</td>
+</tr>
+<tr>
+<td><code>964f7f3</code></td>
+<td>#243</td>
+<td>feature/plan-142-stage-1</td>
+</tr>
+<tr>
+<td><code>8d50ffc</code></td>
+<td>#245</td>
+<td>car-14-plan-142-stage-2-platform-neutral-tests</td>
+</tr>
+<tr>
+<td><code>f32d21b</code></td>
+<td>#246</td>
+<td>plan-149-linear-execution-corrections</td>
+</tr>
+<tr>
+<td><code>80485a0</code></td>
+<td>#247</td>
+<td>car-10-plan-141-structured-log-ingestion-contract</td>
+</tr>
+<tr>
+<td><code>ea0ab91</code></td>
+<td>#248</td>
+<td>plan-141-deploy-queue-sequencing</td>
+</tr>
+<tr>
+<td><code>bb06054</code></td>
+<td>#249</td>
+<td>fix/plan-142-coordination-stale-alert</td>
+</tr>
+<tr>
+<td><code>d078cee</code></td>
+<td>#250</td>
+<td>docs/2026-08-25-deploy-evidence</td>
+</tr>
+<tr>
+<td><code>458d2c5</code></td>
+<td>#251</td>
+<td>feature/plan-142-stage-2-host-procedure</td>
+</tr>
+<tr>
+<td><code>31466a5</code></td>
+<td>#252</td>
+<td>feature/plan-142-stage-3-resume-gate</td>
+</tr>
+<tr>
+<td><code>9a6b3c3</code></td>
+<td>#253</td>
+<td>plan_141_closeout</td>
+</tr>
+<tr>
+<td><code>c9e7532</code></td>
+<td>#254</td>
+<td>plan_141_archive</td>
+</tr>
+<tr>
+<td><code>3f10278</code></td>
+<td>#255</td>
+<td>plan-145-car13</td>
+</tr>
+<tr>
+<td><code>6e03905</code></td>
+<td>#256</td>
+<td>plan-145-car13</td>
+</tr>
+<tr>
+<td><code>f354eab</code></td>
+<td>#257</td>
+<td>plan-145-rewrite</td>
+</tr>
+<tr>
+<td><code>26da70e</code></td>
+<td>#258</td>
+<td>plan-145-revision-2</td>
+</tr>
+<tr>
+<td><code>8c1cd77</code></td>
+<td>#259</td>
+<td>plan-136-stage-3b-closeout</td>
+</tr>
+<tr>
+<td><code>cd57a25</code></td>
+<td>#260</td>
+<td>plan-145-revision-2</td>
+</tr>
+<tr>
+<td><code>243c5ce</code></td>
+<td>#261</td>
+<td>plan-145-stage-4</td>
+</tr>
+<tr>
+<td><code>a6f76fb</code></td>
+<td>#262</td>
+<td>plan-145-stage-4-parse</td>
+</tr>
+<tr>
+<td><code>9f59256</code></td>
+<td>#263</td>
+<td>plan-145-stage-4-census-correction</td>
+</tr>
+<tr>
+<td><code>a5f8ed1</code></td>
+<td>#264</td>
+<td>plan-145-stage-5-design</td>
+</tr>
+<tr>
+<td><code>48987c1</code></td>
+<td>#265</td>
+<td>plan-145-stage-5-compare</td>
+</tr>
+<tr>
+<td><code>d4df9cb</code></td>
+<td>#266</td>
+<td>plan-145-stage-5-writer</td>
+</tr>
+<tr>
+<td><code>302050c</code></td>
+<td>#267</td>
+<td>plan-145-docs-slice3-stage5b</td>
+</tr>
+<tr>
+<td><code>a22bda5</code></td>
+<td>#268</td>
+<td>plan-145-slice2-probe-mode</td>
+</tr>
+<tr>
+<td><code>05d3749</code></td>
+<td>#269</td>
+<td>plan-145-slice2-probe-review2</td>
+</tr>
+<tr>
+<td><code>d10a7ee</code></td>
+<td>#270</td>
+<td>plan-145-probe-evidence</td>
+</tr>
+<tr>
+<td><code>0fe254d</code></td>
+<td>#271</td>
+<td>plan-145-slice3-phase-a</td>
+</tr>
+<tr>
+<td><code>c5c5ee2</code></td>
+<td>#272</td>
+<td>plan-145-stage5-block-page-filter</td>
+</tr>
+<tr>
+<td><code>3777e2e</code></td>
+<td>#273</td>
+<td>docs/plan-146-weekly-recap-backfill</td>
+</tr>
+<tr>
+<td><code>a5c05df</code></td>
+<td>#274</td>
+<td>plan-145-stage5-evidence</td>
+</tr>
+<tr>
+<td><code>9ed0f45</code></td>
+<td>#276</td>
+<td>fix/plan-145-apply-canary-exclusion</td>
+</tr>
+<tr>
+<td><code>64631de</code></td>
+<td>#278</td>
+<td>plan-145-stage-6</td>
+</tr>
+<tr>
+<td><code>85ce87c</code></td>
+<td>#279</td>
+<td>plan-145-stage-6-dryrun-evidence</td>
+</tr>
+<tr>
+<td><code>1c32504</code></td>
+<td>#280</td>
+<td>docs/plan-138-overview-sources</td>
+</tr>
+<tr>
+<td><code>9819075</code></td>
+<td>#281</td>
+<td>docs/plan-142-stage-4-findings</td>
+</tr>
+<tr>
+<td><code>c651603</code></td>
+<td>#282</td>
+<td>docs/plan-147-preflight-corrections</td>
+</tr>
+<tr>
+<td><code>39d6f7d</code></td>
+<td>#283</td>
+<td>plan-145-stage-6-complete</td>
+</tr>
+<tr>
+<td><code>a0c0f7f</code></td>
+<td>—</td>
+<td>origin/master → feature/plan-147-stage-1</td>
+</tr>
+<tr>
+<td><code>8b10160</code></td>
+<td>#284</td>
+<td>feature/plan-147-stage-1</td>
+</tr>
+<tr>
+<td><code>4b2426b</code></td>
+<td>#285</td>
+<td>feature/plan-147-stage-2</td>
+</tr>
+<tr>
+<td><code>a391e66</code></td>
+<td>#286</td>
+<td>plan-158-coordination-gate-deadlock</td>
+</tr>
+<tr>
+<td><code>b7b90ac</code></td>
+<td>#287</td>
+<td>docs/plan-147-evidence-and-plan-158-stage-3</td>
+</tr>
+<tr>
+<td><code>73e5249</code></td>
+<td>#288</td>
+<td>feature/plan-158-stage-2</td>
+</tr>
+<tr>
+<td><code>ee60f5e</code></td>
+<td>#289</td>
+<td>docs/plan-158-stage-3-evidence</td>
+</tr>
+<tr>
+<td><code>a1ace17</code></td>
+<td>#290</td>
+<td>feature/plan-147-stage-3</td>
+</tr>
+<tr>
+<td><code>de18913</code></td>
+<td>#291</td>
+<td>feature/plan-147-stage-4</td>
+</tr>
+<tr>
+<td><code>1d8b088</code></td>
+<td>#292</td>
+<td>docs/plan-147-closeout</td>
+</tr>
+<tr>
+<td><code>108e910</code></td>
+<td>#294</td>
+<td>feature/plan-160-promtail-checker-reliability</td>
+</tr>
+<tr>
+<td><code>d1daa9d</code></td>
+<td>—</td>
+<td>origin/master → plan-134, after Plan 160 landed</td>
+</tr>
+<tr>
+<td><code>0010cb8</code></td>
+<td>#293</td>
+<td>feature/plan-134-survey-and-dead-path-removal</td>
+</tr>
+<tr>
+<td><code>bfc791a</code></td>
+<td>#296</td>
+<td>docs/recap-backfill-to-repo-start</td>
+</tr>
+<tr>
+<td><code>610f77e</code></td>
+<td>#295</td>
+<td>feature/plan-134-stage-1-warning-predicates</td>
+</tr>
+<tr>
+<td><code>2f24be1</code></td>
+<td>#297</td>
+<td>docs/plans-cycle-maintenance</td>
+</tr>
+</tbody>
+</table></div>
+<p>Two merges in the window were themselves reverted inside it: <code>1601379</code> reverts
+<code>3f10278</code> (#255) and <code>f946f88</code> reverts <code>6e03905</code> (#256), both on the discarded
+first Plan 145 design.</p>
+<p>Seven non-merge commits appear twice under different shas. The pairs, with the
+copy on <code>origin/master</code>'s lineage second in each row:</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Off master</th>
+<th>On master</th>
+<th>Subject</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0681ea2</code></td>
+<td><code>4cca77b</code></td>
+<td>docs: split logging health check into Plans 141, 142, 154 and 155</td>
+</tr>
+<tr>
+<td><code>263e702</code></td>
+<td><code>c13ad4a</code></td>
+<td>feat(plan-149): correct cycle alignment and add three execution skills</td>
+</tr>
+<tr>
+<td><code>59c6080</code></td>
+<td><code>b4699ef</code></td>
+<td>docs(plan-149): correct the GitHub automation table to observed configuration</td>
+</tr>
+<tr>
+<td><code>121e48b</code></td>
+<td><code>cdc435e</code></td>
+<td>chore: probe Linear PR/commit automation</td>
+</tr>
+<tr>
+<td><code>d12372e</code></td>
+<td><code>3504b74</code></td>
+<td>docs(plan-149): record the GitHub automation probe results</td>
+</tr>
+<tr>
+<td><code>8688fd9</code></td>
+<td><code>e5f1969</code></td>
+<td>feat: implement structured observability contract (Plan 141)</td>
+</tr>
+<tr>
+<td><code>b80f387</code></td>
+<td><code>0bee614</code></td>
+<td>fix(tests): assert owned contracts, not host platform behavior</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>Zero commits</strong> sit after this window's end. The recap was opened on the morning
+of 2026-08-31, before any commit entered the new week.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-08-30 23:59:59'   # 0
+</code></pre>
+<h2 id="correction-2026-08-31">Correction, 2026-08-31</h2>
+<p>Two corrections to this recap, both to the note about
+<code>scripts/audit_plan_state_history.py</code>. The original paragraphs stand as
+written.</p>
+<p><strong>The sha and date are wrong.</strong> <em>What moved between states</em> and <em>What is still
+owed</em> both say the closeout section has been called <code>## Current closeout</code> since
+<code>b76fb44</code> on 2026-08-17. It has not. <code>b76fb44</code> carries
+<code>## Current closeout — finish before opening another large build</code>, which the
+script's <code>STATE_BY_HEADING</code> <strong>does</strong> map. The rename to the bare
+<code>## Current closeout</code> is <code>0c08382</code> on <strong>2026-08-21</strong>, Plan 146 Stage 2's
+collapse to five tables, so the parser was blind for nine days rather than
+thirteen.</p>
+<p>The error came from the search, not the reading: <code>git log -S '## Current closeout'</code> counts occurrences of that string, and the long heading <em>contains</em>
+it as a substring, so the oldest match was the commit that introduced the long
+form. A substring search cannot tell a rename from an extension. Reading the
+headings out of both revisions is what settles it.</p>
+<p><strong>The defect is fixed.</strong> <code>bf989fc</code>, the same day, maps both closeout forms and
+adds <code>TestTheStateParserClassifiesEveryLiveHeading</code> to
+<code>tests/test_planning_docs.py</code>, which asserts every <code>##</code> heading in the live
+index is either mapped to a state or explicitly ignored. Measured across all
+189 revisions of the index, <code>current closeout</code> was the only unmapped heading,
+present in 55 of them. The same commit fixed a second defect in <code>_git</code>, which
+decoded with the locale codec and so could not walk the history at all on a
+cp1252 host.</p>
+<p>The state table above needed no revision — it was produced with that heading
+added to the map by hand, which is what the fix now does in the script.</p>
+</main>
+</body>
+</html>

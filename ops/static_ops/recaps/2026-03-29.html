@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-03-23 to 2026-03-29</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-03-23 to 2026-03-29. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-03-23-to-2026-03-29">Week of 2026-03-23 to 2026-03-29</h1>
+<p><strong>Window:</strong> 2026-03-23 00:00:00 to 2026-03-29 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-30
+<strong>Commits in window:</strong> 71 (48 non-merge, 23 merges)</p>
+<p>This is a backfill written <strong>154 days after the window closed</strong>. The measured
+commit-body/stat read was about 9.0k tokens. The week turned the previous
+week's fast-growing pipeline into something safer to build, parallelize,
+deploy and operate, then closed with dbt efficiency work and an expanded admin
+surface.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p>The March 23 sequence hardened deployment and identity. <code>1b2d5ea</code> removed
+source bind mounts so images were built from committed code; <code>f991fc7</code>
+materialized <code>int_vehicle_attributes</code> as the cross-source VIN identity table;
+and <code>153ad65</code> introduced an atomic dbt build lock. Plans 45–47 in the
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/planning/completed_plans.md">completed-plan ledger</a> capture the shared
+constraint: deploys and builds needed to operate on a known code snapshot and
+serialize stateful transformations.</p>
+<p>Parallel detail processing followed. <code>0b600e4</code>, <code>01abcd6</code>, <code>0d0b391</code> and their
+fixes introduced status-aware listing claims and moved the large selection
+query into <code>ops_detail_scrape_queue</code>. Two runs could then claim disjoint work
+without a fragile time-only lease. The schema, setup guide and README were
+updated around that topology, while <code>65eeef3</code> automated n8n workflow import so
+checked-in workflow JSON could actually control a deployment.</p>
+<p>The dashboard was made both smaller and more truthful. <code>1a649a4</code> split the
+1,108-line Streamlit application into per-tab modules. The surrounding commits
+corrected active-listing counts, run throughput, error summaries, price
+freshness and newly unlisted metrics. <code>b283302</code> and <code>c2a00f2</code> correspond to
+Plans 33 and 30 in the completed ledger, even though their own commit text uses
+issue-style <code>#33</code>/<code>#30</code> rather than naming a plan and therefore does not earn
+plan attribution here.</p>
+<p><code>ed5a492</code> explicitly implemented Plan 35's dbt audit: staging layers were
+filled in, redundant models and tests were removed, expensive models were
+materialized appropriately, and documentation was tightened. Other dbt
+commits improved early-break behavior, widened the known-VIN source, and
+created a shared build sub-workflow that distinguished lock contention from a
+failed build rather than retrying both forever.</p>
+<p><code>ee28bae</code> names Plans 54 and 58 and overhauled the admin UI with run history,
+dbt controls, database-backed intent management and dbt documentation. The
+same branch later added the log viewer. The <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/planning/completed_plans.md">ledger</a>
+records the combined goal as an operational control plane with clearer service
+responsibility, rather than unrelated pages added to the scraper.</p>
+<p>The final attributed fix, <code>0fa3c56</code>, names Plans 73 and 74. It corrected dbt
+intent handling and SRP breakpoint behavior. Plan 74's full DAG correction
+completed on March 30 and therefore belongs to the next recap; the live
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_73_scraper_refactor.md">Plan 73 document</a> still treats the
+broader scraper split as a deferred review after the linting pass.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Eight planning-index revisions produced these net changes:</p>
+<ul>
+<li>Plans 30, 33–36, 38–43 and 45–51 entered the in-index archive.</li>
+<li>Plan 6 moved from the in-index archive to absent during planning cleanup.</li>
+</ul>
+<p>The second change did not undo Plan 6's asynchronous scraper work. As of
+2026-08-30, the completed-plan ledger records it again with the implementing
+commits and recovery history.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>At the window boundary, Plan 74's new-search-config DAG correction was not yet
+complete; it closed on March 30 and is covered by the next recap. Plan 73's
+larger structural review remained deferred and, as of 2026-08-30, its live
+document still says to reassess after the relevant linting work.</p>
+<p>The week also exposed a historical filing gap when Plan 6 disappeared from the
+index. That record has since been recovered in the completed-plan ledger, so
+no planning-state action is owed for it today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Five non-merge commits name plans: <code>e43f3f1</code> (Plan 25), <code>4b55084</code> (Plans 25,
+35 and 37), <code>ed5a492</code> (Plan 35), <code>ee28bae</code> (Plans 54 and 58), and <code>0fa3c56</code>
+(Plans 73 and 74). The other 43 are unattributed:</p>
+<pre><code class="language-text">18ae913 Fix unlisted chart: drop scrape target filter that excluded pre-backfill data
+b283302 Add error_count and last_error to runs table (#33); verify #34 resolved
+c2a00f2 Dashboard: add unified Recent Runs table with throughput stats (#30)
+88f49c3 Dashboard: switch search scrape chart from per-run to daily aggregate
+97b4546 Dashboard: add success % line to search scrape chart
+b4833e2 Dashboard: add unmapped carousel hints to stale vehicle backlog
+5feae4c Dashboard: 30-min buckets on price freshness chart, trim to 12h window
+07b3bb5 Quick dashboard changes
+1b2d5ea Docker: build from committed code, remove source volume mounts
+f991fc7 Convert int_vehicle_attributes from view to incremental table
+b8a865d Fix missing WITH keyword in int_vehicle_attributes on full-refresh
+641a349 Update PLANS.md: mark 45 and 46 complete
+153ad65 Add dbt build lock to prevent concurrent dbt runs
+df3c160 updating workflows
+0b600e4 Add listing claiming and ops_detail_scrape_queue dbt model
+94048de Update schema, setup script, and README for recent changes
+65eeef3 Automate n8n workflow import on container startup
+01abcd6 Add status column to detail_scrape_claims for self-managing claim lifecycle
+e643516 Fix n8n entrypoint mount conflict with read-only /workflows volume
+c1c28de Add .gitattributes to force LF line endings for shell scripts
+4611eef tweaks to workflow
+0d0b391 add yml for ops detail scrape
+689633f Fix dbt build failure: remove valid_vin test from ops_detail_scrape_queue
+9920ec4 more tweaks
+73464c4 Update docs and setup for auto-import workflows and parallel detail scrapes
+1a649a4 Refactor dashboard: split 1108-line app.py into per-tab modules
+65339ce Fix active listing count: source from snapshot instead of time-windowed SRP/detail CTEs
+05c7272 trying to increase throughput
+8753832 Fix detail scrape run metrics: show prices refreshed and newly unlisted
+a31ba8f Various tweaks to dashboards and pipelining logic
+054b996 fixing unlisted record recording.
+08d7346 dashboard and dbt model tweaks
+be33e1d fixing scraper and dbt models
+82b8b9d updated readme and plans
+da99ebc more dbt fine tuning
+0864d34 more dbt cleanup, removing redundant tests.
+8f4cc93 Fix SRP early breakout: unescape HTML before VIN regex extraction
+dd17f3b dbt improvements
+fbe7567 Fix known_vins: query all VINs from int_vehicle_attributes instead of 14-day SRP window
+557bae0 refactor n8n workflows to implement new DBT building subflow to better handle failure. New Orphan Checker to clean up in-flight crashes
+06c9526 refactor: move dbt_intents DDL into schema_new.sql and seed into db/seed/
+4ace675 feat: add log viewer to admin UI (/admin/logs)
+edb3f74 Future Planning
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>PRs #42 and #43 come from <code>feature/admin-logs-plan54-58</code> and therefore name
+Plans 54 and 58. The other merge branches name no plan; merges are listed but
+not recapped.</p>
+<ul>
+<li><code>6643546</code> — PR #21 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>14d48bc</code> — PR #22 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>15f3da8</code> — PR #23 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>1c51670</code> — PR #24 from <code>dev/dashboard-fixes</code>.</li>
+<li><code>1c9eb6a</code> — PR #25 from <code>dev/docker-build-from-image</code>.</li>
+<li><code>c5fc7b6</code> — PR #26 from <code>dev/vehicle-identity</code>.</li>
+<li><code>55a0202</code> — PR #27 from <code>dev/vehicle-identity</code>.</li>
+<li><code>2c3d2be</code> — PR #28 from <code>dev/dbt-lock</code>.</li>
+<li><code>145fb52</code> — PR #29 from <code>dev/vin-claiming</code>.</li>
+<li><code>30b2e4f</code> — PR #30 from <code>dev/vin-claiming</code>.</li>
+<li><code>2c88c8e</code> — PR #31 from <code>dev/vin-claiming</code>.</li>
+<li><code>9fdbd94</code> — PR #32 from <code>dev/vin-claiming</code>.</li>
+<li><code>e19cc1c</code> — PR #33 from <code>dev/vin-claiming</code>.</li>
+<li><code>208c8d9</code> — PR #34 from <code>fix/dbt-queue-test</code>.</li>
+<li><code>9f0ca14</code> — PR #35 from <code>fix/docs-and-setup</code>.</li>
+<li><code>5304626</code> — PR #36 from <code>refactor/dashboard-split</code>.</li>
+<li><code>768aa43</code> — PR #37 from <code>fix/detail-run-metrics</code>.</li>
+<li><code>d89da32</code> — PR #38 from <code>fix/detail-run-metrics</code>.</li>
+<li><code>c771e72</code> — PR #39 from <code>claude/hardcore-bose</code>.</li>
+<li><code>237e8b1</code> — PR #40 from <code>fix/srp-early-breakout</code>.</li>
+<li><code>b45e6e7</code> — PR #41 from <code>fix/srp-early-breakout</code>.</li>
+<li><code>79a2a96</code> — PR #42 from <code>feature/admin-logs-plan54-58</code> (Plans 54 and 58).</li>
+<li><code>769d68b</code> — PR #43 from <code>feature/admin-logs-plan54-58</code> (Plans 54 and 58).</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>1,183 commits</strong> sit after this window's end as of 2026-08-30.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-03-29 23:59:59'   # 1183
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+Every complete week from March 30 through the week ending August 23 is already
+covered. No following complete week is genuinely uncovered; the week ending
+August 30 is in progress.</p>
+</main>
+</body>
+</html>
