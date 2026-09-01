@@ -1608,6 +1608,59 @@ VM tests:
 - Loki/Promtail show no recurring dashboard/ops/lakehouse reader failures
   during the dual-run window.
 
+### What Plan 162's testing contract adds to this gate list
+
+**Added 2026-09-01 by Plan 162 Stage 7.** This plan's testing strategy predates
+[Plan 161's contract](plan_161_testing_contract.md) and [Plan
+162](plan_162_testing_census_and_restructure.md), so the four items below are
+recorded here rather than left to be rediscovered at each gate. None of them
+changes this plan's design; each names an obligation the contract now places on
+work this plan will do.
+
+**1. `--verify-table` is a convention, not a mechanism — and it guards the
+sharpest instance of the contract's central failure.**
+`scripts/run_dbt_spark.py` records that without
+`spark.sql.defaultCatalog=cartracker`, dbt-spark writes into the built-in
+`spark_catalog` — no Iceberg at all — **and still exits 0**. Its own docstring
+says "a run without `--verify-table` can succeed having written nothing." That
+is `docs/TESTING.md`'s "a run that succeeds has done the work its success
+implies", which is the same class as a paraphrased test passing forever and a
+skipped test executing nothing. It is currently answered by a flag a caller must
+remember to pass. **Before any Gate D or Gate E path invokes dbt-spark
+non-interactively, verification must move from the flag into the invocation**,
+so that a green run cannot mean an empty one.
+
+**2. Gate A owes a selector obligation, and Plan 162 deliberately does not own
+it.** This plan is right that the dbt-spark CI job must be isolated and must
+select only migrated models — per-test Spark overhead makes running all 64
+through Spark the wrong trade. But *which* models are in that selector is then a
+denominator nothing measures, and a model dropping out of it is invisible. That
+is [G1](../TESTING.md#the-gap-list)'s failure mode one level down: work that
+exists, is believed covered, and is run by nothing. **Gate A's exit criterion:
+the Spark selector is derived from the migration manifest, not listed beside
+it.** Plan 162 considered writing this rule and withdrew it — there is no
+selector yet, and a registry invented ahead of its subject is how this
+repository has been bitten before.
+
+**3. Execution recording must be captured before Gate D, not at it.** Plan 162
+Stage 11 scopes a recorder that logs which statement text executed against which
+engine. Its cross-engine assertion — "this ran on the engine production uses for
+it" — needs two live engines and belongs at this gate. **Its capture does not,
+and must not wait**: Gate D moves readers off `analytics.duckdb` one by one, and
+a baseline taken after that migration is not a baseline. The partially-migrated
+middle is exactly where a half-swapped reader looks green.
+
+**4. Gate D2's choice decides whether 26 `.sql` files change engine at all.**
+Measured 2026-09-01: 26 of 135 production `.sql` files are covered *only* by a
+DuckDB-bound Layer 2 test — every `dashboard/sql/*` file plus both
+`dbt_runner/sql/*` snapshots. Under D2 option 1 (serving extracts from Iceberg)
+their engine changes and their tests keep passing against an engine production
+has left, which no current rule can detect: the Layer 2 check matches a filename
+stem in the test's *text* and never inspects which fixture it takes. Under D2
+option 2 (DuckDB as a non-authoritative Iceberg reader/cache), which this plan
+calls the lower-risk first cut, `duckdb_con` stays correct and none of the 26
+moves. **The number is conditional on D2 and should not be quoted flat.**
+
 ## Risks
 
 - dbt-spark SQL dialect incompatibilities (audit F2–F13).
