@@ -1166,11 +1166,36 @@ _FILE_LOG_HANDLERS = frozenset({
 
 
 def _source_files() -> list[Path]:
-    """Every Python file in the repository, minus the directories that are not it."""
+    """Every Python file in the repository, minus the ones that are not it.
+
+    Enumerated through git rather than by walking the tree, because a walk
+    cannot see ``.gitignore`` and the working tree holds files the repository
+    does not own. ``graphify-out/`` is the instance that taught us: a local
+    scratch directory whose generated ``.py`` files carry a BOM, so the walk
+    handed one to ``ast.parse`` and every developer who had run that tool got a
+    ``SyntaxError`` on a file no commit contains, while CI -- checking out
+    fresh -- stayed green. That is the inverse of the defect this rule exists
+    to catch, and the same reason: a check whose subject depends on the machine
+    running it.
+
+    ``--cached --others --exclude-standard`` is the tracked files plus the
+    untracked ones git would not ignore, so a new file is checked before it is
+    added and ignored scratch never is. ``_NOT_SOURCE`` still applies on top,
+    for the directories that are tracked but are not this repository's source.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z",
+         "--", "*.py"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout
     return sorted(
-        path
-        for path in REPO_ROOT.rglob("*.py")
-        if not _NOT_SOURCE & set(path.relative_to(REPO_ROOT).parts)
+        REPO_ROOT / name
+        for name in listed.split("\0")
+        if name and not _NOT_SOURCE & set(Path(name).parts)
     )
 
 
