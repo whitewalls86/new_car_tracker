@@ -13,7 +13,7 @@ without a line of production code changing; Stage 3
 [gave the two health-sensor censuses one declared source](#evidence--stage-3-one-declared-source-for-the-health-sensor-censuses-car-47-2026-08-31)
 and found a third census, `DAG_SPECS`, already one DAG short; Stage 4
 [split the 267s dbt job](#evidence--stage-4-splitting-the-267s-dbt-job-car-48-2026-09-01)
-and took CI's wall clock from 292s to 145-156s, most of it by answering Plan 139
+and took CI's wall clock from 292s to about 155s, most of it by answering Plan 139
 Stage C's question — the 92s step was 21 Python interpreters starting, not 21
 dbt builds running. The waiver list stands at 116 — neither Stage 3 nor
 Stage 4 closes waivers; Stage 3 closes Plan 139's Stage H and Stage 4 its
@@ -339,8 +339,9 @@ Three exceptions, stated here so they are decisions rather than omissions:
 replaced it is named for what it does. Measured in wall-clock seconds against
 the 267s baseline, not asserted.
 
-**Met by Stage 4, 2026-09-01.** The workflow went 292s to 145-156s and the
-job's successor 267s to 118-134s, in four jobs named for what they run.
+**Met by Stage 4, 2026-09-01.** Across three runs of the final configuration
+the workflow went 292s to 145-165s and the job's successor 267s to 118-134s,
+in four jobs named for what they run.
 [The precise reading](#success-criterion-3-is-met) matters more than the
 headline: the dbt job's cost fell by 55% and stopped dominating, but it is
 still the longest job in the workflow on both post-change runs. The criterion
@@ -787,18 +788,26 @@ All four exit conditions met. Commits `5dd6bb7`, `8c54915`, `70d2411`,
 `9f21f87`, [PR #321](https://github.com/whitewalls86/new_car_tracker/pull/321).
 Estimate 2.
 
-**The whole result, measured across seven CI runs rather than asserted:**
+**The whole result, measured across nine CI runs rather than asserted:**
 
 | | Workflow wall clock | The long job | `tests/integration/dbt/` |
 |---|---:|---:|---:|
-| Baseline, three consecutive runs | 277 / 297 / 303s | `dbt build + test` 254 / 272 / 282s | 88s |
+| Baseline, three consecutive runs | 277 / 297 / 303s | `dbt build + test` 254 / 272 / 282s | 88 / 89 / 61s |
 | Split into four jobs | 232s | `dbt model tests (real build)` 210s | 89s |
 | — plus per-job dependency trim | 201s | 177s | 86s |
-| — plus in-process dbt | **145s** | **118s** | **25s** |
+| — plus in-process dbt, three runs | **145 / 156 / 165s** | **118 / 134 / 128s** | **25 / 37 / 36s** |
 
-**292s to 145-156s is a cut of about half, and the 269s job's successor is
-118-134s.** Three
-changes did it, and only the first was the stage as scoped.
+**292s to about 155s is a cut of a little under half, and the 269s job's
+successor runs around 127s.** Three changes did it, and only the first was the
+stage as scoped.
+
+The final configuration is quoted as three runs rather than a number because
+the spread is real and worth knowing before a later stage optimises against
+it: **the wall clock moved 20 seconds across three consecutive runs of
+identical code**, and the equivalence step moved 25s to 37s. Job durations are
+steadier than wall clock, which also carries queueing — run 3's `lint` waited
+14s for a runner. A change worth less than about 20 seconds cannot be
+demonstrated here without more runs than it is worth.
 
 #### What the job was, and why the cut is by prerequisite
 
@@ -855,7 +864,9 @@ subject *is* a sequence of incremental builds with fixture data seeded
 between them, so there is no single build to share. Only the startup was
 shareable. Sharing it took the suite to **24.26s** — the seven from 93.25s to
 23.83s, every test between 2.33s and 4.92s where the cheapest had been
-12.31s.
+12.31s. Both of those are pytest's own timer on one run each, which is the
+only way to get a per-test breakdown; the CI *step* around them reads 86-95s
+before and 25-37s after, across three runs each.
 
 Manifest reuse was measured and **not** taken: ~0.15s per invocation, about
 three seconds total, in exchange for running a configuration the numbers
@@ -960,7 +971,7 @@ to be needed is an ImportError at collection, named and immediate.
 The criterion is *"the `dbt build + test` job is no longer the critical path,
 and what replaced it is named for what it does"*. The job is gone; the four
 that replaced it are named for what they run; the workflow went 292s to
-145-156s and the job's successor 267s to 118-134s across two runs.
+145-165s and the job's successor 267s to 118-134s across three runs.
 
 The third clause is the one worth stating precisely rather than rounding, and
 **the first attempt to state it here was wrong on one reading — which is this
@@ -969,18 +980,26 @@ the in-process change, `dbt model tests (real build)` was 118s against `Unit
 tests (pytest)` at 112s, and this section said the two were "within runner
 variance of each other". The next run said 134s against 97s:
 
-| | run 33465499674 | run 33466934324 |
-|---|---:|---:|
-| workflow wall clock | 145s | 156s |
-| `dbt model tests (real build)` | 118s | 134s |
-| `Unit tests (pytest)` | 112s | 97s |
-| gap | 6s | **37s** |
+| | run 33465499674 | run 33466934324 | run 33467252321 |
+|---|---:|---:|---:|
+| workflow wall clock | 145s | 156s | 165s |
+| `dbt model tests (real build)` | 118s | 134s | 128s |
+| `Unit tests (pytest)` | 112s | 97s | 97s |
+| gap | 6s | **37s** | **31s** |
 
-**Two readings, and the dbt job is the longest in both.** It is no longer a
-267-second critical path; it is still the critical path. The honest form of
-the claim is that the job's cost fell by 55% and stopped dominating, not that
-something else overtook it — and one run was never enough to say which, on a
-runner whose variance moves a 25s step to 37s.
+**Three readings, and the dbt job is the longest in all three.** It is no
+longer a 267-second critical path; it is still the critical path. The honest
+form of the claim is that the job's cost fell by about half and stopped
+dominating, not that something else overtook it — and one run was never enough
+to say which, on a runner whose variance moves a 25s step to 37s.
+
+**The third run is the one that settles it, and it settles it the other way
+from the guess.** It was taken after the temporary measurement step was
+deleted, which the previous draft of this section expected to be worth 7-11s;
+the job came back at 128s and the workflow at its slowest of the three. The
+rig was never the variable. Runner variance was, and it is larger than the
+thing being subtracted — which is the argument for quoting three runs
+everywhere above rather than the best one.
 
 **The criterion was accepted as met by the maintainer on 2026-09-01 with this
 reading on the record**, which is a decision about what "no longer the critical
