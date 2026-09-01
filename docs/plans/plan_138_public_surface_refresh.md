@@ -15,7 +15,7 @@ reconciled overviews and the assigned replacement claims.
 |---|---|
 | **1a** README rewrite (CAR-38, PR #320) | Merged to `master` at `a458877`, **soaking** — merged is not closed, per the truth contract's §4 |
 | **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
-| **1c** Cross-surface consistency (CAR-56) | **In progress**; 1b was built to meet it by construction rather than leave it to a later check, so this slice records and enforces that agreement |
+| **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection | Not started. The landing page carries the section and its list ids; the generator and `project-updates.json` do not exist yet |
 | **1e** Weekly recap projection | Not started |
 | **1f** Reconcile against the published writings | **Audit done 2026-08-31**, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open |
@@ -681,6 +681,67 @@ must agree on ownership, production status, and route access.
 **Gate 1:** a reviewer can answer "what runs in production?", "what is
 experimental?", "where does history live?", and "what requires authentication?"
 without reconciling contradictory statements.
+
+#### Stage 1c evidence — 2026-08-31 (CAR-56)
+
+**This stage did not build what it specified, and the reason belongs here
+rather than in a commit message.**
+
+Both specified artifacts were built first: a `tests/public_surface.py` contract
+module holding the barred-phrase list, thirteen shared claims as regexes and the
+shared URLs, and a Layer 0 `tests/test_public_surface.py` asserting them across
+both surfaces. Twenty tests passed. Four mutations were checked — a barred
+phrase appended to the README, a reworded claim, a URL dropped from the page, a
+Gate 1 question left unanswered — each failing the right test alone. Then they
+were deleted, on this evidence:
+
+**Every drift this plan has recorded is a surface disagreeing with the
+repository, not with the other surface.** Gate 0 found 36 Flyway migrations
+against 49, 266 integration tests against 468, 971 tests against 3,661, eleven
+containers against more than two dozen. Cross-surface disagreement has *no*
+recorded instance: 1b compared twelve shared claims across both files and all
+twelve agreed, and a re-check during this stage found the same set still
+agreeing. The one README-versus-page disagreement this plan describes is the
+deploy lag, and no test closes that.
+
+**Stage 5's open question had already said why a phrase list is insufficient** —
+both denominator defects were *new* wordings, individually true, so a phrase
+list would have passed all four. Asserting the remainder in regexes also
+inverts the incentive: reword "The dashboard reads DuckDB" to "DuckDB backs the
+dashboard" and an identical claim fails, with pattern-editing as the cheap
+repair. The deleted test's failure message had to instruct the reader not to do
+that, which is a design arguing with itself.
+
+**What was built instead.** `.claude/skills/public-surface-check/` is §1c's
+review checklist in executable form: it names the two surfaces, takes
+`git diff --cached` over them as its entire input, and checks changed claims
+against the repository and against the other surface. The scoping is deliberate
+— both files are long, and a check that re-derives the architecture on every
+commit gets switched off. `scripts/public_surface_gate.py` is a `PreToolUse`
+hook blocking a commit that stages either surface until the skill stamps that
+staged digest; re-staging invalidates the stamp, so a pass never covers unread
+content. Verified by direct invocation: blocks (2), clears on stamp (0),
+re-closes on re-stage (2), passes through non-commit commands and malformed
+stdin (0), and fails open on unparseable input. `.gitignore` now tracks
+`.claude/settings.json` — hooks are repository policy rather than per-machine
+preference, and this is the repository's first.
+
+**What the hook does not do.** It is a Claude Code hook on the Bash tool, not a
+git hook: a commit typed in a terminal is unaffected. And it enforces a stop,
+not the check — it blocks and names the skill, and something must still choose
+to run it honestly. That is the trust `commit-plan-attribution` already runs on.
+
+**The optional source module was declined.** `README.md` is static markdown and
+can import nothing, so such a module could feed at most one surface. Templating
+the page's URLs through `ops/routers/info.py` would move prose plumbing into a
+production request path while leaving the README hand-written and the agreement
+still unasserted. The agreement is created by the check, so the check is what
+got built.
+
+**Exit check 2 is unmet as written.** "Tests prevent the known conflicting
+numeric phrases from returning" has no test behind it. The argument for moving
+it to Stage 1f — where the ten disposed-of claims in the published writings are
+the actual vector for stale text re-entering — is recorded but not acted on.
 
 ### 1d. Public roadmap projection contract
 
