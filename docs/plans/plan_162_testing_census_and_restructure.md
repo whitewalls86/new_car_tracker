@@ -3005,6 +3005,27 @@ recording because it misleads on first reading: the table holds **zero**
 `results_page` rows *all time*, since they are consumed and deleted downstream.
 Only MinIO object timestamps answer the question.
 
+#### Cost
+
+Estimate 2 points, actual **1**. `In Progress` ran 16:34 to 18:20 UTC on
+2026-09-02 — 1h45m, ending at the merge — across 22 files.
+
+**The first draft of this line said the stage "ran well past" its estimate, and
+that was wrong in a way worth keeping.** It reasoned from how many things turned
+up rather than from what they cost: the mutation-harness repair, the production
+import fix, two `scrape_results` seams and a capture pulled from production
+MinIO all sound like overrun and were minutes each — two lines, fifteen lines,
+three SSH round-trips. Scope surprise is not effort, and this plan has spent
+nine stages arguing that an unmeasured claim is worth less than a measured one
+whichever direction it points. [Stage 7](#evidence--stage-7-sql-execution-from-both-directions-car-51-2026-09-01)
+is the calibration: estimate 2, actual 1, and it was the plan's largest stage by
+file count at 132 files gaining tests.
+
+What genuinely cost time was not the building but the *reading* — settling that
+G8 was a mocked-write defect rather than a file count, and that the SRP path
+composes its URL where the detail path receives one. Both were decided before
+any test was written, and both changed what got built.
+
 **One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
 checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
 invoked as `bash scripts/redeploy.sh`. Not this stage's to fix, and recorded
