@@ -1056,6 +1056,120 @@ def production_python_files() -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Rule 5d -- a Layer 2 test asserts something about the result.
+# ---------------------------------------------------------------------------
+LAYER_2_ASSERTION_WAIVERS: tuple[Waiver, ...] = ()
+
+# Names that carry an assertion without being an ``assert`` statement. Both are
+# deliberate weakenings and both are narrow: ``pytest.raises`` asserts control
+# flow, and a helper called ``_assert_columns`` has moved the assertion rather
+# than dropped it. Widening this further -- crediting any helper call -- would
+# make the rule unfalsifiable, because every test calls something.
+_ASSERTING_CONTEXTS = frozenset({"raises", "warns", "deprecated_call"})
+
+
+def _asserts_on_its_result(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assert):
+            return True
+        if isinstance(child, ast.withitem):
+            call = child.context_expr
+            if isinstance(call, ast.Call):
+                name = getattr(call.func, "attr", getattr(call.func, "id", ""))
+                if name in _ASSERTING_CONTEXTS:
+                    return True
+        if isinstance(child, ast.Call):
+            name = getattr(child.func, "attr", getattr(child.func, "id", ""))
+            if name.lstrip("_").startswith("assert"):
+                return True
+    return False
+
+
+def test_no_layer_2_test_executes_a_statement_without_asserting_on_the_result():
+    """Layer 2 has two clauses and only the first was ever mechanised.
+
+    The contract says a statement must execute against a real engine **and
+    return the columns the caller expects**. ``test_every_production_sql_file_
+    is_touched_by_a_layer_2_test`` is the first clause; a test that executes a
+    statement and discards the result satisfies it while checking nothing, and
+    nothing could tell the difference.
+
+    That is not hypothetical. Until Plan 162 Stage 8,
+    ``tests/integration/sql/test_dashboard_queries.py`` was 25 tests and zero
+    assertions -- the only Layer 2 suite with none -- and the rule this
+    docstring belongs to found four more hiding in suites whose *other* tests
+    assert: one each in the airflow-DAG and archiver suites and two in
+    ``test_ops_queries.py``. A per-suite eye could not have seen those, which
+    is the whole argument for a derived rule over a read-through.
+
+    **This checks that an assertion exists, not that it is a good one.**
+    Whether an assertion is *meaningful* is one of the four judgements
+    ``docs/TESTING.md`` says are not mechanically checkable, and this rule must
+    not be read as covering it -- ``assert True`` passes here. The skill owns
+    that half and refuses to certify it.
+
+    **Layer 2 only, and the scope is a decision.** The same shape exists
+    elsewhere in ``tests/``, but most of it is not the same defect: a Layer 1
+    test whose whole point is ``pytest.raises`` asserts perfectly well, and a
+    sweep that reported those would be a number nobody chose. Layer 2 is where
+    executing *is* the test, so executing and discarding is the failure. The
+    layer comes from :func:`_layer_of`, which reads the contract's own
+    headings, so a directory that becomes Layer 2 is covered without editing
+    this file.
+    """
+    bare = set()
+    for directory in _test_directories():
+        if _layer_of(directory) != 2:
+            continue
+        for path in sorted(directory.glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if not node.name.startswith("test_"):
+                    continue
+                if not _asserts_on_its_result(node):
+                    bare.add(f"{_relative(path)}::{node.name}")
+
+    _assert_exactly(
+        bare,
+        LAYER_2_ASSERTION_WAIVERS,
+        "A Layer 2 test that executes a statement and asserts nothing about "
+        "the result is not a Layer 2 test. The contract's second clause is "
+        "that a statement returns the columns the caller expects; assert them, "
+        "or assert the rows when the fixture seeds any. "
+        "tests/integration/sql/test_dashboard_queries.py is the pattern.",
+    )
+
+
+def test_the_assertionless_rule_sees_a_test_that_only_executes():
+    """The rule's own worked example, so it cannot pass by finding nothing.
+
+    An empty result set is what this rule reports on a healthy tree, which is
+    exactly the state in which a broken checker and a working one look
+    identical. These four shapes are the ones that decide whether it works.
+    """
+    executes_only = ast.parse(
+        "def test_x(cur):\n    cur.execute(SQL)\n    cur.fetchall()\n"
+    ).body[0]
+    asserts = ast.parse(
+        "def test_x(cur):\n    cur.execute(SQL)\n    assert cur.rowcount == 0\n"
+    ).body[0]
+    raises = ast.parse(
+        "def test_x(cur):\n"
+        "    with pytest.raises(ProgrammingError):\n        cur.execute(SQL)\n"
+    ).body[0]
+    delegates = ast.parse(
+        "def test_x(cur):\n    _assert_columns(cur, ['a'])\n"
+    ).body[0]
+
+    assert not _asserts_on_its_result(executes_only)
+    assert _asserts_on_its_result(asserts)
+    assert _asserts_on_its_result(raises)
+    assert _asserts_on_its_result(delegates)
+
+
+# ---------------------------------------------------------------------------
 # Rule 5e -- no .sql comment contains a parameter placeholder.
 # ---------------------------------------------------------------------------
 _PLACEHOLDER_IN_COMMENT = re.compile(r"^\s*--.*(%s|%\([a-z_]+\)s)", re.M)

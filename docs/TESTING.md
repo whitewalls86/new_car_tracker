@@ -481,21 +481,27 @@ Measured on 2026-08-31 (`*.py` excluding `__init__.py`):
 | `ops` | 19 | 18 | 9 | Meets the floor bar the two `/maintenance` routes |
 | `archiver` | 20 | 15 | 9 | Meets the floor |
 | `processing` | 11 | 10 | 6 | Layer 4 exists and **runs nowhere** |
-| `scraper` | 10 | 9 | 1 | Plan 84 deferred it; **re-examined below** |
+| `scraper` | 10 | 9 | 2 | Layer 4 arrived in Stage 8: the **detail** fetch path runs unmocked, the **SRP** path still does not ([G8](#the-gap-list)) |
 | `dbt_runner` | 4 | 3 | 1 | Plan 84 deferred it; **re-examined below** |
 | `shared` | 14 | 11 | 1 | Meets the floor |
 | `container_health` | 4 | 2 | 2 | Meets the floor — every route reached, Layer 4 added in Stage 6 |
-| `dashboard` | 7 | 0 | 0 | **Below the floor** — its SQL executes in Layer 2 but is asserted by nothing ([G7](#the-gap-list)); its Python is **not importable by the suite at all** ([G18](#the-gap-list)) |
+| `dashboard` | 7 | 0 | 0 | **Below the floor** — its 24 statements are executed *and asserted* in Layer 2 since Stage 8, but its Python is still **not importable by the suite at all** ([G18](#the-gap-list)) |
 
 **Plan 84's deferral of `dbt_runner` and `scraper` is closed, split:**
 
 - **`dbt_runner` — deferral lifted, and it was already lifted in practice.** It
   has a Layer 4 suite and its serving-snapshot SQL is executed in Layer 2
   against the real DuckDB artifact. It meets the floor.
-- **`scraper` — deferral lifted, and it is the largest genuine gap after
-  `dashboard`.** Ten source modules, one integration file
-  (`test_blocked_cooldown.py`), which itself runs in no CI step. Six of its
-  eight routes are the fetch path the whole pipeline sits on. Owner: Plan 162.
+- **`scraper` — deferral lifted, and mostly repaid by Stage 8.** It had ten
+  source modules and one integration file (`test_blocked_cooldown.py`) which
+  executes SQL constants against a cursor — Layer 2's shape, in a Layer 4
+  directory — so the service's *writing* half had never run: every route was
+  reached only from `tests/scraper/`, whose autouse fixture patches
+  `shared.db.get_conn` and `shared.minio.write_html`. Stage 8 added
+  `test_detail_fetch_path.py`, which runs `POST /scrape_detail` through a
+  loopback origin to real MinIO and real Postgres with nothing mocked. **The
+  SRP half is what remains** — `scrape_results` writes the same pair from a
+  background thread and no layer executes it unmocked. Owner: Plan 162.
 
 **Who says so:** this table. It is derived, not curated — a new service
 directory with no row is a violation of the contract, not an omission from a
@@ -525,6 +531,7 @@ the suite does not implement:
 | Every route is reached through the app's routing table | `test_every_route_is_reached_through_the_apps_routing_table`, `test_no_route_is_hidden_from_the_schema_this_rule_reads` | Walk each FastAPI app's `app.routes`; compare to the verb/path literals tests actually request |
 | Every service directory has a row in the "enough" table | `test_every_service_directory_has_a_row_in_the_enough_table` | Compare this document's table to the service directories on disk |
 | Every `.sql` file is executed by a Layer 2 test | `test_every_production_sql_file_is_touched_by_a_layer_2_test` | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
+| A Layer 2 test asserts something about its result | `test_no_layer_2_test_executes_a_statement_without_asserting_on_the_result`, `test_the_assertionless_rule_sees_a_test_that_only_executes` | AST-walk every test in a directory `_layer_of` places at Layer 2 and require an `assert`, a `pytest.raises`, or a call to an `assert`-named helper. This is Layer 2's **second** clause — the row above is the first, and a test that executes a statement and discards the result satisfies that one while checking nothing. Added by Plan 162 Stage 8 after `test_dashboard_queries.py` was found to be 25 tests and zero assertions; it found four more in suites whose other tests assert. It checks that an assertion **exists**, never that it is meaningful — `assert True` passes, and that half stays judgement in the section below |
 | Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops Plan 84's numbering coming back |
 | Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps. One of two mechanically checkable clauses of *the harness must not decide the outcome*; the rest of that rule is judgement, and the row below says so |
 | Every text read and write names its encoding | `test_every_text_read_and_write_states_its_encoding`, `test_the_encoding_rule_sees_the_shape_ruff_cannot` | AST-walk every `read_text`/`write_text` call and require `encoding=`. The second clause of the same rule, added by Plan 162 Stage 6b after a missing `encoding=` made a fixture read UTF-8 on Linux and cp1252 on Windows. `open` and `NamedTemporaryFile` are ruff's `PLW1514` instead, which reads them by type; this rule reads the two `pathlib` methods by name, because ruff resolves a receiver by type and is blind to `(tmp_path / "a.md").write_text(...)` |
@@ -602,17 +609,19 @@ Every entry is a measured violation of the contract above, as of 2026-08-31.
 Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 
 An entry is deleted when it is repaired, not marked closed: a violations table
-that keeps its dead rows is a list you have to read twice to use. Eight rows
+that keeps its dead rows is a list you have to read twice to use. Nine rows
 have gone that way, all to Plan 162: **G1 and G2** to Stage 1 (CAR-45) and
 **G10** to Stage 2 (CAR-46) on 2026-08-31, **G4, G11 and G13** to Stage 5
-(CAR-49) on 2026-09-01, and **G6 and G9** to Stage 6 (CAR-50) on 2026-09-01.
+(CAR-49) on 2026-09-01, **G6 and G9** to Stage 6 (CAR-50) on 2026-09-01, and
+**G7** to Stage 8 (CAR-52) on 2026-09-02.
 What the run of those 73 tests found, what unblinding coverage exposed, what
-the 34 mock conversions and 16 layer renames turned up, and why five of G6's
-twelve routes turned out never to have been uncovered at all are in
+the 34 mock conversions and 16 layer renames turned up, why five of G6's
+twelve routes turned out never to have been uncovered at all, and which four
+assertionless Layer 2 tests were hiding in suites that otherwise assert are in
 [`docs/plans/plan_162_testing_census_and_restructure.md`](plans/plan_162_testing_census_and_restructure.md),
-§Stage 1, §Stage 2, §Stage 5 and §Stage 6. The numbering never reuses a letter,
-so a deleted row leaves a gap in the sequence and the plan documents stay the
-place the history lives.
+§Stage 1, §Stage 2, §Stage 5, §Stage 6 and §Stage 8. The numbering never reuses
+a letter, so a deleted row leaves a gap in the sequence and the plan documents
+stay the place the history lives.
 
 | # | Violation | Measure | Owner |
 |---|---|---|---|
@@ -620,9 +629,8 @@ place the history lives.
 | G15 | **23 SQL statements in 11 production modules are kept in a Python literal**, bound to a name and executed from there — 8 in `archiver/processors/lake_snapshot_cohort.py` and 6 in `ops/routers/admin.py`, a router Stage 7 never touched because every one of its statements is assigned before it is executed. Found by closing G5: a literal at a call site cannot be imported, so G5 fires; a literal bound to a name **is** importable, so G5 does not — and it is in no `.sql` file, so G14's denominator cannot count it either. It satisfies the letter of both instruments while sitting outside both | A SQL verb leading the value of an assignment or a `return` in a service package — asserted by `test_no_production_module_keeps_a_sql_statement_in_a_python_literal` | Plan 162 |
 | G16 | **The dbt project owes nothing this document can state.** Questions 5 and 6 of [Plan 161](plans/plan_161_testing_contract.md) asked what a *service* owes, and the mechanism is keyed to a Python package: the "enough" table's rows must equal `service_packages()` in both directions, so a `dbt` row fails as a phantom. `dbt_runner` — the service that *invokes* dbt — has a row; the 22 models it builds have none. **17 of 22 have a dbt unit test and five do not**, and the only obligation enforced on a model is that it carries a cadence tag, which is a scheduling rule. Because `dbt/` is a named exemption from the rule above, logic moving out of a `.sql` file and into a mart leaves a counted surface for an uncounted one, and the count drops for something that is not a repair | Not yet asserted. Plan 162 Stage 11 owes both the mechanism and G16's own rule: a `.sql` file may leave `production_sql_files()` only by naming the model that absorbed it | Plan 162 |
 | G17 | **One statement filed twice.** `mark_artifact_status`, `insert_artifact_event` and `insert_blocked_cooldown_cleared_event` each existed byte-identically under both `ops/sql/` and `processing/sql/`. Both services issue them against the same tables, so the schema already coupled the two — the copies decoupled nothing and only made a second place to edit. Worse, the rule above credits a file when Layer 2 names its **stem**, and the pairs shared one, so a test of `processing`'s copy silently credited `ops`'s: three files reported covered by a test that never executed them. Consolidated into `shared/sql/` on 2026-09-01 and re-exported by both services' `queries.py`, so no call site changed | Every production statement compared against every other, normalised for comments and whitespace — asserted by `test_no_two_production_sql_files_hold_the_same_statement`. One waived pair, `cancel_coordination_state` and `release_deploy_coordination`, which are two policies that agree rather than one statement | Plan 162 |
-| G7 | **`tests/integration/sql/test_dashboard_queries.py` is 25 tests and 0 assertions** — the only Layer 2 suite with none, against 116 in `test_ops_queries.py` and 65 in `test_processing_queries.py`. Every test is `q(duckdb_con, SOME_QUERY)`: execute, discard. So it meets Layer 2's first clause and not its second — the statements execute, and nothing checks that they *"return the columns the caller expects"*. Every page indexes by name (`df['cnt']`, `df["p75"] - df["median"]`, `df["hour"].dt.floor(...)`), so a renamed mart column passes this suite green and `KeyError`s in production. The pattern that closes it already exists in the same directory against the same fixture: `test_analytics_snapshot_queries.py` asserts `result.description` against a declared column tuple, which `dbt_runner` has and `dashboard` does not | Not yet asserted. Plan 162 Stage 8 owes the assertions and the rule: a Layer 2 test that executes a statement and asserts nothing about the result is not a Layer 2 test | Plan 162 |
 | G18 | **`dashboard/`: 7 modules, 0 test files, and the suite cannot reach them.** Not under-tested — *unreachable*: `streamlit` and `plotly` are declared in `dashboard/requirements.txt` and nowhere else, and production imports are bare (`from queries import`, `from db import`) because the Dockerfile does `WORKDIR /app; COPY dashboard/ .`, while Layer 2 imports `dashboard.queries`. `import dashboard.pages.deals` raises `ModuleNotFoundError` today. That is the whole of the 9% reading — only `queries.py` is importable, ~30 of 309 statements. Closing it means a CI venv, a resolution of the dual import identity, and a render harness, in that order; the first two are structural changes to a service whose role is undecided. **Of the 483 lines under `pages/`, ~430 are `st.*`/`px.*` presentation and ~35 are logic** | — | Plan 150 |
-| G8 | **`scraper/`: Plan 84's four-month-old deferral, now lifted.** One integration file — orphaned until Stage 1 gave it a CI step, and still the whole of the service's coverage above Layer 1 | — | Plan 162 |
+| G8 | **`scraper/`: the SRP fetch path still runs nowhere unmocked.** Was "one integration file and nothing else above Layer 1"; **narrowed 2026-09-02 by Stage 8**, which found the real defect was not the file count but that `tests/scraper/conftest.py` patches `shared.db.get_conn` and `shared.minio.write_html` autouse for every scraper test, so the half of the service that *writes* — MinIO object, `ops.artifacts_queue` row, its `staging.artifacts_queue_events` twin, and the blocked-cooldown pair on a 403 — had never executed. `test_detail_fetch_path.py` closes that for `POST /scrape_detail` against a loopback origin serving the real captures in `tests/fixtures/html/`. **What is left is `scrape_results`**: it writes the same hot/staging pair from a `ThreadPoolExecutor` thread behind `POST /scrape_results`, so a test has to join the job before it can assert, and the existing `test_blocked_cooldown.py` is now a Layer 2 test sitting in a Layer 4 directory, duplicated by `test_scraper_queries.py` | Not yet asserted. The route rule already reaches all eight routes, so no existing rule reports this — the mocked-write class is the judgement half of *what must never be mocked* | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G14 | ~~**56 of 76 production `.sql` files are named by no Layer 2 test.**~~ — **closed 2026-09-01 by Plan 162 Stage 7**, `LAYER_2_WAIVERS` is `()`. Was All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 19 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 names it **as a whole word**. Was 54 until 2026-09-01, when Stage 5 found the match was a bare substring and three files were being credited by identifiers that merely contained their stem. Stage 7 drained it: 132 files gained a test importing the constant production imports, 18 lake-snapshot selectors were already executed by `tests/integration/archiver/` and needed the reading widened rather than new tests, and one file was deleted under [G16](#the-gap-list)'s rule because the statement that absorbed it could be named | Plan 162 |
 

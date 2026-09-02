@@ -142,12 +142,31 @@ MUTATIONS = [
         [],
     ),
     (
+        "test_no_layer_2_test_executes_a_statement_without_asserting_on_the_result",
+        "a Layer 2 test executes a statement and discards the result",
+        lambda: _write(
+            "tests/integration/sql/test_widget_queries.py",
+            '"""Layer 2 — widgets."""\n\n\n'
+            "def test_widget_query_runs(cur):\n"
+            "    cur.execute(WIDGET_QUERY)\n"
+            "    cur.fetchall()\n",
+        ),
+        [],
+        ["tests/integration/sql/test_widget_queries.py"],
+    ),
+    (
         "test_every_waiver_names_a_gap_entry_that_exists",
         "a gap entry a waiver depends on is renamed in the contract",
+        # Re-anchored from G6 to G5 by Plan 162 Stage 8. G6 was deleted by
+        # Stage 6 when route coverage closed, and this anchor went with it --
+        # so the harness aborted here and every mutation after it stopped
+        # running, unnoticed, for two stages. That is the same failure Stage 1
+        # hit on G1 and G2, and the staleness guard is what said so both times.
+        # G5 is one of the three gaps a live waiver still names.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G6 | **Twelve routes reached",
-            "| G6x | **Twelve routes reached",
+            "| G5 | **Inline SQL at a SQL-taking call site.",
+            "| G5x | **Inline SQL at a SQL-taking call site.",
         ),
         ["docs/TESTING.md"],
         [],
@@ -179,11 +198,16 @@ MUTATIONS = [
     (
         "test_no_gap_entry_outlives_the_plan_that_owns_it",
         "a gap entry's owner plan is archived and the entry stays behind",
+        # Re-anchored twice by Plan 162 Stage 8. Stage 7 struck G14's text
+        # through when it closed the gap, so the old anchor stopped matching;
+        # and the row it renamed G14 to, G15, is a real entry Stage 7 added, so
+        # the replacement would now write a duplicate. G99 is used precisely
+        # because no gap will ever have that letter.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G14 | **56 of 76 production `.sql` files",
+            "| G14 | ~~**56 of 76 production `.sql` files",
             "| G14 | **PLACEHOLDER** | -- | Plan 84 |\n"
-            "| G15 | **56 of 76 production `.sql` files",
+            "| G99 | ~~**56 of 76 production `.sql` files",
         ),
         ["docs/TESTING.md"],
         [],
@@ -191,10 +215,12 @@ MUTATIONS = [
     (
         "test_no_waiver_outlives_the_plan_that_owns_it",
         "a waiver's owner plan is archived and the waiver stays behind",
+        # Re-anchored from G6 to G5 by Plan 162 Stage 8, for the reason above:
+        # ROUTE_WAIVERS is `()` since Stage 6, so no waiver names G6 any more.
         lambda: _edit(
             TEST,
-            'Waiver(subject, gap="G6", owner=162)',
-            'Waiver(subject, gap="G6", owner=84)',
+            'Waiver(subject, gap="G5", owner=162)',
+            'Waiver(subject, gap="G5", owner=84)',
         ),
         [TEST],
         [],

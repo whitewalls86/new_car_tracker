@@ -708,14 +708,15 @@ jobs:
         # needed is an ImportError at collection, named and immediate. Add the
         # file back when a suite grows an import; do not pre-empt it.
         #
-        # Five suites, needing bs4, duckdb, fastapi, prometheus_client,
+        # Four suites, needing bs4, duckdb, fastapi, prometheus_client,
         # prometheus_fastapi_instrumentator, psycopg2, pyarrow, s3fs,
         # boto3 and zstandard.
-        # 
-        # Not scraper/requirements.txt, despite the scraper suite running
-        # here: tests/integration/scraper/ imports processing.queries and
-        # scraper.queries, both pure load_query modules, so curl_cffi
-        # (13.5MB) and asyncpg are never reached.
+        #
+        # The scraper suite left this job in Plan 162 Stage 8 -- its Layer 4
+        # half writes to MinIO, which only `lake-integration` has. The note
+        # that used to stand here, that the suite reached neither curl_cffi
+        # nor asyncpg, was true of a suite that only executed SQL constants
+        # and is exactly what G8 said was missing.
         run: |
           pip install \
             -r requirements-dev.txt \
@@ -763,15 +764,6 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/processing_test.log
-
-      - name: Run Scraper integration tests
-        # Plan 162 Stage 1, and the whole of what G8 deferred: the 403 blocked
-        # cooldown upsert-plus-event path, against real Postgres.
-        run: pytest tests/integration/scraper/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          LOG_PATH: /tmp/scraper_test.log
 
       - name: Run dbt_runner integration tests
         # DUCKDB_PATH here is this job's own throwaway file, not the one the
@@ -863,10 +855,17 @@ jobs:
         #
         # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
         # zstandard -- all of which archiver/requirements.txt supplies.
+        #
+        # scraper/requirements.txt joined it in Plan 162 Stage 8, when the
+        # scraper suite moved here and stopped being two imports of pure
+        # load_query modules. Its Layer 4 half imports `scraper.app`, so it
+        # needs what the app needs: curl_cffi for the real fetch, asyncpg for
+        # the lifespan pool, and prometheus-fastapi-instrumentator.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r archiver/requirements.txt
+            -r archiver/requirements.txt \
+            -r scraper/requirements.txt
 
       - name: Create MinIO bucket
         run: python .github/scripts/create_ci_bucket.py
@@ -906,3 +905,27 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
+
+      - name: Run Scraper integration tests (Layer 4)
+        # Moved here from `service-integration` by Plan 162 Stage 8. The suite
+        # used to be the blocked-cooldown statements against Postgres alone;
+        # it now runs `POST /scrape_detail` end to end, and that path writes
+        # the page to MinIO before it writes the queue row, so it needs both
+        # services and this is the only job that has them.
+        #
+        # FLARESOLVERR_URL is set empty on purpose. It is read into a module
+        # constant at import and defaults to a non-empty `http://flaresolverr:8191`,
+        # so leaving it unset does not disable the solver -- it sends every
+        # fetch into the solver branch to wait for a connection error before
+        # falling back. Empty takes the plain curl_cffi path directly.
+        run: pytest tests/integration/scraper/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          FLARESOLVERR_URL: ""
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+          LOG_PATH: /tmp/scraper_test.log

@@ -57,4 +57,8 @@ class TestStaleEmailCleanup:
     """Waived under G14 since the census: a `.sql` file no layer executed."""
 
     def test_delete_stale_emails_matching_nothing(self, cur):
+        # No migration or fixture seeds access_requests, so the 48-hour
+        # predicate matches nothing: the statement proves it plans without
+        # clearing a notification address this test did not write.
         cur.execute(_sql("delete_stale_emails"))
+        assert cur.rowcount == 0
