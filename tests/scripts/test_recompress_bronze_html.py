@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+import sys
+from unittest.mock import MagicMock
 
 import pytest
 import zstandard as zstd
@@ -71,50 +71,55 @@ _MOCK_NEW_SMALLER = 90   # new < old → recompress
 _MOCK_NEW_LARGER = 110   # new > old → skip (unless --force)
 
 
-@contextmanager
-def _mock_zstd(new_size: int):
-    """Patch zstd so decompress returns raw bytes and compress returns new_size bytes."""
+def _mock_zstd(mocker, new_size: int):
+    """Patch zstd so decompress returns raw bytes and compress returns new_size bytes.
+
+    ``get_frame_parameters`` is patched alongside them because the codec now
+    routes through ``shared.compression.decompress_frame``, which reads the
+    dictionary ID from the frame header before decompressing. dict_id 0 is the
+    legacy no-dictionary frame these size-controlled tests stand in for.
+    """
     raw = b"fake raw content"
     new_bytes = b"x" * new_size
     decomp = MagicMock(decompress=MagicMock(return_value=raw))
     comp = MagicMock(compress=MagicMock(return_value=new_bytes))
-    with (
-        patch("zstandard.ZstdDecompressor", return_value=decomp),
-        patch("zstandard.ZstdCompressor", return_value=comp),
-    ):
-        yield
+    mocker.patch("zstandard.get_frame_parameters", return_value=MagicMock(dict_id=0))
+    mocker.patch("zstandard.ZstdDecompressor", return_value=decomp)
+    mocker.patch("zstandard.ZstdCompressor", return_value=comp)
 
 
 # ── Group A: dry-run safety ───────────────────────────────────────────────────
 
 
 class TestDryRunNeverWrites:
-    def test_put_object_not_called_in_dry_run(self):
+    def test_put_object_not_called_in_dry_run(self, mocker):
         from scripts.recompress_bronze_html import process_object
 
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=False, force=False,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=_summary(),
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=False, force=False,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=_summary(),
+        )
         client.put_object.assert_not_called()
 
-    def test_dry_run_counts_would_recompress(self):
+    def test_dry_run_counts_would_recompress(self, mocker):
         """new < old in dry-run → recompressed counter incremented, no write."""
         from scripts.recompress_bronze_html import process_object
 
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
         s = _summary()
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=False, force=False,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=s,
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=False, force=False,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=s,
+        )
         assert s.recompressed == 1
         assert s.skipped == 0
         assert s.failed == 0
@@ -137,17 +142,18 @@ class TestDryRunNeverWrites:
         assert s.recompressed == 0
         client.put_object.assert_not_called()
 
-    def test_delete_object_not_called_in_dry_run(self):
+    def test_delete_object_not_called_in_dry_run(self, mocker):
         from scripts.recompress_bronze_html import process_object
 
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=False, force=False,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=_summary(),
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=False, force=False,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=_summary(),
+        )
         client.delete_object.assert_not_called()
 
 
@@ -155,19 +161,20 @@ class TestDryRunNeverWrites:
 
 
 class TestApplySizeGating:
-    def test_apply_writes_when_smaller(self):
+    def test_apply_writes_when_smaller(self, mocker):
         """new < old in apply mode → put_object called."""
         from scripts.recompress_bronze_html import process_object
 
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
         s = _summary()
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=True, force=False,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=s,
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=True, force=False,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=s,
+        )
         client.put_object.assert_called_once()
         assert s.recompressed == 1
         assert s.skipped == 0
@@ -189,36 +196,38 @@ class TestApplySizeGating:
         assert s.skipped == 1
         assert s.recompressed == 0
 
-    def test_apply_force_writes_even_when_not_smaller(self):
+    def test_apply_force_writes_even_when_not_smaller(self, mocker):
         """With --force, put_object is called even when new >= old."""
         from scripts.recompress_bronze_html import process_object
 
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
         s = _summary()
-        with _mock_zstd(_MOCK_NEW_LARGER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=True, force=True,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=s,
-            )
+        _mock_zstd(mocker, _MOCK_NEW_LARGER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=True, force=True,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=s,
+        )
         client.put_object.assert_called_once()
         assert s.recompressed == 1
         assert s.skipped == 0
 
-    def test_apply_byte_totals_tracked_for_recompressed(self):
+    def test_apply_byte_totals_tracked_for_recompressed(self, mocker):
         """Recompressed objects contribute old/new sizes to byte totals."""
         from scripts.recompress_bronze_html import process_object
 
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
         s = _summary()
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=True, force=False,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=s,
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=True, force=False,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=s,
+        )
         assert s.old_bytes == _MOCK_OLD_SIZE
         assert s.new_bytes == _MOCK_NEW_SMALLER
 
@@ -301,7 +310,7 @@ class TestFailureHandling:
             summary=_summary(),
         )
 
-    def test_multiple_failures_loop_continues(self):
+    def test_multiple_failures_loop_continues(self, mocker):
         """Failures on individual objects do not stop processing of subsequent objects."""
         from botocore.exceptions import ClientError
 
@@ -309,18 +318,19 @@ class TestFailureHandling:
 
         err = ClientError({"Error": {"Code": "NoSuchKey", "Message": ""}}, "GetObject")
         s = _summary()
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            for i in range(5):
-                client = (
-                    _make_client(error=err) if i < 2
-                    else _make_client(b"x" * _MOCK_OLD_SIZE)
-                )
-                process_object(
-                    client, "bronze", _obj(key=f"key_{i}.html.zst"),
-                    apply=True, force=False,
-                    checkpoint_keys=set(), checkpoint_path=None,
-                    summary=s,
-                )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        for i in range(5):
+            client = (
+                _make_client(error=err) if i < 2
+                else _make_client(b"x" * _MOCK_OLD_SIZE)
+            )
+            process_object(
+                client, "bronze", _obj(key=f"key_{i}.html.zst"),
+                apply=True, force=False,
+                checkpoint_keys=set(), checkpoint_path=None,
+                summary=s,
+            )
 
         assert s.failed == 2
         assert s.recompressed == 3
@@ -376,7 +386,7 @@ class TestCheckpoint:
 
         client.get_object.assert_not_called()
 
-    def test_checkpoint_written_after_successful_apply(self, tmp_path):
+    def test_checkpoint_written_after_successful_apply(self, tmp_path, mocker):
         """After a successful apply, the checkpoint file contains the written key."""
         from scripts.recompress_bronze_html import process_object
 
@@ -386,34 +396,36 @@ class TestCheckpoint:
         checkpoint_keys: set[str] = set()
         s = _summary()
 
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(key=key),
-                apply=True, force=False,
-                checkpoint_keys=checkpoint_keys,
-                checkpoint_path=ckpt,
-                summary=s,
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(key=key),
+            apply=True, force=False,
+            checkpoint_keys=checkpoint_keys,
+            checkpoint_path=ckpt,
+            summary=s,
+        )
 
         assert ckpt.exists()
-        data = json.loads(ckpt.read_text())
+        data = json.loads(ckpt.read_text(encoding="utf-8"))
         assert key in data["processed_keys"]
 
-    def test_checkpoint_not_written_in_dry_run(self, tmp_path):
+    def test_checkpoint_not_written_in_dry_run(self, tmp_path, mocker):
         """Dry-run never writes checkpoint even when it would recompress."""
         from scripts.recompress_bronze_html import process_object
 
         ckpt = tmp_path / "ckpt.json"
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
 
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            process_object(
-                client, "bronze", _obj(),
-                apply=False, force=False,
-                checkpoint_keys=set(),
-                checkpoint_path=ckpt,
-                summary=_summary(),
-            )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        process_object(
+            client, "bronze", _obj(),
+            apply=False, force=False,
+            checkpoint_keys=set(),
+            checkpoint_path=ckpt,
+            summary=_summary(),
+        )
 
         assert not ckpt.exists()
 
@@ -440,7 +452,7 @@ class TestCheckpoint:
         from scripts.recompress_bronze_html import load_checkpoint
 
         ckpt = tmp_path / "ckpt.json"
-        ckpt.write_text("{corrupt json{{")
+        ckpt.write_text("{corrupt json{{", encoding="utf-8")
         result = load_checkpoint(ckpt)
         assert result == set()
 
@@ -459,46 +471,47 @@ class TestCheckpoint:
 
 
 class TestNeverDeletes:
-    def _run(self, client, *, apply: bool, force: bool = False,
+    def _run(self, mocker, client, *, apply: bool, force: bool = False,
              new_size: int = _MOCK_NEW_SMALLER) -> None:
         from scripts.recompress_bronze_html import process_object
 
-        with _mock_zstd(new_size):
-            process_object(
-                client, "bronze", _obj(),
-                apply=apply, force=force,
-                checkpoint_keys=set(), checkpoint_path=None,
-                summary=_summary(),
-            )
+        _mock_zstd(mocker, new_size)
 
-    def test_delete_never_called_dry_run(self):
+        process_object(
+            client, "bronze", _obj(),
+            apply=apply, force=force,
+            checkpoint_keys=set(), checkpoint_path=None,
+            summary=_summary(),
+        )
+
+    def test_delete_never_called_dry_run(self, mocker):
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
-        self._run(client, apply=False)
+        self._run(mocker, client, apply=False)
         client.delete_object.assert_not_called()
 
-    def test_delete_never_called_apply(self):
+    def test_delete_never_called_apply(self, mocker):
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
-        self._run(client, apply=True)
+        self._run(mocker, client, apply=True)
         client.delete_object.assert_not_called()
 
-    def test_delete_never_called_apply_force(self):
+    def test_delete_never_called_apply_force(self, mocker):
         # force=True with new > old: still writes, but never deletes
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
-        self._run(client, apply=True, force=True, new_size=_MOCK_NEW_LARGER)
+        self._run(mocker, client, apply=True, force=True, new_size=_MOCK_NEW_LARGER)
         client.delete_object.assert_not_called()
 
-    def test_delete_never_called_on_failure(self):
+    def test_delete_never_called_on_failure(self, mocker):
         from botocore.exceptions import ClientError
 
         err = ClientError({"Error": {"Code": "NoSuchKey", "Message": ""}}, "GetObject")
         client = _make_client(error=err)
-        self._run(client, apply=True)
+        self._run(mocker, client, apply=True)
         client.delete_object.assert_not_called()
 
-    def test_delete_never_called_on_skip(self):
+    def test_delete_never_called_on_skip(self, mocker):
         # new > old → skip → still no delete
         client = _make_client(b"x" * _MOCK_OLD_SIZE)
-        self._run(client, apply=True, force=False, new_size=_MOCK_NEW_LARGER)
+        self._run(mocker, client, apply=True, force=False, new_size=_MOCK_NEW_LARGER)
         client.delete_object.assert_not_called()
 
 
@@ -506,7 +519,7 @@ class TestNeverDeletes:
 
 
 class TestSummaryCounts:
-    def test_mixed_recompress_skip_fail(self):
+    def test_mixed_recompress_skip_fail(self, mocker):
         """10 objects: 7 recompressed, 2 skipped, 1 failed → correct counts."""
         from botocore.exceptions import ClientError
 
@@ -521,21 +534,22 @@ class TestSummaryCounts:
         _OLD_RECOMP = _MOCK_OLD_SIZE
 
         s = _summary()
-        with _mock_zstd(_MOCK_NEW_SMALLER):
-            for i in range(10):
-                if i == 0:
-                    client = _make_client(error=err)
-                elif i in (1, 2):
-                    client = _make_client(b"x" * _OLD_SKIP)
-                else:
-                    client = _make_client(b"x" * _OLD_RECOMP)
-                process_object(
-                    client, "bronze",
-                    _obj(key=f"html/year=2026/month=6/artifact_type=detail_page/k{i}.html.zst"),
-                    apply=True, force=False,
-                    checkpoint_keys=set(), checkpoint_path=None,
-                    summary=s,
-                )
+        _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+        for i in range(10):
+            if i == 0:
+                client = _make_client(error=err)
+            elif i in (1, 2):
+                client = _make_client(b"x" * _OLD_SKIP)
+            else:
+                client = _make_client(b"x" * _OLD_RECOMP)
+            process_object(
+                client, "bronze",
+                _obj(key=f"html/year=2026/month=6/artifact_type=detail_page/k{i}.html.zst"),
+                apply=True, force=False,
+                checkpoint_keys=set(), checkpoint_path=None,
+                summary=s,
+            )
 
         assert s.recompressed == 7
         assert s.skipped == 2
@@ -563,7 +577,7 @@ class TestSummaryCounts:
         out = tmp_path / "summary.json"
         print_summary(s, dry_run=True, json_out=out)
 
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
         assert data["recompressed"] == 3
         assert data["skipped"] == 1
         assert data["failed"] == 1
@@ -603,15 +617,16 @@ class TestSelectors:
         result = build_prefixes(args, MagicMock())
         assert result == ["html/year=2026/month=3/artifact_type=results_page/"]
 
-    def test_year_without_month_discovers_months(self):
+    def test_year_without_month_discovers_months(self, mocker):
         from scripts.recompress_bronze_html import build_prefixes
 
         args = _args(year=2026, month=None, artifact_type="detail_page", bucket="bronze")
-        with patch(
-            "scripts.recompress_bronze_html._discover_months_for_year",
-            return_value=[(2026, 4), (2026, 5)],
-        ) as mock_discover:
-            result = build_prefixes(args, MagicMock())
+        mock_discover = mocker.patch(
+        "scripts.recompress_bronze_html._discover_months_for_year",
+        return_value=[(2026, 4), (2026, 5)],
+        )
+
+        result = build_prefixes(args, MagicMock())
 
         mock_discover.assert_called_once()
         assert sorted(result) == [
@@ -619,15 +634,16 @@ class TestSelectors:
             "html/year=2026/month=5/artifact_type=detail_page/",
         ]
 
-    def test_no_months_found_returns_empty(self):
+    def test_no_months_found_returns_empty(self, mocker):
         from scripts.recompress_bronze_html import build_prefixes
 
         args = _args(year=2099, month=None, artifact_type="detail_page", bucket="bronze")
-        with patch(
-            "scripts.recompress_bronze_html._discover_months_for_year",
-            return_value=[],
-        ):
-            result = build_prefixes(args, MagicMock())
+        mocker.patch(
+        "scripts.recompress_bronze_html._discover_months_for_year",
+        return_value=[],
+        )
+
+        result = build_prefixes(args, MagicMock())
         assert result == []
 
     def test_iter_prefix_filters_html_zst(self):
@@ -660,3 +676,156 @@ class TestSelectors:
         assert len(results) == 2
         assert all(isinstance(r, ObjectInfo) for r in results)
         assert all(r.key.endswith(".html.zst") for r in results)
+
+
+# ── Group J: main() exit codes and startup validation ─────────────────────────
+
+
+def _run_main(mocker, argv, *, objects=(), get_dictionary=None, process=None):
+    """Run main() with the S3 and registry seams stubbed out."""
+    import scripts.recompress_bronze_html as mod
+
+    registered = MagicMock(dict_id=123, source="minio", raw=b"x" * 10)
+    mocker.patch.object(sys, "argv", ["recompress_bronze_html.py", *argv])
+    mocker.patch(
+        "shared.compression.get_dictionary",
+        get_dictionary or MagicMock(return_value=registered),
+    )
+    mocker.patch.object(mod, "get_s3fs", MagicMock())
+    mocker.patch.object(mod, "get_boto3_client", MagicMock())
+    mocker.patch.object(mod, "build_prefixes", MagicMock(return_value=["html/"]))
+    mocker.patch.object(mod, "iter_prefix", MagicMock(return_value=list(objects)))
+    mocker.patch.object(mod, "process_object", process or MagicMock())
+    mocker.patch.object(mod, "print_summary", MagicMock())
+
+    return mod.main()
+
+
+class TestMainExitCodes:
+    def test_unusable_dictionary_id_aborts_before_touching_objects(self, mocker):
+        """A typo'd ID must stop at startup, not fail 3.9M times and exit 0."""
+        import scripts.recompress_bronze_html as mod
+
+        process = MagicMock()
+        code = _run_main(
+            mocker,
+            ["--dictionary-id", "999999", "--year", "2026", "--month", "6"],
+            objects=[_obj()],
+            get_dictionary=MagicMock(side_effect=RuntimeError("unknown dictionary ID 999999")),
+            process=process,
+        )
+
+        assert code == 1
+        process.assert_not_called()
+        assert mod  # module imported cleanly
+
+    def test_all_objects_failing_exits_nonzero(self, mocker):
+        """Finding 1: a backfill that converted nothing must not report success."""
+        def fail(*_args, **kwargs):
+            kwargs["summary"].failed += 1
+
+        code = _run_main(
+            mocker,
+            ["--dictionary-id", "123", "--year", "2026", "--month", "6"],
+            objects=[_obj(key=f"html/{i}.zst") for i in range(3)],
+            process=fail,
+        )
+
+        assert code == 1
+
+    def test_partial_failure_still_exits_nonzero(self, mocker):
+        calls = {"n": 0}
+
+        def sometimes_fail(*_args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                kwargs["summary"].failed += 1
+            else:
+                kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            mocker,
+            ["--dictionary-id", "123", "--year", "2026", "--month", "6"],
+            objects=[_obj(key=f"html/{i}.zst") for i in range(3)],
+            process=sometimes_fail,
+        )
+
+        assert code == 1
+
+    def test_clean_run_exits_zero(self, mocker):
+        def succeed(*_args, **kwargs):
+            kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            mocker,
+            ["--dictionary-id", "123", "--year", "2026", "--month", "6"],
+            objects=[_obj(key=f"html/{i}.zst") for i in range(3)],
+            process=succeed,
+        )
+
+        assert code == 0
+
+    def test_no_dictionary_id_writes_plain_frames_without_touching_the_registry(self, mocker):
+        """The zero-deploy path: plain level-9 needs no dictionary at all."""
+        get_dictionary = MagicMock()
+
+        def succeed(*_args, **kwargs):
+            assert kwargs["dictionary_id"] is None
+            kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            mocker,
+            ["--year", "2026", "--month", "4"],
+            objects=[_obj()],
+            get_dictionary=get_dictionary,
+            process=succeed,
+        )
+
+        assert code == 0
+        get_dictionary.assert_not_called()
+
+
+# ── Group K: checkpoint write frequency ───────────────────────────────────────
+
+
+class TestCheckpointEvery:
+    """Checkpointing every object is O(n^2): each save re-sorts and re-serialises
+    the whole key set. Measured on a real run, 51 ms/object at 66K keys."""
+
+    def _run(self, mocker, n, every, tmp_path):
+        from scripts.recompress_bronze_html import Summary, process_object
+
+        keys = set()
+        summary = Summary()
+        saves = []
+        mocker.patch("scripts.recompress_bronze_html.save_checkpoint",
+        side_effect=lambda *a, **k: saves.append(len(keys)))
+
+        for i in range(n):
+            client = _make_client(b"x" * _MOCK_OLD_SIZE)
+            _mock_zstd(mocker, _MOCK_NEW_SMALLER)
+
+            process_object(
+                client, "bronze", _obj(key=f"html/{i}.zst"),
+                apply=True, force=False,
+                checkpoint_keys=keys, checkpoint_path=tmp_path / "ck.json",
+                summary=summary, checkpoint_every=every,
+            )
+        return saves
+
+    def test_default_of_one_saves_every_object(self, tmp_path, mocker):
+        assert self._run(mocker, 5, 1, tmp_path) == [1, 2, 3, 4, 5]
+
+    def test_interval_saves_only_on_the_boundary(self, tmp_path, mocker):
+        assert self._run(mocker, 10, 5, tmp_path) == [5, 10]
+
+    def test_interval_larger_than_the_run_never_saves_mid_run(self, tmp_path, mocker):
+        """The tail is flushed by main() instead, so nothing is lost."""
+        assert self._run(mocker, 4, 500, tmp_path) == []
+
+    def test_cli_default_is_not_every_object(self, mocker):
+        from scripts.recompress_bronze_html import parse_args
+
+        mocker.patch.object(sys, "argv", ["x", "--year", "2026", "--month", "4"])
+
+        assert parse_args().checkpoint_every == 500

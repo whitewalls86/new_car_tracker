@@ -1,0 +1,54 @@
+# Services exempt from the docker-compose healthcheck contract (Plan 140).
+#
+# Two consumers read this file, and neither keeps a second copy of the list:
+#
+#   tests/test_observability_config.py::TestServiceHealthCoverage
+#       A service in docker-compose.yml without an enabled healthcheck fails
+#       CI unless it is named here with a written reason.
+#
+#   scripts/redeploy.sh
+#       The deploy health gate treats a service named here as *not pollable*
+#       rather than as *not healthy*, and does not wait on it.
+#
+# Format, kept deliberately trivial so a bash `while read` loop and a Python
+# `str.partition` agree without a parser:
+#
+#   - A line starting with '#' in column 0 is a comment.
+#   - A completely empty line is a separator.
+#   - A line starting with whitespace continues the previous entry's reason.
+#   - Any other line is `<service> <reason...>`.
+#
+# There are no indented comments and no whitespace-only lines, because either
+# would mean one continuation to bash and one comment to Python. A test in
+# tests/test_deploy_script.py enforces that.
+#
+# Every entry needs a written reason. A deny-list that grows without
+# justification is an allowlist in disguise, which is the failure shape
+# Plan 140 exists to close.
+
+flyway Runs the migrations to completion and exits. Its contract is
+    `condition: service_completed_successfully`, and a health status on a
+    container that is supposed to be gone is meaningless.
+
+airflow-init Same shape: a one-shot DB migrate / user-create that all four
+    long-running Airflow services gate on with
+    service_completed_successfully before they open a connection.
+
+dbt Profile-gated tools image. Never started by `docker compose up`; invoked
+    as a one-shot `docker compose run`.
+
+dbt_test Profile-gated tools image, same as `dbt`.
+
+snapshot-worker Profile-gated one-shot `docker compose run` target for CI lake
+    snapshot generation (Plan 120 Gate C.5). No ports, no restart policy,
+    never serves traffic.
+
+oauth2-proxy The only entry here that is a real hole rather than a contract
+    that does not apply. quay.io/oauth2-proxy/oauth2-proxy:latest is
+    distroless -- verified 2026-08-18 that `docker exec
+    cartracker-oauth2-proxy sh` fails with exec: "sh": executable file not
+    found in $PATH. No shell, no curl, no wget, no busybox, so no
+    `healthcheck:` can be expressed against this image at all. A
+    `latest-alpine` tag exists and serves /ping on 4180, but swapping the
+    image that fronts every authenticated route is its own change with its
+    own blast radius. See docs/plans/plan_140_service_health_contract.md.

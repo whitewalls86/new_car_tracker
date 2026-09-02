@@ -48,11 +48,43 @@ def _get_artifact_status(vc, artifact_id):
 
 def _count_processing_events(vc, artifact_id):
     vc.execute(
-        "SELECT COUNT(*) AS cnt FROM staging.artifact_events"
+        "SELECT COUNT(*) AS cnt FROM staging.artifacts_queue_events"
         " WHERE artifact_id = %s AND status = 'processing'",
         (artifact_id,),
     )
     return vc.fetchone()["cnt"]
+
+
+@pytest.fixture(autouse=True)
+def _quiet_queue(vc):
+    """Park anything else claimable for the duration of each test.
+
+    ``_claim_batch`` reads the whole of ``ops.artifacts_queue`` and takes the
+    lowest ``artifact_id``s first, so every "my row was claimed" assertion
+    below is really asserting that the row landed inside the first ``LIMIT``.
+    That holds only against an empty queue. This file now runs in the same CI
+    job as four suites that write to the same database, and it went four
+    months without running at all -- so the empty queue is an assumption worth
+    making explicit rather than inheriting from step order.
+    """
+    vc.execute(
+        "SELECT artifact_id, status FROM ops.artifacts_queue"
+        " WHERE status IN ('pending', 'retry')"
+    )
+    parked = [(r["artifact_id"], r["status"]) for r in vc.fetchall()]
+    if parked:
+        vc.execute(
+            "UPDATE ops.artifacts_queue SET status = 'skip' WHERE artifact_id = ANY(%s)",
+            ([artifact_id for artifact_id, _ in parked],),
+        )
+
+    yield
+
+    for artifact_id, status in parked:
+        vc.execute(
+            "UPDATE ops.artifacts_queue SET status = %s WHERE artifact_id = %s",
+            (status, artifact_id),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +106,7 @@ class TestClaimBatch:
             "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifact_events WHERE artifact_id = %s", (artifact_id,)
+            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
         )
 
     def test_claims_retry_artifact(self, vc):
@@ -90,7 +122,7 @@ class TestClaimBatch:
             "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifact_events WHERE artifact_id = %s", (artifact_id,)
+            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
         )
 
     def test_does_not_claim_complete_artifact(self, vc):
@@ -139,7 +171,7 @@ class TestClaimBatch:
             ([srp_id, detail_id],),
         )
         vc.execute(
-            "DELETE FROM staging.artifact_events WHERE artifact_id = ANY(%s)",
+            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = ANY(%s)",
             ([srp_id, detail_id],),
         )
 
@@ -157,7 +189,7 @@ class TestClaimBatch:
             "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifact_events WHERE artifact_id = %s", (artifact_id,)
+            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
         )
 
     def test_returned_rows_have_expected_keys(self, vc):
@@ -179,7 +211,7 @@ class TestClaimBatch:
             "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifact_events WHERE artifact_id = %s", (artifact_id,)
+            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
         )
 
     def test_respects_batch_size_limit(self, vc):
@@ -196,7 +228,7 @@ class TestClaimBatch:
             "DELETE FROM ops.artifacts_queue WHERE artifact_id = ANY(%s)", (ids,)
         )
         vc.execute(
-            "DELETE FROM staging.artifact_events WHERE artifact_id = ANY(%s)", (ids,)
+            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = ANY(%s)", (ids,)
         )
 
     def test_empty_queue_returns_empty_list(self, vc):

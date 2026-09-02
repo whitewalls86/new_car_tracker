@@ -4,7 +4,7 @@ All DB calls are mocked via db_cursor patch. Tests verify the correct SQL
 is called with the correct parameters for each scenario.
 """
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,7 +12,7 @@ from processing.writers.srp_writer import write_srp_observations
 
 
 @pytest.fixture
-def mock_cursor():
+def mock_cursor(mocker):
     """Yields a mock cursor and patches db_cursor to return it."""
     cursor = MagicMock()
     cursor.fetchall.return_value = []
@@ -24,8 +24,8 @@ def mock_cursor():
     def fake_db_cursor(error_context="", dict_cursor=False):
         yield cursor
 
-    with patch("processing.writers.srp_writer.db_cursor", fake_db_cursor):
-        yield cursor
+    mocker.patch("processing.writers.srp_writer.db_cursor", fake_db_cursor)
+    return cursor
 
 
 @pytest.fixture
@@ -148,8 +148,8 @@ class TestSrpWriter:
         ]
         assert len(tracked_calls) == 0
 
-    def test_srp_does_not_set_last_detail_scraped_at(self, mock_cursor, mock_silver):
-        """SRP writes must pass last_detail_scraped_at = None (circuit breaker must not advance)."""
+    def test_srp_does_not_set_last_detail_enriched_at(self, mock_cursor, mock_silver):
+        """SRP writes must pass last_detail_enriched_at = None (enrichment must not advance)."""
         listings = [
             {"listing_id": "aaa", "vin": "VIN001", "price": 25000,
              "make": "Honda", "model": "CR-V"},
@@ -165,4 +165,4 @@ class TestSrpWriter:
         ]
         assert len(upsert_params) >= 1
         for params in upsert_params:
-            assert params.get("last_detail_scraped_at") is None
+            assert params.get("last_detail_enriched_at") is None

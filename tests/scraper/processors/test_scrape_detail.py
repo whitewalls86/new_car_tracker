@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock, mock_open
 
 import pytest
+from prometheus_client import REGISTRY
 
 import scraper.processors.cf_session as cf_session
 import scraper.processors.scrape_detail as sd
@@ -210,6 +211,111 @@ class TestScrapeDetailFetch:
 # ---------------------------------------------------------------------------
 # scrape_detail_dummy
 # ---------------------------------------------------------------------------
+
+class TestDetailFetchOutcomeCounter:
+    """Plan 136 Stage 2. Exactly one count per fetch, whichever path served it.
+
+    Deltas, not absolutes: the counter is process-global.
+    """
+
+    @staticmethod
+    def _counts():
+        return {
+            outcome: REGISTRY.get_sample_value(
+                "cartracker_detail_fetch_total", {"outcome": outcome}
+            )
+            for outcome in ("ok", "403", "error")
+        }
+
+    def test_a_200_counts_ok_once(self, mock_cf_session, mocker):
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 200
+        mock_resp.content = b"<html>detail</html>"
+        mock_resp.headers = {}
+
+        before = self._counts()
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        after = self._counts()
+
+        assert after["ok"] == before["ok"] + 1
+        assert after["403"] == before["403"]
+        assert after["error"] == before["error"]
+
+    def test_a_403_counts_403(self, mock_cf_session, mocker):
+        """The whole batch looked like this for eight hours on 2026-08-14."""
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 403
+        mock_resp.content = b"<html><title>Just a moment...</title></html>"
+        mock_resp.headers = {}
+
+        before = self._counts()
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        after = self._counts()
+
+        assert after["403"] == before["403"] + 1
+        assert after["ok"] == before["ok"]
+
+    def test_a_raised_fetch_counts_error(self, mocker):
+        mock_session = MagicMock(get=MagicMock(side_effect=ConnectionError("refused")))
+        mocker.patch(
+            "scraper.processors.scrape_detail.make_cf_session",
+            return_value=mock_session,
+        )
+        mocker.patch(
+            "scraper.processors.scrape_detail.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
+        )
+
+        before = self._counts()
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        after = self._counts()
+
+        assert after["error"] == before["error"] + 1
+        assert after["ok"] == before["ok"]
+
+    def test_a_minio_write_failure_is_not_counted_as_a_fetch_failure(
+        self, mock_cf_session, mocker
+    ):
+        """The counter measures fetching, not storing. Counting a MinIO problem
+        as a failed fetch would point an operator at the solver during a storage
+        incident -- and would suppress the ok rate the alerts read."""
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 200
+        mock_resp.content = b"<html>detail</html>"
+        mock_resp.headers = {}
+        mocker.patch("shared.minio.write_html", side_effect=RuntimeError("minio down"))
+
+        before = self._counts()
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        after = self._counts()
+
+        assert "MinIO write failed" in (result["error"] or "")
+        assert after["ok"] == before["ok"] + 1
+        assert after["error"] == before["error"]
+
+    def test_a_dummy_scrape_is_not_counted(self, mocker):
+        """scrape_detail_dummy writes a canned page and never touches the
+        network. Counting it would put synthetic successes into the signal.
+
+        Both readings are taken OUTSIDE the `builtins.open` patch on purpose,
+        which is why the patch is stopped by hand rather than left to teardown.
+        prometheus_client registers a ProcessCollector on the default registry,
+        and REGISTRY.collect() -- which get_sample_value walks -- opens
+        /proc/<pid>/stat in binary mode. Under a mock_open that read returns a
+        str and raises `TypeError: must be str or None, not bytes`. It fails on
+        Linux only: Windows has no /proc, so the collector returns early and CI
+        is the only place that sees it.
+        """
+        before = self._counts()
+        makedirs = mocker.patch("os.makedirs")
+        opened = mocker.patch("builtins.open", mock_open())
+
+        scrape_detail_dummy(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+
+        mocker.stop(opened)
+        mocker.stop(makedirs)
+        assert self._counts() == before
+
 
 class TestScrapeDetailDummy:
     def test_missing_listing_id_returns_error(self, mocker):

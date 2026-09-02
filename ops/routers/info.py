@@ -1,43 +1,24 @@
 """
-Public /info route — renders the CarTracker portfolio landing page.
-No authentication required; Caddy routes /info without forward_auth.
-"""
-import logging
-import os
-import time
-from datetime import datetime, timezone
+The public landing page. No authentication required; Caddy routes both paths
+below to ops without forward_auth.
 
-import duckdb
+Plan 138 Stage 2 moved the page from ``/info`` to ``/``. ``/info`` is kept as a
+permanent redirect rather than retired, because it is the URL printed on a
+resume, a LinkedIn profile and a GitHub profile -- copies this repository cannot
+edit. It has to keep resolving for as long as those do.
+"""
+import os
+
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from shared.db import db_cursor
-
-logger = logging.getLogger(__name__)
+from ops.public_stats import public_stats_cache
 
 router = APIRouter()
 
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
-
-_DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/data/analytics/analytics.duckdb")
-_DUCKDB_RETRIES = 3
-_DUCKDB_RETRY_DELAY = 2.0  # seconds between retries; covers dbt write-lock windows
-
-
-def _duckdb_connect() -> duckdb.DuckDBPyConnection:
-    """Open a read-only DuckDB connection, retrying on lock errors."""
-    last_exc: Exception = RuntimeError("no attempts made")
-    for attempt in range(_DUCKDB_RETRIES):
-        try:
-            return duckdb.connect(_DUCKDB_PATH, read_only=True)
-        except Exception as exc:
-            last_exc = exc
-            if attempt < _DUCKDB_RETRIES - 1:
-                time.sleep(_DUCKDB_RETRY_DELAY)
-    raise last_exc
-
 
 def _fmt_stat(value: int | float) -> str:
     """Format a stat number for display: abbreviate millions/thousands."""
@@ -53,93 +34,23 @@ def _fmt_stat(value: int | float) -> str:
 templates.env.filters["fmt_stat"] = _fmt_stat
 
 
-def _load_stats() -> dict:
+@router.get("/info")
+def info_redirect() -> RedirectResponse:
+    """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
+
+    308 rather than 301: it preserves the method, and unlike 302 it tells a
+    crawler to move the indexed URL rather than to keep asking. The landing page
+    also carries a canonical link to ``/``, so the two agree.
     """
-    Pull live counts for the landing page.
-    Active listings, price observations, and make/model pairs come from the
-    DuckDB mart layer (mart_vehicle_snapshot). Last pipeline run comes from
-    Postgres ops.artifacts_queue.
-    Any value that fails to load is silently omitted.
-    """
-    stats: dict = {}
-
-    try:
-        with _duckdb_connect() as con:
-            row = con.execute(
-                "SELECT COUNT(*) FROM main.mart_vehicle_snapshot WHERE listing_state = 'active'"
-            ).fetchone()
-            if row:
-                stats["active_listings"] = row[0]
-    except Exception:
-        logger.warning("info stats: active_listings query failed", exc_info=True)
-
-    try:
-        with _duckdb_connect() as con:
-            row = con.execute(
-                "SELECT COALESCE(SUM(total_price_observations), 0) FROM main.mart_vehicle_snapshot"
-            ).fetchone()
-            if row:
-                stats["price_observations"] = row[0]
-    except Exception:
-        logger.warning("info stats: price_observations query failed", exc_info=True)
-
-    try:
-        with _duckdb_connect() as con:
-            row = con.execute(
-                """
-                SELECT COUNT(DISTINCT make || '|' || model)
-                FROM main.mart_vehicle_snapshot
-                WHERE make IS NOT NULL AND model IS NOT NULL
-                """
-            ).fetchone()
-            if row:
-                stats["make_model_pairs"] = row[0]
-    except Exception:
-        logger.warning("info stats: make_model_pairs query failed", exc_info=True)
-
-    try:
-        with db_cursor(error_context="info: last_pipeline_run") as cur:
-            cur.execute(
-                "SELECT MAX(fetched_at) FROM ops.artifacts_queue WHERE status = 'complete'"
-            )
-            row = cur.fetchone()
-            if row and row[0]:
-                ts: datetime = row[0]
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                stats["last_pipeline_run_iso"] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
-        logger.warning("info stats: last_pipeline_run query failed", exc_info=True)
-
-    try:
-        with _duckdb_connect() as con:
-            row = con.execute(
-                """
-                SELECT
-                    SUM(artifact_count)    / 24.0,
-                    SUM(observation_count) / 24.0
-                FROM main.mart_scrape_volume
-                WHERE hour >= now() - INTERVAL '24 hours'
-                """
-            ).fetchone()
-            if row and row[0] is not None:
-                stats["artifacts_per_hour"] = round(row[0])
-                stats["observations_per_hour"] = round(row[1])
-    except Exception:
-        logger.warning("info stats: throughput query failed", exc_info=True)
-
-    return stats
+    return RedirectResponse(url="/", status_code=308)
 
 
-@router.get("/info", response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse)
 def info_page(request: Request):
-    try:
-        stats = _load_stats()
-    except Exception:
-        stats = {}
+    snapshot = public_stats_cache.get()
 
     return templates.TemplateResponse(
         request=request,
         name="info.html",
-        context={"request": request, "stats": stats},
+        context={"request": request, "stats": snapshot.stats, "stats_snapshot": snapshot},
     )

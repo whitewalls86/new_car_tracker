@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-05-25 to 2026-05-31</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-05-31">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-05-25 to 2026-05-31. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-05-25-to-2026-05-31">Week of 2026-05-25 to 2026-05-31</h1>
+<p><strong>Window:</strong> 2026-05-25 00:00:00 to 2026-05-31 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-28
+<strong>Commits in window:</strong> 2 (1 non-merge, 1 merge)</p>
+<p>This is a backfill written <strong>89 days after the window closed</strong>. Both commits
+were authored on May 27. The maintainer recalled on 2026-08-28 that this was
+probably a vacation period with bug-fixing performed from Scotland. Converted
+to Scotland time, the fix and its merge occurred at 15:30 and 15:48 BST,
+respectively. That short mid-afternoon burst is consistent with the
+recollection, although Git retained a <code>-05:00</code> author offset and cannot prove
+where the work occurred.</p>
+<p>A scan of all six public GitHub repositories on 2026-08-28 found no commits in
+the other five during this week. The two <code>new_car_tracker</code> commits were the
+maintainer's only visible public-repository activity.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p><code>37c21c2</code> repaired a dbt unit test whose fixture used a compiled, hardcoded
+<code>utcnow()</code> value. After seven days, that value drifted outside the model's
+seven-day recency window and made the test fail. The fix introduced an
+overridable <code>now_ts()</code> macro, used it in the vehicle-snapshot model, and gave
+the test a fixed time anchor so its result no longer decays with age.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Nothing moved. <code>docs/PLANS.md</code> has no revision in the window.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The recorded defect was fixed and merged in the same eighteen-minute burst.
+The commit text records no remaining gate or follow-up obligation.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<ul>
+<li><code>37c21c2</code> — <code>fix: replace now() with overridable now_ts() macro for stable unit tests</code></li>
+</ul>
+<p>The subject and body do not name a plan.</p>
+<h2 id="merges">Merges</h2>
+<ul>
+<li><code>f6b5be1</code> — PR #129 from <code>fix/dbt-unit-test-now-staleness</code>; the branch names
+no plan.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>639 commits</strong> sit after this window's end as of 2026-08-28.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-05-31 23:59:59'   # 639
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+The complete weeks ending June 7, June 14, June 21, June 28, July 5, July 12,
+July 19, July 26, August 2, August 9, August 16 and August 23 are already
+covered. No following complete week is genuinely uncovered; the week ending
+August 30 is still in progress and is not yet recappable.</p>
+</main>
+</body>
+</html>

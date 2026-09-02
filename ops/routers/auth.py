@@ -8,6 +8,7 @@ import os
 from fastapi import APIRouter, Header, Query
 from fastapi.responses import Response
 
+from ops.queries import SELECT_USER_ROLE
 from shared.db import db_cursor
 
 router = APIRouter()
@@ -42,10 +43,7 @@ def auth_check(
 
     try:
         with db_cursor(error_context="Auth-Check", dict_cursor=True) as cur:
-            cur.execute(
-                "SELECT role FROM authorized_users WHERE email_hash = %s",
-                (email_hash,),
-            )
+            cur.execute(SELECT_USER_ROLE, (email_hash,))
             row = cur.fetchone()
     except Exception:
         return Response(status_code=503)

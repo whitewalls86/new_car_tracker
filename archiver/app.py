@@ -1,15 +1,19 @@
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import Body, FastAPI, HTTPException
 
-from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet
-from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from archiver.processors.compact_silver import compact_silver as _compact_silver
+from archiver.processors.delete_packed_source_html import (
+    delete_packed_source_html as _delete_packed_source_html,
+)
+from archiver.processors.disk_usage import run_disk_usage as _run_disk_usage
+from archiver.processors.disk_usage import textfile_dir as _disk_usage_textfile_dir
 from archiver.processors.export_ci_lake_snapshot import (
     SnapshotRequest,
     SnapshotRequestError,
@@ -21,8 +25,13 @@ from archiver.processors.flush_silver_observations import (
     flush_silver_observations as _flush_silver_observations,
 )
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
-from shared.job_counter import active_job, is_idle
+from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronze_html
+from archiver.processors.verify_pack_read_path import (
+    verify_pack_read_path as _verify_pack_read_path,
+)
+from shared.job_counter import JobInFlight, active_job, job_snapshot, single_flight
 from shared.logging_setup import configure_logging
+from shared.minio import BUCKET as _MINIO_BUCKET
 
 configure_logging()
 logger = logging.getLogger("archiver")
@@ -46,21 +55,145 @@ _ALLOW_SYNC_SNAPSHOT_COHORT = (
     os.environ.get("ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT", "false").lower() == "true"
 )
 
+# Plan 131 Stage 5 D4: month-scale pack/prune work has its own long-running
+# service. Keeping the same endpoints on the regular archiver process would
+# leave two live entry points and let a long job starve flush/cleanup/compact.
+# Tests and deliberate manual use can override this on a process explicitly.
+_ALLOW_PACK_JOBS = (
+    os.environ.get("ARCHIVER_ALLOW_PACK_JOBS", "false").lower() == "true"
+)
 
-@app.post("/cleanup/parquet")
-def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
-    with active_job():
-        paths = (payload or {}).get("paths", [])
-        results = _cleanup_parquet(paths)
-        deleted_count = sum(1 for r in results if r.get("deleted"))
-        return {"total": len(results), "deleted": deleted_count,
-                "failed": len(results) - deleted_count, "results": results}
+# ---------------------------------------------------------------------------
+# Plan 134 Stage 1 — the flush/compact failure contract, warning-only
+# ---------------------------------------------------------------------------
+#
+# Exactly the gap the Plan 131 block below describes, on the three endpoints
+# that block deliberately left alone. Each processor returns a summary rather
+# than raising, this module returns it with a 200, and resp.raise_for_status()
+# — the entire check a DAG performs — passes on a run that flushed nothing
+# because the disk was full.
+#
+# Stage 0 measured what that has cost. A full MinIO produced 21 ERROR records
+# over five days (2026-08-08 → 08-13); code deployed ahead of its migration
+# produced 32 over sixteen hours (2026-08-26 → 08-27). Airflow recorded every
+# one of the 128 covering runs as success, and dbt built on stale data through
+# both. So these predicates are already known to be right on the two failure
+# modes that have actually happened.
+#
+# What is not known is what *else* they would fire on, and that is the whole
+# reason this stage warns instead of raising: an oversight here costs a log
+# line for seven days rather than a skipped dbt build every hour. Stage 2
+# flips them to a 500, one endpoint per deploy and 48 hours apart, in
+# ascending order of blast radius.
+#
+# The shape is _pack_failure_reason's, below: a pure function on the summary
+# dict, mirroring that job's own CLI exit code, unit-tested directly against
+# summary dicts, whose docstring records *why* each carried condition is
+# carried — a predicate without that reasoning is how an hourly job gets
+# failed over a quiet hour.
 
 
-@app.post("/cleanup/parquet/run")
-def trigger_cleanup_parquet() -> Dict[str, Any]:
-    with active_job():
-        return _run_cleanup_parquet()
+def _warn_would_fail(job: str, reason: Optional[str]) -> None:
+    """Log the Stage 1 warning for a run Stage 2 will fail, and carry on.
+
+    The greppable half of the observation window. Every warning emitted here
+    carries the literal ``would fail``, so the seven-day gate is one query:
+
+        {service="archiver", level="WARNING"} |~ "would fail"
+
+    rather than a text-matching exercise across three job vocabularies. Keep
+    the phrase intact when Stage 2 replaces a call site with the raise — the
+    window is read out of that query, and each endpoint leaves it on its own
+    deploy.
+    """
+    if reason:
+        logger.warning("%s: would fail — %s", job, reason)
+
+
+def _flush_silver_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this silver flush counts as failed, or None.
+
+    ``error`` is the whole predicate. ``flush_silver_observations`` sets it on
+    a DB connection failure, on a MinIO connection failure, and on any
+    exception inside the write-then-delete transaction — the last of which is
+    Stage 0's Incident 1, where PutObject returned XMinioStorageFull for five
+    days while the DAG went green every hour.
+
+    ``flushed == 0`` is **not** a failure. The processor returns
+    ``{"flushed": 0, "error": None}`` when nothing is staged, which is the
+    ordinary state of a quiet hour; failing on it would page forever on a
+    system that is working.
+    """
+    if summary.get("error"):
+        return f"flush aborted: {summary['error']}"
+    return None
+
+
+def _flush_staging_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this staging flush counts as failed, or None.
+
+    The per-table failures are the condition worth naming. ``flush_staging_events``
+    flushes each table independently and rolls any failure up into a top-level
+    ``error`` of the literal ``"one or more tables failed"``, which says
+    nothing about which — and Stage 0's Incident 2 was two tables out of six,
+    missing for sixteen hours because the archiver image shipped ahead of V044
+    and V045. A page that cannot name them sends a human to read six tables.
+
+    The top-level ``error`` is still checked on its own, because the two
+    connection-failure paths set it with an empty ``tables`` list and there is
+    nothing per-table to name.
+
+    ``total_flushed == 0`` is **not** a failure, for the same reason it is not
+    on the silver flush: an hour with nothing staged is an ordinary hour.
+    """
+    failed = [
+        table.get("table") or "?"
+        for table in (summary.get("tables") or [])
+        if table.get("error")
+    ]
+    if failed:
+        return f"{len(failed)} staging table(s) failed to flush: {', '.join(failed)}"
+    if summary.get("error"):
+        return f"flush aborted: {summary['error']}"
+    return None
+
+
+def _compact_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this compaction run counts as failed, or None.
+
+    **The predicate is ``error or failed``, and ``failed`` is the half that
+    matters.** ``compact_silver`` catches per-partition exceptions, counts them
+    in ``failed``, appends an ``{"ok": False, ...}`` entry to ``partitions``,
+    and then returns the run summary with ``"error": None``. Its top-level
+    ``error`` is set only when MinIO itself is unreachable, so a run in which
+    every partition failed is ``{"failed": 7, "error": None}`` — and, before
+    this predicate, a 200.
+
+    A failed partition is not a soft signal here. ``_compact_one`` writes a
+    ``.parquet.tmp``, verifies the row count, deletes the originals, then
+    renames; a rename failure raises *after* the originals are gone, leaving an
+    unpublished ``.tmp`` that the ``*.parquet`` glob does not match. That is
+    data which is present and invisible to every reader until a human moves it,
+    which is the condition on this service that most needs a person. So the
+    reason names the offending partitions rather than only counting them, and
+    the caller carries the whole summary — ``partitions`` entries included.
+
+    ``skipped`` and ``incremental`` are **not** failures. A partition that is
+    already compacted is skipped, an incremental merge is the normal daily
+    path, and a run that is entirely skipped is a clean run.
+    """
+    if summary.get("error"):
+        return f"run aborted: {summary['error']}"
+    failed = summary.get("failed") or 0
+    if failed:
+        names = [
+            f"{partition.get('source')}/{partition.get('date')}"
+            for partition in (summary.get("partitions") or [])
+            if not partition.get("ok", True)
+        ]
+        named = f": {', '.join(names)}" if names else ""
+        return f"{failed} partition(s) failed to compact{named}"
+    return None
 
 
 @app.post("/cleanup/queue")
@@ -83,23 +216,359 @@ def trigger_cleanup_queue() -> Dict[str, Any]:
 
 @app.post("/flush/silver/run")
 def trigger_flush_silver() -> Dict[str, Any]:
-    """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger)."""
+    """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).
+
+    Plan 134 Stage 1: a run failing ``_flush_silver_failure_reason`` logs a
+    ``would fail`` warning and **still returns 200**. Stage 2 turns that into a
+    500 carrying the summary and a ``failure_reason`` — last of the three,
+    because a 500 here skips the dbt build for that hour.
+    """
     with active_job():
-        return _flush_silver_observations()
+        result = _flush_silver_observations()
+        _warn_would_fail("flush_silver", _flush_silver_failure_reason(result))
+        return result
 
 
 @app.post("/compact/silver/run")
 def trigger_compact_silver() -> Dict[str, Any]:
-    """Compact silver_normalized/observations partitions (Airflow DAG trigger)."""
+    """Compact silver_normalized/observations partitions (Airflow DAG trigger).
+
+    Plan 134 Stage 1: a run failing ``_compact_failure_reason`` logs a
+    ``would fail`` warning and **still returns 200**. Stage 2 turns that into a
+    500 carrying the summary and a ``failure_reason`` — first of the three,
+    because this runs daily and nothing downstream depends on it.
+    """
     with active_job():
-        return _compact_silver()
+        result = _compact_silver()
+        _warn_would_fail("compact_silver", _compact_failure_reason(result))
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Plan 131 — pack lifecycle (Stage 2 packing, Stage 4 pruning)
+# ---------------------------------------------------------------------------
+#
+# Both processors return a summary dict rather than raising: partial results
+# are still results, which is right for a job you run by hand and read. Both
+# then translate that summary into a failure *on the CLI* — and the HTTP side
+# never got the same translation, so resp.raise_for_status() passed on a run
+# that deleted nothing, refused forty thousand objects, or never started.
+#
+# These two predicates give the HTTP side that contract, so a curl gets the
+# same answer the DAG does. dbt_runner is the in-repo precedent: a 500 whose
+# detail carries the whole result, which sensors.post_json parses back out and
+# a notify task can quote.
+#
+# They start from each job's CLI exit code and diverge in one place: the packer
+# exits 1 on read_failures and the endpoint only warns. A human running the CLI
+# wants to know one object was unreadable; a monthly DAG must not throw away a
+# packed month over it. The deleter's predicate is the CLI's exactly.
+#
+# Deliberately scoped to the two Plan 131 endpoints. flush/silver,
+# flush/staging and compact/silver have exactly the same gap and should be
+# fixed the same way — but that converts long-standing *silent* failures into
+# sudden DAG failures and pages, which is its own change with its own blast
+# radius, not something to smuggle in under a packing plan.
+#
+# That change is Plan 134, and its predicates are in the block above. They are
+# warning-only through Stage 1's observation window; these three have raised
+# since Plan 131 Stage 5.
+
+
+@contextmanager
+def _single_flight_or_409(job: str):
+    """Hold *job*'s single-flight slot, or 409 if something else has it.
+
+    There is no lock on either endpoint without this, which was fine while
+    every run was a human typing a command. It stops being fine the moment a
+    DAG retries: a multi-hour HTTP call that dies on a dropped connection
+    leaves the job **still running**, and the retry would start a second packer
+    on the same bucket — two runs computing the same ``next_seq`` and racing to
+    write packs under the same key.
+
+    See ``shared.job_counter.single_flight`` for what this does and does not
+    cover; in particular it does not see a manual CLI run in another process.
+    """
+    try:
+        with single_flight(job):
+            yield
+    except JobInFlight:
+        logger.warning("%s: refused — a run is already in flight", job)
+        raise HTTPException(
+            status_code=409,
+            detail=f"{job} is already in flight on this service; skipping.",
+        )
+
+
+def _pack_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this pack run counts as failed, or None.
+
+    Only an aborted run. Everything else warns and carries:
+
+    - ``read_failures`` — a source object could not be read, so it was left
+      unpacked and its bytes are still exactly where they were. Packing is
+      additive and nothing is deleted here, so an unreadable object costs a
+      later run, not any data. The packer's CLI exits 1 on this
+      (``pack_bronze_html.py:996``) and the endpoint deliberately does not: a
+      monthly DAG that fails on one bad object out of 557,065 abandons the
+      other 557,064. Each one is already logged at WARNING by the packer.
+    - ``stopped_at_max_packs`` — the cap doing its job.
+    - ``orphan_packs`` — an earlier run was interrupted. The packer reports
+      orphans and never writes into them, so carrying the condition is safe.
+    """
+    if summary.get("error"):
+        return f"run aborted: {summary['error']}"
+    return None
+
+
+def _prune_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this prune run counts as failed, or None. Mirrors the CLI's exit 1.
+
+    ``objects_refused`` is the loudest signal this job produces: one of the
+    three per-member checks disagreed, so a pack or the resolver is wrong.
+    Nothing was lost — that is the safety property working — but it must not
+    return 200.
+
+    ``objects_deleted == 0`` is **not** a failure on its own: a fully drained
+    month legitimately deletes nothing and returns after one listing. Neither
+    is ``capped``.
+    """
+    if summary.get("error"):
+        return f"run aborted: {summary['error']}"
+    refused = summary.get("objects_refused") or 0
+    if refused:
+        return (
+            f"{refused} object(s) refused verification; nothing was deleted for them"
+        )
+    return None
+
+
+def _verify_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this read-path verification counts as failed, or None.
+
+    This is the verifier CLI's exit predicate exactly: any failed member or no
+    verified members is a failure. The endpoint carries the full summary in its
+    500 response so a scheduled canary can report the offending keys.
+    """
+    failed = summary.get("failed") or 0
+    if failed:
+        return f"{failed} sampled member(s) failed read-path verification"
+    if not (summary.get("verified") or 0):
+        return "no sampled members were verified"
+    return None
+
+
+def _require_pack_worker() -> None:
+    """Refuse month-scale mutation jobs on the regular archiver service."""
+    if _ALLOW_PACK_JOBS:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Pack and prune jobs are disabled on the production archiver API. "
+            "Run them on pack-worker at http://pack-worker:8001; a month-scale "
+            "run starves flush/cleanup/compact here. Set "
+            "ARCHIVER_ALLOW_PACK_JOBS=true to override for tests or manual use."
+        ),
+    )
+
+
+@app.post("/pack/bronze/run")
+def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).
+
+    Dry-run unless the caller passes ``apply: true``. Stage 2 writes packs
+    alongside their sources and deletes nothing — deleting packed sources is
+    Stage 4 and has its own endpoint when it exists.
+
+    Returns **500** with the summary as ``detail`` when the run aborted.
+    ``read_failures`` warn and carry — see ``_pack_failure_reason``.
+
+    Returns **409** while another pack run is in flight (D3a), which
+    ``sensors.post_json`` turns into a graceful skip.
+    """
+    _require_pack_worker()
+    with active_job(), _single_flight_or_409("pack_bronze"):
+        payload = payload or {}
+        try:
+            kwargs = {
+                key: payload[key]
+                for key in (
+                    "apply", "artifact_type", "year", "month", "max_buckets",
+                    "max_packs", "max_pack_bytes", "frame_target_bytes",
+                    "settle_days", "min_free_bytes", "dict_id",
+                    "allow_no_dictionary",
+                )
+                if key in payload
+            }
+            result = _pack_bronze_html(**kwargs)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+        reason = _pack_failure_reason(result)
+        if reason:
+            logger.error("pack_bronze_html: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
+        if result.get("read_failures"):
+            # Returning 200 on this is a decision, so it says so once here
+            # rather than only in the per-object warnings the packer emits.
+            logger.warning(
+                "pack_bronze_html: %d source object(s) could not be read and were "
+                "left unpacked; a later run will pick them up",
+                result["read_failures"],
+            )
+        return result
+
+
+@app.post("/pack/bronze/prune")
+def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Delete bronze HTML objects that are inside a verified pack (Plan 131 Stage 4).
+
+    **Dry-run unless the caller passes ``apply: true``**, and capped by
+    ``max_objects`` / ``max_packs`` in either mode. This is the only endpoint on
+    this service that removes bronze data; the bucket is un-versioned, so a
+    delete is immediate and there is no undo.
+
+    ``year`` and ``month`` are required. Deliberately: the packer can discover
+    what is eligible because packing is additive, and this cannot, because it
+    is not.
+
+    Returns **500** with the summary as ``detail`` when the run aborted or
+    refused an object, matching the CLI's exit code — see
+    ``_prune_failure_reason``.
+
+    Returns **409** while another prune run is in flight (D3a). Packing is a
+    separate key, so a pack and a prune may run at once.
+    """
+    _require_pack_worker()
+    with active_job(), _single_flight_or_409("pack_prune"):
+        payload = payload or {}
+        if "year" not in payload or "month" not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail="year and month are required — this endpoint deletes data",
+            )
+        try:
+            kwargs = {
+                key: payload[key]
+                for key in (
+                    "apply", "artifact_type", "year", "month", "max_objects",
+                    "max_packs", "grace_days", "sample_full_reads", "status_breakdown",
+                )
+                if key in payload
+            }
+            result = _delete_packed_source_html(**kwargs)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+        reason = _prune_failure_reason(result)
+        if reason:
+            logger.error("delete_packed_source_html: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
+        return result
+
+
+@app.post("/pack/bronze/verify")
+def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Sample a packed month through the production read path (read-only).
+
+    Unlike pack and prune this endpoint is intentionally outside their
+    single-flight slots and the pack-worker guard. A canary must stay available
+    while either mutation job is running, which is when it is most useful.
+    """
+    with active_job():
+        payload = payload or {}
+        if "year" not in payload or "month" not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail="year and month are required for pack read-path verification",
+            )
+        try:
+            kwargs = {
+                "artifact_type": payload.get("artifact_type", "detail_page"),
+                "year": payload["year"],
+                "month": payload["month"],
+                "per_pack": payload.get("per_pack", 5),
+                "warm_reads": payload.get("warm_reads", 50),
+                "seed": payload.get("seed", 131),
+                "bucket": _MINIO_BUCKET,
+            }
+            result = _verify_pack_read_path(**kwargs)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+        reason = _verify_failure_reason(result)
+        if reason:
+            logger.error("verify_pack_read_path: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
+        return result
 
 
 @app.post("/flush/staging/run")
 def trigger_flush_staging() -> Dict[str, Any]:
-    """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger)."""
+    """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).
+
+    Plan 134 Stage 1: a run failing ``_flush_staging_failure_reason`` logs a
+    ``would fail`` warning naming the tables and **still returns 200**. Stage 2
+    turns that into a 500 carrying the summary and a ``failure_reason`` —
+    second of the three, since the dbt build does not read staging events.
+    """
     with active_job():
-        return _flush_staging_events()
+        result = _flush_staging_events()
+        _warn_would_fail("flush_staging", _flush_staging_failure_reason(result))
+        return result
+
+
+def _require_disk_usage_host_mounts() -> None:
+    """Refuse the disk walk on a service that cannot see the disks.
+
+    Only pack-worker carries the read-only host mounts and the writable
+    textfile volume. Without them every measurement fails and the job would
+    still cheerfully write a .prom with nothing in it -- which reads as
+    "the disks are empty" rather than as an error.
+    """
+    if _disk_usage_textfile_dir():
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Disk usage measurement is not configured on this service. It runs "
+            "on pack-worker at http://pack-worker:8001, which carries the "
+            "read-only host mounts and the node-exporter textfile volume. Set "
+            "DISK_USAGE_TEXTFILE_DIR to enable it elsewhere."
+        ),
+    )
+
+
+@app.post("/disk-usage/run")
+def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Measure the disk watchlist and publish it via node-exporter (Plan 135 Stage 4).
+
+    ``include_slow: true`` adds the high-inode volumes (MinIO bronze, Airflow
+    task logs), which between them take 20+ minutes and belong on the weekly
+    run only. Everything else is walked on every call and the slow-tier values
+    are carried forward in between.
+
+    Returns **500** when a scheduled measurement failed, so a silently empty
+    band on the dashboard cannot pass as a successful run.
+    """
+    _require_disk_usage_host_mounts()
+    with active_job():
+        payload = payload or {}
+        result = _run_disk_usage(include_slow=bool(payload.get("include_slow", False)))
+        if result["failed"]:
+            logger.error(
+                "disk_usage: %d watchlist target(s) could not be measured: %s",
+                result["failed"], result["unpublished"],
+            )
+            raise HTTPException(status_code=500, detail=result)
+        return result
 
 
 @app.post("/snapshots/adaptive-refresh/run")
@@ -181,6 +650,8 @@ def health():
 
 @app.get("/ready")
 def ready():
-    if is_idle():
-        return {"ready": True}
-    raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
+    evidence = job_snapshot()
+    result = {"ready": evidence["active_jobs"] == 0, **evidence}
+    if result["ready"]:
+        return result
+    raise HTTPException(status_code=503, detail={**result, "reason": "jobs in flight"})

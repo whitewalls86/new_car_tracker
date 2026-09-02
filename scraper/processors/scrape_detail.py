@@ -3,13 +3,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
+from scraper.metrics import record_detail_fetch
 from scraper.processors.cf_session import (
     FLARESOLVERR_URL,
     get_cf_credentials,
@@ -17,10 +17,13 @@ from scraper.processors.cf_session import (
     make_cf_session,
 )
 from scraper.queries import (
+    ENQUEUE_DETAIL_ARTIFACT,
     GET_BLOCKED_COOLDOWN_ATTEMPTS,
     INSERT_BLOCKED_COOLDOWN_EVENT,
+    INSERT_DETAIL_ARTIFACT_EVENT,
     UPSERT_BLOCKED_COOLDOWN,
 )
+from shared.challenge import html_title as _html_title
 
 # Adaptive delay for detail fetches: backs off on 403, recovers on success.
 _detail_delay_lock = threading.Lock()
@@ -34,17 +37,6 @@ DEFAULT_DETAIL_MAX_WORKERS = int(os.environ.get("SCRAPER_DETAIL_MAX_WORKERS", "1
 
 def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
-
-
-def _html_title(content: bytes) -> Optional[str]:
-    try:
-        text = content[:4096].decode("utf-8", errors="replace")
-    except Exception:
-        return None
-    m = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
-    if not m:
-        return None
-    return re.sub(r"\s+", " ", m.group(1)).strip()[:200]
 
 
 def _update_detail_delay(is_403: bool) -> None:
@@ -164,7 +156,20 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
     # Non-200 responses are still written to MinIO (useful for debugging blocks/interstitials).
     # MinIO write failure is treated as a fetch failure — the artifact is unreadable by processing.
     try:
-        content, status, content_type, final_url = _fetch_url(url, timeout_s)
+        # Plan 136 Stage 2. Counted around _fetch_url rather than inside it, so
+        # the solver path and the plain-curl_cffi fallback produce exactly one
+        # count per listing whichever one served it, and so an exception raised
+        # later while building the artifact is not miscounted as a fetch
+        # failure. This is the shape-independent half of the liveness signal: a
+        # `*/15` batch is a hundred of these, so ct-detail-fetch-failing's 20m
+        # window always spans a whole cycle and catches a throughput collapse
+        # the dbt-backed volume gauge cannot see for an hour.
+        try:
+            content, status, content_type, final_url = _fetch_url(url, timeout_s)
+        except Exception:
+            record_detail_fetch(None, errored=True)
+            raise
+        record_detail_fetch(status)
         size = len(content)
 
         minio_path = None
@@ -179,23 +184,12 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
 
             with db_cursor(error_context="scrape_detail_fetch: insert artifacts_queue") as cur:
                 cur.execute(
-                    """
-                    INSERT INTO ops.artifacts_queue
-                        (minio_path, artifact_type, listing_id, run_id, fetched_at, status)
-                    VALUES (%s, 'detail_page', %s, %s, %s, 'pending')
-                    RETURNING artifact_id
-                    """,
+                    ENQUEUE_DETAIL_ARTIFACT,
                     (minio_path, str(listing_id), run_id or None, fetched_at),
                 )
                 queue_artifact_id = cur.fetchone()[0]
                 cur.execute(
-                    """
-                    INSERT INTO staging.artifacts_queue_events (
-                        artifact_id, status, minio_path, artifact_type,
-                        fetched_at, listing_id, run_id
-                    )
-                    VALUES (%s, 'pending', %s, 'detail_page', %s, %s, %s)
-                    """,
+                    INSERT_DETAIL_ARTIFACT_EVENT,
                     (queue_artifact_id, minio_path, fetched_at,
                      str(listing_id) if listing_id else None, run_id or None),
                 )

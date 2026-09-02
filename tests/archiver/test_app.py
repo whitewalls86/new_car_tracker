@@ -1,5 +1,25 @@
 """Unit tests for archiver/app.py — all HTTP endpoints."""
 
+import logging
+
+import pytest
+
+
+@pytest.fixture(scope="module", autouse=True)
+def allow_pack_jobs_in_endpoint_tests():
+    """Keep the pre-D4 endpoint tests focused on their original contracts.
+
+    The production archiver defaults to refusing pack/prune after D4. This
+    override is intentionally local to this module: putting an app import in
+    tests/archiver/conftest.py would run configure_logging() for every processor
+    test and create its log directory as a collection-time side effect.
+    """
+    import archiver.app as archiver_app
+
+    previous = archiver_app._ALLOW_PACK_JOBS
+    archiver_app._ALLOW_PACK_JOBS = True
+    yield
+    archiver_app._ALLOW_PACK_JOBS = previous
 
 # ---------------------------------------------------------------------------
 # GET /health
@@ -10,92 +30,6 @@ class TestHealth:
         resp = mock_archiver_client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
-
-
-# ---------------------------------------------------------------------------
-# POST /cleanup/parquet
-# ---------------------------------------------------------------------------
-
-class TestCleanupParquetEndpoint:
-    def test_empty_paths(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app._cleanup_parquet", return_value=[])
-        resp = mock_archiver_client.post("/cleanup/parquet", json={"paths": []})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["total"] == 0
-        assert data["deleted"] == 0
-        assert data["failed"] == 0
-
-    def test_all_deleted(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app._cleanup_parquet", return_value=[
-            {"path": "bronze/html/year=2025/month=11/", "deleted": True, "reason": None},
-            {"path": "bronze/html/year=2025/month=12/", "deleted": True, "reason": None},
-        ])
-        resp = mock_archiver_client.post("/cleanup/parquet", json={
-            "paths": [
-                "bronze/html/year=2025/month=11/",
-                "bronze/html/year=2025/month=12/",
-            ]
-        })
-        data = resp.json()
-        assert data["total"] == 2
-        assert data["deleted"] == 2
-        assert data["failed"] == 0
-
-    def test_partial_failure(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app._cleanup_parquet", return_value=[
-            {"path": "bronze/html/year=2025/month=11/", "deleted": True, "reason": None},
-            {"path": "bronze/html/year=2025/month=10/", "deleted": False, "reason": "timeout"},
-        ])
-        resp = mock_archiver_client.post("/cleanup/parquet", json={
-            "paths": [
-                "bronze/html/year=2025/month=11/",
-                "bronze/html/year=2025/month=10/",
-            ]
-        })
-        data = resp.json()
-        assert data["deleted"] == 1
-        assert data["failed"] == 1
-
-    def test_paths_forwarded_to_processor(self, mock_archiver_client, mocker):
-        mock_fn = mocker.patch("archiver.app._cleanup_parquet", return_value=[])
-        paths = ["bronze/html/year=2025/month=09/"]
-        mock_archiver_client.post("/cleanup/parquet", json={"paths": paths})
-        assert mock_fn.call_args[0][0] == paths
-
-    def test_already_deleted_counts_as_deleted(self, mock_archiver_client, mocker):
-        cleanup_result = [{
-            "path": "bronze/html/year=2025/month=08/",
-            "deleted": True,
-            "reason": "already_deleted",
-        }]
-        mocker.patch("archiver.app._cleanup_parquet", return_value=cleanup_result)
-        paths_payload = {"paths": ["bronze/html/year=2025/month=08/"]}
-        resp = mock_archiver_client.post("/cleanup/parquet", json=paths_payload)
-        data = resp.json()
-        assert data["deleted"] == 1
-        assert data["failed"] == 0
-
-
-# ---------------------------------------------------------------------------
-# POST /cleanup/parquet/run
-# ---------------------------------------------------------------------------
-
-class TestCleanupParquetRunEndpoint:
-    def test_delegates_to_run_cleanup_parquet(self, mock_archiver_client, mocker):
-        fake = {"total": 2, "deleted": 2, "failed": 0, "results": []}
-        mocker.patch("archiver.app._run_cleanup_parquet", return_value=fake)
-        resp = mock_archiver_client.post("/cleanup/parquet/run")
-        assert resp.status_code == 200
-        assert resp.json() == fake
-
-    def test_no_work_returns_zeros(self, mock_archiver_client, mocker):
-        mocker.patch(
-            "archiver.app._run_cleanup_parquet",
-            return_value={"total": 0, "deleted": 0, "failed": 0, "results": []},
-        )
-        resp = mock_archiver_client.post("/cleanup/parquet/run")
-        assert resp.json()["total"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +183,505 @@ class TestCompactSilverRunEndpoint:
 
     def test_ready_returns_503_while_compact_active(self, mock_archiver_client, mocker):
         """GET /ready returns 503 while active_job() counter is non-zero."""
-        mocker.patch("archiver.app.is_idle", return_value=False)
+        mocker.patch(
+            "archiver.app.job_snapshot",
+            return_value={
+                "active_jobs": 1,
+                "oldest_started_at": "2026-08-25T01:00:00+00:00",
+            },
+        )
         resp = mock_archiver_client.get("/ready")
         assert resp.status_code == 503
         assert resp.json()["detail"]["ready"] is False
+
+
+# ---------------------------------------------------------------------------
+# POST /pack/bronze/run  (Plan 131)
+# ---------------------------------------------------------------------------
+
+class TestPackBronzeRunEndpoint:
+    def test_defaults_to_a_dry_run(self, mock_archiver_client, mocker):
+        fake = {"mode": "dry_run", "packs_written": 0, "error": None, "buckets": []}
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+        resp = mock_archiver_client.post("/pack/bronze/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert mock_fn.call_args.kwargs == {}, "no payload means processor defaults"
+
+    def test_passes_through_the_documented_options(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch(
+            "archiver.app._pack_bronze_html", return_value={"mode": "apply"}
+        )
+        resp = mock_archiver_client.post(
+            "/pack/bronze/run",
+            json={"apply": True, "year": 2026, "month": 5, "max_packs": 2},
+        )
+        assert resp.status_code == 200
+        assert mock_fn.call_args.kwargs == {
+            "apply": True, "year": 2026, "month": 5, "max_packs": 2,
+        }
+
+    def test_unknown_payload_keys_are_ignored(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value={})
+        resp = mock_archiver_client.post(
+            "/pack/bronze/run", json={"apply": True, "delete_sources": True}
+        )
+        assert resp.status_code == 200
+        assert "delete_sources" not in mock_fn.call_args.kwargs
+
+
+# ---------------------------------------------------------------------------
+# The Plan 131 failure contract (Stage 5 D5)
+#
+# Both processors return a summary rather than raising, and both translate that
+# summary into a failure on the CLI. These are the HTTP half of that contract:
+# a run that aborted or refused an object must not return 200, or
+# raise_for_status() — the entire check a DAG performs — passes on it.
+# ---------------------------------------------------------------------------
+
+class TestPackFailureReason:
+    """The predicate itself, against summary dicts, per D5."""
+
+    def test_clean_run_is_not_a_failure(self):
+        from archiver.app import _pack_failure_reason
+
+        assert _pack_failure_reason(
+            {"error": None, "read_failures": 0, "packs_written": 3}
+        ) is None
+
+    def test_error_is_a_failure(self):
+        from archiver.app import _pack_failure_reason
+
+        reason = _pack_failure_reason({"error": "disk full", "read_failures": 0})
+        assert reason and "disk full" in reason
+
+    def test_read_failures_only_warn(self):
+        from archiver.app import _pack_failure_reason
+
+        # The packer's CLI exits 1 on this; the endpoint deliberately does not.
+        # Nothing is deleted here and packing is additive, so an unreadable
+        # object costs a later run rather than any data — and a monthly DAG
+        # must not throw away a packed month over one bad object.
+        assert _pack_failure_reason({"error": None, "read_failures": 4}) is None
+
+    def test_stopped_at_max_packs_only_warns(self):
+        from archiver.app import _pack_failure_reason
+
+        # The cap doing its job. The next run picks up where this one stopped.
+        assert _pack_failure_reason({
+            "error": None, "read_failures": 0, "stopped_at_max_packs": True,
+        }) is None
+
+    def test_orphan_packs_only_warn(self):
+        from archiver.app import _pack_failure_reason
+
+        # An earlier run was interrupted. The packer reports orphans and never
+        # writes into them, so carrying the condition is safe.
+        assert _pack_failure_reason({
+            "error": None, "read_failures": 0, "orphan_packs": ["pack-00007"],
+        }) is None
+
+
+class TestPruneFailureReason:
+    def test_clean_run_is_not_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        assert _prune_failure_reason(
+            {"error": None, "objects_refused": 0, "objects_deleted": 100}
+        ) is None
+
+    def test_error_is_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        reason = _prune_failure_reason({
+            "error": "year and month are required — this job deletes data",
+            "objects_refused": 0,
+        })
+        assert reason and "year and month" in reason
+
+    def test_refused_objects_are_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        # The loudest signal this job produces: verification disagreed.
+        reason = _prune_failure_reason({"error": None, "objects_refused": 40000})
+        assert reason and "40000" in reason
+
+    def test_a_drained_month_deleting_nothing_is_not_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        # A fully pruned month legitimately deletes nothing and returns after
+        # one listing. objects_deleted == 0 is not a failure predicate.
+        assert _prune_failure_reason({
+            "error": None, "objects_refused": 0, "objects_deleted": 0,
+            "objects_surviving_before": 0,
+        }) is None
+
+    def test_capped_only_warns(self):
+        from archiver.app import _prune_failure_reason
+
+        assert _prune_failure_reason({
+            "error": None, "objects_refused": 0, "capped": True,
+        }) is None
+
+
+class TestPackEndpointsSignalFailure:
+    def test_pack_error_returns_500_carrying_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {"mode": "apply", "error": "no free space", "read_failures": 0}
+        mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+
+        resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        # The whole summary survives, so JsonPostError can carry it to notify.
+        assert detail["error"] == "no free space"
+        assert detail["mode"] == "apply"
+        assert "no free space" in detail["failure_reason"]
+
+    def test_pack_read_failures_still_return_200(self, mock_archiver_client, mocker):
+        fake = {"mode": "apply", "error": None, "read_failures": 2, "packs_written": 31}
+        mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+
+        resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
+
+        # 31 packs written is not a failed run because two objects were
+        # unreadable. The count stays in the body for whoever wants it.
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_prune_refusals_return_500_carrying_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {
+            "mode": "apply", "error": None, "objects_refused": 7,
+            "objects_deleted": 93,
+            "failures": [{"source_key": "html/...", "error": "sha256 mismatch"}],
+        }
+        mocker.patch("archiver.app._delete_packed_source_html", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4, "apply": True}
+        )
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert detail["objects_refused"] == 7
+        assert detail["failures"][0]["error"] == "sha256 mismatch"
+        assert "7" in detail["failure_reason"]
+
+    def test_prune_error_returns_500(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._delete_packed_source_html",
+            return_value={"error": "listing failed", "objects_refused": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+
+    def test_prune_deleting_nothing_still_returns_200(
+        self, mock_archiver_client, mocker
+    ):
+        # The drained-month case. It must stay green, or the Stage 5 DAG fails
+        # every month after the first one it packs.
+        fake = {
+            "mode": "apply", "error": None, "objects_refused": 0,
+            "objects_deleted": 0, "objects_surviving_before": 0, "capped": False,
+        }
+        mocker.patch("archiver.app._delete_packed_source_html", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4, "apply": True}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_a_clean_pack_run_is_unchanged(self, mock_archiver_client, mocker):
+        fake = {
+            "mode": "apply", "error": None, "read_failures": 0,
+            "packs_written": 32, "orphan_packs": [], "stopped_at_max_packs": False,
+        }
+        mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+
+        resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "failure_reason" not in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Single-flight (Plan 131 Stage 5 D3a)
+#
+# There was no lock on either endpoint. That was fine while every run was a
+# human typing a command, and stops being fine the moment a DAG retries: a
+# multi-hour call that dies on a dropped connection leaves the job running, and
+# the retry would start a second packer on the same bucket.
+# ---------------------------------------------------------------------------
+
+class TestPackSingleFlight:
+    def test_a_pack_run_is_refused_while_one_is_in_flight(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value={})
+
+        with single_flight("pack_bronze"):
+            resp = mock_archiver_client.post("/pack/bronze/run")
+
+        assert resp.status_code == 409
+        assert "pack_bronze" in resp.json()["detail"]
+        # It must refuse *before* the processor, not after — the whole point is
+        # that a second packer never lists the bucket.
+        mock_fn.assert_not_called()
+
+    def test_a_prune_run_is_refused_while_one_is_in_flight(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mock_fn = mocker.patch("archiver.app._delete_packed_source_html", return_value={})
+
+        with single_flight("pack_prune"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/prune", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 409
+        mock_fn.assert_not_called()
+
+    def test_a_pack_in_flight_does_not_block_a_prune(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mocker.patch(
+            "archiver.app._delete_packed_source_html",
+            return_value={"error": None, "objects_refused": 0},
+        )
+
+        # Keyed per job. A pack and a prune on different months are a normal
+        # thing to run at once, and a global lock would make working the
+        # backlog by hand impossible.
+        with single_flight("pack_bronze"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/prune", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 200
+
+    def test_the_slot_is_released_after_a_run(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._pack_bronze_html",
+            return_value={"error": None, "read_failures": 0},
+        )
+
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+
+    def test_the_slot_is_released_after_a_failed_run(
+        self, mock_archiver_client, mocker
+    ):
+        # A 500 must not wedge the job out of existence until the container
+        # restarts.
+        mocker.patch(
+            "archiver.app._pack_bronze_html",
+            return_value={"error": "boom", "read_failures": 0},
+        )
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 500
+
+        mocker.patch(
+            "archiver.app._pack_bronze_html",
+            return_value={"error": None, "read_failures": 0},
+        )
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /pack/bronze/verify (Plan 131 Stage 5 Step 7b)
+# ---------------------------------------------------------------------------
+
+class TestVerifyEndpoint:
+    def test_clean_run_returns_200(self, mock_archiver_client, mocker):
+        fake = {"verified": 5, "failed": 0, "sampled": 5}
+        mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_forwards_only_allow_listed_keys(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mock_fn = mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify",
+            json={
+                "artifact_type": "detail_page",
+                "year": 2026,
+                "month": 6,
+                "per_pack": 7,
+                "warm_reads": 9,
+                "seed": 42,
+                "bucket": "attacker-controlled",
+                "apply": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert mock_fn.call_args.kwargs == {
+            "artifact_type": "detail_page",
+            "year": 2026,
+            "month": 6,
+            "per_pack": 7,
+            "warm_reads": 9,
+            "seed": 42,
+            "bucket": archiver_app._MINIO_BUCKET,
+        }
+
+    @pytest.mark.parametrize("payload", [{}, {"year": 2026}, {"month": 4}])
+    def test_year_and_month_are_required(self, mock_archiver_client, payload):
+        resp = mock_archiver_client.post("/pack/bronze/verify", json=payload)
+
+        assert resp.status_code == 400
+        assert "year and month" in resp.json()["detail"]
+
+    def test_failed_members_return_500_with_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {
+            "verified": 4,
+            "failed": 1,
+            "failures": [{"source_key": "html/bad", "error": "hash mismatch"}],
+        }
+        mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert detail["failed"] == 1
+        assert detail["failures"] == fake["failures"]
+        assert "1" in detail["failure_reason"]
+
+    def test_nothing_verified_returns_500(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 0, "failed": 0, "sidecars": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+        assert "no sampled members" in resp.json()["detail"]["failure_reason"]
+
+    def test_verify_is_available_while_both_mutation_slots_are_held(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        with single_flight("pack_bronze"), single_flight("pack_prune"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/verify", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 200
+
+
+class TestPackJobsGuard:
+    @pytest.mark.parametrize(
+        ("path", "processor", "payload", "slot"),
+        [
+            ("/pack/bronze/run", "_pack_bronze_html", {}, "pack_bronze"),
+            (
+                "/pack/bronze/prune",
+                "_delete_packed_source_html",
+                {"year": 2026, "month": 4},
+                "pack_prune",
+            ),
+        ],
+    )
+    def test_pack_and_prune_are_refused_before_work_or_a_slot(
+        self, mock_archiver_client, mocker, path, processor, payload, slot
+    ):
+        import archiver.app as archiver_app
+        from shared.job_counter import is_idle, single_flight
+
+        mocker.patch.object(archiver_app, "_ALLOW_PACK_JOBS", False)
+        processor_mock = mocker.patch.object(archiver_app, processor)
+
+        resp = mock_archiver_client.post(path, json=payload)
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "pack-worker" in detail
+        assert "http://pack-worker:8001" in detail
+        assert "starves flush/cleanup/compact" in detail
+        assert "ARCHIVER_ALLOW_PACK_JOBS" in detail
+        processor_mock.assert_not_called()
+        assert is_idle(), "the guard must run before active_job()"
+        with single_flight(slot):
+            pass  # The refused request must not consume the mutation slot.
+
+    def test_pack_and_prune_run_when_explicitly_allowed(
+        self, mock_archiver_client, mocker
+    ):
+        import archiver.app as archiver_app
+
+        mocker.patch.object(archiver_app, "_ALLOW_PACK_JOBS", True)
+        mocker.patch.object(
+            archiver_app,
+            "_pack_bronze_html",
+            return_value={"error": None, "read_failures": 0},
+        )
+        mocker.patch.object(
+            archiver_app,
+            "_delete_packed_source_html",
+            return_value={"error": None, "objects_refused": 0},
+        )
+
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+        assert mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4}
+        ).status_code == 200
+
+    def test_verify_is_not_guarded(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mocker.patch.object(archiver_app, "_ALLOW_PACK_JOBS", False)
+        mocker.patch.object(
+            archiver_app,
+            "_verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -558,14 +987,398 @@ class TestSnapshotExportRunEndpoint:
 
 class TestReady:
     def test_ready_true_when_idle(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app.is_idle", return_value=True)
+        mocker.patch(
+            "archiver.app.job_snapshot",
+            return_value={"active_jobs": 0, "oldest_started_at": None},
+        )
         resp = mock_archiver_client.get("/ready")
         assert resp.status_code == 200
-        assert resp.json() == {"ready": True}
+        assert resp.json() == {
+            "ready": True,
+            "active_jobs": 0,
+            "oldest_started_at": None,
+        }
 
     def test_ready_false_when_busy(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app.is_idle", return_value=False)
+        mocker.patch(
+            "archiver.app.job_snapshot",
+            return_value={
+                "active_jobs": 3,
+                "oldest_started_at": "2026-08-25T01:00:00+00:00",
+            },
+        )
         resp = mock_archiver_client.get("/ready")
         assert resp.status_code == 503
         assert resp.json()["detail"]["ready"] is False
+        assert resp.json()["detail"]["active_jobs"] == 3
         assert "reason" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# POST /disk-usage/run  (Plan 135 Stage 4)
+# ---------------------------------------------------------------------------
+
+class TestDiskUsageEndpoint:
+    def test_refused_without_the_host_mounts(self, mock_archiver_client, mocker):
+        """The regular archiver cannot see the disks. Without this guard it
+        would measure nothing, write an empty .prom, and return 200 -- which
+        reads as "the disks are empty" rather than as a misconfiguration."""
+        import archiver.app as archiver_app
+        from shared.job_counter import is_idle
+
+        mocker.patch.object(archiver_app, "_disk_usage_textfile_dir", return_value=None)
+        processor = mocker.patch.object(archiver_app, "_run_disk_usage")
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={})
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "pack-worker" in detail
+        assert "http://pack-worker:8001" in detail
+        assert "DISK_USAGE_TEXTFILE_DIR" in detail
+        processor.assert_not_called()
+        assert is_idle(), "the guard must run before active_job()"
+
+    def test_daily_run_defaults_to_skipping_minio(self, mock_archiver_client, mocker):
+        """The expensive walk must be opt-in: defaulting it on would put a
+        20-minute disk thrash on every daily run."""
+        import archiver.app as archiver_app
+
+        mocker.patch.object(
+            archiver_app, "_disk_usage_textfile_dir", return_value="/textfile"
+        )
+        processor = mocker.patch.object(
+            archiver_app, "_run_disk_usage",
+            return_value={"failed": 0, "measured": 10, "unpublished": []},
+        )
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={})
+
+        assert resp.status_code == 200
+        processor.assert_called_once_with(include_slow=False)
+
+    def test_weekly_run_passes_the_flag_through(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mocker.patch.object(
+            archiver_app, "_disk_usage_textfile_dir", return_value="/textfile"
+        )
+        processor = mocker.patch.object(
+            archiver_app, "_run_disk_usage",
+            return_value={"failed": 0, "measured": 11, "unpublished": []},
+        )
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={"include_slow": True})
+
+        assert resp.status_code == 200
+        processor.assert_called_once_with(include_slow=True)
+
+    def test_failed_measurement_is_a_500_not_a_quiet_200(
+        self, mock_archiver_client, mocker
+    ):
+        """Carried-forward values look identical to fresh ones in the gauge, so
+        the run is the only place a failure can surface."""
+        import archiver.app as archiver_app
+
+        mocker.patch.object(
+            archiver_app, "_disk_usage_textfile_dir", return_value="/textfile"
+        )
+        mocker.patch.object(
+            archiver_app, "_run_disk_usage",
+            return_value={"failed": 2, "measured": 8, "unpublished": ["/usr", "/tmp"]},
+        )
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={})
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"]["unpublished"] == ["/usr", "/tmp"]
+
+
+# ---------------------------------------------------------------------------
+# The Plan 134 failure contract, Stage 1 (warning-only)
+#
+# The same defect as the Plan 131 block above, on the three endpoints it left
+# alone. Stage 0 measured what it cost: five days of a full MinIO and sixteen
+# hours of code deployed ahead of its migration, both of which Airflow recorded
+# as unbroken success while dbt built on stale data.
+#
+# The predicates are tested here exactly as the Plan 131 ones are — directly
+# against summary dicts, including every passing case they must *not* fail on,
+# because a predicate that fails a quiet hour pages every hour forever. The
+# endpoints still return 200 through Stage 1's observation window; Stage 2
+# flips them to a 500 one deploy at a time.
+# ---------------------------------------------------------------------------
+
+class TestFlushSilverFailureReason:
+    def test_a_clean_flush_is_not_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        assert _flush_silver_failure_reason({"flushed": 4210, "error": None}) is None
+
+    def test_flushing_nothing_is_not_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        # The ordinary state of a quiet hour. The processor returns exactly
+        # this when nothing is staged, and failing on it would page forever on
+        # a system that is working.
+        assert _flush_silver_failure_reason({"flushed": 0, "error": None}) is None
+
+    def test_error_is_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        # Stage 0's Incident 1: XMinioStorageFull for five days, 200 every hour.
+        reason = _flush_silver_failure_reason({
+            "flushed": 0,
+            "error": "[Errno 5] ... (XMinioStorageFull) when calling the PutObject operation",
+        })
+        assert reason and "XMinioStorageFull" in reason
+
+    def test_a_connection_failure_is_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        reason = _flush_silver_failure_reason(
+            {"flushed": 0, "error": "could not connect to server"}
+        )
+        assert reason and "could not connect" in reason
+
+
+class TestFlushStagingFailureReason:
+    def test_a_clean_flush_is_not_a_failure(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        assert _flush_staging_failure_reason({
+            "total_flushed": 812,
+            "tables": [
+                {"table": "staging.price_observation_events", "flushed": 812,
+                 "error": None},
+            ],
+            "error": None,
+        }) is None
+
+    def test_flushing_nothing_is_not_a_failure(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Every table quiet. This is most hours.
+        assert _flush_staging_failure_reason({
+            "total_flushed": 0,
+            "tables": [
+                {"table": "staging.vin_to_listing_events", "flushed": 0, "error": None},
+                {"table": "staging.artifacts_queue_events", "flushed": 0, "error": None},
+            ],
+            "error": None,
+        }) is None
+
+    def test_the_reason_names_the_failing_tables(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Stage 0's Incident 2: two tables out of six, sixteen hours, because
+        # the image shipped ahead of V044/V045. The roll-up error says only
+        # "one or more tables failed", which sends a human to read six tables.
+        reason = _flush_staging_failure_reason({
+            "total_flushed": 91,
+            "tables": [
+                {"table": "staging.price_observation_events", "flushed": 91,
+                 "error": None},
+                {"table": "staging.coordination_state_events", "flushed": 0,
+                 "error": 'relation "staging.coordination_state_events" does not exist'},
+                {"table": "staging.coordination_release_evidence", "flushed": 0,
+                 "error": 'relation "staging.coordination_release_evidence" does not exist'},
+            ],
+            "error": "one or more tables failed",
+        })
+        assert reason
+        assert "2 staging table(s)" in reason
+        assert "staging.coordination_state_events" in reason
+        assert "staging.coordination_release_evidence" in reason
+        # The table that worked is not in the page.
+        assert "price_observation_events" not in reason
+
+    def test_a_connection_failure_has_no_tables_to_name(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Both connection paths return the error with an empty tables list, so
+        # the top-level error has to be checked on its own.
+        reason = _flush_staging_failure_reason(
+            {"total_flushed": 0, "tables": [], "error": "MinIO unreachable"}
+        )
+        assert reason and "MinIO unreachable" in reason
+
+    def test_a_partial_flush_still_fails(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Rows landed. That is not a reason to call the run clean — the tables
+        # that did not land are still not in the lake.
+        reason = _flush_staging_failure_reason({
+            "total_flushed": 4000,
+            "tables": [{"table": "staging.x", "flushed": 0, "error": "boom"}],
+            "error": "one or more tables failed",
+        })
+        assert reason and "staging.x" in reason
+
+
+class TestCompactFailureReason:
+    def test_a_clean_run_is_not_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        assert _compact_failure_reason({
+            "scanned": 12, "compacted": 3, "incremental": 1, "skipped": 8,
+            "failed": 0, "error": None,
+            "partitions": [{"source": "cargurus", "date": "2026-07-31", "ok": True}],
+        }) is None
+
+    def test_an_entirely_skipped_run_is_not_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        # Every partition already compacted. The normal daily outcome.
+        assert _compact_failure_reason({
+            "scanned": 12, "compacted": 0, "incremental": 0, "skipped": 12,
+            "failed": 0, "error": None, "partitions": [],
+        }) is None
+
+    def test_an_incremental_run_is_not_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        assert _compact_failure_reason({
+            "scanned": 4, "compacted": 0, "incremental": 4, "skipped": 0,
+            "failed": 0, "error": None, "partitions": [],
+        }) is None
+
+    def test_failed_partitions_are_a_failure_even_with_no_error(self):
+        from archiver.app import _compact_failure_reason
+
+        # The case this plan's earlier draft would have missed. compact_silver
+        # counts per-partition exceptions in `failed` and still returns
+        # "error": None, so `error` alone is not the predicate.
+        reason = _compact_failure_reason({
+            "scanned": 9, "compacted": 2, "incremental": 0, "skipped": 0,
+            "failed": 3, "error": None,
+            "partitions": [
+                {"source": "cargurus", "date": "2026-08-28", "ok": True},
+                {"source": "cargurus", "date": "2026-08-29", "ok": False,
+                 "error": "rename failed"},
+                {"source": "autotrader", "date": "2026-08-29", "ok": False,
+                 "error": "rename failed"},
+                {"source": "autotrader", "date": "2026-08-30", "ok": False,
+                 "error": "rename failed"},
+            ],
+        })
+        assert reason
+        assert "3 partition(s)" in reason
+        # Named, not just counted: a rename failure leaves an unpublished .tmp
+        # and a human has to go and find which partition it belongs to.
+        assert "cargurus/2026-08-29" in reason
+        assert "autotrader/2026-08-30" in reason
+        assert "cargurus/2026-08-28" not in reason
+
+    def test_a_count_without_partition_entries_still_fails(self):
+        from archiver.app import _compact_failure_reason
+
+        reason = _compact_failure_reason(
+            {"failed": 2, "error": None, "partitions": []}
+        )
+        assert reason and "2 partition(s)" in reason
+
+    def test_minio_unreachable_is_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        # The only condition that sets the top-level error.
+        reason = _compact_failure_reason({
+            "scanned": 0, "compacted": 0, "incremental": 0, "skipped": 0,
+            "failed": 0, "error": "connection refused", "partitions": [],
+        })
+        assert reason and "connection refused" in reason
+
+
+class TestStage1IsWarningOnly:
+    """The endpoints still return 200. That is the stage, not an oversight.
+
+    An oversight in a predicate costs a log line for seven days here, and a
+    skipped dbt build every hour under Stage 2. These tests are what has to
+    change, deliberately and one endpoint at a time, when Stage 2 flips them.
+    """
+
+    def test_a_failed_silver_flush_warns_and_returns_200(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        fake = {"flushed": 0, "error": "XMinioStorageFull"}
+        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "flush_silver: would fail" in caplog.text
+        assert "XMinioStorageFull" in caplog.text
+
+    def test_a_failed_staging_flush_warns_and_returns_200(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        fake = {
+            "total_flushed": 0,
+            "tables": [{"table": "staging.coordination_state_events", "flushed": 0,
+                        "error": "relation does not exist"}],
+            "error": "one or more tables failed",
+        }
+        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/staging/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "flush_staging: would fail" in caplog.text
+        assert "staging.coordination_state_events" in caplog.text
+
+    def test_a_failed_compaction_warns_and_returns_200(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        fake = {
+            "scanned": 2, "compacted": 0, "incremental": 0, "skipped": 0,
+            "failed": 1, "error": None,
+            "partitions": [{"source": "cargurus", "date": "2026-08-29",
+                            "ok": False, "error": "rename failed"}],
+        }
+        mocker.patch("archiver.app._compact_silver", return_value=fake)
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/compact/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "compact_silver: would fail" in caplog.text
+        assert "cargurus/2026-08-29" in caplog.text
+
+    def test_every_stage_1_warning_carries_the_window_query_string(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        """The seven-day gate is read from
+
+            {service="archiver", level="WARNING"} |~ "would fail"
+
+        so the literal is part of the contract, not a phrasing choice.
+        """
+        mocker.patch(
+            "archiver.app._flush_silver_observations",
+            return_value={"flushed": 0, "error": "boom"},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            mock_archiver_client.post("/flush/silver/run")
+
+        assert [r for r in caplog.records if "would fail" in r.getMessage()]
+
+    def test_a_clean_run_warns_about_nothing(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        # A quiet hour must be silent, or the window's own signal is noise.
+        mocker.patch(
+            "archiver.app._flush_silver_observations",
+            return_value={"flushed": 0, "error": None},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/silver/run")
+
+        assert resp.status_code == 200
+        assert "would fail" not in caplog.text

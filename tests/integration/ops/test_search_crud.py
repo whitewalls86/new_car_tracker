@@ -1,5 +1,5 @@
 """
-Layer 3 — search_configs CRUD integration tests.
+Layer 4 — search_configs CRUD integration tests.
 
 Tests POST /admin/searches/ (create), GET /admin/searches/ (list),
 POST /admin/searches/{key} (update), POST /admin/searches/{key}/toggle,

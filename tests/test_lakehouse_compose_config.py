@@ -17,7 +17,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 def _load(filename):
     path = _REPO_ROOT / filename
     assert path.exists(), f"{filename} missing"
-    return yaml.safe_load(path.read_text())
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 class TestMainComposeUntouched:
@@ -59,7 +59,9 @@ class TestLakehouseComposeStandalone:
         assert "cartracker_pgdata" not in volume_names
 
     def test_lakekeeper_pgdata_volume_declared_and_not_external(self):
-        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
+        )
         assert "lakekeeper_pgdata" in doc["volumes"]
         # No `external: true` -- this volume is owned entirely by this
         # standalone project, unlike cartracker_pgdata in the main file.
@@ -67,7 +69,9 @@ class TestLakehouseComposeStandalone:
         assert not spec or not spec.get("external")
 
     def test_joins_external_cartracker_net(self):
-        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
+        )
         assert doc["networks"]["cartracker-net"]["external"] is True
 
     def test_no_production_postgres_service_referenced(self):
@@ -101,7 +105,9 @@ class TestLakehouseComposeStandalone:
         assert healthcheck["retries"] >= 30
 
     def test_no_flyway_reference(self):
-        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
+        )
         assert "flyway" not in doc["services"]
 
     def test_only_expected_volumes_declared(self):
@@ -111,7 +117,9 @@ class TestLakehouseComposeStandalone:
         docker-compose.lakehouse.a3.yml override (never loaded by CI), so
         that a CI run of the base file (+ its own ci.yml override) never
         needs an external volume that doesn't exist on the runner."""
-        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
+        )
         declared_volumes = set(doc.get("volumes") or {})
         assert declared_volumes == {"lakekeeper_pgdata"}
 
@@ -125,7 +133,7 @@ class TestLakehouseWorkerService:
     @staticmethod
     def _service():
         doc = yaml.safe_load(
-            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text()
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
         )
         return doc["services"]["lakehouse-worker"]
 
@@ -141,7 +149,7 @@ class TestLakehouseWorkerService:
         """A profile-gated service must not appear among services with no
         `profiles` key (those are the ones a bare `up` starts)."""
         doc = yaml.safe_load(
-            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text()
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
         )
         bare_up_services = {
             name for name, spec in doc["services"].items() if not spec.get("profiles")
@@ -215,7 +223,9 @@ class TestLakehouseA3Override:
 
     @staticmethod
     def _doc():
-        return yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.a3.yml").read_text())
+        return yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.a3.yml").read_text(encoding="utf-8")
+        )
 
     def test_mounts_analytics_db_read_only(self):
         service = self._doc()["services"]["lakehouse-worker"]
@@ -237,7 +247,9 @@ class TestLakehouseA3Override:
         """The CI job never loads this override, so the base file must be
         fully CI-safe on its own: no analytics_db mount, no external volume
         declaration that doesn't exist on a CI runner."""
-        base_doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        base_doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text(encoding="utf-8")
+        )
         base_service = base_doc["services"]["lakehouse-worker"]
         assert "cartracker_analytics_db" not in (base_doc.get("volumes") or {})
         for mount in base_service.get("volumes") or []:
@@ -253,7 +265,9 @@ class TestLakehouseLocalOverride:
 
     @staticmethod
     def _doc():
-        return yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.local.yml").read_text())
+        return yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.local.yml").read_text(encoding="utf-8")
+        )
 
     def test_adds_throwaway_minio(self):
         services = self._doc()["services"]
@@ -329,7 +343,9 @@ class TestLakehouseLocalOverride:
     def test_ci_override_untouched_by_a4(self):
         """The CI override must not have gained an analytics mount -- CI's
         A2 round-trip needs none, and adding one would break the runner."""
-        ci_doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.ci.yml").read_text())
+        ci_doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.ci.yml").read_text(encoding="utf-8")
+        )
         worker = ci_doc["services"].get("lakehouse-worker") or {}
         for mount in worker.get("volumes") or []:
             assert "analytics" not in mount
@@ -338,7 +354,9 @@ class TestLakehouseLocalOverride:
 class TestLakehouseComposeCiOverride:
     @staticmethod
     def _doc():
-        return yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.ci.yml").read_text())
+        return yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.ci.yml").read_text(encoding="utf-8")
+        )
 
     def test_adds_throwaway_minio(self):
         services = self._doc()["services"]

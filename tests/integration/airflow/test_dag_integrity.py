@@ -15,30 +15,49 @@ import importlib.util
 import inspect
 import re
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).parents[3]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
+CENSUS = REPO_ROOT / "tests" / "health_sensor_census.py"
+
+
+def _load_census():
+    """Load the health-sensor census by path rather than importing it.
+
+    This venv is `apache-airflow==3.2.0` in isolation and pytest does not put
+    the repo root on `sys.path` here: CI run 33444675959 failed collection with
+    `ModuleNotFoundError: No module named 'tests'` on a plain
+    `from tests.health_sensor_census import ...` that passed in the main venv.
+    Loading by path is what both readers of the census can do, and the census
+    imports nothing, so there is nothing to resolve. Same helper, same reason,
+    in tests/airflow/test_health_sensor_demotion.py.
+    """
+    spec = importlib.util.spec_from_file_location("health_sensor_census", CENSUS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+expected_sensor_task_ids = _load_census().expected_sensor_task_ids
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {
-    "cleanup_artifacts.py": {
-        "dag_id": "cleanup_artifacts",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
-    },
     "cleanup_queue.py": {
         "dag_id": "cleanup_queue",
         "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_queue"},
     },
-    "cleanup_parquet.py": {
-        "dag_id": "cleanup_parquet",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
-    },
     "dbt_build.py": {
         "dag_id": "dbt_build",
-        "tasks": {"check_dbt_runner_health", "dbt_build", "notify"},
+        "tasks": {
+            "check_deploy_intent",
+            "check_dbt_runner_health",
+            "dbt_build",
+            "notify",
+        },
     },
     "flush_silver_observations.py": {
         "dag_id": "flush_silver_observations",
@@ -110,6 +129,25 @@ DAG_SPECS = {
         "dag_id": "export_ci_lake_snapshot",
         "tasks": {"check_deploy_intent", "check_archiver_health", "export_ci_lake_snapshot"},
     },
+    "pack_bronze_html.py": {
+        "dag_id": "pack_bronze_html",
+        "tasks": {
+            "check_deploy_intent",
+            "check_pack_worker_health",
+            "pack_bronze_html",
+            "prune_packed_source_html",
+            "verify_pack_read_path",
+            "notify",
+        },
+    },
+    "disk_usage.py": {
+        "dag_id": "disk_usage",
+        "tasks": {"check_deploy_intent", "check_pack_worker_health", "disk_usage"},
+    },
+    "prune_task_logs.py": {
+        "dag_id": "prune_task_logs",
+        "tasks": {"check_deploy_intent", "prune_task_logs"},
+    },
 }
 
 
@@ -174,6 +212,34 @@ def test_dag_id_and_tasks(filename, spec):
 
 
 @pytest.mark.integration
+def test_every_dag_the_dagbag_builds_is_named_in_the_specs():
+    """DAG_SPECS is a census too, and it was already one short.
+
+    `disk_usage` was absent from it, so neither `test_dag_imports_without_error`
+    nor `test_dag_id_and_tasks` ever reached the DAG -- while
+    airflow/dags/disk_usage.py's own `except ImportError` comment said "the
+    Airflow integration suite imports the real DAG and asserts it exists". The
+    claim was checked into source and false, which is the same defect Plan 162
+    Stage 3 removed one layer up: a census kept honest by whoever remembers it.
+
+    Parametrising over DAG_SPECS can only ever check the DAGs someone thought to
+    list. This asks the DagBag instead, so a new DAG file fails until it is
+    named -- and a deleted one fails until its entry goes.
+    """
+    dagbag = _make_dagbag()
+    assert not dagbag.import_errors
+
+    built = set(dagbag.dags)
+    listed = {spec["dag_id"] for spec in DAG_SPECS.values()}
+    assert built == listed, (
+        "DAG_SPECS no longer names every DAG in airflow/dags/.\n"
+        f"  built but unlisted: {sorted(built - listed)}\n"
+        f"  listed but absent:  {sorted(listed - built)}\n"
+        "An unlisted DAG is imported and asserted by nothing in this file."
+    )
+
+
+@pytest.mark.integration
 def test_hourly_analytics_refresh_order():
     """Hourly analytics must flush before dbt so dbt reads fresh normalized files."""
     dagbag = _make_dagbag()
@@ -192,15 +258,140 @@ def test_hourly_analytics_refresh_order():
         dag.task_dict["check_dbt_runner_health"].upstream_list
     )
     assert dag.task_dict["check_dbt_runner_health"] in dag.task_dict["dbt_build"].upstream_list
+    # The health sensors are deliberately absent from this list -- Plan 140
+    # Stage 4. They gate the chain above, but feeding the Telegram task meant
+    # an unreachable archiver sent "hourly analytics refresh FAILED", naming
+    # the DAG rather than the service that was down.
     for task_id in [
         "check_deploy_intent",
-        "check_archiver_health",
         "flush_silver_observations",
         "flush_staging_events",
-        "check_dbt_runner_health",
         "dbt_build",
     ]:
         assert dag.task_dict[task_id] in dag.task_dict["notify"].upstream_list
+
+    for task_id in ("check_archiver_health", "check_dbt_runner_health"):
+        assert dag.task_dict[task_id] not in dag.task_dict["notify"].upstream_list, (
+            f"{task_id} feeds the notify task again. A health failure would "
+            "send a Telegram message named after the DAG rather than the "
+            "service, which is the defect Plan 140 Stage 4 removed."
+        )
+
+
+@pytest.mark.integration
+def test_maintenance_pool_reaches_the_real_operators():
+    """Plan 142 Stage 0 item 3, Phase A.
+
+    tests/airflow/test_maintenance_pool.py owns the contract and reads the
+    source; this checks the attribute actually survives DAG parsing onto the
+    task, and that everything else stays on `default_pool` — a task that
+    silently landed in `maintenance` would stop running the moment a window
+    held it."""
+    if str(DAGS_DIR) not in sys.path:
+        sys.path.insert(0, str(DAGS_DIR))
+    from pools import MAINTENANCE_POOL  # noqa: PLC0415 -- resolved via DAGS_DIR above
+
+    # ("scrape_detail_pages", "claim_batch") was here until Plan 147 Stage 3
+    # (2026-08-30). It was held only because a processing pause used to loop
+    # the detail scraper; the guard now lives in release_claims, verified in
+    # production at 2,000 fetches with zero repeats across an 81-minute pause.
+    expected = {
+        ("results_processing", "process_batch"),
+        ("orphan_checker", "expire_orphan_detail_claims"),
+        ("orphan_checker", "reap_stuck_processing"),
+        ("orphan_checker", "evict_delisted_cooldowns"),
+    }
+
+    dagbag = _make_dagbag()
+    assert dagbag.import_errors == {}, f"Import errors found: {dagbag.import_errors}"
+
+    pooled = {
+        (dag_id, task.task_id)
+        for dag_id, dag in dagbag.dags.items()
+        for task in dag.tasks
+        if task.pool == MAINTENANCE_POOL
+    }
+    assert pooled == expected
+
+
+@pytest.mark.integration
+def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
+    """Plan 140 Stage 4b, on the parsed task rather than on the source.
+
+    tests/airflow/test_health_sensor_demotion.py owns the contract and reads
+    the factory with `ast`; this is what proves the keyword survives onto every
+    real sensor across every DAG. Without it a timeout raises
+    AirflowSensorTimeout, fails the run, and pages as "DAG {dag_id} failed" --
+    named after a downstream consumer rather than the service that is down.
+
+    `check_deploy_intent` is asserted the other way on purpose: a stuck deploy
+    intent is Plan 142 Stage 1's condition, and skipping it would let work
+    start mid-deploy.
+    """
+    dagbag = _make_dagbag()
+    assert not dagbag.import_errors
+
+    health_sensors = []
+    for dag in dagbag.dags.values():
+        for task_id, task in dag.task_dict.items():
+            if task_id == "check_deploy_intent":
+                assert getattr(task, "soft_fail", False) is False, (
+                    f"{dag.dag_id}.{task_id} now skips on timeout; a stuck "
+                    "deploy intent must still stop the DAG"
+                )
+            elif task_id.startswith("check_") and task_id.endswith("_health"):
+                health_sensors.append(task_id)
+                assert task.soft_fail is True, (
+                    f"{dag.dag_id}.{task_id} fails instead of skipping on "
+                    "timeout, so a down service pages as a DAG failure again"
+                )
+                assert task.mode == "reschedule", (
+                    f"{dag.dag_id}.{task_id} left reschedule mode. Deferrable "
+                    "sensors ignore soft_fail on timeout (apache/airflow#61130)"
+                )
+
+    # 16 sensor tasks when Plan 140 Stage 4 landed; 14 since Plan 134's survey
+    # deleted cleanup_parquet.py and cleanup_artifacts.py, each of which wired
+    # one check_archiver_health, for an endpoint that had been a no-op since
+    # V036. That deletion updated the file count in test_health_sensor_demotion
+    # and missed this one, so Plan 162 Stage 3 gave both the same source: this
+    # counts sensor *tasks* and that counts the DAG *files* wiring them, and
+    # both now derive from tests/health_sensor_census.py.
+    assert sorted(health_sensors) == expected_sensor_task_ids(), (
+        "the health sensors the DagBag built no longer match the census in "
+        "tests/health_sensor_census.py.\n"
+        f"  built:    {sorted(health_sensors)}\n"
+        f"  declared: {expected_sensor_task_ids()}\n"
+        "These gate DAG correctness independently of who reports the outage, "
+        "so a dropped one is work starting against an unanswering service."
+    )
+
+
+@pytest.mark.integration
+def test_pack_bronze_html_lifecycle_contract():
+    """The monthly lifecycle stays UTC, single-run, ordered, and retryable."""
+    dagbag = _make_dagbag()
+    dag = dagbag.dags["pack_bronze_html"]
+
+    assert dag.schedule == "0 6 3 * *"
+    assert str(dag.timezone) == "UTC"
+    assert dag.catchup is False
+    assert dag.max_active_runs == 1
+    assert set(dag.tags) == {"maintenance"}
+
+    ordered_tasks = [
+        "check_deploy_intent",
+        "check_pack_worker_health",
+        "pack_bronze_html",
+        "prune_packed_source_html",
+        "verify_pack_read_path",
+    ]
+    for upstream, downstream in zip(ordered_tasks, ordered_tasks[1:]):
+        assert dag.task_dict[upstream] in dag.task_dict[downstream].upstream_list
+
+    for task_id in ("pack_bronze_html", "prune_packed_source_html"):
+        assert dag.task_dict[task_id].retries == 6
+        assert dag.task_dict[task_id].retry_delay == timedelta(minutes=15)
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +407,7 @@ def _parse_compose_ports():
     import yaml
 
     compose_path = REPO_ROOT / "docker-compose.yml"
-    with open(compose_path) as f:
+    with open(compose_path, encoding="utf-8") as f:
         compose = yaml.safe_load(f)
 
     service_ports = {}
@@ -232,7 +423,7 @@ def _parse_compose_ports():
         if dockerfile:
             df_path = REPO_ROOT / dockerfile
             if df_path.exists():
-                content = df_path.read_text()
+                content = df_path.read_text(encoding="utf-8")
                 m = re.search(r"--port[=\s]+(\d+)", content)
                 if m:
                     ports.add(int(m.group(1)))
@@ -249,7 +440,7 @@ def _extract_dag_service_urls():
     url_re = re.compile(r'http://(\w+):(\d+)')
     results = []
     for dag_file in DAGS_DIR.glob("*.py"):
-        content = dag_file.read_text()
+        content = dag_file.read_text(encoding="utf-8")
         for m in url_re.finditer(content):
             service = m.group(1)
             port = int(m.group(2))

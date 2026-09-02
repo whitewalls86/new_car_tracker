@@ -8,12 +8,25 @@ groups:
     interval: 5m
     rules:
 
+      # The service set is explicit, not `.+`, and that is load-bearing.
+      # Airflow and oauth2-proxy stdout carried no `level` label at all until
+      # Plan 141 gave them one, so `.+` silently extended a >5-in-5m threshold
+      # tuned against six application log streams to cover DAG-failure bursts
+      # and every 5xx behind the auth proxy. Those sources are visible on the
+      # logs dashboard from day one; adding them here needs a threshold chosen
+      # from their measured volume, which is Stage 4's soak output.
+      # test_error_spike_is_scoped_to_the_application_log_streams asserts this
+      # set equals APPLICATION_SERVICES, so a seventh app service fails there
+      # rather than going unwatched.
       - uid: ct-log-error-spike
-        title: Log ERROR Spike
+        title: Application Log ERROR Spike
         condition: C
         noDataState: OK
         execErrState: Alerting
         for: 5m
+        annotations:
+          summary: "{{ $labels.service }} is logging more than 5 errors per 5 minutes"
+          description: "An application service's JSON log stream exceeded 5 ERROR records in five minutes. Airflow and oauth2-proxy stdout are deliberately outside this rule until their volume is measured."
         data:
           - refId: A
             datasourceUid: cartracker-loki
@@ -21,7 +34,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'sum by (service) (count_over_time({service=~".+", level="ERROR"}[5m]))'
+              expr: 'sum by (service) (count_over_time({service=~"archiver|dbt_runner|ops|pack-worker|processing|scraper", level="ERROR"}[5m]))'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
@@ -45,20 +58,32 @@ groups:
                     type: gt
                     params: [5]
 
+      # Plan 141 keeps this legacy UID beside ct-detail-fetch-failing because
+      # they answer different questions. This is the fast partial-degradation
+      # signal: more than 5% of at least 25 detail fetches returned 403 in five
+      # minutes. ct-detail-fetch-failing is the sustained all-fetches-failing
+      # signal over twenty minutes at meaningful traffic.
+      #
+      # The metric outcome is authoritative. Broad log text matching previously
+      # paged on UUIDs, timestamps, byte counts, and shared.minio object keys
+      # that happened to contain "403".
       - uid: ct-403-log-spike
-        title: Scraper 403 Log Spike
+        title: Detail Fetch 403 Rate High
         condition: C
         noDataState: OK
         execErrState: Alerting
         for: 5m
+        annotations:
+          summary: "Detail fetch 403 rate above 5%"
+          description: "More than 5% of detail fetches returned exact outcome=403 with at least 25 fetches in the five-minute window. This is the partial-degradation early warning; ct-detail-fetch-failing remains the sustained 100%-failure detector."
         data:
           - refId: A
-            datasourceUid: cartracker-loki
+            datasourceUid: cartracker-prometheus
             relativeTimeRange:
               from: 600
               to: 0
             model:
-              expr: 'count_over_time({service="scraper"} |= "403" [5m])'
+              expr: '(sum(increase(cartracker_detail_fetch_total{job="scraper",outcome="403"}[5m])) / clamp_min(sum(increase(cartracker_detail_fetch_total{job="scraper"}[5m])), 1) > bool 0.05) * (sum(increase(cartracker_detail_fetch_total{job="scraper"}[5m])) >= bool 25)'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
@@ -80,7 +105,56 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [10]
+                    params: [0]
+
+      # Plan 131 Stage 5: pack verification failures must be zero. The deleter
+      # logs REFUSED at ERROR and deletes nothing when a pack disagrees with its
+      # sidecar or with the source object, so any occurrence is a real defect in
+      # the read path Stage 4's safety rests on -- hence gt 0 and for: 0s rather
+      # than the spike thresholds the other two log rules use.
+      #
+      # Both services: scheduled runs land on pack-worker (only it sets
+      # ARCHIVER_ALLOW_PACK_JOBS), but the archiver still serves manual runs when
+      # that flag is enabled for one.
+      - uid: ct-pack-verification-refused
+        title: Pack Verification REFUSED
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "Pack verification refused an object on {{ $labels.service }}"
+          description: "delete_packed_source_html refused to delete a source object because its pack did not verify. Nothing was deleted. Read failures[] in the run summary, and pause the pack_bronze_html DAG before any further pruning. Run sheet: docs/runbooks/runbook_plan_131_stage_3_4.md"
+        data:
+          - refId: A
+            datasourceUid: cartracker-loki
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              expr: 'sum by (service) (count_over_time({service=~"archiver|pack-worker"} |= "REFUSED" [10m]))'
+              queryType: range
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
 
   - orgId: 1
     name: infra-and-data-health
@@ -104,7 +178,12 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'increase(airflow_dagrun_duration_failed_count[10m])'
+              # Plan 136 Stage 0c: statsd-exporter also carries a series with
+              # no dag_id label, which matched this expression and rendered as
+              # a second instance reading "DAG [no value] failed". One failure
+              # must produce one alert, or triage starts by chasing a DAG that
+              # does not exist.
+              expr: 'increase(airflow_dagrun_duration_failed_count{dag_id!=""}[10m])'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -127,12 +206,27 @@ groups:
                     type: gt
                     params: [0]
 
+      # Plan 140 Stage 2: this selected up{job=~"ops|processing"} -- an
+      # allowlist covering two of eight scrape jobs, which is the same
+      # never-added-to-the-list defect Plan 140 exists to close, sitting in the
+      # alert file. airflow, postgres, minio, minio_bucket, dbt_runner and node
+      # were all unwatched at the target level.
+      #
+      # It must stay complete for a second reason now: container-health computes
+      # at scrape time and therefore has no freshness metric of its own. `up` is
+      # its entire liveness contract, so an allowlist here would leave the
+      # fleet-health exporter unwatched.
+      # test_service_down_covers_every_scrape_job asserts this job set equals
+      # prometheus.yml's, by exact set equality.
       - uid: ct-service-down
         title: Service Down
         condition: C
         noDataState: Alerting
         execErrState: Alerting
         for: 2m
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} is down"
+          description: "A scrape target has been unreachable for 2 minutes. Check the container and its logs before assuming the metric itself is broken."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
@@ -140,7 +234,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'up{job=~"ops|processing"}'
+              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing|promtail|scraper"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -163,12 +257,31 @@ groups:
                     type: lt
                     params: [1]
 
-      - uid: ct-scrape-volume-drop
-        title: Scrape Volume Drop
+      # Plan 142 Stage 1. State age is computed directly from Postgres during
+      # each ops scrape. This pages a human; it never releases coordination.
+      - uid: ct-coordination-stale
+        title: Coordination State Stale
         condition: C
+        # `noDataState: OK`, deliberately. The query selects `phase!="none"`,
+        # so in the healthy steady state -- no deploy or maintenance window
+        # open -- it matches no series at all. With `noDataState: Alerting`
+        # and `for: 0s` this rule fired permanently from the moment it was
+        # deployed (2026-08-25 20:00 UTC, minutes after a window closed
+        # cleanly), and reported the *previous* window's labels while doing
+        # it: "deploy coordination has remained requested for over 30
+        # minutes" against a record already released to `phase=none`.
+        # Absence of a window is the healthy case, not a stale one.
+        #
+        # This does not blind us to `ops` dying: `up{job=~"...|ops|..."}`
+        # in ct-service-down covers an unreachable exporter after 2m, which
+        # is the correct owner of that failure. `execErrState` stays
+        # Alerting -- a query that errors is a real fault, not an absence.
         noDataState: OK
         execErrState: Alerting
-        for: 30m
+        for: 0s
+        annotations:
+          summary: "{{ $labels.kind }} coordination has remained {{ $labels.phase }} for over 30 minutes"
+          description: "Coordination is deliberately fail-closed. Inspect the request, drain evidence and target health; never clear it merely because this alert fired."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
@@ -176,7 +289,352 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_observation_count_last_hour'
+              expr: 'cartracker_coordination_state_age_seconds{job="ops",phase!="none"}'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1800]
+
+      # Plan 142 Stage 1. Unknown evidence and an active DAG run that has not
+      # observed the current generation are both unsafe authorization states.
+      # Ten minutes permits ordinary admitted work to finish before paging.
+      - uid: ct-coordination-gate-unhealthy
+        title: Coordination Admission Gate Unhealthy
+        condition: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 10m
+        annotations:
+          summary: "Coordination admission evidence is unknown or has unobserved DAG runs"
+          description: "Authorization remains blocked. Check ops database access, Airflow scheduler health, active DAG runs, and current-generation gate observations. This alert must never auto-release the window."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(1 - cartracker_coordination_gate_evidence_known{job="ops"}) + clamp_max(cartracker_coordination_gate_unobserved_runs{job="ops"}, 1)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Plan 140 Stage 2. Two rules, never one, over the same three-state
+      # metric: 1 healthy, 0 unhealthy, -1 no healthcheck configured. A single
+      # `< 1` rule would merge them and re-hide the coverage gap inside the
+      # incident channel, which is the whole point of spending a third state on
+      # it. The `container` label survives the comparison, so each alert
+      # instance still names one service.
+      #
+      # `starting` maps to 0 by design -- "not yet known to be healthy" is not
+      # healthy. Docker leaves that state within
+      # start_period + retries * (interval + timeout), a 230s worst case across
+      # this compose file, so the 5m `for` is what keeps a slow start quiet.
+      # test_unhealthy_alert_outlasts_the_slowest_healthcheck_start pins it.
+      #
+      # `== bool 0`, NOT `count by (container) (... == 0)`. The filtering form
+      # was deployed on 2026-08-20 and produced a false page within six minutes.
+      # A filtered comparison *drops* the series when a container is healthy,
+      # and `reduce: last` over a 600s relativeTimeRange then keeps the last
+      # value it saw alive for the rest of that window. Grafana's own restart
+      # put `container="grafana"` at 0 for a single 15s sample at 18:38:15; the
+      # ghost series satisfied the 5m `for` and the rule was Alerting at 18:44
+      # for a container that had been healthy for six minutes.
+      #
+      # `== bool` returns 1-or-0 for *every* series and drops none, so a
+      # recovered container reads 0 on the very next evaluation. Note this is
+      # not a defect the other rules in this file share: they select continuous
+      # gauges that always have a current sample, where `last` really is the
+      # latest value. It only bites an expression whose series come and go.
+      #
+      # There is deliberately no staleness rule. container-health computes in
+      # its scrape handler and cannot serve a stale value; its liveness is
+      # ct-service-down above. A freshness metric appearing here would mean the
+      # design drifted back toward a cached file.
+      - uid: ct-container-unhealthy
+        title: Container Unhealthy
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Container {{ $labels.container }} is unhealthy or absent"
+          description: "This container has read 0 for 5 minutes, which means one of two things. Docker reports it unhealthy, restarting or paused -- read its recorded probe output with `docker inspect` and look at State.Health.Log. Or the service is expected running and Docker does not report it at all: check `docker ps -a` first, because `docker inspect` on a container that is gone tells you nothing. Plan 140 Stage 4a added that second case; before it, a stopped service left the metric silently. This is a liveness signal only -- a healthy container can still be doing nothing useful, which is exactly what the 2026-08-14 solver outage was."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'cartracker_container_health{job="container-health"} == bool 0'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Not an incident -- a coverage alert. It reads as "Plan 140 regressed":
+      # a service is running with no healthcheck at all, so Docker publishes no
+      # health status for it and an unwatched service looks exactly like a
+      # healthy one. Routed to the severity=coverage policy (24h repeat) rather
+      # than the 4h incident cadence.
+      #
+      # It is expected to be noisy the first time it fires, and suppressing it
+      # inverts the plan. `oauth2-proxy` is the one known standing exception --
+      # its distroless image cannot execute any probe -- and it is exempt in
+      # TestServiceHealthCoverage's deny-list, not here, because silencing it in
+      # the alert would silence the next one too.
+      - uid: ct-container-health-unconfigured
+        title: Container Health Unconfigured
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: coverage
+        annotations:
+          summary: "Container {{ $labels.container }} has no healthcheck configured"
+          description: "This service is running with no healthcheck, so Docker reports no health status for it and it is indistinguishable from a healthy service. Add a `healthcheck:` block in docker-compose.yml, or add a deny-list entry with a written reason in tests/test_observability_config.py. See docs/plans/plan_140_service_health_contract.md."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'cartracker_container_health{job="container-health"} == bool -1'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Plan 136 Stage 2. Two rules over scraper-owned counters, and they are
+      # deliberately not one rule with a shorter window, because the two
+      # failure modes this plan was written about have opposite signatures.
+      #
+      # The 2026-08-14 solver outage was the *refusing* mode: /v1 returned HTTP
+      # 500, get_cf_credentials raised before ever assigning
+      # _cf_credentials_expires_at, and so every single fetch re-bootstrapped.
+      # Solver request volume goes UP during that failure, which is what makes
+      # ct-solver-not-solving fast -- a couple of minutes of one batch is
+      # already six failed bootstraps.
+      #
+      # The *lying* mode is the opposite: the solver returns status=ok with
+      # real cf_clearance cookies and an interstitial behind them. Credentials
+      # cache normally for the full 25-minute _CF_SESSION_TTL, solver volume
+      # stays at its healthy ~2.4/hour, and ct-solver-not-solving's `> bool 5`
+      # guard is never reached. Only the detail fetches show it, as 403s at
+      # full batch rate. That is ct-detail-fetch-failing's job.
+      #
+      # Neither subsumes the other and neither should be "simplified" into the
+      # other. The same is true one layer out: a healthy container can produce
+      # 0% success (this incident), so Plan 140's cartracker_container_health
+      # does not cover either of these.
+      #
+      # Both are written as `== bool` / `> bool` products, never as filtering
+      # comparisons. See the ct-container-unhealthy comment above: a filtered
+      # comparison drops its series on recovery and `reduce: last` over the
+      # 600s relativeTimeRange then keeps the dead value alive for the rest of
+      # the window. That shape false-paged on 2026-08-20 within six minutes.
+      # These expressions sum over pre-initialized counter children, so exactly
+      # one series exists at all times and it reads 0 the instant work
+      # recovers. test_solver_alerts_cannot_drop_a_recovered_series pins it.
+      #
+      # Scraper liveness itself is NOT these rules -- if the process is down
+      # the counters vanish and both go NoData. `scraper` was added to
+      # ct-service-down's job set in the same change for exactly that reason.
+      - uid: ct-solver-not-solving
+        title: Solver Not Solving
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "The Cloudflare solver has not succeeded once in 15 minutes"
+          description: "We are asking the solver for credentials and none of the attempts are succeeding — `outcome=error` means it is refusing or unreachable, `outcome=challenge` means it claimed success and handed back an interstitial. The 2026-08-14 outage ran 8 hours in this state with the container reporting healthy the whole time, because `trawl`'s own healthcheck only probes pool liveness. A plain `docker restart cartracker-trawl` resolved it. Check the solver's outcome split on the Pipeline Health dashboard before restarting, and note the container is `trawl`, not the vestigial `flaresolverr`."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(sum(increase(cartracker_solver_requests_total{job="scraper",outcome="ok"}[15m])) == bool 0) * (sum(increase(cartracker_solver_requests_total{job="scraper",outcome!="ok"}[15m])) > bool 5)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # The window is 20m against a `*/15` DAG, so it always spans at least one
+      # whole batch whatever the phase. Detail traffic is bursty -- ~100 fetches
+      # in roughly two minutes, then idle -- and a window shorter than the
+      # schedule would keep falling to zero traffic between batches, where the
+      # `> bool 20` guard reads 0 and resets the 5m `for`. That would make the
+      # rule quieter, not faster.
+      #
+      # The guard is what keeps a skipped or failed DAG run from paging here:
+      # no fetches means no evidence, and a scraper that has stopped fetching
+      # entirely is ct-service-down's and the DAG sensors' signal, not this one.
+      - uid: ct-detail-fetch-failing
+        title: Detail Fetches All Failing
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Every detail fetch in the last 20 minutes failed"
+          description: "At least 21 detail-page fetches were attempted and not one returned HTTP 200. This is shape-independent — it catches a solver that lies as readily as one that refuses, which is why it exists alongside ct-solver-not-solving. Every hour in this state costs an hour of detail coverage and pushes the affected listings into a 12-96h exponential cooldown, so check `cartracker_detail_fetch_total` by outcome first: all-403 points at the solver, mixed `error` points at the fetch path or the site."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(sum(increase(cartracker_detail_fetch_total{job="scraper",outcome="ok"}[20m])) == bool 0) * (sum(increase(cartracker_detail_fetch_total{job="scraper"}[20m])) > bool 20)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Plan 136 D1, corrected in two passes. Plan 143 fixed the half where a
+      # DuckDB lock conflict left every gauge silently retaining its last value;
+      # this rule now reads a fail-loud snapshot with its own freshness alert.
+      #
+      # What Stage 2 corrects is the other half: this is a **data-quality**
+      # alert and must not be read as liveness. It sits downstream of scrape ->
+      # processing -> silver flush -> dbt build -> DuckDB, so it cannot answer
+      # "is scraping working now" -- during the 2026-08-14 outage it stayed
+      # silent for eight hours and then fired at 05:51, forty minutes into the
+      # healthy recovery. ct-solver-not-solving and ct-detail-fetch-failing
+      # above are the liveness signals; this one answers "did the observations
+      # that were scraped actually land".
+      #
+      # The partial-hour defect that made it fire during a recovery is fixed in
+      # dbt_runner/sql/analytics_metrics_snapshot.sql, not here: the snapshot
+      # selected MAX(hour) from a mart bucketed on date_trunc('hour',
+      # fetched_at), so the hourly build read a bucket holding a few minutes of
+      # data and published it as an hourly total.
+      - uid: ct-scrape-volume-drop
+        title: Scrape Volume Drop
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        annotations:
+          summary: "Hourly observation count has dropped below 100"
+          description: "The last complete hour produced fewer than 100 observations. This is a data-quality signal, not a liveness one — it is downstream of the dbt build and lags the whole pipeline, so do not wait on it to tell you scraping has stopped. Check ct-solver-not-solving and ct-detail-fetch-failing first; if those are Normal, the scrape worked and the loss is in processing, the silver flush, or the build."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'cartracker_observation_count_last_hour{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -199,6 +657,51 @@ groups:
                     type: lt
                     params: [100]
 
+      # Plan 143: dbt_runner exports NaN when the serving snapshot refresh is
+      # failed or unavailable. This independent timestamp makes producer
+      # failure alertable instead of letting last-good values look current.
+      # The producer runs hourly, so the threshold is one cadence plus 15
+      # minutes of flush/build/scheduler grace, not 15 minutes after every
+      # successful publication.
+      - uid: ct-metrics-freshness
+        title: Metrics Refresh Stale
+        condition: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "dbt-backed metrics missed the hourly refresh plus 15 minutes of grace"
+          description: "The dbt_runner serving snapshot has not refreshed successfully for 75 minutes, or the freshness series is unavailable. Check dbt_runner health, the hourly analytics DAG, build output, and snapshot publication before trusting the analytics gauges."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              expr: 'time() - cartracker_metrics_last_success_timestamp_seconds{job="dbt_runner"}'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [4500]
+
       - uid: ct-extraction-yield-drop
         title: VIN Extraction Yield Drop
         condition: C
@@ -212,7 +715,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_extraction_yield_last_day'
+              expr: 'cartracker_extraction_yield_last_day{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -248,7 +751,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_stale_listings_pct'
+              expr: 'cartracker_stale_listings_pct{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -284,7 +787,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_cooldown_backlog_high'
+              expr: 'cartracker_cooldown_backlog{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -379,6 +882,133 @@ groups:
                     type: gt
                     params: [90]
 
+      # Inode alerts. /mnt/data holds every Docker volume including MinIO's
+      # bronze bucket, where each object costs 2 inodes. Inode exhaustion
+      # presents as ENOSPC with free space still on the disk, so it needs its
+      # own alert rather than riding on the byte rules above. These selectors
+      # deliberately match ct-disk-space-* so both families cover the same
+      # filesystems. Plan 135 Stage 3 (inherited from Plan 131 Stage 5 Step 6).
+      - uid: ct-inode-warning
+        title: Inode Usage Warning (>80%)
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        annotations:
+          summary: "Inode usage above 80% on {{ $labels.mountpoint }}"
+          description: "Inodes can exhaust while bytes look healthy, which surfaces as ENOSPC with free space on the disk. Check the Filesystem row: https://cartracker.info/grafana/d/cartracker-infrastructure"
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(1 - node_filesystem_files_free{fstype!="tmpfs",mountpoint!~"/boot.*"} / node_filesystem_files{fstype!="tmpfs",mountpoint!~"/boot.*"}) * 100'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [80]
+
+      - uid: ct-inode-critical
+        title: Inode Usage Critical (>90%)
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Inode usage above 90% on {{ $labels.mountpoint }}"
+          description: "Writes will start failing with ENOSPC despite free bytes. Check the Filesystem row: https://cartracker.info/grafana/d/cartracker-infrastructure"
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(1 - node_filesystem_files_free{fstype!="tmpfs",mountpoint!~"/boot.*"} / node_filesystem_files{fstype!="tmpfs",mountpoint!~"/boot.*"}) * 100'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [90]
+
+      # A static threshold cannot catch a runaway backfill in time -- the fill
+      # rate is what changes, not the level. This fires when the trailing 6h
+      # rate would consume every remaining inode on /mnt/data within a week,
+      # which is while there is still time to stop the job.
+      - uid: ct-inode-exhaustion-forecast
+        title: Inode Exhaustion Forecast (<7 days)
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1h
+        annotations:
+          summary: "{{ $labels.mountpoint }} is on track to run out of inodes within 7 days"
+          description: "The trailing 6h inode consumption rate projects to zero free inodes inside a week. A backfill or pack job is usually the cause. Check the Filesystem row: https://cartracker.info/grafana/d/cartracker-infrastructure"
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 21600
+              to: 0
+            model:
+              expr: 'predict_linear(node_filesystem_files_free{mountpoint="/mnt/data"}[6h], 7*24*3600)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 21600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 21600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [0]
+
       - uid: ct-block-events-spike
         title: 403 Block Events Spike
         condition: C
@@ -392,7 +1022,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_block_events_last_hour'
+              expr: 'cartracker_block_events_last_hour{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:

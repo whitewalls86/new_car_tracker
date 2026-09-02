@@ -161,12 +161,32 @@ try:
         max_active_runs=1,
         tags=["scrape", "plan71"],
     ):
-        ready = deploy_intent_sensor()
+        ready = deploy_intent_sensor("scrape_detail_pages")
         scraper_up = http_health_sensor("scraper", SCRAPER_URL)
 
         claim = PythonOperator(
             task_id="claim_batch",
             python_callable=_claim_batch,
+            # Deliberately unpooled since Plan 147 Stage 3 (2026-08-30).
+            #
+            # This task was held by Plan 142's maintenance pool for one reason
+            # only: pausing `results_processing` used to leave the detail
+            # scraper re-claiming the same listings every 15 minutes, because
+            # the guard against re-fetching was a timestamp written by the
+            # processing service two hops downstream. Holding processing
+            # without holding this task disabled the guard.
+            #
+            # Plan 147 moved that guard next to the fetch -- `release_claims`
+            # now records `last_detail_fetched_at` in the transaction that
+            # deletes the claim -- and the coupling is gone. Verified in
+            # production: with `results_processing` paused 81 minutes, five
+            # batches fetched 2,000 listings and repeated none of them. A
+            # processing pause no longer implies a scraper pause.
+            #
+            # This does NOT mean detail fetches need not be quiesced for a host
+            # reboot; you still do not want fetches in flight while the machine
+            # goes down. That is a separate concern from the loop, and Plan 142
+            # covers it through the `detail_fetch` surface rather than here.
         )
 
         scrape = PythonOperator(

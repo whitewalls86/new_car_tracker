@@ -1,0 +1,131 @@
+# The running-set manifest's expected state, per Plan 142 Stage 0 item 2.
+#
+# Plan 142 stops the whole stack, reboots the host, and then has to decide what
+# to start again. "Everything Compose can find on disk" is the wrong answer and
+# has already been observed to be wrong: the Plan 140 Stage 1 soak found four
+# stale `unhealthy` containers -- cartracker-lakekeeper, -lakekeeper-migrate,
+# -lakekeeper-postgres and cartracker-mlflow -- all compose-managed, none of
+# them intended to be running. container_health/collector.py:89 says it
+# outright: "`up -d` on either sibling project brings the condition straight
+# back". A recovery that walks the filesystem resurrects all four and pages
+# forever.
+#
+# So this file records what a correct restore looks like, and CI checks it
+# against the Compose sources.
+#
+# THIS FILE RECORDS EXCEPTIONS ONLY. The expected default running set is
+# derived, not listed: every service in docker-compose.yml with no `profiles:`
+# key is expected running in project `cartracker` after a restore. Listing all
+# 26 of them here would be a second copy of docker-compose.yml, and a second
+# copy is how the first one goes stale. A new service is therefore expected
+# running by default, and has to be named here to be anything else -- which is
+# the safe direction for this particular list to fail.
+#
+# Format is healthcheck-exemptions.txt's, read by the same parser
+# (tests/test_deploy_script.py::load_health_exemptions): '#' in column 0 is a
+# comment, an empty line separates entries, an indented line continues the
+# previous one. Entries here additionally begin their reason with a CLASS
+# token, and tests/test_maintenance_running_set.py checks it is a known one.
+#
+# Keys are `project/service` wherever the service name alone is ambiguous --
+# `minio`, `lakekeeper` and `scraper` each appear in more than one Compose
+# file, and the project label is the only thing that separates them.
+#
+# The classes:
+#
+#   oneshot          Runs to completion and exits. Absent is correct; present
+#                    and running is the anomaly.
+#   on-demand        Profile-gated `docker compose run` target. Never started
+#                    by `up -d`, never restored.
+#   profile-running  Profile-gated but long-running. MUST be restored, and the
+#                    profile flag has to be passed to do it. This is the class
+#                    that a naive `docker compose up -d` silently omits.
+#   aux-paused       A sibling project, deliberately stopped. Restoring it is a
+#                    Plan 125 decision, never a maintenance action.
+#   aux-foreign      Declared in a Compose file that never runs on this host.
+#   restart-gap      Expected running, but carries no `restart:` policy, so
+#                    Docker does NOT bring it back after a host reboot. No
+#                    service is in this class today -- `caddy` was the only
+#                    one and Plan 142 Stage 0 item 7 fixed it on 2026-08-24.
+#                    The class stays defined because the test that classifies
+#                    every policy-less service needs somewhere to put the next
+#                    one, and because a class that disappears when it empties
+#                    takes its reasoning with it.
+#
+# COMPOSE_PROFILES appears nowhere in this repository, so which profiles
+# production actually has enabled is not recorded anywhere in source. The
+# `profile-running` entries below are reconstructed from checked-in evidence
+# (see each reason) and are marked as such. Confirming them against the live
+# host is Stage 0's remaining open item.
+
+flyway oneshot Runs the Flyway migrations to completion and exits. Every
+    consumer gates on `condition: service_completed_successfully`. A restore
+    that waits for it to be "running" waits forever.
+
+airflow-init oneshot One-shot DB migrate and user-create that all four
+    long-running Airflow services gate on with
+    `service_completed_successfully`. Same shape as `flyway`.
+
+dbt on-demand Profile-gated (`tools`) tools image, invoked as a one-shot
+    `docker compose run`. Never started by `up -d` and never restored.
+
+dbt_test on-demand Profile-gated (`tools`) tools image, same as `dbt`.
+
+snapshot-worker on-demand Profile-gated (`snapshot-worker`) one-shot
+    `docker compose run` target for CI lake snapshot generation, Plan 120 Gate
+    C.5. No ports, no restart policy, never serves traffic.
+
+april-processor on-demand Profile-gated (`april-processor`) one-shot
+    `docker compose run` target for the Plan 145 April cutover reconciliation.
+    No ports, no restart policy, never serves traffic. A run is invoked
+    deliberately and must not be resurrected by a restore: restarting a
+    half-finished materialize is safe (its object keys are content-derived, so
+    it resumes) but it should be a person's decision, not a reboot's.
+
+trawl profile-running Profile-gated (`trawl`) but long-running once up, so the
+    `profiles:` key must NOT decide restore scope. OBSERVED in the 2026-08-18
+    window: after `docker compose up -d --force-recreate`, trawl and redis-trawl
+    were still down, and came back only from a second command naming them
+    explicitly. See docs/runbooks/runbook_host_maintenance.md section 7.
+    Corroborated in source: tests/test_observability_config.py holds
+    `_PROFILE_GATED_IN_SCOPE = {"trawl", "redis-trawl"}` with the note that
+    "the 2026-08-14 solver outage is why this is spelled out rather than
+    inferred from `profiles:`", and Plan 136 Stage 3a deployed against a
+    running production `trawl` on 2026-08-23. Restoring it requires
+    `--profile trawl`; a plain `up -d` leaves the solver down and every detail
+    scrape failing, which is the 2026-08-14 outage again.
+
+redis-trawl profile-running Backs `trawl` and shares its profile and its
+    restore requirement. Same evidence.
+
+cartracker-lakehouse/lakekeeper aux-paused Sibling project, deliberately
+    stopped for Plan 125. One of the four stale `unhealthy` containers the
+    Plan 140 Stage 1 soak found. Its state changes only when Plan 125
+    authorises it; a maintenance window must not.
+
+cartracker-lakehouse/lakekeeper-postgres aux-paused Same project, same Plan 125
+    pause, same soak finding.
+
+cartracker-lakehouse/lakekeeper-migrate aux-paused Same project and pause. Also
+    `oneshot` by shape -- `restart: no`, runs the catalog migration and exits --
+    so it is doubly wrong to restore.
+
+cartracker-lakehouse/lakehouse-worker on-demand Profile-gated
+    (`lakehouse-worker`) manual export target for
+    scripts/export_volatility_features_to_iceberg.py. Never restored, and its
+    Plan 112 Gate A3 override mounts a production volume read-only, so an
+    accidental start is not harmless.
+
+cartracker-mlflow/mlflow aux-paused Standalone Plan 112 Gate B tracking server
+    on its own project, deliberately stopped. The fourth stale `unhealthy`
+    container from the Plan 140 Stage 1 soak. Note it is the one entry here
+    carrying `restart: unless-stopped`, so if it is ever started manually it
+    WILL come back after a reboot and re-arm that soak finding by itself.
+
+cartracker-test/scraper aux-foreign docker-compose.test.yml runs scraper and
+    dbt_runner on alternate ports under project `cartracker-test` for local
+    development. It is not production runtime intent and is never restored.
+
+cartracker-test/dbt_runner aux-foreign Same file and project as
+    cartracker-test/scraper: a local development override on alternate ports,
+    not production runtime intent, and never restored.

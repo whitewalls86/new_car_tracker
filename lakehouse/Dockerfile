@@ -23,7 +23,7 @@ FROM python:3.13-slim-bookworm AS lakehouse-worker
 # that scheme; Hadoop-AWS's S3AFileSystem only registers `s3a://` and was
 # tried first here, which does not exist for this catalog. Keep this version
 # in sync with ICEBERG_SPARK_RUNTIME_VERSION if pyspark is ever upgraded --
-# see docs/plan_112_refresh_policy_backtesting.md.
+# see docs/plans/plan_112_refresh_policy_backtesting.md.
 ARG ICEBERG_SPARK_RUNTIME_VERSION=1.6.1
 ARG ICEBERG_AWS_BUNDLE_VERSION=1.6.1
 
@@ -57,7 +57,7 @@ ARG AWS_JAVA_SDK_BUNDLE_VERSION=1.12.262
 
 # Debian's openjdk-17 package installs to an architecture-suffixed path
 # (java-17-openjdk-amd64 on x86_64 CI runners, java-17-openjdk-arm64 on the
-# OCI A1/Ampere ARM64 VM -- see docs/plan_105_vm_migration.md) -- resolve it
+# OCI A1/Ampere ARM64 VM -- see docs/plans/plan_105_vm_migration.md) -- resolve it
 # dynamically via a stable symlink instead of hardcoding one architecture,
 # so this image builds correctly on both.
 # procps provides `ps`, which Spark's load-spark-env.sh shells out to on

@@ -47,7 +47,7 @@ def _write_snapshot_pair(directory: Path, payload: bytes = b"archive-bytes") -> 
         },
     }
     manifest_path = directory / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
 
 
@@ -119,24 +119,24 @@ class TestMinioEndpoint:
         result = check_minio_endpoint("http://localhost:19000", "prod-bronze")
         assert result.status == FAIL
 
-    def test_reachable(self, monkeypatch):
+    def test_reachable(self, mocker):
         import httpx
 
         class FakeResponse:
             def raise_for_status(self):
                 pass
 
-        monkeypatch.setattr(httpx, "get", lambda url, timeout: FakeResponse())
+        mocker.patch.object(httpx, "get", lambda url, timeout: FakeResponse())
         result = check_minio_endpoint("http://localhost:19000", "bronze")
         assert result.status == PASS
 
-    def test_unreachable_mentions_compose_command(self, monkeypatch):
+    def test_unreachable_mentions_compose_command(self, mocker):
         import httpx
 
         def boom(url, timeout):
             raise httpx.ConnectError("refused")
 
-        monkeypatch.setattr(httpx, "get", boom)
+        mocker.patch.object(httpx, "get", boom)
         result = check_minio_endpoint("http://localhost:19000", "bronze")
         assert result.status == FAIL
         assert "docker-compose.lakehouse.local.yml" in result.message
@@ -253,7 +253,7 @@ class TestFeatureTables:
         assert "int_listing_volatility_features" in result.message
         assert "stale" in result.message
 
-    def test_unopenable_file_fails(self, fake_duckdb, monkeypatch):
+    def test_unopenable_file_fails(self, fake_duckdb):
         module, db_path = fake_duckdb
 
         def broken_connect(path, read_only):
@@ -265,48 +265,48 @@ class TestFeatureTables:
 
 
 class TestLakekeeperChecks:
-    def test_lakekeeper_reachable(self, monkeypatch):
+    def test_lakekeeper_reachable(self, mocker):
         import httpx
 
         class FakeResponse:
             def raise_for_status(self):
                 pass
 
-        monkeypatch.setattr(httpx, "get", lambda url, timeout: FakeResponse())
+        mocker.patch.object(httpx, "get", lambda url, timeout: FakeResponse())
         result = check_lakekeeper("http://localhost:18181")
         assert result.status == PASS
         assert "/management/v1/info" in result.message
 
-    def test_lakekeeper_unreachable_mentions_compose_command(self, monkeypatch):
+    def test_lakekeeper_unreachable_mentions_compose_command(self, mocker):
         import httpx
 
         def boom(url, timeout):
             raise httpx.ConnectError("refused")
 
-        monkeypatch.setattr(httpx, "get", boom)
+        mocker.patch.object(httpx, "get", boom)
         result = check_lakekeeper("http://localhost:18181")
         assert result.status == FAIL
         assert "docker-compose.lakehouse.local.yml" in result.message
 
-    def test_warehouse_registered(self, monkeypatch):
+    def test_warehouse_registered(self, mocker):
         import httpx
 
         class FakeResponse:
             status_code = 200
 
-        monkeypatch.setattr(
+        mocker.patch.object(
             httpx, "get", lambda url, params, timeout: FakeResponse()
         )
         result = check_warehouse_registered("http://localhost:18181", "cartracker_experiments")
         assert result.status == PASS
 
-    def test_warehouse_not_registered_mentions_register_script(self, monkeypatch):
+    def test_warehouse_not_registered_mentions_register_script(self, mocker):
         import httpx
 
         class FakeResponse:
             status_code = 400
 
-        monkeypatch.setattr(
+        mocker.patch.object(
             httpx, "get", lambda url, params, timeout: FakeResponse()
         )
         result = check_warehouse_registered("http://localhost:18181", "cartracker_experiments")
@@ -322,12 +322,12 @@ class TestRunPreflight:
         ]
         return preflight._parse_args(argv)
 
-    def test_dependent_checks_skip_when_prerequisite_fails(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
+    def test_dependent_checks_skip_when_prerequisite_fails(self, tmp_path, mocker):
+        mocker.patch.object(
             preflight, "check_minio_endpoint",
             lambda endpoint, bucket: CheckResult("minio-endpoint", FAIL, "down"),
         )
-        monkeypatch.setattr(
+        mocker.patch.object(
             preflight, "check_lakekeeper",
             lambda url: CheckResult("lakekeeper", FAIL, "down"),
         )
@@ -337,12 +337,12 @@ class TestRunPreflight:
         assert by_name["feature-tables"].status == SKIP
         assert by_name["warehouse"].status == SKIP
 
-    def test_all_checks_reported_in_order(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
+    def test_all_checks_reported_in_order(self, tmp_path, mocker):
+        mocker.patch.object(
             preflight, "check_minio_endpoint",
             lambda endpoint, bucket: CheckResult("minio-endpoint", FAIL, "down"),
         )
-        monkeypatch.setattr(
+        mocker.patch.object(
             preflight, "check_lakekeeper",
             lambda url: CheckResult("lakekeeper", FAIL, "down"),
         )
@@ -354,14 +354,14 @@ class TestRunPreflight:
             "lakekeeper", "warehouse",
         ]
 
-    def test_never_writes_anything(self, tmp_path, monkeypatch):
+    def test_never_writes_anything(self, tmp_path, mocker):
         """The preflight is read-only: running it against an empty tmp dir
         must not create any file or directory."""
-        monkeypatch.setattr(
+        mocker.patch.object(
             preflight, "check_minio_endpoint",
             lambda endpoint, bucket: CheckResult("minio-endpoint", FAIL, "down"),
         )
-        monkeypatch.setattr(
+        mocker.patch.object(
             preflight, "check_lakekeeper",
             lambda url: CheckResult("lakekeeper", FAIL, "down"),
         )

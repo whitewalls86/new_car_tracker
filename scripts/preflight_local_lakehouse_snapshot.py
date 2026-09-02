@@ -2,7 +2,7 @@
 Plan 112 Gate A4: preflight checks for the local lakehouse harness.
 
 Read-only sanity checks for the "fresh clone to local lakehouse smoke" path
-(docs/plan_112_refresh_policy_backtesting.md, A4 section) so missing dependencies, an unseeded
+(docs/plans/plan_112_refresh_policy_backtesting.md, A4 section) so missing dependencies, an unseeded
 MinIO, a stale/absent analytics.duckdb, or an unregistered Iceberg warehouse
 are caught with an actionable message *before* a Spark container run fails
 half an hour in. Run it from the repo root on the host:
@@ -66,7 +66,7 @@ DEFAULT_REQUIRED_TABLES = ("int_listing_volatility_features",)
 # the actual Gate D/E export (archiver/processors/lake_snapshot_export.py)
 # only ever materializes/packages the four source-table prefixes below --
 # "expected/" is an aspirational fixture-shape note in
-# docs/plan_120_ci_lake_snapshot_delivery.md that nothing currently writes.
+# docs/plans/plan_120_ci_lake_snapshot_delivery.md that nothing currently writes.
 # Requiring it here would make a real, correctly-seeded VM-generated archive
 # fail this check forever. Seed verification only checks what the harness
 # actually needs: the dbt sources under silver_normalized/ and ops_normalized/.

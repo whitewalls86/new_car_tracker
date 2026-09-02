@@ -18,6 +18,21 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ops.email import send_access_approved, send_access_denied
+from ops.queries import (
+    APPROVE_ACCESS_REQUEST,
+    DELETE_AUTHORIZED_USER,
+    DENY_ACCESS_REQUEST,
+    INSERT_ACCESS_REQUEST,
+    SELECT_ACCESS_REQUESTS,
+    SELECT_AUTHORIZED_USERS,
+    SELECT_PENDING_REQUEST_DETAILS,
+    SELECT_PENDING_REQUEST_FOR_EMAIL,
+    SELECT_PENDING_REQUEST_ID_FOR_EMAIL,
+    SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL,
+    SELECT_USER_ROLE,
+    UPDATE_USER_ROLE,
+    UPSERT_AUTHORIZED_USER,
+)
 from shared.db import db_cursor
 
 from .auth import _hash_email
@@ -77,20 +92,12 @@ def request_access_form(request: Request):
         email_hash = _hash_email(email)
         try:
             with db_cursor(error_context="Request-Access-Check", dict_cursor=True) as cur:
-                cur.execute(
-                    "SELECT role FROM authorized_users WHERE email_hash = %s",
-                    (email_hash,),
-                )
+                cur.execute(SELECT_USER_ROLE, (email_hash,))
                 row = cur.fetchone()
                 if row:
                     return _redirect_for_role(row["role"])
 
-                cur.execute(
-                    "SELECT status FROM access_requests"
-                    " WHERE email_hash = %s AND status = 'pending'"
-                    " ORDER BY requested_at DESC LIMIT 1",
-                    (email_hash,),
-                )
+                cur.execute(SELECT_PENDING_REQUEST_FOR_EMAIL, (email_hash,))
                 pending = cur.fetchone()
         except Exception:
             pending = None
@@ -137,19 +144,13 @@ def submit_access_request(
     try:
         with db_cursor(error_context="Submit-Access-Request", dict_cursor=True) as cur:
             # Redirect if already authorised
-            cur.execute(
-                "SELECT role FROM authorized_users WHERE email_hash = %s",
-                (email_hash,),
-            )
+            cur.execute(SELECT_USER_ROLE, (email_hash,))
             existing = cur.fetchone()
             if existing:
                 return _redirect_for_role(existing["role"])
 
             # Guard against duplicate pending requests
-            cur.execute(
-                "SELECT id FROM access_requests WHERE email_hash = %s AND status = 'pending'",
-                (email_hash,),
-            )
+            cur.execute(SELECT_PENDING_REQUEST_ID_FOR_EMAIL, (email_hash,))
             if cur.fetchone():
                 return templates.TemplateResponse(
                     request=request,
@@ -165,9 +166,7 @@ def submit_access_request(
 
             stored_email = email if notify_email == "on" else None
             cur.execute(
-                """INSERT INTO access_requests
-                       (email_hash, requested_role, display_name, notification_email)
-                   VALUES (%s, %s, %s, %s)""",
+                INSERT_ACCESS_REQUEST,
                 (email_hash, requested_role, display_name.strip() or None, stored_email),
             )
     except Exception:
@@ -199,11 +198,7 @@ def submit_access_request(
 def list_users(request: Request):
     try:
         with db_cursor(error_context="List-Users", dict_cursor=True) as cur:
-            cur.execute(
-                """SELECT id, email_hash, role, display_name, created_at
-                   FROM authorized_users
-                   ORDER BY role, created_at"""
-            )
+            cur.execute(SELECT_AUTHORIZED_USERS)
             users = cur.fetchall()
     except Exception:
         users = []
@@ -226,10 +221,7 @@ def change_user_role(
         return RedirectResponse(url="/admin/users", status_code=303)
     try:
         with db_cursor(error_context="Change-User-Role") as cur:
-            cur.execute(
-                "UPDATE authorized_users SET role = %s WHERE id = %s",
-                (role, user_id),
-            )
+            cur.execute(UPDATE_USER_ROLE, (role, user_id))
     except Exception:
         logger.exception("Failed to update user role")
     return RedirectResponse(url="/admin/users", status_code=303)
@@ -239,7 +231,7 @@ def change_user_role(
 def revoke_user(request: Request, user_id: int):
     try:
         with db_cursor(error_context="Revoke-User") as cur:
-            cur.execute("DELETE FROM authorized_users WHERE id = %s", (user_id,))
+            cur.execute(DELETE_AUTHORIZED_USER, (user_id,))
     except Exception:
         logger.exception("Failed to revoke user")
     return RedirectResponse(url="/admin/users", status_code=303)
@@ -253,14 +245,7 @@ def revoke_user(request: Request, user_id: int):
 def list_access_requests(request: Request):
     try:
         with db_cursor(error_context="List-Access-Requests", dict_cursor=True) as cur:
-            cur.execute(
-                """SELECT id, email_hash, display_name, requested_role, requested_at, status,
-                          resolved_at, resolved_by
-                   FROM access_requests
-                   ORDER BY
-                     CASE status WHEN 'pending' THEN 0 ELSE 1 END,
-                     requested_at DESC"""
-            )
+            cur.execute(SELECT_ACCESS_REQUESTS)
             requests_ = cur.fetchall()
     except Exception:
         requests_ = []
@@ -282,31 +267,16 @@ def approve_access_request(
 
     try:
         with db_cursor(error_context="Approve-Access-Request", dict_cursor=True) as cur:
-            cur.execute(
-                """SELECT email_hash, requested_role, display_name, notification_email
-                   FROM access_requests WHERE id = %s AND status = 'pending'""",
-                (req_id,),
-            )
+            cur.execute(SELECT_PENDING_REQUEST_DETAILS, (req_id,))
             row = cur.fetchone()
             if not row:
                 return RedirectResponse(url="/admin/access-requests", status_code=303)
 
             cur.execute(
-                """INSERT INTO authorized_users
-                       (email_hash, role, display_name, created_by)
-                   VALUES (%s, %s, %s, %s)
-                   ON CONFLICT (email_hash) DO UPDATE
-                       SET role = EXCLUDED.role,
-                           created_by = EXCLUDED.created_by""",
+                UPSERT_AUTHORIZED_USER,
                 (row["email_hash"], row["requested_role"], row["display_name"], admin_hash),
             )
-            cur.execute(
-                """UPDATE access_requests
-                   SET status = 'approved', resolved_at = now(), resolved_by = %s,
-                       notification_email = NULL
-                   WHERE id = %s""",
-                (admin_hash, req_id),
-            )
+            cur.execute(APPROVE_ACCESS_REQUEST, (admin_hash, req_id))
     except Exception:
         logger.exception("Failed to approve access request")
         return RedirectResponse(url="/admin/access-requests", status_code=303)
@@ -325,21 +295,11 @@ def deny_access_request(request: Request, req_id: int):
 
     try:
         with db_cursor(error_context="Deny-Access-Request", dict_cursor=True) as cur:
-            cur.execute(
-                "SELECT notification_email FROM access_requests"
-                " WHERE id = %s AND status = 'pending'",
-                (req_id,),
-            )
+            cur.execute(SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL, (req_id,))
             row = cur.fetchone()
             if row:
                 notification_email = row.get("notification_email")
-            cur.execute(
-                """UPDATE access_requests
-                   SET status = 'denied', resolved_at = now(), resolved_by = %s,
-                       notification_email = NULL
-                   WHERE id = %s AND status = 'pending'""",
-                (admin_hash, req_id),
-            )
+            cur.execute(DENY_ACCESS_REQUEST, (admin_hash, req_id))
     except Exception:
         logger.exception("Failed to deny access request")
         return RedirectResponse(url="/admin/access-requests", status_code=303)

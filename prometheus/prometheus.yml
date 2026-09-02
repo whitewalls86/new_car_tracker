@@ -26,11 +26,46 @@ scrape_configs:
     static_configs:
       - targets: ['ops:8060']
 
+  - job_name: dbt_runner
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['dbt_runner:8080']
+
   - job_name: processing
     metrics_path: /metrics
     static_configs:
       - targets: ['processing:8070']
 
+  # Plan 136 Stage 2. The scraper was not scraped at all, which is why the
+  # 2026-08-14 solver outage had to be detected through a dbt mart: the only
+  # component that knew every fetch outcome at the moment it happened was
+  # publishing none of them. Counters here are process-local and reset on
+  # restart; every alert over them uses rate(), which handles resets.
+  - job_name: scraper
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['scraper:8000']
+
   - job_name: node
     static_configs:
       - targets: ['node-exporter:9100']
+
+  # Plan 141 Stage 3. Every unclassified log line is *dropped* by a Promtail
+  # pipeline stage, so it never reaches Loki and cannot be counted from log
+  # data -- the panel that was supposed to show contract drift read 0 by
+  # construction. promtail_dropped_lines_total{reason=...} is the only place
+  # that count exists, and nothing was scraping it. Port 9080 is the same one
+  # the Compose healthcheck already probes for /ready.
+  - job_name: promtail
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['promtail:9080']
+
+  # Plan 140 Stage 2. Computed in the scrape handler, so there is no cached
+  # file to go stale and no companion freshness metric to maintain. The
+  # exporter's own liveness is up{job="container-health"}, which ct-service-down
+  # covers -- that rule's job set is asserted equal to this file's.
+  - job_name: container-health
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['container-health:9110']

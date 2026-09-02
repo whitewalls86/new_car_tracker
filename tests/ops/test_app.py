@@ -1,5 +1,10 @@
 
 
+from types import MappingProxyType
+
+from ops.public_stats import PresentationSnapshot
+
+
 def test_get_health(mock_client):
     response = mock_client.get("/health")
     assert response.status_code == 200
@@ -16,16 +21,16 @@ def test_metrics_endpoint_content_type_is_prometheus(mock_client):
     assert "text/plain" in response.headers["content-type"]
 
 
-def test_metrics_endpoint_contains_custom_duckdb_metrics(mock_client):
+def test_metrics_endpoint_does_not_proxy_analytics_metrics(mock_client):
     response = mock_client.get("/metrics")
-    # Verify custom DuckDB data health metrics are exposed
-    assert "cartracker_observation_count_last_hour" in response.text
-    assert "cartracker_artifact_count_last_hour" in response.text
-    assert "cartracker_block_events_last_hour" in response.text
-    assert "cartracker_extraction_yield_last_day" in response.text
-    assert "cartracker_stale_listings_pct" in response.text
-    assert "cartracker_cooldown_backlog" in response.text
-    assert "cartracker_cooldown_permanent" in response.text
+    assert "cartracker_observation_count_last_hour" not in response.text
+    assert "cartracker_metrics_last_success_timestamp_seconds" not in response.text
+
+
+def test_app_has_no_analytics_gauge_loop():
+    from ops import app
+
+    assert not hasattr(app, "_analytics_metrics_loop")
 
 
 def test_get_admin(mock_client):
@@ -34,10 +39,26 @@ def test_get_admin(mock_client):
     assert response.headers["location"] == "/admin/searches/"
 
 
-def test_get_base_url(mock_client):
+def test_get_base_url_is_no_longer_the_admin_redirect(mock_client, mocker):
+    """Plan 138 Stage 2 gave ``/`` to the public landing page.
+
+    Caddy sent ``/`` to Streamlit before this stage, so this redirect was
+    reachable only from inside the network. The contract now lives in
+    tests/ops/routers/test_public_routes.py; this asserts the handover.
+    """
+    mocker.patch(
+        "ops.routers.info.public_stats_cache.get",
+        return_value=PresentationSnapshot(
+            stats=MappingProxyType({}),
+            status="not_ready",
+            stale=True,
+            last_success_at=None,
+        ),
+    )
+
     response = mock_client.get("/", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/admin/searches/"
+
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

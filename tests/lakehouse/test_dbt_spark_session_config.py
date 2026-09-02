@@ -4,7 +4,7 @@ shared/iceberg_catalog.spark_conf_for_dbt_session() and the
 scripts/run_dbt_spark.py guards.
 
 These exist because Gate A's two worst failure modes are SILENT (see
-docs/plan_125_portability_audit.md, "Two config details that will bite Gate A"):
+docs/reference/plan_125_portability_audit.md, "Two config details that will bite Gate A"):
 without spark.sql.defaultCatalog, dbt writes to spark_catalog and still exits 0;
 without spark.sql.session.timeZone, every timestamp shifts. Neither raises. A
 regression in this config would not fail any dbt run -- so it has to fail here.

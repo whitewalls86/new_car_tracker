@@ -13,6 +13,14 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ops.queries import (
+    INSERT_SEARCH_CONFIG,
+    RETIRE_SEARCH_CONFIG,
+    SELECT_SEARCH_CONFIG_BY_KEY,
+    SELECT_SEARCH_CONFIGS,
+    TOGGLE_SEARCH_CONFIG_ENABLED,
+    UPDATE_SEARCH_CONFIG,
+)
 from shared.db import db_cursor
 
 from ..models.search_config import SORT_KEYS, SORT_OPTIONS, SearchConfigParams
@@ -66,16 +74,7 @@ def _db_error_response(request: Request):
 
 @router.get("/searches/", response_class=HTMLResponse)
 def list_searches(request: Request):
-    sql = """SELECT 
-                search_key, 
-                enabled, 
-                source, 
-                params, 
-                rotation_order, 
-                last_queued_at, 
-                created_at, 
-                updated_at
-            FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"""
+    sql = SELECT_SEARCH_CONFIGS
     
     try:
         with db_cursor(error_context="List-Searches", dict_cursor=True) as cur:
@@ -262,7 +261,7 @@ def view_logs(request: Request, lines: int = 200):
         pass
 
     try:
-        with open(_OPS_LOG_PATH) as f:
+        with open(_OPS_LOG_PATH, encoding="utf-8") as f:
             ops_lines = f.readlines()[-lines:]
     except FileNotFoundError:
         pass
@@ -308,8 +307,7 @@ def deploy_complete(request: Request):
 @router.get("/searches/{search_key}/edit", response_class=HTMLResponse)
 def edit_search_form(request: Request, search_key: str):
 
-    sql = """SELECT search_key, enabled, source, params, rotation_order, last_queued_at
-            FROM search_configs WHERE search_key = %s;"""
+    sql = SELECT_SEARCH_CONFIG_BY_KEY
     params = (search_key,)
 
     try:
@@ -393,16 +391,7 @@ def create_search(
         }, status_code=422)
     
 
-    sql = """INSERT INTO search_configs (
-                search_key,
-                enabled,
-                params,
-                rotation_order,
-                rotation_slot,
-                created_at,
-                updated_at
-            )
-             VALUES (%s, %s, %s::jsonb, %s, %s, now(), now());"""
+    sql = INSERT_SEARCH_CONFIG
 
     sql_params = (
         key, 
@@ -489,14 +478,7 @@ def update_search(
         }, status_code=422)
     
 
-    sql = """UPDATE search_configs
-             SET
-                enabled = %s,
-                params = %s::jsonb,
-                rotation_order = %s,
-                rotation_slot = %s,
-                updated_at = now()
-             WHERE search_key = %s;"""
+    sql = UPDATE_SEARCH_CONFIG
     sql_params = (enabled, 
                   json.dumps(params.model_dump()), 
                   rotation_order, 
@@ -519,8 +501,7 @@ def update_search(
 @router.post("/searches/{search_key}/toggle")
 def toggle_search(request: Request, search_key: str):
 
-    sql = """UPDATE search_configs SET enabled = NOT enabled, updated_at = now()
-             WHERE search_key = %s;"""
+    sql = TOGGLE_SEARCH_CONFIG_ENABLED
     params = (search_key,)
 
     try:
@@ -540,8 +521,7 @@ def toggle_search(request: Request, search_key: str):
 def delete_search(request: Request, search_key: str):
     deleted_key = f"_deleted_{search_key}_{int(datetime.now(UTC).timestamp())}"
 
-    sql = """UPDATE search_configs SET enabled = false, search_key = %s, updated_at = now()
-            WHERE search_key = %s;"""
+    sql = RETIRE_SEARCH_CONFIG
     params = (deleted_key, search_key)
 
     try:

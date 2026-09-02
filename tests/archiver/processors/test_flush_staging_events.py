@@ -1,4 +1,5 @@
 """Unit tests for archiver/processors/flush_staging_events.py"""
+
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -18,15 +19,15 @@ _EVENT_AT = datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
 def _make_aq_row(event_id=1):
     """Tuple matching artifacts_queue_events db_columns order."""
     return (
-        event_id,                                           # event_id
-        100,                                                # artifact_id
-        "pending",                                          # status
-        _EVENT_AT,                                          # event_at
-        "s3://bronze/html/year=2026/month=4/f.html.zst",   # minio_path
-        "results_page",                                     # artifact_type
-        _EVENT_AT,                                          # fetched_at
-        "listing-abc",                                      # listing_id
-        "run-xyz",                                          # run_id
+        event_id,  # event_id
+        100,  # artifact_id
+        "pending",  # status
+        _EVENT_AT,  # event_at
+        "s3://bronze/html/year=2026/month=4/f.html.zst",  # minio_path
+        "results_page",  # artifact_type
+        _EVENT_AT,  # fetched_at
+        "listing-abc",  # listing_id
+        "run-xyz",  # run_id
     )
 
 
@@ -56,9 +57,18 @@ def _aq_config():
     return next(c for c in _TABLE_CONFIGS if "artifacts_queue" in c["table"])
 
 
+def _coordination_config():
+    return next(c for c in _TABLE_CONFIGS if "coordination_state" in c["table"])
+
+
+def _release_evidence_config():
+    return next(c for c in _TABLE_CONFIGS if "coordination_release_evidence" in c["table"])
+
+
 # ---------------------------------------------------------------------------
 # _flush_one — empty table
 # ---------------------------------------------------------------------------
+
 
 class TestFlushOneEmpty:
     def test_returns_zero_when_table_empty(self, mocker):
@@ -90,6 +100,7 @@ class TestFlushOneEmpty:
 # ---------------------------------------------------------------------------
 # _flush_one — happy path
 # ---------------------------------------------------------------------------
+
 
 class TestFlushOneSuccess:
     def test_returns_flushed_count(self, mocker):
@@ -150,6 +161,33 @@ class TestFlushOneSuccess:
         for config in _TABLE_CONFIGS:
             assert config["minio_prefix"].startswith("ops_normalized/")
 
+    def test_coordination_history_uses_the_shared_flush_registry(self):
+        config = _coordination_config()
+
+        assert config["table"] == "staging.coordination_state_events"
+        assert config["pk"] == "event_id"
+        assert config["ts_col"] == "event_at"
+        assert config["db_columns"] == [
+            "event_id",
+            "generation",
+            "prior_phase",
+            "phase",
+            "kind",
+            "actor",
+            "event_at",
+        ]
+        assert config["minio_prefix"] == "ops_normalized/coordination_state_events"
+        assert config["schema"].names == [*config["db_columns"], "year", "month"]
+
+    def test_release_evidence_uses_the_shared_flush_registry(self):
+        config = _release_evidence_config()
+
+        assert config["table"] == "staging.coordination_release_evidence"
+        assert config["pk"] == "evidence_id"
+        assert config["ts_col"] == "submitted_at"
+        assert config["json_cols"] == {"gate_results", "evidence_digests"}
+        assert config["minio_prefix"] == "ops_normalized/coordination_release_evidence"
+
     def test_commit_called_after_delete(self, mocker):
         mock_conn, _ = _make_mock_conn(max_pk=1, rows=[_make_aq_row()])
         mocker.patch("pyarrow.parquet.write_to_dataset")
@@ -172,6 +210,7 @@ class TestFlushOneSuccess:
 # ---------------------------------------------------------------------------
 # _flush_one — error handling
 # ---------------------------------------------------------------------------
+
 
 class TestFlushOneErrors:
     def test_parquet_write_error_returns_error_key(self, mocker):
@@ -219,15 +258,12 @@ class TestFlushOneErrors:
 # flush_staging_events — orchestration
 # ---------------------------------------------------------------------------
 
+
 class TestFlushStagingEvents:
     def test_all_tables_processed(self, mocker):
         mock_conn, _ = _make_mock_conn(max_pk=None)  # empty tables
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_conn", return_value=mock_conn
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
-        )
+        mocker.patch("archiver.processors.flush_staging_events.get_conn", return_value=mock_conn)
+        mocker.patch("archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock())
 
         result = flush_staging_events()
 
@@ -241,12 +277,8 @@ class TestFlushStagingEvents:
                 for i in range(len(_TABLE_CONFIGS))
             ],
         )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_conn", return_value=MagicMock()
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
-        )
+        mocker.patch("archiver.processors.flush_staging_events.get_conn", return_value=MagicMock())
+        mocker.patch("archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock())
 
         result = flush_staging_events()
 
@@ -261,12 +293,8 @@ class TestFlushStagingEvents:
             "archiver.processors.flush_staging_events._flush_one",
             side_effect=side_effects,
         )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_conn", return_value=MagicMock()
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
-        )
+        mocker.patch("archiver.processors.flush_staging_events.get_conn", return_value=MagicMock())
+        mocker.patch("archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock())
 
         result = flush_staging_events()
 
@@ -278,17 +306,10 @@ class TestFlushStagingEvents:
         n = len(_TABLE_CONFIGS)
         mocker.patch(
             "archiver.processors.flush_staging_events._flush_one",
-            side_effect=[
-                {"table": f"staging.t{i}", "flushed": 0, "error": None}
-                for i in range(n)
-            ],
+            side_effect=[{"table": f"staging.t{i}", "flushed": 0, "error": None} for i in range(n)],
         )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_conn", return_value=MagicMock()
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
-        )
+        mocker.patch("archiver.processors.flush_staging_events.get_conn", return_value=MagicMock())
+        mocker.patch("archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock())
 
         result = flush_staging_events()
 
@@ -306,15 +327,9 @@ class TestFlushStagingEvents:
         assert result["error"] is not None
 
     def test_no_tables_configured_returns_zero(self, mocker):
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_conn", return_value=MagicMock()
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events._TABLE_CONFIGS", []
-        )
+        mocker.patch("archiver.processors.flush_staging_events.get_conn", return_value=MagicMock())
+        mocker.patch("archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock())
+        mocker.patch("archiver.processors.flush_staging_events._TABLE_CONFIGS", [])
         result = flush_staging_events()
         assert result["total_flushed"] == 0
         assert result["tables"] == []
@@ -322,12 +337,8 @@ class TestFlushStagingEvents:
 
     def test_conn_always_closed(self, mocker):
         mock_conn = MagicMock()
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_conn", return_value=mock_conn
-        )
-        mocker.patch(
-            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
-        )
+        mocker.patch("archiver.processors.flush_staging_events.get_conn", return_value=mock_conn)
+        mocker.patch("archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock())
         mocker.patch(
             "archiver.processors.flush_staging_events._flush_one",
             side_effect=Exception("unexpected crash"),

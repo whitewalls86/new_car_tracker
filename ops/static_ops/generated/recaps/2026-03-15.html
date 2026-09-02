@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-03-09 to 2026-03-15</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-03-15">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-03-09 to 2026-03-15. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-03-09-to-2026-03-15">Week of 2026-03-09 to 2026-03-15</h1>
+<p><strong>Window:</strong> 2026-03-09 00:00:00 to 2026-03-15 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-30
+<strong>Commits in window:</strong> 4 (2 non-merge, 2 merges)</p>
+<p>This is a backfill written <strong>168 days after the window closed</strong>. After six
+weeks without a commit, work resumed by adapting the scraper to Cars.com's
+new SRP markup and then replacing requests-based browser behavior when the
+site's anti-bot defenses still rejected it.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p><code>e95cff3</code> added a third SRP parser for the <code>spark-card</code>/<code>srp2025</code> format,
+wired it into the processing API, updated pagination metadata extraction and
+replaced a 2014-era user agent with Chrome 122 plus inter-page pacing.</p>
+<p><code>e49e9c2</code> then moved SRP fetching to Playwright with a fresh browser context
+per page, corrected the meaning of <code>max_listings</code>, expanded parser fallbacks,
+and added a daily artifact-cleanup workflow with status-sensitive retention.
+The paired changes show that parsing correctness and fetch reliability were
+one problem boundary: the new markup had to be understood, but successful
+HTTP delivery also had to survive JavaScript and session-level bot checks.</p>
+<p>Neither commit names a numbered plan. <code>docs/PLANS.md</code> was not introduced
+until the following week, so no later plan is assigned retroactively here.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Nothing moved. The planning index did not exist during this window, and the
+history parser reports zero index revisions.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The fresh-context Playwright design reduced one class of blocking but did not
+settle anti-detection permanently; the following week continued through
+curl-cffi, Patchright, fingerprint rotation and human pacing. That is a
+technical continuation, not a planning-state action owed today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Both non-merge commits are unattributed because neither subject nor body names
+a plan:</p>
+<pre><code class="language-text">e95cff3 Fix Cars.com srp2025 parser and reduce Cloudflare 403s
+e49e9c2 Playwright SRP scraper, artifact cleanup, and max_listings fix
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>Neither merge branch names a plan.</p>
+<ul>
+<li><code>d415fbe</code> — PR #1 from <code>claude/happy-austin</code>.</li>
+<li><code>1000851</code> — PR #2 from <code>claude/srp-playwright-cleanup-deals</code>.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>1,349 commits</strong> sit after this window's end as of 2026-08-30.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-03-15 23:59:59'   # 1349
+</code></pre>
+<p>That raw tail includes every later week through the current partial week. The
+remaining backfilled weeks ending March 22 and March 29 are covered in this
+batch, and the existing series covers March 30 through August 23. No following
+complete week is genuinely uncovered; the week ending August 30 is in
+progress.</p>
+</main>
+</body>
+</html>

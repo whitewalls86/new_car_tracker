@@ -29,6 +29,12 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+# ``python scripts/seed_lake_snapshot.py`` puts ``scripts/`` rather than the
+# repository root on sys.path.  Keep the documented direct invocation working
+# while retaining package imports for tests and ``python -m`` usage.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from scripts.lake_snapshot_common import (
     FIXTURE_PREFIXES,
     LakeSnapshotError,

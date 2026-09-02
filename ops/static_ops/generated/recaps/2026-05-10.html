@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-05-04 to 2026-05-10</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-05-10">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-05-04 to 2026-05-10. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-05-04-to-2026-05-10">Week of 2026-05-04 to 2026-05-10</h1>
+<p><strong>Window:</strong> 2026-05-04 00:00:00 to 2026-05-10 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-28
+<strong>Commits in window:</strong> 32 (23 non-merge, 9 merges)</p>
+<p>This is a backfill written <strong>110 days after the window closed</strong>. Work was
+concentrated on May 4, May 5, May 6 and May 8. A scan performed on 2026-08-28
+found no commits in the maintainer's other five public GitHub repositories
+during the week; all visible public-repository activity was here.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p>The week opened with bug chasing across the writer, parsers, dbt and DuckDB.
+<code>c3d0a13</code> made float prices safe for the silver writer, addressed dbt/DuckDB
+locking, and updated planning records. <code>8246f5c</code> corrected pipeline-health
+Grafana metrics and their Prometheus/StatsD inputs. Four small follow-ups
+repaired observability and dbt test definitions (<code>61063df</code>, <code>19c5625</code>,
+<code>2a729c2</code>, <code>099db48</code>).</p>
+<p>The May 5 cleanup added defensive guards across Airflow, scraper, processing,
+ops and shared database code (<code>3298855</code>), then standardized service logging
+through shared JSON formatting (<code>d88a41e</code>). It consolidated SQL loading and
+expanded router, parser and service coverage (<code>cdbb1e1</code>), added broad dbt
+schema and unit-test coverage (<code>93a94f6</code>), removed redundant and deprecated
+schema-test syntax (<code>1f6b48b</code>), and dropped staging tests that could not
+exercise MinIO directly (<code>167b3a5</code>). Two <code>.gitignore</code> adjustments accompanied
+the cleanup (<code>26086a3</code>, <code>81818ae</code>).</p>
+<p>Deployment and operations work corrected deploy-intent handling and the
+redeploy script (<code>73899b4</code>), repaired its integration test (<code>44f5ec1</code>), and
+added more useful <code>/info</code> error observability (<code>33cfc6e</code>). <code>af39855</code> then
+addressed scraper writes and dbt-related operational behavior while adding a
+Grafana alert and revising scraper tests.</p>
+<p>The May 8 sequence made pipeline failures diagnosable. <code>14899d1</code> ensured a
+dbt 500 response was pushed to Airflow XCom before <code>raise_for_status()</code> so the
+notification task retained stdout and stderr. <code>5460ebe</code>, <code>c92bd97</code> and
+<code>9bb1995</code> carried that detail through dbt-runner logs, Airflow notifications
+and Grafana alerts. <code>4a10682</code> removed obsolete raw-volume mounts.</p>
+<p>None of those commits names a plan in its subject or body. The planning
+documents explain the state changes below, but they are not used to attribute
+the implementation commits.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>The planning index had two revisions in the window:</p>
+<ul>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_95_portfolio_landing_page.md">Plan 95</a> moved from backlog out
+of the active tables and into the completed-plan record. Its purpose was to
+replace the dense README-rendered <code>/info</code> page with a hiring-manager-focused
+landing page backed by live project statistics.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_102_decommission.md">Plan 102</a> moved from build order out of
+the active tables and into the completed-plan record after removing the
+remaining n8n, legacy Postgres and dead-service surface.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_108_deploy_trigger_endpoint.md">Plan 108</a> entered backlog. It
+proposed an authenticated API trigger for deployments while preserving SSH
+as the fallback and forbidding the ops service from redeploying itself.</li>
+</ul>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The week created documents for <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_105_vm_migration.md">Plan 105</a>,
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_106_code_review_cleanup.md">Plan 106</a> and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_107_quality_to_90.md">Plan 107</a>, but none had a table row by the
+window's end. Plan 105 aimed to move production onto an Oracle free-tier VM;
+Plans 106 and 107 captured targeted code-review cleanup and a broader quality
+drive. That missing-index defect was real at the time.</p>
+<p>As of 2026-08-28, the filing gap is repaired: Plan 105 is in the completed-plan
+archive, and Plans 106, 107 and 108 are all in backlog with explicit triggers.
+No planning-state action is owed from this recap.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>None of the 23 non-merge commits names a plan in its subject or body:</p>
+<ul>
+<li><code>c3d0a13</code> — <code>fixing bug where float prices were crashing writer. Fixed locking issue with DBT and duckdb. Updating plans.</code></li>
+<li><code>8246f5c</code> — <code>tweaking grafana dashboards for accuracy.</code></li>
+<li><code>61063df</code> — <code>fixing test definition</code></li>
+<li><code>19c5625</code> — <code>fixing another test definition</code></li>
+<li><code>2a729c2</code> — <code>fixing dbt unit tests</code></li>
+<li><code>099db48</code> — <code>fixing other dbt unit tests</code></li>
+<li><code>3298855</code> — <code>adding guadrs for some edge cases across services. Defensive additions.</code></li>
+<li><code>26086a3</code> — <code>adding a file to ignore</code></li>
+<li><code>81818ae</code> — <code>whitespace</code></li>
+<li><code>d88a41e</code> — <code>standardizing logging, and adding json formatting.</code></li>
+<li><code>cdbb1e1</code> — <code>adding test coverage for some of the new code.</code></li>
+<li><code>93a94f6</code> — <code>adding more dbt tests and schema file coverage.</code></li>
+<li><code>1f6b48b</code> — <code>removing some reduncies, fixing deprecated formating of test arguments.</code></li>
+<li><code>167b3a5</code> — <code>remove testing on the stg_ tables. Can't test the minio direcly.</code></li>
+<li><code>73899b4</code> — <code>tweaking a couple issues with the deploy script and intent signals.</code></li>
+<li><code>44f5ec1</code> — <code>fixing integration tests.</code></li>
+<li><code>33cfc6e</code> — <code>adding more observability for landing page errors on the /info page.</code></li>
+<li><code>af39855</code> — <code>fixing dbt, scraper issue</code></li>
+<li><code>14899d1</code> — <code>fix: bubble up dbt error details to Airflow notify task</code></li>
+<li><code>5460ebe</code> — <code>adding better error logging for dbt_runner</code></li>
+<li><code>c92bd97</code> — <code>adding detail to airflow failure notification</code></li>
+<li><code>9bb1995</code> — <code>adding more detail to pipeline failure alerts</code></li>
+<li><code>4a10682</code> — <code>removing old volume mounts</code></li>
+</ul>
+<h2 id="merges">Merges</h2>
+<ul>
+<li><code>213d5f4</code> — PR #118 from <code>fix/bug-chasing</code>; the branch names no plan.</li>
+<li><code>b79eaea</code> — PR #119 from <code>refactor/code-cleanup</code>; the branch names no plan.</li>
+<li><code>8031a74</code> — PR #120 from <code>fix/deploy_intent</code>; the branch names no plan.</li>
+<li><code>d210f74</code> — PR #121 from <code>fix/ops-logs</code>; the branch names no plan.</li>
+<li><code>3f7fbd7</code> — PR #122 from <code>fix/processor-writes</code>; the branch names no plan.</li>
+<li><code>f7a5b61</code> — PR #123 from <code>fix/dbt_error_status</code>; the branch names no plan.</li>
+<li><code>236ab34</code> — PR #124 from <code>fix/dbt_error_status</code>; the branch names no plan.</li>
+<li><code>5ea9381</code> — PR #125 from <code>fix/dbt_error_status</code>; the branch names no plan.</li>
+<li><code>fe1237f</code> — PR #126 from <code>fix/remove-raw-volume</code>; the branch names no plan.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>651 commits</strong> sit after this window's end as of 2026-08-28.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-05-10 23:59:59'   # 651
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+The complete weeks ending May 17, May 24, May 31, June 7, June 14, June 21,
+June 28, July 5, July 12, July 19, July 26, August 2, August 9, August 16 and
+August 23 are already covered. No following complete week is genuinely
+uncovered; the week ending August 30 is still in progress and is not yet
+recappable.</p>
+</main>
+</body>
+</html>

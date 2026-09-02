@@ -19,7 +19,7 @@ with DAG(
     catchup=False,
     tags=["silver"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("flush_silver_observations")
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     flush = PythonOperator(task_id="flush_silver_observations", python_callable=_run_flush)
 

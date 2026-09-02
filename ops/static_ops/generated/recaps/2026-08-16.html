@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-08-10 to 2026-08-16</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-08-16">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-08-10 to 2026-08-16. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-08-10-to-2026-08-16">Week of 2026-08-10 to 2026-08-16</h1>
+<p><strong>Window:</strong> 2026-08-10 00:00:00 to 2026-08-16 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-21
+<strong>Commits in window:</strong> 55 (42 non-merge, 13 merges)</p>
+<p>The week bronze storage stopped being a byte problem and became an inode
+problem, and then stopped being either. Three plans ran end to end:
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_114_sectioned_html_artifact_audit.md">114</a> closed with a
+measured <em>no</em>, <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md">129</a> went to
+production, and <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_131_packed_cold_storage.md">131</a> went from
+first draft to deleting real objects in four days. Four new plan documents were
+born out of what those runs found.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plan-114-sectioned-html-rejected-on-the-numbers">Plan 114 — sectioned HTML, rejected on the numbers</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_114_sectioned_html_artifact_audit.md">Plan 114</a> asked whether
+detail-page HTML could be split into stable reusable sections and stored as a
+verified manifest, which would have bought far longer artifact retention than a
+30-day window. It was audit-first by design: prove it before putting it in the
+scrape path.</p>
+<p><code>1f0e847</code> closed that question against 60 real production artifacts. The
+correctness gates passed completely — 100% byte-identical reconstruction, 100%
+parser-equivalent, zero failures — and the storage case did not survive contact
+with the real backend. Whole-section reuse across listings is 0.65%, and
+MinIO's ~8 KB per-object floor turned 60 artifacts into 556 section objects
+costing 4.3 MiB of padding against a 1.9 MiB baseline: a 223% regression, with
+no granularity at which it wins. The value of the commit is that it says <em>no</em> on
+a measurement rather than on taste, and names the two successors that inherit
+the problem — <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md">129</a>
+(reversible) and <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_130_parser_input_projection.md">130</a> (not).</p>
+<h3 id="plan-129-dictionary-compression-shipped-mid-rollout">Plan 129 — dictionary compression, shipped mid-rollout</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md">Plan 129</a> compresses bronze
+HTML against a zstd dictionary trained on a corpus sample instead of
+compressing each page as an independent frame. It matters because it is
+<strong>reversible</strong> — nothing is discarded, every artifact stays independently
+decompressable — which is why it ships before Plan 130.</p>
+<ul>
+<li><code>38d7e5a</code> passed Stage 0's gate at −73.15% on held-out listings from held-out
+months, against a 40% bar, and reported four splits rather than one because
+each holdout can be gamed by the sample. It also promoted the backfill from
+out-of-scope to Stage 4: Stages 1-3 change new writes only and free zero
+existing bytes, and with the volume at 98% that distinction is the plan.</li>
+<li><code>9f078c6</code> restored plain level-9 recompression as a first-class mode. The
+preceding commit had made <code>--dictionary-id</code> mandatory, which removed the only
+recompression route needing no migration, no registered dictionary and no
+service rebuild — exactly the route that is usable while the disk is full.</li>
+<li><code>f98e69b</code> fixed a checkpoint that was O(n²): measured mid-run at 66,130 keys
+the checkpoint file was 6.4 MiB and cost ~51 ms per object, a hard ceiling of
+19 objects/sec from bookkeeping alone, with the observed rate already decayed
+from 42/s to 8/s.</li>
+<li><code>f4e0f0b</code> recorded the production rollout and what it taught, including the
+finding that a full disk blocks the backfill entirely — MinIO's minimum-free
+threshold refuses even the small writes that would free space.</li>
+</ul>
+<h3 id="plan-131-packed-cold-storage-draft-to-production-deletes-in-four-days">Plan 131 — packed cold storage, draft to production deletes in four days</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_131_packed_cold_storage.md">Plan 131</a> exists because Plan 129
+cut bronze bytes ~73% and changed object count by <strong>zero</strong>. Object count is the
+constraint compression cannot touch, and at ~65,500 inodes/day the volume had
+about 61 days of headroom. Thirty-three commits, the whole arc:</p>
+<p><strong>Scoping</strong> — <code>3282919</code> opened the plan; <code>6bc6723</code> corrected it three ways,
+moving the work into the archiver rather than a script, promoting grouping from
+a settled decision to the plan's biggest open question, and recording why
+deferred compression was rejected.</p>
+<p><strong>Stage 0, the gate that could fail</strong> — <code>48ee624</code> measured against production
+and killed the cheap alternative: results pages are 0.7% of the object
+population, so deleting every one ever captured buys about half a day of inode
+headroom. <code>54cc075</code> then withdrew its own conclusion, on the grounds that the
+5% penalty estimate had assumed away the base/delta asymmetry that is the
+entire premise of packing by listing. <code>18807e2</code> added the script to measure B
+and D, the two numbers the layout decision actually needs; <code>ddeddbb</code> recorded
+that the archiver image had to be rebuilt before it could pack at all;
+<code>f447ee8</code> made the script refuse an undictionaried baseline rather than
+silently overstate the win. <code>01f8d60</code> settled it: monthly capture buckets, 1.9
+physical points behind the per-listing ceiling, B = 8,578 bytes and D = 2,142.</p>
+<p><strong>Stages 1-2</strong> — <code>6d0092a</code> landed the pack format and the packer.
+<code>705095b</code> replaced an arbitrary 60-day age threshold with month-completion
+eligibility, which as of that day was the difference between packing April-May
+and April-July. <code>815864d</code> made packs cut on stored bytes rather than raw
+(~20x conservative otherwise). <code>9e607f7</code> caught the code up to the spec change
+<code>705095b</code> made mid-build. <code>e23acdd</code> fixed two things only production could
+show: a listing phase that logged nothing for ~1M objects, and a free-space
+floor measuring the wrong filesystem. <code>5e18c82</code> is the interesting one — the
+first real pack came in under projection because frames were cut at a fixed
+8 MiB and split half the listings across frame boundaries, forfeiting the
+adjacency that ordering by <code>listing_id</code> exists to create. <code>1ec6fb8</code> packed
+April in full: 557,065 objects into 32 packs, 8,704x reduction, every member
+verified byte-identical, nothing deleted.</p>
+<p><strong>Stage 3, the read path</strong> — <code>cd9e1a8</code> made <code>read_html</code> fall back to the pack
+index transparently, which is the precondition Stage 4's deletes stand on.
+<code>60bc9c6</code> and <code>115a001</code> recorded the measured latency for April and May: warm,
+a packed read costs what an object read costs (5.90 ms against 5.79); cold is
+36x, and the cost is the sidecar scan rather than decompression.</p>
+<p><strong>Stage 4, the only step that removes data</strong> — <code>ba1b677</code> cut the proposed
+14-day grace period to zero, because neither argument for it survived being
+asked what it protects against, replacing a timer with a gate that gets
+satisfied. <code>257cef0</code> implemented the deleter with three non-optional checks per
+member. <code>4ec7216</code> ran it: 100 objects, 100/100 verified, 0 refused, the first
+inodes the plan freed at all. <code>020ba6b</code> confirmed by readback that the deleted
+artifacts are still readable — the property the whole plan was built to
+establish, demonstrated on production data rather than argued from the format.</p>
+<p><strong>Run sheets and prompts</strong> — <code>b30c47d</code>, <code>dba8d8f</code> and <code>e564061</code> built and
+corrected the Stage 3/4 run sheet, the last two for failures of the document
+rather than the code: a readback step that could not be executed as written,
+and a detached run whose output had nowhere to go. <code>d0b2a9d</code>, <code>b52b6b6</code>,
+<code>c8d9500</code> and <code>d1f91e1</code> tracked the build prompts.</p>
+<p><strong>Stage 5</strong> — <code>2cbb7c3</code> made the case for a stage that was reading as tidy-up:
+run continuously, packing collapses a closed month from ~1.1M objects to about
+82, so inodes stop being the binding constraint at all and the ceiling moves
+out roughly three years. <code>4be8ee9</code> fixed a cap of zero that deleted nothing and
+reported success. <code>5de59bc</code> gave the two pack endpoints the same failure
+contract their CLIs have, so <code>raise_for_status()</code> means something. <code>c317c1d</code>
+added single-flight locking and a deploy pause, both being a check at a
+boundary the jobs already had.</p>
+<h3 id="plan-133-two-read-path-defects-recorded-rather-than-fixed">Plan 133 — two read-path defects, recorded rather than fixed</h3>
+<p><code>61461c9</code> opened <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_133_pack_read_path_hardening.md">Plan 133</a> for
+two defects found while verifying Plan 131 Stage 3 in production: <code>object_exists</code>
+has no pack fallback, and the sidecar index cache defaults to 4 packs against
+months holding 32-41 while the resolver scans upward from pack-00000, so each
+scan evicts the entries the next one needs. Neither blocked Stage 4. They were
+recorded rather than fixed because Stage 3's gate had just been established over
+365 real members with zero failures, and changing the path immediately after
+verifying it would have re-opened the gate for no gain.</p>
+<h3 id="plan-135-lokis-log-level-and-the-alerting-gap-behind-it">Plan 135 — Loki's log level, and the alerting gap behind it</h3>
+<p><code>cf30421</code> capped Loki's server log level after its container stdout reached
+8.6 GB on the root disk. Investigating that turned up the defect that became
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_135_storage_observability.md">Plan 135</a>: node-exporter bind-mounts
+host root at <code>/rootfs</code> but never passes <code>--path.rootfs</code>, so it has <strong>never</strong>
+reported <code>/mnt/data</code>. Both disk alerts only ever evaluated <code>/</code> — leaving the
+196 GB data volume, which had filled to 99-100% twice that same week, with no
+capacity alerting at all.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Read from <code>docs/PLANS.md</code>'s own history across the window — eight index
+revisions — rather than from the index as it stands today.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md">129</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_130_parser_input_projection.md">130</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_131_packed_cold_storage.md">131</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_132_unrecorded_artifact_recovery.md">132</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+<tr>
+<td><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_133_pack_read_path_hardening.md">133</a></td>
+<td>absent</td>
+<td>build order</td>
+</tr>
+</tbody>
+</table></div>
+<p>Five plans entered the index and <strong>none left it</strong>. That is worth noticing on
+its own: the week shipped Plan 114's conclusion, Plan 129's production rollout
+and four of Plan 131's five stages, and the index recorded none of those as a
+completion. Every state change in the window was an arrival.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li><strong>Two plan documents were created in the window with no index row at all.</strong>
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md">Plan 134</a> was split
+out of Plan 131's D5 decision in <code>5de59bc</code>, and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_135_storage_observability.md">Plan 135</a> was opened in
+<code>cf30421</code>. Neither appears in any state change above, because neither was
+filed. A plan document in no table is exactly the defect Plan 146 was written
+to fix. <em>(As of 2026-08-21 both have since been filed — 134 as build-order
+row 6, 135 in closeout with a 2026-08-23 gate.)</em></li>
+<li><strong>Plan 131 Stage 4's processed-check policy</strong> was proposed in <code>ba1b677</code> and
+described in that commit as still awaiting agreement.</li>
+<li><strong><code>scripts/verify_pack_read_path.py</code> was written and not yet run</strong> at
+<code>cd9e1a8</code>; it was run two commits later at <code>60bc9c6</code>, inside the window.</li>
+<li><strong>The sidecar index cache defect</strong> was left unfixed on purpose (<code>61461c9</code>),
+sequenced before Plan 132 Stage 2 and not before Plan 131 Stage 4.</li>
+<li><strong>Retention</strong> is named in <code>f4e0f0b</code> as no longer theoretical — the disk hit
+100% twice during Plan 129's own rollout, and the second time it blocked the
+plan — and was left needing its own plan.</li>
+<li><strong>Two papercuts</strong> recorded in <code>f4e0f0b</code> and not addressed: <code>deploy.sh</code> and
+<code>redeploy.sh</code> are tracked <code>100644</code> and so are not executable on a fresh
+checkout, and <code>ps</code> is absent from the processing image.</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Two of 42 non-merge commits name no plan in their subject. Both are recapped
+above or below; what is missing is the link to a <em>why</em>, not the work.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Subject</th>
+<th>What is known</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a80b123</code></td>
+<td>emergency commit to try and free space</td>
+<td>No body at all. Its <code>--stat</code> shows 12 files and ~1,300 insertions — <code>shared/compression.py</code>, <code>shared/minio.py</code>, <code>scripts/train_html_dictionary.py</code>, migration V041 — which is the bulk of Plan 129's Stages 1-4 implementation. The following commit <code>9f078c6</code> says so explicitly and records the notes for it, but that is another commit's testimony, not this one's, so it stays listed here.</td>
+</tr>
+<tr>
+<td><code>820c944</code></td>
+<td>Make two CLI path assertions platform-independent</td>
+<td>Its body attributes it to nothing, deliberately: <em>&quot;Unrelated to Plan 131; it rides along because the same checkout has to be green to trust the rest of this branch.&quot;</em> It made two argparse <code>type=Path</code> assertions compare <code>Path</code> to <code>Path</code> instead of <code>str</code> to a POSIX literal, which had the suite green in CI and red on a Windows checkout.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="merges">Merges</h2>
+<p>Thirteen merges, none recapped as work — the commits they bring in are in the
+window and are recapped above, so recapping both would double the week.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th>PR</th>
+<th>Branch names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>788bb33</code></td>
+<td>#184</td>
+<td>Plan 114</td>
+</tr>
+<tr>
+<td><code>c552c11</code></td>
+<td>#185</td>
+<td>Plan 129</td>
+</tr>
+<tr>
+<td><code>6dddbcc</code></td>
+<td>#186</td>
+<td>Plan 129</td>
+</tr>
+<tr>
+<td><code>ed6a08c</code></td>
+<td>#187</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>4c55520</code></td>
+<td>#189</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>eb99964</code></td>
+<td>#190</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>c4147b3</code></td>
+<td>#191</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>91409b0</code></td>
+<td>#192</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>feeae79</code></td>
+<td>#193</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>4613d0b</code></td>
+<td>#195</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>36f1fbd</code></td>
+<td>#196</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>196411f</code></td>
+<td>#197</td>
+<td>Plan 131</td>
+</tr>
+<tr>
+<td><code>dd90287</code></td>
+<td>#198</td>
+<td>Plan 135</td>
+</tr>
+</tbody>
+</table></div>
+<p>Together they bring in 43 commits: the window's 42 non-merge commits, plus
+<code>8cab72a</code> from 2026-08-08, which <code>788bb33</code> carried in from before the window
+and which belongs to the previous week.</p>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>117 commits</strong> sit after this window's end, as of 2026-08-21. The tail is more
+than twice the window, and it is deferred on purpose — the week of 2026-08-17
+is not complete work for this recap to describe.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-08-16 23:59:59'   # 117
+</code></pre>
+</main>
+</body>
+</html>

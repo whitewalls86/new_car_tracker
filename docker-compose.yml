@@ -96,6 +96,32 @@ services:
     networks:
       - cartracker-net
 
+  # ── Plan 140 Stage 1: the liveness floor ─────────────────────────────────────
+  #
+  # Every long-running service gets a healthcheck so that "no signal" stops
+  # being indistinguishable from "healthy". Two conventions, one reason each:
+  #
+  # * Shape is `interval: 30s / timeout: 10s / retries: 5 / start_period: 30s`,
+  #   copied from the Airflow blocks below so there is one convention rather
+  #   than twenty.
+  # * The probe tool is whatever the image actually ships. Plan 140 drafted
+  #   `curl --fail` everywhere; a 2026-08-18 sweep of the running production
+  #   containers found that ops, scraper, processing, archiver, pack-worker,
+  #   dbt_runner and dashboard have **neither curl nor wget** -- they are
+  #   python:*-slim, which ships no HTTP client. A healthcheck that fails
+  #   because the tool is missing manufactures a false unhealthy, which is
+  #   worse than none. So the Python tier probes with `python -c urllib`
+  #   (always present, no image rebuild), busybox images use `wget -q -O
+  #   /dev/null`, and only genuinely curl-bearing images use `curl --fail`.
+  #
+  # Probes are deliberately shallow -- process liveness, never dependency
+  # health. A probe that touches Postgres turns one DB blip into twenty
+  # unhealthy containers. This is why the exporters probe `/` (a static
+  # landing page) rather than `/metrics`, which would scrape their backends.
+  #
+  # Note that plain Docker never restarts a container for being unhealthy, so
+  # nothing here is an actuator; it is signal only. Plan 136 Stage 4 owns
+  # restart authority.
   ops:
     build:
       context: .
@@ -107,7 +133,15 @@ services:
       - "8060:8060"
     volumes:
       - ops_logs:/usr/app/logs
-      - analytics_db:/data/analytics:ro
+      - analytics_snapshot:/data/analytics_snapshot:ro
+      # Plan 138 Stage 7: generated public content is served from the checkout,
+      # not the image, so `git pull` publishes a recap or a roadmap update with
+      # no build, no recreate and no coordination drain. The image `COPY` stays,
+      # so this only overlays it and a host with no checkout still serves.
+      # It must stay a DIRECTORY mount: a single-file mount pins the inode and
+      # `git pull` replaces the file, leaving the container serving a deleted
+      # copy while reporting success (redeploy.sh decision 4).
+      - ./ops/static_ops/generated:/app/ops/static_ops/generated:ro
     environment:
       PGHOST: postgres
       PGPORT: 5432
@@ -118,15 +152,21 @@ services:
       TELEGRAM_API: ${TELEGRAM_API}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       DBT_RUNNER_URL: http://dbt_runner:8080
+      ANALYTICS_SNAPSHOT_PATH: /data/analytics_snapshot/analytics_snapshot.json
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
       SCRAPER_URL: http://scraper:8000
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      DUCKDB_PATH: /data/analytics/analytics.duckdb
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
       SNAPSHOT_DOWNLOAD_TOKEN: ${SNAPSHOT_DOWNLOAD_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8060/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
     depends_on:
@@ -139,6 +179,17 @@ services:
     restart: unless-stopped
     environment:
       LOG_LEVEL: info
+    # Vestigial: the live scrape path is `trawl`, not this container
+    # (docs/plans/plan_128_false_block_detection.md). It is in scope anyway -- exempting a
+    # service because it is believed unused is the exact reasoning that
+    # produces the gaps this plan exists to close. Removing it is a separate
+    # decision, and the probe is six lines.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8191/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
@@ -152,11 +203,28 @@ services:
     memswap_limit: 512m
     volumes:
       - trawl_redis_data:/data
+    # Profile-gated but long-running when up, so it is in scope. The 2026-08-14
+    # solver outage is the reason the profile flag does not get to decide.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
   trawl:
-    image: ${TRAWL_IMAGE:-ghcr.io/germondai/trawl:latest}
+    # Plan 136 Stage 3b: pinned by digest, not `:latest`. An unpinned tag on
+    # the one component whose failure takes detail scraping down makes the
+    # next `compose up` an unreviewed upgrade -- which is how a six-week
+    # drift went unnoticed. This digest is v1.4.2 (built 2026-08-21); the
+    # previous pin, for rollback, is
+    # sha256:d4d7beb21541a84664d45fd2e0320367a67185c028428aa2313fd1c0c856e60b
+    # (revision d0877c5, built 2026-07-06). It is a multi-arch index digest,
+    # so it resolves on the arm64 VM and on x86 CI alike. Moving it is a
+    # commit someone can see.
+    image: ${TRAWL_IMAGE:-ghcr.io/germondai/trawl@sha256:86b1fdf26cfeebd996eeedaeb774002434f4cf8d02e5486f8a8173373c4d6e9b}
     container_name: cartracker-trawl
     restart: unless-stopped
     profiles: ["trawl"]
@@ -176,6 +244,12 @@ services:
       BROWSER_CONTENT_PROCESSES: ${TRAWL_BROWSER_CONTENT_PROCESSES:-2}
     depends_on:
       - redis-trawl
+    # Plan 140 Stage 1 changes nothing here, and that is the point. This probe
+    # is present, correct, and explicitly not sufficient: on 2026-08-14 it
+    # reported status:ok and the container showed (healthy) for eight hours
+    # while the solve rate sat at 0%. Efficacy is Plan 136 Stage 2's job. Do
+    # not deepen this into a real solve -- Plan 136 Stage 4 prices that at
+    # 30-90s per interval against cars.com and rejects it.
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8191/health"]
       interval: 30s
@@ -205,6 +279,15 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
+      # Plan 129 Stage 3: leave unset for legacy frames; set to the registered
+      # v1 zstd dictionary ID only after dictionary-aware readers are deployed.
+      HTML_COMPRESSION_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
     depends_on:
@@ -265,11 +348,21 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
       DUCKDB_PATH: /data/analytics/analytics.duckdb
+      ANALYTICS_SNAPSHOT_PATH: /data/analytics_snapshot/analytics_snapshot.json
     # Plan 123 Phase 0: hard containment boundary above the 8GB DuckDB
     # memory_limit (dbt/profiles.yml) but well below the ~23.4GB host total,
     # so a runaway build is killed inside the container instead of triggering
     # the host OOM killer against Postgres/MinIO/Airflow/scraper/ops.
     mem_limit: 12g
+    # /dbt/build is a sync def, so FastAPI runs the blocking `dbt build`
+    # subprocess on the threadpool and the event loop keeps answering /health
+    # throughout. A long build does not flap this probe.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
     depends_on:
@@ -279,6 +372,7 @@ services:
       - ./target:/usr/app/target
       - dbt_runner_logs:/usr/app/logs
       - analytics_db:/data/analytics
+      - analytics_snapshot:/data/analytics_snapshot
 
 
 
@@ -330,6 +424,75 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
+      # Plan 131: pack frames keep the trained dictionary the scraper writes
+      # with. HTML_COMPRESSION_DICT_ID is a *writer*-side variable and is not
+      # set on readers, so the packer has to be told explicitly.
+      PACK_BRONZE_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - cartracker-net
+
+  # Plan 131 Stage 5 D4: the month-scale pack/prune HTTP jobs run on their own
+  # service so they cannot starve the regular archiver's flush/cleanup/compact
+  # traffic. It deliberately reuses the archiver image and stays internal-only.
+  pack-worker:
+    build:
+      context: .
+      dockerfile: archiver/Dockerfile
+    image: cartracker-archiver
+    container_name: cartracker-pack-worker
+    volumes:
+      - pack_worker_logs:/usr/app/logs
+      # Plan 135 Stage 4: the disk watchlist. Mounted per-path and read-only
+      # rather than binding the whole host root, because the watchlist is fixed
+      # by design -- adding a path should be a deliberate change here, not a
+      # side effect of editing a list in Python. This service already holds DB
+      # and MinIO credentials, so it gets exactly the five directories it
+      # measures and nothing else.
+      - /var/lib/containerd:/measure/root/var/lib/containerd:ro
+      - /var/lib/docker/containers:/measure/root/var/lib/docker/containers:ro
+      - /var/log/journal:/measure/root/var/log/journal:ro
+      - /usr:/measure/root/usr:ro
+      - /var/lib/snapd:/measure/root/var/lib/snapd:ro
+      # /var/lib/docker/volumes is a symlink to here (Plan 105), so the Docker
+      # volumes live on /mnt/data while image layers live on /.
+      - /mnt/data/docker-volumes:/measure/volumes:ro
+      - node_textfile:/textfile
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: scraper_user
+      POSTGRES_PASSWORD: ${SCRAPER_DB_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+      PACK_BRONZE_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
+      ARCHIVER_ALLOW_PACK_JOBS: "true"
+      # Setting this is what enables POST /disk-usage/run. Its absence on the
+      # regular archiver is the refusal: without these mounts every
+      # measurement fails and an empty .prom reads as "the disks are empty".
+      DISK_USAGE_TEXTFILE_DIR: /textfile
+    # Same archiver image, same port -- pack-worker just serves a different
+    # slice of its routes.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -375,10 +538,52 @@ services:
     networks:
       - cartracker-net
 
+  # Plan 145: isolated one-shot worker for the April cutover reconciliation --
+  # materializing legacy Parquet bodies as normal HTML objects, parsing them,
+  # and comparing the result to silver. Follows snapshot-worker's lifecycle:
+  # profile-gated, no ports, no restart policy, never started by
+  # `docker compose up`. Built from the processing image because the parse
+  # stage needs bs4/lxml, which the archiver image does not carry.
+  #
+  # Deliberately not resource-capped. pack-worker runs month-scale jobs
+  # unlimited and the box tolerates it; a cap can be added from measured
+  # contention rather than guessed at. Invoke explicitly, e.g.:
+  #   docker compose run --rm april-processor python -m \
+  #     scripts.oneoff.reconcile_april_detail materialize --max-objects 5
+  # (add --apply to write; without it the run plans and reports only)
+  april-processor:
+    build:
+      context: .
+      dockerfile: processing/Dockerfile
+    image: cartracker-processing
+    container_name: cartracker-april-processor
+    profiles: ["april-processor"]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: cartracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+      # Without this every object it writes would be dictionary-less and so
+      # unlike every other HTML object in the store. The scraper -- the only
+      # other writer of these objects -- sets the same variable.
+      HTML_COMPRESSION_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    networks:
+      - cartracker-net
+
   dashboard:
     build:
-      context: ./dashboard
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: dashboard/Dockerfile
     image: cartracker-dashboard
     container_name: cartracker-dashboard
     restart: unless-stopped
@@ -387,6 +592,19 @@ services:
     environment:
       DATABASE_URL: postgresql://viewer:${VIEWER_DB_PASSWORD}@postgres:5432/cartracker
       DUCKDB_PATH: /data/analytics/analytics.duckdb
+    # Streamlit's own liveness endpoint, which does not touch Postgres or
+    # DuckDB. Its `/healthz` alias is deprecated; `/_stcore/health` is current.
+    #
+    # The path carries the base path set in dashboard/Dockerfile. Streamlit
+    # serves *everything* under it, this endpoint included, so the two must be
+    # changed together: leave this at /_stcore/health and the container reports
+    # unhealthy forever while the app itself is fine.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/dashboard/_stcore/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -410,13 +628,35 @@ services:
       PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    # SCRIPT_NAME=/pgadmin above prefixes every route, so the bare /misc/ping
+    # returns 500, not 404 -- a probe copied from pgAdmin's docs fails here and
+    # fails in a way that looks like the app is broken.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80/pgadmin/misc/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
+  # Plan 140 Stage 1 DENY-LIST ENTRY -- the one in-scope service with no
+  # liveness floor. quay.io/oauth2-proxy/oauth2-proxy:latest is distroless: no
+  # shell, no curl, no wget, no busybox, only the bare binary. Verified
+  # 2026-08-18 -- `docker exec cartracker-oauth2-proxy sh` fails with
+  # exec: "sh": executable file not found in $PATH. No `healthcheck:` can be
+  # expressed against this image at all.
+  #
+  # It does serve /ping on 4180. A `latest-alpine` tag exists and would make
+  # this probeable, but that is an image swap on the service fronting every
+  # authenticated route, and it does not belong in a change that also touches
+  # eighteen other services. See docs/plans/plan_140_service_health_contract.md.
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:latest
     container_name: cartracker-oauth2-proxy
     restart: unless-stopped
+    labels:
+      promtail.enable: "true"
     command: --config=/etc/oauth2-proxy/oauth2-proxy.cfg --reverse-proxy=true
     volumes:
       - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
@@ -430,6 +670,14 @@ services:
   caddy:
     image: caddy:latest
     container_name: caddy
+    # Plan 142 Stage 0 item 7. Without this caddy's effective policy is `no`,
+    # so an unplanned reboot leaves :80/:443 down until someone runs `up -d` by
+    # hand -- and a stopped container leaves the Plan 140 health metric rather
+    # than reading unhealthy, so nothing reports that it happened. Applying a
+    # change to this key needs `docker compose up -d caddy`, which recreates
+    # the container; `docker compose restart` reuses the old config and would
+    # leave the policy silently unapplied.
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
@@ -443,6 +691,16 @@ services:
       - oauth2-proxy
       - airflow-apiserver
       - grafana
+    # Caddy's admin API on 2019 is localhost-only by default and is the only
+    # thing it serves that is not a proxied route. Deliberately /config/ rather
+    # than /reverse_proxy/upstreams: the latter reports *backend* health, which
+    # would make one Postgres blip read as an unhealthy reverse proxy.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
@@ -467,6 +725,12 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8070/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
     depends_on:
@@ -500,11 +764,27 @@ services:
     <<: *airflow-common
     command: api-server --proxy-headers
     container_name: cartracker-airflow-apiserver
+    labels:
+      promtail.enable: "true"
     ports:
       - "8080:8080"
     environment:
       <<: *airflow-common-env
       AIRFLOW__API__BASE_URL: "https://cartracker.info/airflow"
+      # Plan 136 Stage 0a: the apiserver wedged on 2026-08-18 with Airflow's
+      # stock QueuePool of 5 + 10. AIRFLOW__CORE__EXECUTION_API_SERVER_URL
+      # routes every task's state through here, so task concurrency consumes
+      # apiserver pool connections directly -- and every authenticated request
+      # takes a session for the token-revocation lookup, so a starved pool
+      # takes the healthcheck down with it.
+      #
+      # Set here rather than on *airflow-common-env: that anchor is shared by
+      # four long-running services, so raising it there multiplies by four
+      # against Postgres's max_connections=100. Apiserver-only is 40 here plus
+      # the stock 15 each for scheduler, dag-processor and triggerer -- 85
+      # worst case. test_observability_config.py guards that budget.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: '20'
+      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: '20'
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
@@ -521,6 +801,8 @@ services:
     <<: *airflow-common
     command: scheduler
     container_name: cartracker-airflow-scheduler
+    labels:
+      promtail.enable: "true"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s
@@ -537,6 +819,8 @@ services:
     <<: *airflow-common
     command: dag-processor
     container_name: cartracker-airflow-dag-processor
+    labels:
+      promtail.enable: "true"
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
       interval: 30s
@@ -574,6 +858,16 @@ services:
     volumes:
       - ./grafana/statsd_mapping.yml:/etc/statsd_mapping.yml:ro
     restart: unless-stopped
+    # All three exporters probe `/` -- their static landing page -- not
+    # /metrics. Scraping /metrics is exactly the dependency-coupled probe this
+    # plan forbids: it would make postgres-exporter's health a function of
+    # Postgres's, and turn one DB blip into a fan of unhealthy containers.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9102/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
@@ -583,6 +877,12 @@ services:
     restart: unless-stopped
     environment:
       DATA_SOURCE_NAME: postgresql://metrics_user:${METRICS_DB_PASSWORD}@postgres:5432/cartracker?sslmode=disable
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9187/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
     depends_on:
@@ -598,10 +898,30 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # Plan 135 Stage 4: pack-worker writes the disk watchlist here; this side
+      # only ever reads it.
+      - node_textfile:/textfile:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      # Without this, node-exporter reads the host mount table via procfs, sees
+      # /dev/sdb at /mnt/data, then statfs()es it inside its own namespace where
+      # /mnt does not exist -- so the 196 GB data volume emitted
+      # node_filesystem_device_error and no capacity series at all.
+      # See docs/plans/plan_135_storage_observability.md.
+      - '--path.rootfs=/rootfs'
+      # run/credentials/* is a ramfs mount whose statfs reports zero blocks and
+      # zero inodes. It is not tmpfs, so the disk/inode alert selectors do not
+      # filter it, and once rootfs resolves it would divide by zero into every
+      # filesystem panel. This mirrors node-exporter's own default exclusion.
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials/.+)($$|/)'
+      - '--collector.textfile.directory=/textfile'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
@@ -616,6 +936,14 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
+    # /-/healthy, not /-/ready: ready goes false during WAL replay after a
+    # restart, which is a working Prometheus doing startup work.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
@@ -636,6 +964,12 @@ services:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
     depends_on:
@@ -652,11 +986,26 @@ services:
     volumes:
       - ./loki/loki.yml:/etc/loki/loki.yml:ro
       - loki_data:/loki
+    # /ready genuinely returns 503 until the ingester joins the ring, so this
+    # is the one probe that is expected to fail on a cold start. The standard
+    # 30s start_period plus 5 x 30s of retries gives it 180s before it counts
+    # as unhealthy, which is why the shape does not need widening here.
+    # (Plan 135 recorded /ready reading 503 from *inside prometheus* while the
+    # host read 200 -- that was a cross-container artifact. Self-probed from
+    # inside loki it reads 200, verified 2026-08-18.)
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - cartracker-net
 
   promtail:
-    image: grafana/promtail:2.9.8
+    # 3.5.8 uses a Docker API compatible with Docker Engine 29. Ubuntu Jammy's
+    # 29.1 package rejects Promtail 2.9.8's API 1.42 discovery client.
+    image: grafana/promtail:3.5.8
     container_name: cartracker-promtail
     restart: unless-stopped
     command: --config.file=/etc/promtail/promtail.yml
@@ -667,10 +1016,89 @@ services:
       - processing_logs:/logs/processing:ro
       - dbt_runner_logs:/logs/dbt_runner:ro
       - archiver_logs:/logs/archiver:ro
+      - pack_worker_logs:/logs/pack-worker:ro
+      - promtail_positions:/positions
+      # Stage 5: selected operational stdout is durable in Loki. The Docker
+      # socket supplies container metadata; the log tree remains read-only.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    # grafana/promtail:3.5.8 is Debian-based: it has bash but ships neither
+    # curl nor wget. bash's /dev/tcp is the only HTTP client in the image, so
+    # this speaks HTTP/1.0 by hand and asserts the status line. Single-quoted
+    # YAML on purpose -- in a double-quoted scalar YAML would eat the \r\n
+    # before printf ever sees it.
+    healthcheck:
+      test: ["CMD", "bash", "-c", 'exec 3<>/dev/tcp/127.0.0.1/9080; printf "GET /ready HTTP/1.0\r\n\r\n" >&3; head -1 <&3 | grep -q "200 OK"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     depends_on:
       - loki
     networks:
       - cartracker-net
+
+  # ── Plan 140 Stage 2: container health as a metric ───────────────────────────
+  #
+  # `- /var/run/docker.sock:/var/run/docker.sock:ro` is NOT read-only access.
+  # The `:ro` flag makes the socket *file* read-only and does nothing to the
+  # Docker API reachable through it: any client that can connect can
+  # POST /containers/{id}/restart, kill, or create a privileged container.
+  # POST=0 below is what actually enforces read-only, and CONTAINERS=1 is the
+  # only section granted. Plan 136 Stage 4 gets exactly one verb here when it
+  # needs restart authority -- it must not add a second socket path.
+  #
+  # promtail already carries the same full-API grant (line 951) for
+  # log-discovery metadata. That is pre-existing and out of scope; it is not a
+  # precedent that settles this.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: cartracker-docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Alpine/haproxy base -- busybox wget is present (verified 2026-08-20).
+    # /_ping is granted by the proxy's own defaults, so this probes the proxy
+    # rather than reaching through it to the daemon.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2375/_ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # Deliberately NOT on cartracker-net. Every one of the ~26 containers on
+    # that network would otherwise be able to enumerate the fleet; only the
+    # exporter needs to.
+    networks:
+      - docker-socket
+
+  container-health:
+    build:
+      context: .
+      dockerfile: container_health/Dockerfile
+    image: cartracker-container-health
+    container_name: cartracker-container-health
+    restart: unless-stopped
+    environment:
+      DOCKER_API_URL: http://docker-socket-proxy:2375
+      # Set explicitly rather than inferred from the deploy directory name, so
+      # renaming that directory is a deliberate edit here. A mismatch is loud:
+      # the collector refuses to publish an empty fleet and /metrics 500s.
+      COMPOSE_PROJECT: cartracker
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9110/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      - docker-socket-proxy
+    networks:
+      - cartracker-net
+      - docker-socket
 
 volumes:
   cartracker_pgdata:
@@ -679,6 +1107,8 @@ volumes:
 
   pgadmin_data:
 
+  promtail_positions:
+
   scraper_logs:
 
   trawl_redis_data:
@@ -686,6 +1116,8 @@ volumes:
   dbt_runner_logs:
 
   analytics_db:
+
+  analytics_snapshot:
 
   ops_logs:
 
@@ -700,12 +1132,24 @@ volumes:
 
   archiver_logs:
 
+  pack_worker_logs:
+
   prometheus_data:
 
   grafana_data:
 
   loki_data:
 
+  # Plan 135 Stage 4: pack-worker writes the disk watchlist .prom here and
+  # node-exporter reads it. Holds one small file.
+  node_textfile:
+
 networks:
   cartracker-net:
     external: true
+
+  # Plan 140 Stage 2: a two-member network carrying nothing but the read-only
+  # Docker API. `internal: true` gives it no gateway, so the proxy is
+  # unreachable from anything except container-health.
+  docker-socket:
+    internal: true

@@ -1,5 +1,6 @@
 ruff
 pytest
+pytest-cov
 pytest-mock
 pytest-asyncio
 httpx
@@ -8,3 +9,4 @@ boto3
 zstandard
 pyyaml
 prometheus-fastapi-instrumentator
+markdown-it-py

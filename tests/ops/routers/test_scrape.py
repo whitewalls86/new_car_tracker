@@ -2,7 +2,7 @@
 Unit tests for ops.routers.scrape.
 
 DB interactions are mocked via mock_cursor_context (patches psycopg2.connect).
-Tests validate logic branches — SQL correctness is covered by Layer 3 integration tests.
+Tests validate logic branches — SQL correctness is covered by Layer 4 integration tests.
 """
 import datetime
 import json
@@ -256,4 +256,105 @@ class TestReleaseClaims:
 
         sql_calls = [c[0][0] for c in cursor.execute.call_args_list]
         assert any("DELETE FROM detail_scrape_claims" in sql for sql in sql_calls)
+
+
+class TestReleaseRecordsFetch:
+    """POST /scrape/claims/release stamps last_detail_fetched_at (Plan 147).
+
+    These are endpoint-contract tests, not evidence about production. The only
+    live caller, scrape_detail_pages, reports 'ok' for every claimed listing,
+    so the failed/skipped branches below are a rule no caller exercises today.
+    They are asserted so the endpoint stays honest for any future caller.
+    """
+
+    @staticmethod
+    def _fetch_update(cursor):
+        """The UPDATE that records the spent request, with its bound ids."""
+        for call in cursor.execute.call_args_list:
+            sql = call[0][0]
+            if "last_detail_fetched_at" in sql:
+                return sql, call[0][1]
+        return None, None
+
+    def test_ok_records_the_fetch(self, mock_cursor_context):
+        _, cursor = mock_cursor_context
+
+        client.post("/scrape/claims/release", json={
+            "run_id": str(uuid.uuid4()),
+            "results": [{"listing_id": "listing-aaa", "status": "ok"}],
+        })
+
+        sql, params = self._fetch_update(cursor)
+        assert sql is not None, "an ok result must record the spent request"
+        assert "UPDATE ops.price_observations" in sql
+        assert params[0] == ["listing-aaa"]
+
+    def test_failed_records_the_fetch(self, mock_cursor_context):
+        """A failed fetch spent a request, so the backoff applies to it."""
+        _, cursor = mock_cursor_context
+
+        client.post("/scrape/claims/release", json={
+            "run_id": str(uuid.uuid4()),
+            "results": [{"listing_id": "listing-bbb", "status": "failed"}],
+        })
+
+        sql, params = self._fetch_update(cursor)
+        assert sql is not None, "a failed result spent a request too"
+        assert params[0] == ["listing-bbb"]
+
+    def test_skipped_does_not_record_the_fetch(self, mock_cursor_context):
+        """A skipped listing was never attempted, so no request was spent."""
+        _, cursor = mock_cursor_context
+
+        client.post("/scrape/claims/release", json={
+            "run_id": str(uuid.uuid4()),
+            "results": [{"listing_id": "listing-ccc", "status": "skipped"}],
+        })
+
+        sql, _ = self._fetch_update(cursor)
+        assert sql is None
+
+    def test_mixed_batch_records_only_the_attempted(self, mock_cursor_context):
+        _, cursor = mock_cursor_context
+
+        resp = client.post("/scrape/claims/release", json={
+            "run_id": str(uuid.uuid4()),
+            "results": [
+                {"listing_id": "listing-ok", "status": "ok"},
+                {"listing_id": "listing-failed", "status": "failed"},
+                {"listing_id": "listing-skipped", "status": "skipped"},
+            ],
+        })
+
+        _, params = self._fetch_update(cursor)
+        assert params[0] == ["listing-ok", "listing-failed"]
+        assert resp.json()["fetches_recorded"] == 2
+
+    def test_claims_are_still_released_for_skipped_listings(self, mock_cursor_context):
+        """The backoff is not a claim leak: a skipped listing keeps no claim."""
+        _, cursor = mock_cursor_context
+
+        client.post("/scrape/claims/release", json={
+            "run_id": str(uuid.uuid4()),
+            "results": [{"listing_id": "listing-ccc", "status": "skipped"}],
+        })
+
+        delete = [
+            c for c in cursor.execute.call_args_list
+            if "DELETE FROM detail_scrape_claims" in c[0][0]
+        ]
+        assert len(delete) == 1
+        assert delete[0][0][1][0] == ["listing-ccc"]
+
+    def test_empty_results_records_nothing(self, mock_cursor_context):
+        _, cursor = mock_cursor_context
+
+        resp = client.post("/scrape/claims/release", json={
+            "run_id": str(uuid.uuid4()),
+            "results": [],
+        })
+
+        sql, _ = self._fetch_update(cursor)
+        assert sql is None
+        assert resp.json()["fetches_recorded"] == 0
 

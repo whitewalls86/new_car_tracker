@@ -1,7 +1,13 @@
+import os
+import tempfile
 from unittest.mock import MagicMock
 
 import pytest
 from psycopg2 import DatabaseError, OperationalError, ProgrammingError
+
+# Service modules configure logging at import time. Keep unit-test collection
+# portable outside the Linux containers while preserving an explicit LOG_PATH.
+os.environ.setdefault("LOG_PATH", os.path.join(tempfile.gettempdir(), "cartracker_test.log"))
 
 
 @pytest.fixture
@@ -19,7 +25,7 @@ def mock_db_conn(mocker):
 
 @pytest.fixture
 def mock_cursor_context(mocker):
-    """ Returns a mock psycopg2 connection with a configurable cursor. """
+    """Returns a mock psycopg2 connection with a configurable cursor."""
     cursor = MagicMock()
     conn = MagicMock()
     conn.cursor.return_value.__enter__ = lambda s: cursor
@@ -64,7 +70,7 @@ def mock_requests(mocker):
     get = mocker.patch("requests.get")
     delete = mocker.patch("requests.delete")
     return {
-        'post': post,
-        'get': get,
-        'delete': delete,
+        "post": post,
+        "get": get,
+        "delete": delete,
     }

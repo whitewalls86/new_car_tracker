@@ -5,12 +5,134 @@ on:
     branches: [master]
   push:
     branches: [master]
+  # Manual re-run: `gh workflow run ci.yml --ref <branch>`. Without this there
+  # is no way to re-run CI against a *changed workflow file* -- `gh run rerun`
+  # replays the version the original run was built with, so a fix to this file
+  # can only be picked up by a new run. CAR-42 hit exactly that: two docs-only
+  # PRs stayed red after the fix merged and had to be branch-updated.
+  #
+  # A dispatch run classifies as nothing at all, because the `changes` job has
+  # no base sha to diff against on this event, so it keeps the full-workflow
+  # defaults and skips `docs-tests`. That is the intended default for a manual
+  # run.
+  workflow_dispatch:
 
 jobs:
+
+  changes:
+    name: Classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      docs_tests: ${{ steps.scope.outputs.docs_tests }}
+      unit: ${{ steps.scope.outputs.unit }}
+      heavy: ${{ steps.scope.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select the CI scope
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          # Defaults are the full workflow. Every path out of the block below
+          # that fails to classify leaves these standing, so an unreadable
+          # base sha, a crashed classifier or an output shape nobody expected
+          # can only ever cost a full run -- never a skipped one.
+          docs_tests=false
+          unit=true
+          heavy=true
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+            head_sha="$PR_HEAD_SHA"
+          else
+            base_sha="$PUSH_BASE_SHA"
+            head_sha="$PUSH_HEAD_SHA"
+          fi
+
+          if [[ -n "$base_sha" && -n "$head_sha" && ! "$base_sha" =~ ^0+$ ]] \
+             && git cat-file -e "$base_sha^{commit}" \
+             && git cat-file -e "$head_sha^{commit}"; then
+            if classified="$(git diff --no-renames --name-only -z \
+                "$base_sha" "$head_sha" | python scripts/ci_change_scope.py)"; then
+              # One `name=true|false` line per job group. Anything else is
+              # ignored and that group keeps its default above, so a malformed
+              # or extended classifier degrades to a full run rather than a
+              # silently narrowed one.
+              while IFS= read -r line; do
+                case "$line" in
+                  docs_tests=true|docs_tests=false) docs_tests="${line#*=}" ;;
+                  unit=true|unit=false) unit="${line#*=}" ;;
+                  heavy=true|heavy=false) heavy="${line#*=}" ;;
+                esac
+              done <<< "$classified"
+            fi
+          fi
+
+          echo "docs_tests=$docs_tests" >> "$GITHUB_OUTPUT"
+          echo "unit=$unit" >> "$GITHUB_OUTPUT"
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+
+  docs-tests:
+    name: Documentation tests
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs_tests == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # markdown-it-py is what Stage 1e's recap projection renders with. It is
+      # present locally only as a transitive dependency of `rich`, so this job
+      # names it rather than relying on something else's dependency tree.
+      - run: pip install pytest markdown-it-py
+      # Plan 138 Stage 1d. The public roadmap projection is generated from
+      # docs/PLANS.md and docs/planning/completed_plans.md, so a roadmap edit is
+      # exactly the change that can leave it stale -- and it is also the change
+      # that takes this docs-only path, which skips the unit job where the same
+      # assertion lives. Without this step the landing page would keep serving
+      # the previous roadmap and nothing would say so.
+      #
+      # --check rebuilds in memory and writes nothing, so it also runs the
+      # generator's own validations on the edited tables: unique build order,
+      # priority within 0-100, newest-first completion dates, and a resolvable
+      # local document behind every published link.
+      - run: python scripts/build_public_roadmap.py --check
+      # Plan 138 Stage 1e. Same reasoning as the roadmap check above, pointed at
+      # docs/recaps/: a new recap is a docs-only change, so it takes this path
+      # and skips the unit job where the same assertion lives. Without this step
+      # the site would keep serving last week's set and nothing would say so.
+      #
+      # --check rebuilds every page in memory and writes nothing, so it also runs
+      # the generator's own validations across the whole corpus: a publication
+      # marker on every recap, filename-to-week agreement, a newest-first index,
+      # every relative link classified, and no page left behind by a recap that
+      # stopped being published.
+      - run: python scripts/build_public_recaps.py --check
+      - run: pytest --noconftest tests/test_planning_docs.py -q
+        env:
+          # The repo root carries an __init__.py, so pytest's package-root walk
+          # climbs past it whenever the checkout directory name is a valid
+          # Python identifier -- which `new_car_tracker` is. That drops the repo
+          # root off sys.path and `from scripts import ...` stops resolving, so
+          # this job is the only place TestTheStateParserClassifiesEveryLiveHeading
+          # fails. Every other pytest step here already sets this.
+          PYTHONPATH: ${{ github.workspace }}
+          LOG_PATH: /tmp/app.log
 
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.unit == 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,10 +141,63 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
 
+  promtail-config:
+    name: Promtail config (real image)
+    runs-on: ubuntu-latest
+    needs: [changes, docker-build]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.docker-build.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate with the production Promtail image
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE/promtail/promtail.yml:/etc/promtail/config.yml:ro"
+          grafana/promtail:3.5.8
+          -config.file=/etc/promtail/config.yml
+          -check-syntax
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pyyaml
+      # Syntax validation proves the config loads, not that it classifies. The
+      # unit tests only ever ask the Python model. This replays the fixture
+      # corpus through the real Go pipeline, which is the only thing that
+      # catches the model drifting away from what production actually does.
+      - name: Replay the log contract fixtures through the real pipeline
+        run: python scripts/verify_promtail_contract.py
+
+  container-health-contract:
+    name: container_health Docker contract (real proxy)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The verifier imports the production label constants rather than
+      # restating them, so it pulls container_health.collector and with it
+      # prometheus_client. Installed from the service's own requirements file
+      # rather than pinned again here: one source for the version, and fastapi
+      # and uvicorn ride along for a couple of seconds. This step is the only
+      # place container_health is imported outside its own image, which is why
+      # its dependency set is declared rather than inherited.
+      - run: pip install -r container_health/requirements.txt
+      # The Layer 4 suite serves a recording, so nothing in it can notice the
+      # day Docker or the proxy changes a response shape. This is the only step
+      # that asks the real thing: it stands up tecnativa/docker-socket-proxy
+      # against a throwaway labelled fleet and asserts the live responses still
+      # carry every field collector.py reads. Same split Plan 141 uses for
+      # Promtail, and the corpus is the only thing the two share.
+      - name: Verify the recorded Docker API contract against the real proxy
+        run: python scripts/verify_container_health_docker_contract.py
+
   unit-tests:
     name: Unit tests (pytest)
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.unit == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,7 +207,8 @@ jobs:
         # No airflow/requirements.txt here: Airflow is a separate service image
         # in prod (airflow/Dockerfile) and no non-integration test imports it —
         # installing it alongside FastAPI here forces an incompatible starlette
-        # downgrade (see the dbt job's isolated Airflow venv below).
+        # downgrade (see the isolated Airflow venv in the `schema-contracts`
+        # job below, which is the one job that needs it).
         run: |
           pip install \
             -r requirements-dev.txt \
@@ -42,22 +218,83 @@ jobs:
             -r ops/requirements.txt \
             -r dashboard/requirements.txt \
             -r dbt_runner/requirements.txt
-      - run: pytest tests/ -v -m "not integration"
+      # --cov-fail-under is what makes the number mean something: before Plan
+      # 162 Stage 2 this step measured coverage and threw it away, over six of
+      # the ten production directories. The floor is a ratchet, not a target --
+      # raise it when a stage raises the number, never lower it to fit a
+      # regression.
+      #
+      # 74 -> 75 at Stage 5b, which did not improve any coverage: it removed
+      # `scripts/oneoff/` from the denominator, 19,733 statements -> 13,585,
+      # and the reported number went 75.91% -> 77.65% for that reason alone.
+      # The floor moves with it or it stops being a floor. Two points of
+      # headroom is the Stage 2 convention -- seven statements read differently
+      # on Linux and Windows, and the rest is ordinary churn, which a smaller
+      # denominator now amplifies rather than damps.
+      - run: >-
+          pytest tests/ -v -m "not integration"
+          --cov --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=75
         env:
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
+          COVERAGE_CORE: sysmon
+      # The report outlives the log, so a stage that has to argue about which
+      # lines are uncovered has something to read.
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
 
   docker-build:
     name: Docker build (all services)
     runs-on: ubuntu-latest
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build
 
-  dbt:
-    name: dbt build + test
+  # ---------------------------------------------------------------------------
+  # Plan 162 Stage 4 (Plan 139 Stages B and C) replaced one `dbt build + test`
+  # job with the four below.
+  #
+  # What that job was: eight pytest suites run one after another on a single
+  # runner, behind one Flyway migration, one shared `pip install`, one dbt
+  # build and one pinned Airflow venv install. It measured 254-282s
+  # across three consecutive runs and was the whole CI critical path; its name
+  # described the first of the eight things it did.
+  #
+  # The cut is by *prerequisite*, because that is the only thing the suites
+  # actually shared:
+  #
+  #   dbt-models          the DuckDB file a real `dbt build` produces
+  #   schema-contracts    that same file AND the real `airflow` schema, which
+  #                       only `airflow db migrate` can create
+  #   service-integration a migrated Postgres, and nothing else
+  #   lake-integration    MinIO holding the Plan 120 lake-snapshot fixture
+  #
+  # `tests/integration/sql/` is the one suite that needs two of them -- 21 of
+  # its tests read dbt's marts out of DuckDB, 92 read Postgres and one file
+  # reads Airflow's own `task_instance`/`dag_run` -- which is why
+  # schema-contracts builds dbt a second time rather than waiting on
+  # dbt-models. An artifact hand-off would serialize the two longest jobs and
+  # was measured as the worse trade; the second build costs ~31s in a job that
+  # is not on the critical path.
+  #
+  # The `loki` service the old job declared is gone. Nothing under
+  # `tests/integration/` has ever opened port 3100; it arrived with cf216c8's
+  # log-aggregation work and outlived it.
+  # ---------------------------------------------------------------------------
+
+  dbt-models:
+    name: dbt model tests (real build)
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     services:
       postgres:
         image: postgres:16
@@ -87,12 +324,346 @@ jobs:
           --health-retries 10
         command: server /data
 
-      loki:
-        image: grafana/loki:2.9.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations (Flyway)
+        uses: docker://flyway/flyway:10-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/cartracker
+            -user=cartracker
+            -password=cartracker
+            -locations=filesystem:/github/workspace/db/migrations
+            -detectEncoding=true
+            -placeholders.viewerPassword=ci_viewer
+            -placeholders.scraperPassword=ci_scraper
+            -placeholders.dbtPassword=ci_dbt
+            -placeholders.authEmailSalt=ci_salt
+            -placeholders.adminEmail=ci@example.com
+            -placeholders.airflowPassword=ci_airflow
+            -placeholders.airflowAppPassword=ci_airflow_app
+            -placeholders.metricsPassword=ci_metrics
+            -defaultSchema=public
+            migrate
+        # Flyway runs as a Docker container step; it must reach the postgres
+        # service by its service name ("postgres"), not localhost. dbt's
+        # on-run-start hook reads Postgres, so the models still need it even
+        # though every assertion here lands in DuckDB.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
+        # zstandard -- the suite's own imports plus the fixture seeder's.
+        run: |
+          pip install \
+            -r requirements-dev.txt \
+            -r archiver/requirements.txt
+
+      - name: Create MinIO bucket
+        run: python .github/scripts/create_ci_bucket.py
+
+      - name: Install dbt
+        # Pinned to match dbt_runner/Dockerfile — dbt 1.10 supports data_tests.arguments; avoids dbt 2.x prerelease.
+        run: pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1"
+
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Install DuckDB extensions
+        run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
+
+      - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
+        run: python .github/scripts/seed_ci_bronze_schemas.py
+        env:
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Seed lake snapshot fixture data
+        # Uploads the shared Plan 120 lake-snapshot fixture (known business-state
+        # scenarios across all four source tables) so the dbt build below
+        # materializes int_listing_state_runs/int_latest_observation against real
+        # data. Written under the reserved 2099 partition so it never collides
+        # with the empty-schema compilation seed above.
+        run: python scripts/seed_lake_snapshot_fixture.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt build (DuckDB — empty data compilation check)
+        working-directory: dbt
+        run: dbt build --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run selector/dbt equivalence tests
+        # Compares the real dbt build above against the Plan 120 selector SQL
+        # over the same MinIO data — the coupling guard requested in Gate B
+        # review (not a hand-copied paraphrase of the dbt logic).
+        #
+        # --durations is Plan 139 Stage C's instruction, kept rather than run
+        # once: this step is the critical path now that nothing else shares
+        # its job, so the per-test breakdown has to stay readable in the log
+        # rather than living only in a plan document that ages.
+        run: pytest tests/integration/dbt/ -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+  schema-contracts:
+    name: SQL + Airflow metadata contracts
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    # The two suites here are the only ones that need a schema some other tool
+    # owns: dbt's marts in DuckDB, and Airflow's own tables in Postgres. That
+    # is also why the pinned Airflow venv build lives here and nowhere else --
+    # before the split it ran on every invocation of all eight suites, 26s of a
+    # job in which six of them never import Airflow.
+    #
+    # Do not write the pinned version into a comment anywhere in this file.
+    # test_ci_pins_the_airflow_version_production_runs greps the whole workflow
+    # for `apache-airflow==<version>` and requires exactly one distinct match,
+    # so a prose mention becomes a second, punctuation-mangled "pin". Say
+    # "the pinned Airflow venv" and let the install step below be the pin.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cartracker
+          POSTGRES_PASSWORD: cartracker
+          POSTGRES_DB: cartracker
         ports:
-          - 3100:3100
+          - 5432:5432
         options: >-
-          --health-cmd "wget -qO- http://localhost:3100/ready"
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        command: server /data
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations (Flyway)
+        uses: docker://flyway/flyway:10-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/cartracker
+            -user=cartracker
+            -password=cartracker
+            -locations=filesystem:/github/workspace/db/migrations
+            -detectEncoding=true
+            -placeholders.viewerPassword=ci_viewer
+            -placeholders.scraperPassword=ci_scraper
+            -placeholders.dbtPassword=ci_dbt
+            -placeholders.authEmailSalt=ci_salt
+            -placeholders.adminEmail=ci@example.com
+            -placeholders.airflowPassword=ci_airflow
+            -placeholders.airflowAppPassword=ci_airflow_app
+            -placeholders.metricsPassword=ci_metrics
+            -defaultSchema=public
+            migrate
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # The SQL suite needs duckdb and psycopg2; the fixture seeder and the
+        # dbt build need boto3, pyarrow and s3fs. archiver/requirements.txt
+        # supplies all five. tests/integration/sql/ imports dashboard.queries
+        # and dbt_runner.queries, but both are load_query modules with no
+        # third-party imports of their own.
+        # 
+        # No airflow/requirements.txt here: Airflow's starlette/fastapi
+        # constraints conflict with the FastAPI services', so it gets the
+        # isolated venv below, mirroring how it is its own container in prod.
+        run: |
+          pip install \
+            -r requirements-dev.txt \
+            -r archiver/requirements.txt
+
+      - name: Create MinIO bucket
+        run: python .github/scripts/create_ci_bucket.py
+
+      - name: Install dbt
+        # Pinned to match dbt_runner/Dockerfile — dbt 1.10 supports data_tests.arguments; avoids dbt 2.x prerelease.
+        run: pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1"
+
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Install DuckDB extensions
+        run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
+
+      - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
+        run: python .github/scripts/seed_ci_bronze_schemas.py
+        env:
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Seed lake snapshot fixture data
+        run: python scripts/seed_lake_snapshot_fixture.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt build (DuckDB — empty data compilation check)
+        # Built here as well as in dbt-models, deliberately. 21 of the SQL
+        # contract tests below read `main.mart_*` out of the DuckDB file a real
+        # build produces; handing that file across jobs as an artifact would
+        # put the two longest jobs in series, which is the thing this split
+        # exists to stop.
+        working-directory: dbt
+        run: dbt build --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Install Airflow test dependencies (isolated venv)
+        # Isolated from the "Install dependencies" step above: apache-airflow's
+        # starlette/fastapi constraints conflict with the FastAPI services', so
+        # it gets its own venv here, pinned to match airflow/Dockerfile's base
+        # image tag, mirroring how Airflow is its own container in prod.
+        run: |
+          python -m venv /tmp/airflow-venv
+          /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest pytest-mock psycopg2-binary requests
+
+      - name: Create the Airflow metadata schema (airflow db migrate)
+        # Plan 139 Stage F. Production runs this same command on every stack
+        # start: docker-compose.yml's `airflow-init` sets _AIRFLOW_DB_MIGRATE
+        # and is gated on Flyway completing, exactly as this step is. Flyway
+        # owns public/ops/staging and creates the empty `airflow` schema plus
+        # the airflow_user role (V013); Airflow owns every table inside that
+        # schema through its own Alembic migrations. Running as airflow_user,
+        # whose `search_path = airflow`, is what puts them there -- the same
+        # mechanism prod uses, not a CI-only arrangement.
+        #
+        # Without this, `tests/integration/sql/` cannot execute the two
+        # coordination-drain queries that cross into `airflow.*` at all, which
+        # is how they shipped naming the wrong schema and hung a production
+        # deploy. This migrates from empty, so it proves the schema Airflow
+        # 3.2.0 builds and that our SQL matches it; it does not prove the
+        # upgrade path against populated production data (see Plan 121).
+        run: /tmp/airflow-venv/bin/airflow db migrate
+        env:
+          AIRFLOW_HOME: /tmp/airflow-home
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:ci_airflow@localhost:5432/cartracker
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+      - name: Run SQL smoke tests (Layer 2)
+        run: pytest tests/integration/sql/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          TEST_VIEWER_DATABASE_URL: postgresql://viewer:ci_viewer@localhost:5432/cartracker
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          # The step above created the schema, so absence here is a broken CI
+          # job, not a developer running the suite against a Flyway-only local
+          # database. Skipping in CI would restore the exact blind spot this
+          # stage closes.
+          REQUIRE_AIRFLOW_SCHEMA: "1"
+          # Same reasoning one fixture over. 55 of this suite's tests read the
+          # DuckDB file the dbt build above produced; if it were missing they
+          # would skip and this step would still pass, hiding a quarter of
+          # Layer 2. REQUIRE_LAYER_2_EXECUTION is the general form: any skip in
+          # this suite is a broken job, not a local convenience.
+          REQUIRE_DUCKDB: "1"
+          REQUIRE_LAYER_2_EXECUTION: "1"
+
+      - name: Run Airflow integration tests
+        run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}/airflow/dags
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow.db
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+  service-integration:
+    name: Service integration tests (Postgres)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    # Five suites whose only shared dependency is a Postgres with the Flyway
+    # migrations applied. None of them touches MinIO, dbt or Airflow, and
+    # before the split every one of them waited on all three.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cartracker
+          POSTGRES_PASSWORD: cartracker
+          POSTGRES_DB: cartracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -119,178 +690,190 @@ jobs:
             -placeholders.metricsPassword=ci_metrics
             -defaultSchema=public
             migrate
-        # Flyway runs as a Docker container step; it must reach the postgres
-        # service by its service name ("postgres"), not localhost.
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Install dependencies
-        # No airflow/requirements.txt here: Airflow is a separate service image
-        # in prod (airflow/Dockerfile) and is installed into its own isolated
-        # venv below, right before the Airflow integration tests, so its
-        # starlette/fastapi constraints never collide with the other services'.
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # Five suites, needing bs4, duckdb, fastapi, prometheus_client,
+        # prometheus_fastapi_instrumentator, psycopg2, pyarrow, s3fs,
+        # boto3 and zstandard.
+        # 
+        # Not scraper/requirements.txt, despite the scraper suite running
+        # here: tests/integration/scraper/ imports processing.queries and
+        # scraper.queries, both pure load_query modules, so curl_cffi
+        # (13.5MB) and asyncpg are never reached.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r scraper/requirements.txt \
-            -r archiver/requirements.txt \
             -r processing/requirements.txt \
             -r ops/requirements.txt \
-            -r dashboard/requirements.txt \
             -r dbt_runner/requirements.txt
 
+      - name: Run API integration tests (Layer 4)
+        run: pytest tests/integration/ops/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/ops_test.log
+
+      - name: Run container_health integration tests (Layer 4)
+        # Plan 162 Stage 6. Needs no service: the suite stands up a strict fake
+        # of docker-socket-proxy on loopback and serves the recorded corpus, so
+        # the whole request path runs with nothing mocked and no daemon. The
+        # real proxy is exercised once, in `container-health-contract`.
+        run: pytest tests/integration/container_health/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          LOG_PATH: /tmp/container_health_test.log
+
+      - name: Run recovery-script integration tests
+        # Plan 145 Stage 5 slice 2 writes to Postgres inside one transaction
+        # per batch; the rollback, receipt and protected-table properties are
+        # only observable against a real database with the migrations applied.
+        run: pytest tests/integration/scripts/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/scripts_test.log
+
+      - name: Run Processing integration tests
+        # Plan 162 Stage 1. These 58 tests had never appeared in this file in
+        # its history -- written, reviewed and merged against a step that did
+        # not exist. Two defects had been sitting in them the whole time: six
+        # cleanups named `staging.artifact_events`, a table no migration has
+        # ever created, and the VIN-relisting test seeded a mapping no older
+        # than the artifact meant to supersede it, so the recency guard in
+        # upsert_vin_to_listing.sql correctly declined to remap.
+        run: pytest tests/integration/processing/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/processing_test.log
+
+      - name: Run Scraper integration tests
+        # Plan 162 Stage 1, and the whole of what G8 deferred: the 403 blocked
+        # cooldown upsert-plus-event path, against real Postgres.
+        run: pytest tests/integration/scraper/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/scraper_test.log
+
+      - name: Run dbt_runner integration tests
+        # DUCKDB_PATH here is this job's own throwaway file, not the one the
+        # dbt build writes -- these tests create what they read, which is why
+        # the suite needs no dbt at all.
+        run: pytest tests/integration/dbt_runner/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/dbt_runner_test.log
+
+  lake-integration:
+    name: Lake integration tests (MinIO)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    # The two suites that read and write real objects. Postgres is here
+    # because the archiver's flush paths write rows as well as Parquet; no dbt
+    # and no Airflow, because neither suite has ever needed them.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cartracker
+          POSTGRES_PASSWORD: cartracker
+          POSTGRES_DB: cartracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        command: server /data
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations (Flyway)
+        uses: docker://flyway/flyway:10-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/cartracker
+            -user=cartracker
+            -password=cartracker
+            -locations=filesystem:/github/workspace/db/migrations
+            -detectEncoding=true
+            -placeholders.viewerPassword=ci_viewer
+            -placeholders.scraperPassword=ci_scraper
+            -placeholders.dbtPassword=ci_dbt
+            -placeholders.authEmailSalt=ci_salt
+            -placeholders.adminEmail=ci@example.com
+            -placeholders.airflowPassword=ci_airflow
+            -placeholders.airflowAppPassword=ci_airflow_app
+            -placeholders.metricsPassword=ci_metrics
+            -defaultSchema=public
+            migrate
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
+        # zstandard -- all of which archiver/requirements.txt supplies.
+        run: |
+          pip install \
+            -r requirements-dev.txt \
+            -r archiver/requirements.txt
+
       - name: Create MinIO bucket
-        run: |
-          python -c "
-          import boto3
-          from botocore.client import Config
-          s3 = boto3.client('s3',
-              endpoint_url='http://localhost:9000',
-              aws_access_key_id='cartracker',
-              aws_secret_access_key='cartracker123',
-              config=Config(signature_version='s3v4'),
-              region_name='us-east-1')
-          s3.create_bucket(Bucket='bronze')
-          print('Created bucket: bronze')
-          "
-
-      - name: Install dbt
-        # Pinned to match dbt_runner/Dockerfile — dbt 1.10 supports data_tests.arguments; avoids dbt 2.x prerelease.
-        run: pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1"
-
-      - name: Install dbt packages
-        working-directory: dbt
-        run: dbt deps
-
-      - name: Install DuckDB extensions
-        run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
-
-      - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
-        run: |
-          python -c "
-          import io
-          import boto3
-          import pyarrow as pa
-          import pyarrow.parquet as pq
-          from botocore.client import Config
-
-          s3 = boto3.client('s3',
-              endpoint_url='http://localhost:9000',
-              aws_access_key_id='cartracker',
-              aws_secret_access_key='cartracker123',
-              config=Config(signature_version='s3v4'),
-              region_name='us-east-1')
-
-          def upload_empty(key, schema):
-              buf = io.BytesIO()
-              pq.write_table(pa.table({f.name: pa.array([], type=f.type) for f in schema}, schema=schema), buf)
-              buf.seek(0)
-              s3.put_object(Bucket='bronze', Key=key, Body=buf.getvalue())
-              print(f'Uploaded {key}')
-
-          upload_empty('silver_normalized/observations/source=srp/obs_year=2026/obs_month=1/seed.parquet', pa.schema([
-              pa.field('artifact_id', pa.int64()),
-              pa.field('listing_id', pa.string()),
-              pa.field('vin', pa.string()),
-              pa.field('canonical_detail_url', pa.string()),
-              pa.field('source', pa.string()),
-              pa.field('listing_state', pa.string()),
-              pa.field('fetched_at', pa.timestamp('us', tz='UTC')),
-              pa.field('written_at', pa.timestamp('us', tz='UTC')),
-              pa.field('price', pa.int32()),
-              pa.field('make', pa.string()),
-              pa.field('model', pa.string()),
-              pa.field('trim', pa.string()),
-              pa.field('year', pa.int16()),
-              pa.field('mileage', pa.int32()),
-              pa.field('msrp', pa.int32()),
-              pa.field('stock_type', pa.string()),
-              pa.field('fuel_type', pa.string()),
-              pa.field('body_style', pa.string()),
-              pa.field('dealer_name', pa.string()),
-              pa.field('dealer_zip', pa.string()),
-              pa.field('customer_id', pa.string()),
-              pa.field('seller_id', pa.string()),
-              pa.field('dealer_street', pa.string()),
-              pa.field('dealer_city', pa.string()),
-              pa.field('dealer_state', pa.string()),
-              pa.field('dealer_phone', pa.string()),
-              pa.field('dealer_website', pa.string()),
-              pa.field('dealer_cars_com_url', pa.string()),
-              pa.field('dealer_rating', pa.float32()),
-              pa.field('financing_type', pa.string()),
-              pa.field('seller_zip', pa.string()),
-              pa.field('seller_customer_id', pa.string()),
-              pa.field('page_number', pa.int16()),
-              pa.field('position_on_page', pa.int16()),
-              pa.field('trid', pa.string()),
-              pa.field('isa_context', pa.string()),
-              pa.field('body', pa.string()),
-              pa.field('condition', pa.string()),
-              pa.field('obs_year', pa.int32()),
-              pa.field('obs_month', pa.int32()),
-              pa.field('obs_day', pa.int32()),
-          ]))
-
-          schema = pa.schema([
-              pa.field('event_id', pa.int64()),
-              pa.field('listing_id', pa.string()),
-              pa.field('vin', pa.string()),
-              pa.field('price', pa.int32()),
-              pa.field('make', pa.string()),
-              pa.field('model', pa.string()),
-              pa.field('artifact_id', pa.int64()),
-              pa.field('event_type', pa.string()),
-              pa.field('source', pa.string()),
-              pa.field('event_at', pa.timestamp('us', tz='UTC')),
-              pa.field('year', pa.int32()),
-              pa.field('month', pa.int32()),
-          ])
-          from datetime import datetime, timezone
-          row = {
-              # event_id=0: outside the 1-8 range used by the Plan 120 lake-snapshot
-              # fixture's price_observation_events rows (scripts/seed_lake_snapshot_fixture.py),
-              # so unique_stg_price_events_event_id doesn't collide across the two seeds.
-              'event_id': pa.array([0], type=pa.int64()),
-              'listing_id': pa.array(['CI_SEED_L1'], type=pa.string()),
-              'vin': pa.array(['1HGBH41JXMN109186'], type=pa.string()),
-              'price': pa.array([25000], type=pa.int32()),
-              'make': pa.array(['Honda'], type=pa.string()),
-              'model': pa.array(['Civic'], type=pa.string()),
-              'artifact_id': pa.array([1], type=pa.int64()),
-              'event_type': pa.array(['upserted'], type=pa.string()),
-              'source': pa.array(['srp'], type=pa.string()),
-              'event_at': pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp('us', tz='UTC')),
-              'year': pa.array([2026], type=pa.int32()),
-              'month': pa.array([1], type=pa.int32()),
-          }
-          buf = io.BytesIO()
-          pq.write_table(pa.table(row, schema=schema), buf)
-          buf.seek(0)
-          s3.put_object(Bucket='bronze', Key='ops_normalized/price_observation_events/year=2026/month=1/seed.parquet', Body=buf.getvalue())
-          print('Uploaded ops_normalized/price_observation_events/year=2026/month=1/seed.parquet')
-
-          upload_empty('ops_normalized/blocked_cooldown_events/year=2026/month=1/seed.parquet', pa.schema([
-              pa.field('event_id', pa.int64()),
-              pa.field('listing_id', pa.string()),
-              pa.field('event_type', pa.string()),
-              pa.field('num_of_attempts', pa.int32()),
-              pa.field('event_at', pa.timestamp('us', tz='UTC')),
-              pa.field('year', pa.int32()),
-              pa.field('month', pa.int32()),
-          ]))
-          "
+        run: python .github/scripts/create_ci_bucket.py
 
       - name: Seed lake snapshot fixture data
-        # Uploads the shared Plan 120 lake-snapshot fixture (known business-state
-        # scenarios across all four source tables) so the dbt build below
-        # materializes int_listing_state_runs/int_latest_observation against real
-        # data, and so the archiver selector/cohort integration tests have
-        # production-shaped Parquet to run their SQL against. Written under the
-        # reserved 2099 partition so it never collides with the empty-schema
-        # compilation seed above.
+        # The archiver's selector and cohort tests run their SQL against
+        # production-shaped Parquet; this is where that Parquet comes from.
         run: python scripts/seed_lake_snapshot_fixture.py
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -299,48 +882,20 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
-      - name: dbt build (DuckDB — empty data compilation check)
-        working-directory: dbt
-        run: dbt build --profiles-dir . --target duckdb
+      - name: Run Shared integration tests
+        # Plan 162 Stage 1. Plan 131's pack fallback end-to-end against real
+        # MinIO -- the property Stage 4 deletes source objects on the strength
+        # of. INTEGRATION_HTML_DICT_ID is deliberately unset: the dictionary
+        # case declares its own skip rather than asserting against a
+        # dictionary this job never registers.
+        run: pytest tests/integration/shared/ -v -m integration
         env:
-          DUCKDB_PATH: /tmp/ci_analytics.duckdb
-          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
-
-      - name: Run SQL smoke tests (Layer 1)
-        run: pytest tests/integration/sql/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          TEST_VIEWER_DATABASE_URL: postgresql://viewer:ci_viewer@localhost:5432/cartracker
-          DUCKDB_PATH: /tmp/ci_analytics.duckdb
-
-      - name: Run API integration tests (Layer 3)
-        run: pytest tests/integration/ops/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          LOG_PATH: /tmp/ops_test.log
-
-      - name: Install Airflow test dependencies (isolated venv)
-        # Isolated from the "Install dependencies" step above: apache-airflow's
-        # starlette/fastapi constraints conflict with the FastAPI services', so
-        # it gets its own venv here, pinned to match airflow/Dockerfile's base
-        # image tag, mirroring how Airflow is its own container in prod.
-        run: |
-          python -m venv /tmp/airflow-venv
-          /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest psycopg2-binary requests
-
-      - name: Run Airflow integration tests
-        run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}/airflow/dags
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow.db
-          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+          LOG_PATH: /tmp/shared_test.log
 
       - name: Run Archiver integration tests
         run: pytest tests/integration/archiver/ -v -m integration
@@ -351,25 +906,3 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
-
-      - name: Run selector/dbt equivalence tests
-        # Compares the real dbt build above against the Plan 120 selector SQL
-        # over the same MinIO data — the coupling guard requested in Gate B
-        # review (not a hand-copied paraphrase of the dbt logic).
-        run: pytest tests/integration/dbt/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          DUCKDB_PATH: /tmp/ci_analytics.duckdb
-          MINIO_ENDPOINT: http://localhost:9000
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-          MINIO_BUCKET: bronze
-
-      - name: Run dbt_runner integration tests
-        run: pytest tests/integration/dbt_runner/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
-          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          LOG_PATH: /tmp/dbt_runner_test.log
-

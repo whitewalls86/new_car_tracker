@@ -38,7 +38,7 @@ Examples:
   python -m scripts.log_lakehouse_experiment_provenance ... \\
       --tracking-uri http://localhost:15000
 
-See docs/plan_112_refresh_policy_backtesting.md ("Gate B provenance smoke") for the full flow.
+See docs/plans/plan_112_refresh_policy_backtesting.md ("Gate B provenance smoke") for the full flow.
 """
 from __future__ import annotations
 
@@ -151,6 +151,7 @@ def _detect_code_sha() -> Optional[str]:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, check=True,
+            encoding="utf-8",
         )
         return out.stdout.strip() or None
     except (subprocess.SubprocessError, FileNotFoundError, OSError):

@@ -2,7 +2,7 @@
 # the reason documented at the top of models/intermediate/unit_tests.yml: dbt
 # builds a dict fixture by introspecting the mocked input's relation, and the
 # staging models are `ephemeral` on the spark target, which never materializes
-# one. See docs/plan_125_portability_audit.md § F16.
+# one. See docs/reference/plan_125_portability_audit.md § F16.
 #
 # Note for mart_vehicle_snapshot / mart_detail_batch_outcomes / mart_deal_scores:
 # these are still F8-blocked (postgres_scan) and so cannot build on spark at all
@@ -619,6 +619,33 @@ unit_tests:
     expect:
       rows:
         - {attempt_bucket: "1", listing_count: 1}
+
+  # ---------------------------------------------------------------------------
+  # mart_cooldown_event_funnel — hourly transition counts by attempt bucket
+  # ---------------------------------------------------------------------------
+
+  - name: test_cooldown_event_funnel_counts_transitions_and_excludes_clears
+    description: "Each blocked/incremented scrape lands in one bucket; clears do not"
+    model: mart_cooldown_event_funnel
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as event_id,
+                 'L001' as listing_id,
+                 'blocked' as event_type,
+                 1 as num_of_attempts,
+                 cast('2026-01-10 12:10:00+00' as timestamp) as event_at
+          union all select 2, 'L001', 'incremented', 2, cast('2026-01-10 12:20:00+00' as timestamp)
+          union all select 3, 'L002', 'incremented', 4, cast('2026-01-10 12:30:00+00' as timestamp)
+          union all select 4, 'L002', 'cleared', 4, cast('2026-01-10 12:40:00+00' as timestamp)
+          union all select 5, 'L003', 'incremented', 11, cast('2026-01-10 13:00:00+00' as timestamp)
+    expect:
+      rows:
+        - {event_hour: "2026-01-10 12:00:00", attempt_bucket: "1", bucket_order: 1, scrape_count: 1, unique_listing_count: 1}
+        - {event_hour: "2026-01-10 12:00:00", attempt_bucket: "2", bucket_order: 2, scrape_count: 1, unique_listing_count: 1}
+        - {event_hour: "2026-01-10 12:00:00", attempt_bucket: "3-4", bucket_order: 3, scrape_count: 1, unique_listing_count: 1}
+        - {event_hour: "2026-01-10 13:00:00", attempt_bucket: "11+", bucket_order: 5, scrape_count: 1, unique_listing_count: 1}
 
   # ---------------------------------------------------------------------------
   # mart_detail_batch_outcomes — extraction yield per day

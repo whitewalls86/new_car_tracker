@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-05-18 to 2026-05-24</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-05-24">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-05-18 to 2026-05-24. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-05-18-to-2026-05-24">Week of 2026-05-18 to 2026-05-24</h1>
+<p><strong>Window:</strong> 2026-05-18 00:00:00 to 2026-05-24 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-28
+<strong>Commits in window:</strong> 10 (7 non-merge, 3 merges)</p>
+<p>This is a backfill written <strong>96 days after the window closed</strong>. All ten commits
+were authored on May 19 or May 20. The maintainer recalled on 2026-08-28 that
+this period was probably a vacation with some bug-fixing performed from
+Scotland. The recorded timestamps are consistent with that recollection: the
+May 19 work ran from 15:34 to 16:25 BST and the May 20 commits were at 18:27
+BST when converted to Scotland time. Git retained a <code>-05:00</code> author offset,
+however, so the times support the account without independently establishing
+the author's location.</p>
+<p>A scan of all six public GitHub repositories on 2026-08-28 found no work in
+the other five during this week; all visible commits were in
+<code>new_car_tracker</code>.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p>The week was a short DuckDB and MinIO troubleshooting burst. <code>52255f2</code> selected
+DuckDB's <code>httplib</code> HTTPFS implementation to revert behavior changed in DuckDB
+1.5. Five subsequent commits tested the suspected parallelism and connection
+behavior by enabling HTTPFS connection caching, reducing dbt's DuckDB threads
+from four to two and then one, removing the explicit <code>httplib</code> selection, and
+finally restoring four threads (<code>3587754</code>, <code>3877444</code>, <code>4864ee1</code>, <code>5038c4b</code>,
+<code>f819bf0</code>). The sequence records an experiment; its commit text does not state
+whether the underlying theory was confirmed.</p>
+<p>Before pausing development, <code>202f448</code> added a 312-line LinkedIn case study and
+an SVG cover image. The same commit changed the then-current Plan 105 document
+marker from planned to complete, but its subject and body do not name a plan,
+so the commit remains unattributed under the recap's attribution rule.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Nothing moved in the planning index. <code>docs/PLANS.md</code> has no revision in the
+window. The status-marker edit inside the Plan 105 document at <code>202f448</code> is a
+document change, not an index state transition.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The DuckDB experiment ended with connection caching enabled, four threads
+restored and the explicit <code>httplib</code> setting removed. No commit in the window
+states whether the connectivity or parallelism issue was resolved, so the
+outcome cannot be recovered from this week's history alone.</p>
+<p>As of 2026-08-28, Plan 105 is already present in the completed-plan archive;
+the historical marker change therefore needs no planning-state action today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>None of the seven non-merge commits names a plan in its subject or body:</p>
+<ul>
+<li><code>52255f2</code> — <code>revert to pre-1.5.x DuckDB behavior</code></li>
+<li><code>3587754</code> — <code>testing theory the issue is around parrallezation.</code></li>
+<li><code>3877444</code> — <code>testing theory the issue is around parrallezation.</code></li>
+<li><code>4864ee1</code> — <code>testing theory the issue is around parrallezation.</code></li>
+<li><code>5038c4b</code> — <code>testing theory the issue is around parrallezation.</code></li>
+<li><code>f819bf0</code> — <code>testing theory the issue is around parrallezation.</code></li>
+<li><code>202f448</code> — <code>adding docs before pausing development.</code></li>
+</ul>
+<h2 id="merges">Merges</h2>
+<ul>
+<li><code>2f48ac6</code> — PR #127 from <code>fix/duckdb_versioning</code>; the branch names no plan.</li>
+<li><code>1229679</code> — PR #128 from <code>fix/duckdb_versioning</code>; the branch names no plan.</li>
+<li><code>52e3b1d</code> — merge of <code>master</code> from the GitHub remote; no PR or plan is named.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>641 commits</strong> sit after this window's end as of 2026-08-28.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-05-24 23:59:59'   # 641
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+The complete weeks ending May 31, June 7, June 14, June 21, June 28, July 5,
+July 12, July 19, July 26, August 2, August 9, August 16 and August 23 are
+already covered. No following complete week is genuinely uncovered; the week
+ending August 30 is still in progress and is not yet recappable.</p>
+</main>
+</body>
+</html>

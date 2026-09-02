@@ -11,7 +11,17 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+# PLW1514 is preview-gated, and `preview = true` on its own would also turn on
+# every other preview rule in E/F/I -- 207 new violations, all cosmetic,
+# measured 2026-09-01. `explicit-preview-rules` narrows that to the preview
+# rules actually named here, so this costs the 12 sites it found and nothing
+# else. It owns `open` and `tempfile.NamedTemporaryFile`, where its type
+# inference is the right instrument; `read_text`/`write_text` are owned by
+# test_every_text_read_and_write_states_its_encoding, which sees the receiver
+# shapes ruff cannot. Plan 162 Stage 6b.
+select = ["E", "F", "I", "PLW1514"]
+preview = true
+explicit-preview-rules = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -22,3 +32,28 @@ asyncio_mode = "auto"
 markers = [
     "integration: tests that require a real Postgres database",
 ]
+
+[tool.coverage.run]
+source = [
+    "airflow/dags",
+    "archiver",
+    "container_health",
+    "dashboard",
+    "dbt_runner",
+    "ops",
+    "processing",
+    "scraper",
+    "scripts",
+    "shared",
+]
+# Spent means out of the ratchet's denominator -- never deleted, and never
+# untested. `scripts/oneoff/` holds scripts whose owning plan has archived:
+# `tests/scripts/oneoff/` still runs in the unit job, and the assertions that
+# proved those scripts safe still fail if they break. What they stop doing is
+# grading the code being written now. `reconcile_april_detail.py` alone is
+# 3,846 statements, and holding a finished recovery job in the denominator
+# makes the ratchet answer slowly to every stage that comes after it.
+omit = ["scripts/oneoff/*"]
+
+[tool.coverage.report]
+show_missing = true

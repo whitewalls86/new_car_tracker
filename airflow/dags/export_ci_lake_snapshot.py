@@ -121,7 +121,7 @@ with DAG(
     tags=["maintenance", "snapshots"],
     params=DEFAULT_PARAMS,
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("export_ci_lake_snapshot")
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     export = PythonOperator(task_id="export_ci_lake_snapshot", python_callable=_run_export)
 

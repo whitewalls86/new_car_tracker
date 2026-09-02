@@ -3,7 +3,50 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CarTracker</title>
+
+    {# Plan 138 Stage 2. The page answers at / and at /info, so it names which
+       of the two is canonical. Everything below describes the public page only:
+       /dashboard, /admin and the infrastructure tools are behind Google and
+       would be indexed as a sign-in screen. #}
+    <title>CarTracker — a production data pipeline for car prices</title>
+    <meta name="description" content="A production data pipeline tracking new-car prices from Cars.com: continuous collection, a Postgres, MinIO and DuckDB lakehouse, and a deal-score model.">
+    <link rel="canonical" href="https://cartracker.info/">
+
+    <link rel="icon" href="/static_ops/favicon.svg" type="image/svg+xml">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="CarTracker">
+    <meta property="og:url" content="https://cartracker.info/">
+    <meta property="og:title" content="CarTracker — a production data pipeline for car prices">
+    <meta property="og:description" content="Continuous collection from Cars.com, a lakehouse on Postgres, MinIO and DuckDB, and a deal-score model — running on a single host.">
+    <meta property="og:image" content="https://cartracker.info/static_ops/og-preview.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="CarTracker — a production data pipeline for car prices.">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CarTracker — a production data pipeline for car prices">
+    <meta name="twitter:description" content="Continuous collection from Cars.com, a lakehouse on Postgres, MinIO and DuckDB, and a deal-score model — running on a single host.">
+    <meta name="twitter:image" content="https://cartracker.info/static_ops/og-preview.png">
+    <meta name="twitter:image:alt" content="CarTracker — a production data pipeline for car prices.">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareSourceCode",
+      "name": "CarTracker",
+      "description": "A production data pipeline tracking new-car prices from Cars.com.",
+      "url": "https://cartracker.info/",
+      "codeRepository": "https://github.com/whitewalls86/new_car_tracker",
+      "programmingLanguage": ["Python", "SQL"],
+      "author": {
+        "@type": "Person",
+        "name": "Andrew Miller",
+        "url": "https://github.com/whitewalls86"
+      }
+    }
+    </script>
+
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <style>
         body { padding: 2rem 0; }
@@ -66,61 +109,6 @@
         }
         .stat-card .num { font-size: 2.2rem; font-weight: 700; line-height: 1.1; color: var(--pico-primary); }
         .stat-card .label { font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 0.3rem; }
-
-        /* ── Data flow pipeline ── */
-        .pipeline {
-            display: flex;
-            align-items: stretch;
-            gap: 0;
-            margin-bottom: 2.5rem;
-            overflow-x: auto;
-        }
-        /* Layer color tokens */
-        .pipeline-stage[data-layer="ingest"]  { --layer-color: #2563EB; }
-        .pipeline-stage[data-layer="bronze"]  { --layer-color: #B45309; }
-        .pipeline-stage[data-layer="silver"]  { --layer-color: #64748B; }
-        .pipeline-stage[data-layer="mart"]    { --layer-color: #7C3AED; }
-        .pipeline-stage[data-layer="serving"] { --layer-color: #059669; }
-
-        .pipeline-stage {
-            flex: 1;
-            min-width: 130px;
-            border: 1px solid var(--pico-muted-border-color);
-            border-top: 3px solid var(--layer-color, var(--pico-muted-border-color));
-            border-radius: 8px;
-            padding: 0.85rem 1rem;
-        }
-        .pipeline-stage + .pipeline-stage {
-            border-left: none;
-            border-radius: 0;
-        }
-        .pipeline-stage:first-child { border-radius: 8px 0 0 8px; }
-        .pipeline-stage:last-child  { border-radius: 0 8px 8px 0; }
-        .pipeline-stage:only-child  { border-radius: 8px; }
-        .pipeline-stage:not(:last-child) {
-            position: relative;
-        }
-        .pipeline-stage:not(:last-child)::after {
-            content: "→";
-            position: absolute;
-            right: -0.7rem;
-            top: 50%;
-            transform: translateY(-50%);
-            color: var(--pico-muted-color);
-            font-size: 0.9rem;
-            background: var(--pico-background-color);
-            z-index: 1;
-        }
-        .layer-badge {
-            font-size: 0.65rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            color: var(--layer-color, var(--pico-primary));
-            margin-bottom: 0.3rem;
-        }
-        .pipeline-stage strong { font-size: 0.85rem; display: block; margin-bottom: 0.25rem; }
-        .pipeline-stage p { font-size: 0.75rem; color: var(--pico-muted-color); margin: 0; line-height: 1.4; }
 
         /* ── Services grid ── */
         .services-grid {
@@ -230,7 +218,7 @@
             border-radius: 8px;
             padding: 1rem 1.2rem;
         }
-        .highlight-card h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+        .highlight-card h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
         .highlight-card p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
         .highlight-detail-panel {
             grid-column: 1 / -1;
@@ -242,13 +230,13 @@
             color: var(--pico-muted-color);
             line-height: 1.6;
         }
-        .highlight-detail-panel h5 {
+        .highlight-detail-panel h4 {
             font-size: 0.85rem;
             font-weight: 700;
             color: var(--pico-color);
             margin: 1rem 0 0.3rem;
         }
-        .highlight-detail-panel h5:first-child { margin-top: 0; }
+        .highlight-detail-panel h4:first-child { margin-top: 0; }
         .highlight-detail-panel p { margin: 0 0 0.6rem; }
         .highlight-detail-panel p:last-child { margin-bottom: 0; }
 
@@ -277,15 +265,246 @@
             color: var(--pico-muted-color);
             line-height: 1.6;
         }
-        .highlight-detail-panel h5 {
+        .highlight-detail-panel h4 {
             font-size: 0.85rem;
             font-weight: 700;
             color: var(--pico-color);
             margin: 1rem 0 0.3rem;
         }
-        .highlight-detail-panel h5:first-child { margin-top: 0; }
+        .highlight-detail-panel h4:first-child { margin-top: 0; }
         .highlight-detail-panel p { margin: 0 0 0.6rem; }
         .highlight-detail-panel p:last-child { margin-bottom: 0; }
+
+        /* ── Architecture diagram ── */
+        .diagram-wrap {
+            overflow-x: auto;
+            margin-bottom: 0.5rem;
+        }
+        .flow-diagram {
+            display: block;
+            width: 100%;
+            min-width: 680px;
+            height: auto;
+        }
+        /* Layer identity is carried by the badge text inside each node, never by
+           colour alone -- the stroke is reinforcement, not the signal. */
+        .flow-diagram .node rect {
+            fill: var(--pico-card-background-color);
+            stroke: var(--pico-muted-border-color);
+            stroke-width: 1;
+        }
+        .flow-diagram .node[data-layer] rect {
+            stroke: var(--layer-color, var(--pico-muted-border-color));
+            stroke-width: 1.5;
+        }
+        .flow-diagram .node[data-layer="fetch"]       { --layer-color: #2563EB; }
+        .flow-diagram .node[data-layer="parse"]       { --layer-color: #475569; }
+        /* The scrape queue reads the ops tables, so it carries their colour. */
+        .flow-diagram .node[data-layer="decides"]     { --layer-color: #0F766E; }
+        .flow-diagram .node[data-layer="bronze"]      { --layer-color: #B45309; }
+        .flow-diagram .node[data-layer="operational"] { --layer-color: #0F766E; }
+        .flow-diagram .node[data-layer="staging"]     { --layer-color: #0369A1; }
+        .flow-diagram .node[data-layer="silver"]      { --layer-color: #64748B; }
+        .flow-diagram .node[data-layer="mart"]        { --layer-color: #7C3AED; }
+        .flow-diagram .node[data-layer="serving"]     { --layer-color: #059669; }
+        .flow-diagram .node.external rect {
+            fill: none;
+            stroke-dasharray: 4 3;
+        }
+        .flow-diagram .badge {
+            font-size: 8.5px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            fill: var(--layer-color, var(--pico-muted-color));
+        }
+        .flow-diagram .title {
+            font-size: 12px;
+            font-weight: 700;
+            fill: var(--pico-color);
+        }
+        .flow-diagram .sub {
+            font-size: 10px;
+            fill: var(--pico-muted-color);
+        }
+        .flow-diagram .edge {
+            fill: none;
+            stroke: var(--pico-muted-color);
+            stroke-width: 1.4;
+        }
+        /* The control loop is dashed as well as labelled, so the two paths stay
+           distinguishable without relying on colour. */
+        .flow-diagram .edge.loop { stroke-dasharray: 5 4; }
+        .flow-diagram .edge-label {
+            font-size: 9.5px;
+            font-style: italic;
+            fill: var(--pico-muted-color);
+        }
+        .flow-diagram .arrow-head { fill: var(--pico-muted-color); }
+        .diagram-caption {
+            font-size: 0.8rem;
+            color: var(--pico-muted-color);
+            margin: 0 0 1.25rem;
+        }
+
+        /* ── Layer / grain table ── */
+        .layer-table-wrap {
+            overflow-x: auto;
+            margin-bottom: 1rem;
+        }
+        .layer-table {
+            width: 100%;
+            min-width: 640px;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+            margin: 0;
+        }
+        .layer-table th,
+        .layer-table td {
+            text-align: left;
+            vertical-align: top;
+            padding: 0.55rem 0.7rem;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .layer-table th {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--pico-muted-color);
+            border-bottom-width: 2px;
+        }
+        .layer-table td { color: var(--pico-muted-color); }
+        .layer-table tbody tr:last-child td { border-bottom: none; }
+        .layer-table .layer-name {
+            white-space: nowrap;
+            font-weight: 700;
+            color: var(--pico-color);
+            border-left: 3px solid var(--layer-color, var(--pico-muted-border-color));
+        }
+        .layer-table tr[data-layer="bronze"]      { --layer-color: #B45309; }
+        .layer-table tr[data-layer="operational"] { --layer-color: #0F766E; }
+        .layer-table tr[data-layer="staging"]     { --layer-color: #0369A1; }
+        .layer-table tr[data-layer="silver"]      { --layer-color: #64748B; }
+        .layer-table tr[data-layer="mart"]        { --layer-color: #7C3AED; }
+
+        .subhead {
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin: 1.25rem 0 0.6rem;
+        }
+
+        /* ── Shared section copy ── */
+        .section-lede {
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+            margin-bottom: 0.85rem;
+        }
+        .stats-freshness {
+            font-size: 0.8rem;
+            color: var(--pico-muted-color);
+            margin: 0.75rem 0 0;
+        }
+        .flow-note {
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+            margin: 0 0 2.5rem;
+        }
+        .footer-legal {
+            font-size: 0.75rem;
+            color: var(--pico-muted-color);
+            line-height: 1.6;
+            margin: 1rem 0 0;
+        }
+
+        /* ── Platform evolution callout ── */
+        .evolution {
+            border: 1px solid var(--pico-muted-border-color);
+            border-left: 3px solid #7C3AED;
+            border-radius: 8px;
+            padding: 1.1rem 1.4rem;
+            margin-bottom: 2.5rem;
+            background: var(--pico-card-background-color);
+        }
+        .evolution .track-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #7C3AED;
+            border: 1px solid #7C3AED;
+            border-radius: 4px;
+            padding: 0.15rem 0.45rem;
+            margin-bottom: 0.6rem;
+        }
+        .evolution p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0 0 0.6rem; }
+        .evolution ul {
+            margin: 0 0 0.6rem;
+            padding-left: 1.2rem;
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+        }
+        .evolution li { margin-bottom: 0.25rem; }
+        .evolution p:last-child { margin-bottom: 0; }
+
+        /* ── Recent work ── */
+        .work-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .work-column {
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: 8px;
+            padding: 1rem 1.2rem;
+        }
+        .work-column h3 {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--pico-muted-color);
+            margin: 0 0 0.75rem;
+        }
+        .work-list { list-style: none; margin: 0; padding: 0; }
+        .work-list li {
+            font-size: 0.85rem;
+            padding-bottom: 0.7rem;
+            margin-bottom: 0.7rem;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .work-list li:last-child {
+            padding-bottom: 0;
+            margin-bottom: 0;
+            border-bottom: none;
+        }
+        .work-list .work-title { font-weight: 600; display: block; margin-bottom: 0.15rem; }
+        .work-list .work-summary { color: var(--pico-muted-color); font-size: 0.82rem; }
+        .work-list .work-meta {
+            display: block;
+            margin-top: 0.25rem;
+            font-size: 0.72rem;
+            color: var(--pico-muted-color);
+        }
+        .work-empty { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
+        .work-footnote { font-size: 0.8rem; color: var(--pico-muted-color); margin: 0 0 2.5rem; }
+
+        /* ── Testing and evidence ── */
+        .evidence-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .evidence-card {
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: 8px;
+            padding: 0.9rem 1.1rem;
+        }
+        .evidence-card h3 { margin: 0 0 0.3rem; font-size: 0.88rem; }
+        .evidence-card p { font-size: 0.82rem; color: var(--pico-muted-color); margin: 0; }
+        .evidence-note { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0 0 2.5rem; }
 
         /* ── Footer CTA ── */
         .footer-cta {
@@ -320,15 +539,16 @@
             <p>
                 CarTracker started as a personal project — I was car shopping and wanted a data-driven
                 way to spot a good deal before it disappeared. What began as a simple scraper grew into
-                a full production pipeline: continuous collection across 13+ make/model pairs, a lakehouse
-                architecture across Postgres, MinIO, and DuckDB, and a deal-score model that turns 10M+
-                raw observations into a single number. It's as much a learning project as a portfolio
-                piece — every architectural decision in here was made, reconsidered, and sometimes replaced
-                as the system grew into something that actually had to work.
+                a production pipeline: continuous collection from Cars.com, a lakehouse built on Postgres,
+                MinIO, and DuckDB, and a deal-score model that turns a long history of price observations
+                into a single number. All of it runs on a single host, which is the constraint most of
+                the interesting decisions here answer to. It is as much a learning project as a portfolio
+                piece — every architectural decision was made, reconsidered, and sometimes replaced as
+                the system grew into something that actually had to work.
             </p>
             <div class="hero-cta">
-                <a href="/request-access" role="button">Request Access</a>
-                <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
+                <a href="#architecture" role="button">Explore the architecture</a>
+                <a href="/request-access" role="button" class="secondary">Sign in to request read-only access</a>
             </div>
             <!-- Drop demo.mp4 (or demo.gif) into ops/static_ops/ to activate this preview -->
             <figure class="demo-media">
@@ -373,19 +593,25 @@
                     <div class="label">Make/model pairs tracked</div>
                 </div>
                 {% endif %}
-                {% if stats.last_pipeline_run_iso %}
+                {% if stats.analytics_data_through_iso %}
                 <div class="stat-card">
                     <div class="num" style="font-size:1.1rem; padding-top:0.55rem;">
-                        <time id="last-run-time" datetime="{{ stats.last_pipeline_run_iso }}">{{ stats.last_pipeline_run_iso }}</time>
+                        <time id="analytics-data-through" datetime="{{ stats.analytics_data_through_iso }}">{{ stats.analytics_data_through_iso }}</time>
                     </div>
-                    <div class="label">Last pipeline run</div>
+                    <div class="label">Analytics data through{% if stats_snapshot.stale %} (stale){% endif %}</div>
                 </div>
                 {% endif %}
             </div>
+            <p class="stats-freshness">
+                Every number above comes from the analytics marts, as of the timestamp shown. The marts
+                refresh hourly, so these are recent rather than live. Counts describing the repository
+                itself — services, DAGs, models, tests — are deliberately rounded on this page, because an
+                exact figure in hand-written copy is a number nobody updates.
+            </p>
         </section>
         <script>
             (function () {
-                var el = document.getElementById('last-run-time');
+                var el = document.getElementById('analytics-data-through');
                 if (!el) return;
                 var d = new Date(el.getAttribute('datetime'));
                 if (isNaN(d)) return;
@@ -400,39 +626,198 @@
         <!-- ── 3. How data flows ── -->
         <section>
             <h2>How data flows</h2>
-            <div class="pipeline">
-                <div class="pipeline-stage" data-layer="ingest">
-                    <div class="layer-badge">Ingest</div>
-                    <strong>Scraper → MinIO</strong>
-                    <p>Raw HTML artifacts written to MinIO object storage, partitioned by date and artifact type.</p>
-                </div>
-                <div class="pipeline-stage" data-layer="bronze">
-                    <div class="layer-badge">Bronze</div>
-                    <strong>Processing → Postgres</strong>
-                    <p>Artifacts claimed from the queue, parsed, and written to staging event tables in Postgres.</p>
-                </div>
-                <div class="pipeline-stage" data-layer="silver">
-                    <div class="layer-badge">Silver</div>
-                    <strong>Archiver → Parquet</strong>
-                    <p>Archiver bulk-flushes staging events to Parquet files on MinIO, partitioned by source and date.</p>
-                </div>
-                <div class="pipeline-stage" data-layer="mart">
-                    <div class="layer-badge">Mart</div>
-                    <strong>dbt + DuckDB</strong>
-                    <p>dbt reads Parquet from MinIO and Postgres exports, producing silver and mart layers in DuckDB.</p>
-                </div>
-                <div class="pipeline-stage" data-layer="serving">
-                    <div class="layer-badge">Serving</div>
-                    <strong>Dashboard</strong>
-                    <p>Streamlit queries the DuckDB mart layer directly for price history, deal scores, and trends.</p>
-                </div>
+            <div class="diagram-wrap">
+                <svg class="flow-diagram" viewBox="0 0 720 740" role="img"
+                     aria-labelledby="flow-title flow-desc">
+                    <title id="flow-title">CarTracker data flow, from fetch to dashboard</title>
+                    <desc id="flow-desc">
+                        The scraper fetches a page from Cars.com and writes it two places at once: the
+                        compressed HTML to MinIO as bronze, and an artifact pointer with its claim to
+                        Postgres. Processing reads the stored HTML and again writes two places in a
+                        single Postgres transaction: the current row per entity in the ops schema, and
+                        the matching event into an append-only staging buffer. Those two writes begin
+                        two separate paths. The current state feeds the scrape queue view, which
+                        decides what the scraper fetches next, closing a control loop. The event buffer
+                        is exported by the archiver to partitioned Parquet on MinIO, which dbt and
+                        DuckDB build into mart tables, which the dashboard and this page read.
+                    </desc>
+
+                    <defs>
+                        <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path class="arrow-head" d="M 0 0 L 10 5 L 0 10 z"></path>
+                        </marker>
+                    </defs>
+
+                    <!-- Edges first, so node fills sit on top of the line ends -->
+                    <g marker-end="url(#flow-arrow)">
+                        <path class="edge" d="M 360 40 V 76"></path>
+                        <path class="edge" d="M 360 126 V 150 H 145 V 172"></path>
+                        <path class="edge" d="M 360 126 V 150 H 575 V 172"></path>
+                        <path class="edge" d="M 145 234 V 258 H 360 V 280"></path>
+                        <path class="edge" d="M 575 234 V 258 H 360 V 280"></path>
+                        <path class="edge" d="M 360 330 V 356 H 145 V 384"></path>
+                        <path class="edge" d="M 360 330 V 356 H 575 V 384"></path>
+                        <path class="edge" d="M 145 446 V 496"></path>
+                        <path class="edge" d="M 575 446 V 496"></path>
+                        <path class="edge" d="M 575 558 V 592"></path>
+                        <path class="edge" d="M 575 644 V 676"></path>
+                        <path class="edge loop" d="M 145 558 V 592 H 10 V 101 H 260"></path>
+                    </g>
+
+                    <text class="edge-label" x="585" y="476">archiver exports,</text>
+                    <text class="edge-label" x="585" y="488">then deletes</text>
+                    <text class="edge-label" x="135" y="94" text-anchor="middle">what to fetch next</text>
+
+                    <!-- Source -->
+                    <g class="node external">
+                        <rect x="290" y="8" width="140" height="32" rx="6"></rect>
+                        <text class="sub" x="360" y="28" text-anchor="middle">Cars.com</text>
+                    </g>
+
+                    <!-- Fetch -->
+                    <g class="node" data-layer="fetch">
+                        <rect x="260" y="76" width="200" height="50" rx="6"></rect>
+                        <text class="badge" x="272" y="94">FETCH</text>
+                        <text class="title" x="272" y="110">Scraper</text>
+                    </g>
+
+                    <!-- The first fan-out -->
+                    <g class="node" data-layer="bronze">
+                        <rect x="20" y="172" width="250" height="62" rx="6"></rect>
+                        <text class="badge" x="32" y="190">BRONZE</text>
+                        <text class="title" x="32" y="206">Compressed HTML</text>
+                        <text class="sub" x="32" y="221">immutable object, MinIO</text>
+                    </g>
+                    <g class="node" data-layer="operational">
+                        <rect x="450" y="172" width="250" height="62" rx="6"></rect>
+                        <text class="badge" x="462" y="190">OPERATIONAL</text>
+                        <text class="title" x="462" y="206">Artifact pointer + claim</text>
+                        <text class="sub" x="462" y="221">Postgres ops</text>
+                    </g>
+
+                    <!-- Parse -->
+                    <g class="node" data-layer="parse">
+                        <rect x="260" y="280" width="200" height="50" rx="6"></rect>
+                        <text class="badge" x="272" y="298">PARSE</text>
+                        <text class="title" x="272" y="314">Processing</text>
+                    </g>
+
+                    <!-- The second fan-out: the one that matters -->
+                    <g class="node" data-layer="operational">
+                        <rect x="20" y="384" width="250" height="62" rx="6"></rect>
+                        <text class="badge" x="32" y="402">OPERATIONAL</text>
+                        <text class="title" x="32" y="418">HOT state</text>
+                        <text class="sub" x="32" y="433">one current row per entity</text>
+                    </g>
+                    <g class="node" data-layer="staging">
+                        <rect x="450" y="384" width="250" height="62" rx="6"></rect>
+                        <text class="badge" x="462" y="402">STAGING</text>
+                        <text class="title" x="462" y="418">Event buffer</text>
+                        <text class="sub" x="462" y="433">append-only, Postgres staging</text>
+                    </g>
+
+                    <text class="edge-label" x="360" y="370" text-anchor="middle">
+                        both writes, one transaction
+                    </text>
+
+                    <!-- Left path: the control loop -->
+                    <g class="node" data-layer="decides">
+                        <rect x="20" y="496" width="250" height="62" rx="6"></rect>
+                        <text class="badge" x="32" y="514">DECIDES</text>
+                        <text class="title" x="32" y="530">Scrape queue</text>
+                        <text class="sub" x="32" y="545">a Postgres view, read in place</text>
+                    </g>
+
+                    <!-- Right path: the analytical record -->
+                    <g class="node" data-layer="silver">
+                        <rect x="450" y="496" width="250" height="62" rx="6"></rect>
+                        <text class="badge" x="462" y="514">SILVER</text>
+                        <text class="title" x="462" y="530">Parquet history</text>
+                        <text class="sub" x="462" y="545">partitioned by source and date</text>
+                    </g>
+                    <g class="node" data-layer="mart">
+                        <rect x="450" y="592" width="250" height="52" rx="6"></rect>
+                        <text class="badge" x="462" y="610">MART</text>
+                        <text class="title" x="462" y="626">dbt + DuckDB marts</text>
+                    </g>
+                    <g class="node" data-layer="serving">
+                        <rect x="450" y="676" width="250" height="52" rx="6"></rect>
+                        <text class="badge" x="462" y="694">SERVING</text>
+                        <text class="title" x="462" y="710">Dashboard, and this page</text>
+                    </g>
+                </svg>
             </div>
+            <p class="diagram-caption">
+                The two forks are the whole design. The scraper writes the page and its pointer
+                separately; processing writes current state and its event <strong>in one
+                transaction</strong>, and those two writes begin two paths that never rejoin. The left
+                path is a loop — current state decides what gets fetched next, in a Postgres view read
+                transactionally by the same query that claims the work. The right path is a record, and
+                nothing on it can block a fetch.
+            </p>
+
+            <h3 class="subhead">What lives where, and at what grain</h3>
+            <div class="layer-table-wrap">
+                <table class="layer-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Layer</th>
+                            <th scope="col">Physical home</th>
+                            <th scope="col">Grain</th>
+                            <th scope="col">Why it exists</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr data-layer="bronze">
+                            <td class="layer-name">Bronze</td>
+                            <td>MinIO</td>
+                            <td>One compressed HTML object per fetched results or detail page</td>
+                            <td>Preserves exactly what the site returned, so parser changes are replayable</td>
+                        </tr>
+                        <tr data-layer="operational">
+                            <td class="layer-name">Operational</td>
+                            <td>Postgres <code>ops</code></td>
+                            <td>One current row per artifact, listing, VIN mapping, claim, or cooldown</td>
+                            <td>Low-latency point lookups, transactions, leases, and conflict handling</td>
+                        </tr>
+                        <tr data-layer="staging">
+                            <td class="layer-name">Staging buffers</td>
+                            <td>Postgres <code>staging</code></td>
+                            <td>Append-only mutations and typed observations awaiting bulk export</td>
+                            <td>Decouples small transactional writes from columnar object-store writes</td>
+                        </tr>
+                        <tr data-layer="silver">
+                            <td class="layer-name">Silver</td>
+                            <td>MinIO (Parquet)</td>
+                            <td>One typed observation per listing appearance, partitioned by source and date</td>
+                            <td>Durable analytical history, cheap and scan-friendly</td>
+                        </tr>
+                        <tr data-layer="mart">
+                            <td class="layer-name">Mart</td>
+                            <td>DuckDB, built by dbt</td>
+                            <td>VIN-, listing-, hour-, cohort-, and benchmark-grain products</td>
+                            <td>Turns history into dashboard-ready business meaning</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="flow-note">
+                The division that makes the rest of it work: <strong>Postgres owns what the pipeline needs
+                right now; Parquet owns what happened.</strong> Current state is small, mutable, and read by
+                key. History is append-only, columnar, and read in scans. Serving both from one store is
+                the design this pipeline started with, and replaced.
+            </p>
         </section>
 
-        <!-- ── 4. Architecture at a glance ── -->
-        <section>
-            <h2>Architecture at a glance</h2>
-            <p style="font-size:0.82rem; color:var(--pico-muted-color); margin-bottom:0.85rem;">Click any card to learn why it was built that way.</p>
+        <!-- ── 4. Production architecture ── -->
+        <section id="architecture">
+            <h2>Production architecture</h2>
+            <p class="section-lede">
+                The platform runs as more than two dozen long-running services on a single Compose host,
+                alongside a few profile-gated and one-shot ones. These are the parts worth explaining.
+                Click any card for the reasoning behind it.
+            </p>
             <div class="services-grid" id="services-grid">
 
                 <div class="service-card" data-card="scraper">
@@ -443,14 +828,34 @@
                             <span class="service-badge">FastAPI</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>Continuously surveys Cars.com across 40+ make/model pairs — capturing market-level search results every 15 minutes and drilling into individual listings for full vehicle detail.</p>
+                        <p>Fetches results and detail pages on a rotation across the tracked make/model pairs, and stores the compressed HTML without parsing it.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>Two-pass collection strategy: broad market sweeps surface new listings and price changes; targeted detail scrapes enrich each listing with full specs, trim, dealer, and history</li>
-                                <li>Raw HTML artifacts stored to MinIO on every pass — the source of truth is always replayable, not dependent on what the parser could extract at the time</li>
-                                <li>Anti-detection layer (Chrome TLS fingerprinting + Cloudflare bypass) keeps the collection running continuously without manual intervention</li>
-                                <li>Adaptive backoff system tracks block events per listing and backs off exponentially — scraper recovers on its own without operator involvement</li>
-                                <li>Process-wide session cache avoids redundant auth handshakes across concurrent scrape workers</li>
+                                <li>Two-pass collection: broad market sweeps surface new listings and price changes; targeted detail fetches enrich each listing with specs, trim, dealer, and history</li>
+                                <li>Raw HTML is stored on every pass, so the source of truth is always replayable rather than limited to whatever the parser could extract at the time</li>
+                                <li>Requests are issued through an HTTP client whose TLS behavior matches a mainstream browser, so the site sees a client it recognises rather than a library default</li>
+                                <li>Refusals are governed by bounded retries and an adaptive per-listing cooldown that lengthens as blocks accumulate — the fetch path backs off rather than hammering</li>
+                                <li>A process-wide session cache avoids repeating the bootstrap handshake across concurrent workers</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card" data-card="solver">
+                    <div class="service-logo-placeholder">SLV</div>
+                    <div class="service-info">
+                        <div class="title-row">
+                            <strong>Solver sidecar</strong>
+                            <span class="service-badge">Browser</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Performs a browser-assisted session bootstrap for pages that require one, and hands the resulting session back to the scraper over a small HTTP API.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Some pages will not serve a plain HTTP client at all until a real browser has completed a session handshake — the sidecar is where that browser lives, so the scraper stays a simple HTTP client</li>
+                                <li>The live container is <code>trawl</code>. An older <code>flaresolverr</code> container is still defined and still running, but has served no request since July; it is kept deliberately so health coverage never exempts a service believed unused</li>
+                                <li>The wire protocol genuinely is FlareSolverr's v1 API, and the environment variable kept its original name — the implementation changed, the interface did not</li>
+                                <li>Isolating it means the memory cost of running a browser stays in one container that can be recycled on its own schedule, away from the fetch path</li>
                             </ul>
                         </div>
                     </div>
@@ -464,33 +869,13 @@
                             <span class="service-badge">FastAPI</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>Transforms raw HTML artifacts into structured price observations — separating the data the pipeline needs right now from the data that feeds long-term analytics.</p>
+                        <p>Turns stored HTML into structured observations, separating what the pipeline needs right now from what long-term analytics needs eventually.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>Every artifact is parsed from the original stored HTML — if the parser improves, historical data can be reprocessed from source without re-scraping</li>
-                                <li>HOT tables (<code>ops.*</code>) hold current state for pipeline operations — fast, minimal, always up to date</li>
-                                <li>Staging event tables buffer every observation until the archiver flushes them to Parquet — the silver layer is built from this event stream, not from HOT table snapshots</li>
-                                <li>Idempotent by VIN: the same listing can be processed multiple times without producing duplicate records, so retries and replays are safe</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="service-card" data-card="ops">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
-                    <div class="service-info">
-                        <div class="title-row">
-                            <strong>Ops</strong>
-                            <span class="service-badge">FastAPI</span>
-                            <span class="why-cta">Why?</span>
-                        </div>
-                        <p>The control plane for the stack — handles auth, configuration, and deploy coordination so every other service stays stateless and focused on its own job.</p>
-                        <div class="card-detail" hidden>
-                            <ul>
-                                <li>Caddy calls <code>GET /auth/check</code> on every protected request — Ops validates the Google OAuth token and DB role so no other service needs to know about auth at all</li>
-                                <li>Search configs, tracked make/model pairs, and user roles all live here — one place to change pipeline behavior without touching service code</li>
-                                <li>Deploy intent state machine signals all services to drain before a container restart — zero-downtime deploys without an external orchestrator</li>
-                                <li>Claim lifecycle management prevents duplicate scrape work across concurrent workers — Ops owns the coordination, scraper and processing just ask permission</li>
+                                <li>Every artifact is parsed from the original stored HTML — if the parser improves, history can be reprocessed from source without re-fetching a single page</li>
+                                <li>HOT tables in the <code>ops</code> schema hold one current row per entity: listing, VIN mapping, claim, cooldown. Small, always current, read by key</li>
+                                <li><strong>The current row and its event are written in the same Postgres transaction.</strong> Staging event tables are the append-only buffer beside the HOT row, not a separate pass over it</li>
+                                <li>Idempotent by VIN, so the same listing can be processed more than once without producing duplicate records — which is what makes retries and replays safe</li>
                             </ul>
                         </div>
                     </div>
@@ -504,13 +889,34 @@
                             <span class="service-badge">FastAPI</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>Bridges the operational and analytical data systems — draining Postgres staging tables into partitioned Parquet on MinIO so each system stays focused on what it does best.</p>
+                        <p>Moves the permanent record out of Postgres — exporting the staging event buffers to partitioned Parquet on object storage, then deleting the rows it exported.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>Postgres stays lean and fast because it only holds what the pipeline needs right now — the Archiver is what makes that possible by moving the permanent record out on a schedule</li>
-                                <li>Staging tables are intentionally short-lived: written to during processing, flushed to Parquet by the Archiver, then truncated — Postgres never becomes the analytics store</li>
-                                <li>Parquet files are hive-partitioned by source and date on MinIO — structured for the analytical queries that DuckDB and dbt will run downstream</li>
-                                <li>Flush and truncate happen in a single transaction — if the write to MinIO fails, nothing is lost and the next run picks up where it left off</li>
+                                <li>Postgres stays lean because it only holds current state and a short buffer; the archiver is what makes that true, by moving the permanent record out on a schedule</li>
+                                <li><strong>It does not populate the HOT tables.</strong> Processing already wrote those. The archiver reads the event buffer, writes Parquet, and deletes what it exported — nothing else</li>
+                                <li>Parquet is hive-partitioned by source and date, which is the layout the downstream DuckDB and dbt queries actually scan</li>
+                                <li>Export and delete happen together, so a failed write to object storage loses nothing and the next run picks up where it stopped</li>
+                                <li>It also compacts silver partitions on a schedule, so readers never double-count a row that was written twice</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card" data-card="pack-worker">
+                    <div class="service-logo-placeholder">PACK</div>
+                    <div class="service-info">
+                        <div class="title-row">
+                            <strong>Pack worker</strong>
+                            <span class="service-badge">Packing</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Packs closed months of bronze HTML into immutable packs with a columnar index, and prunes the sources only after verifying the packed copy reads back identically.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>It is a separate service for one reason: packing a month is a long operation, and it must not be able to starve the archiver's short, frequent requests by sharing its worker pool</li>
+                                <li>Reading one artifact out of a pack is a ranged GET plus a single frame decompression, not a scan — the index makes the pack random-access</li>
+                                <li>A source object is deleted only after the packed replacement returns byte-identical content, verified against a hash held in the pack's sidecar index</li>
+                                <li>See <em>Storage economics</em> below for what packing was actually solving, which turned out not to be bytes</li>
                             </ul>
                         </div>
                     </div>
@@ -524,17 +930,17 @@
                     <div class="service-info">
                         <div class="title-row">
                             <strong>dbt Runner</strong>
-                            <span class="service-badge">dbt + DuckDB</span>
+                            <span class="service-badge">DuckDB</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>The analytical layer — transforms the raw Parquet event stream into tested, documented data models that answer real questions about the market.</p>
+                        <p>The analytical layer — 20+ dbt models across staging, intermediate, and mart layers, built by DuckDB reading Parquet straight from object storage.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>DuckDB reads Parquet directly from MinIO via the <code>httpfs</code> extension — no managed warehouse needed, the lake <em>is</em> the warehouse</li>
-                                <li>Models are layered by responsibility: staging cleans and types the raw events, intermediate builds reusable assets like price history and national benchmarks, mart tables answer specific questions — deal scores, inventory coverage, scraper health</li>
-                                <li>Deal score model combines five factors (MSRP discount, national price percentile, days on market, price drop history, inventory supply) into a single 0–100 score with tier labels — built in SQL so the logic is transparent and testable</li>
-                                <li>dbt tests run on every pipeline execution — transformation correctness is enforced the same way application correctness is, not left to manual spot-checks</li>
-                                <li>Exponential backoff logic for blocked listings lives entirely in a dbt model — keeping operational concerns queryable and auditable alongside the data they affect</li>
+                                <li>DuckDB reads Parquet from MinIO via the <code>httpfs</code> extension, so there is no separate warehouse cluster to run or pay for — the lake <em>is</em> the warehouse</li>
+                                <li>Models are layered by responsibility: staging cleans and types the raw events, intermediate builds reusable assets like price history and national benchmarks, marts answer specific questions</li>
+                                <li>The deal score combines MSRP discount, national price percentile, days on market, price-drop history, and inventory supply into a single 0–100 score with tier labels — written in SQL so the logic is readable and testable</li>
+                                <li>dbt tests run with every build, so transformation correctness is enforced the same way application correctness is</li>
+                                <li><strong>What does not live here:</strong> the executable 403 backoff. dbt reads the same events for cohort, funnel, and block-rate analysis, but the decision about whether a listing can be claimed is a Postgres view — see <em>Operational state and analytical history</em> below</li>
                             </ul>
                         </div>
                     </div>
@@ -548,14 +954,34 @@
                             <span class="service-badge">Airflow</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>Coordinates the full pipeline — scraping, processing, archiving, and analytics — across a dozen independent services that have no direct knowledge of each other.</p>
+                        <p>Sequences the whole pipeline — fetching, processing, archival, maintenance, and analytics — across services that have no direct knowledge of each other.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>Without an orchestration layer, each service would need to know what comes next — Airflow is the only thing that knows the full sequence, so the services themselves stay decoupled</li>
-                                <li>Migrated from n8n: workflow logic in n8n lived in a UI, not in code — it couldn't be unit tested, version controlled, or reviewed like the rest of the codebase</li>
-                                <li>Thin-DAG, fat-service pattern: DAGs contain only scheduling and HTTP calls, all business logic lives in the services — the testable surface area is in Python, not in a workflow config file</li>
-                                <li>Twelve DAGs covering scrape rotation, artifact processing, staging flush, dbt builds, orphan claim expiry, queue cleanup, and deployment coordination</li>
-                                <li>Deploy intent DAG coordinates zero-downtime restarts — Airflow doesn't just run the pipeline, it manages the pipeline's own lifecycle</li>
+                                <li>Without an orchestration layer each service would need to know what runs next; Airflow is the only component that knows the full sequence, which is what keeps the services decoupled</li>
+                                <li>More than a dozen DAGs cover scrape rotation, artifact processing, staging flush, dbt builds, orphan claim expiry, queue cleanup, storage maintenance, and deploy coordination</li>
+                                <li><strong>One DAG owns the scheduled analytics sequence.</strong> <code>hourly_analytics_refresh</code> flushes staging events, flushes silver observations, then builds the models in order — which is why the component DAGs are deliberately manual-only rather than each running on its own timer</li>
+                                <li>Thin DAGs, fat services: a DAG task carries scheduling and an HTTP call, and every piece of business logic it invokes is testable without Airflow running at all</li>
+                                <li>That boundary is what makes the orchestrator replaceable — if schedules were ever replaced by events, a consumer would call the same endpoints the DAG tasks call today</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card" data-card="ops">
+                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
+                    <div class="service-info">
+                        <div class="title-row">
+                            <strong>Ops</strong>
+                            <span class="service-badge">FastAPI</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The control plane — authorization, configuration, claim coordination, deploy sequencing, and the page you are reading right now.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Caddy calls <code>GET /auth/check</code> on every protected request, and Ops answers with the caller's role — so no other service in the stack contains any authorization code at all</li>
+                                <li>Search configs, tracked make/model pairs, and user roles live here: one place to change pipeline behavior without editing service code</li>
+                                <li>Claim lifecycle management prevents two workers from fetching the same listing — Ops owns the coordination, and the workers just ask permission</li>
+                                <li>The deploy intent state machine signals every service to drain before its container is replaced, which is what makes a redeploy a sequence rather than a restart</li>
                             </ul>
                         </div>
                     </div>
@@ -569,13 +995,33 @@
                             <span class="service-badge">Streamlit</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>The payoff of the pipeline — fast, recent market intelligence made possible by architectural decisions made at every layer upstream.</p>
+                        <p>The payoff — price history, deal scores, inventory coverage, and pipeline health, read from the DuckDB marts. Access-gated; the live stats above are its public slice.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>Sub-second query performance on 57M+ observations comes from the layers below: hive-partitioned Parquet, DuckDB's columnar engine, and pre-aggregated mart tables — the dashboard itself does almost no work</li>
-                                <li>Data is recent, not live — the mart layer refreshes hourly, which is the right tradeoff for analytical queries that don't need to be real-time</li>
-                                <li>Surfaces pipeline health alongside market data — scraper block rates, processing lag, and stale listings are visible here, turning operational issues into something you can see rather than hunt for in logs</li>
-                                <li>Access-gated behind the same OAuth + DB role layer as the rest of the stack — the dashboard is a consumer of the architecture, not a special case in it</li>
+                                <li>It is fast because of the layers underneath it: hive-partitioned Parquet, DuckDB's columnar engine, and pre-aggregated marts. The dashboard itself does almost no work, which is the intended outcome</li>
+                                <li>Data is recent, not live — the marts refresh hourly, which is the right trade for analytical questions that do not need to be real-time, and the page says so rather than implying otherwise</li>
+                                <li>It surfaces pipeline health beside market data: block rates, processing lag, stale listings. Operational problems become something you can see rather than something you go looking for in logs</li>
+                                <li>It is gated by the same authorization layer as everything else — a consumer of the architecture, not a special case in it</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="service-card" data-card="postgres">
+                    <img class="service-logo" src="https://cdn.simpleicons.org/postgresql/4169E1" alt="PostgreSQL" onerror="this.style.display='none'">
+                    <div class="service-info">
+                        <div class="title-row">
+                            <strong>Postgres</strong>
+                            <span class="service-badge">State</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Holds current operational state and the short-lived event buffers beside it — and, deliberately, nothing else.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Three schemas with three jobs: configuration, current operational state, and short-lived append-only buffers awaiting export</li>
+                                <li>Because only the current row per entity stays, the table the scrape queue reads stays small and deletable no matter how much history the project accumulates</li>
+                                <li>Every schema change is a versioned migration applied automatically on deploy — 40+ of them, including expand/contract sequences that let readers and writers change in separate releases</li>
+                                <li>What it is <em>not</em>: the analytics store. An early version kept an append-only price log here, and that is the decision the architecture below exists to correct</li>
                             </ul>
                         </div>
                     </div>
@@ -586,17 +1032,16 @@
                     <div class="service-info">
                         <div class="title-row">
                             <strong>MinIO</strong>
-                            <span class="service-badge">S3-compatible</span>
+                            <span class="service-badge">S3</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>The storage backbone of the lakehouse — keeps the analytical record out of Postgres and in a format purpose-built for the queries that matter.</p>
+                        <p>The storage backbone — replayable bronze HTML and the permanent Parquet history, in a format built for the queries that read it.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>Postgres was never meant to hold years of append-only observation history — query performance degrades, storage costs grow, and the operational database starts doing two jobs badly instead of one well</li>
-                                <li>Moving the historical record to Parquet on MinIO lets Postgres stay small and fast for pipeline operations while the analytical layer scales independently</li>
-                                <li>Parquet's columnar format is why DuckDB can query 57M+ observations in under a second — row-oriented databases like Postgres simply can't match that for this access pattern</li>
-                                <li>S3-compatible by design: MinIO is a right-sized choice for a single-server deployment, but the interface is identical to AWS S3 — the entire stack ports to cloud storage without a code change</li>
-                                <li>Two tiers: raw GZIP HTML artifacts (bronze, 30-day retention) and Parquet observations (silver, indefinite) — retention policy matches the value of the data at each layer</li>
+                                <li>Two tiers with different retention because the data has different value at each: compressed bronze HTML, packed and pruned on a monthly cycle, and Parquet observations kept indefinitely</li>
+                                <li>The columnar format is why DuckDB can scan the full observation history quickly; a row-oriented store cannot match it for this access pattern, whatever its size</li>
+                                <li>S3-compatible on purpose: MinIO is right-sized for a single-server deployment, but the interface is the same as cloud object storage, so the stack ports without a code change</li>
+                                <li>Bronze objects are written as independently decompressible frames — see <em>Storage economics</em> below for why that detail is load-bearing</li>
                             </ul>
                         </div>
                     </div>
@@ -606,59 +1051,39 @@
                     <img class="service-logo" src="https://cdn.simpleicons.org/caddy/22D3EE" alt="Caddy" onerror="this.style.display='none'">
                     <div class="service-info">
                         <div class="title-row">
-                            <strong>Caddy</strong>
-                            <span class="service-badge">Reverse Proxy</span>
+                            <strong>Caddy + oauth2-proxy</strong>
+                            <span class="service-badge">Edge</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>The front door — handles TLS, Google OAuth, and role-based access so the rest of the stack is visible to the right people without any service needing to own auth logic.</p>
+                        <p>The front door — TLS, Google authentication, and role enforcement, so every service behind it can be written as though authorization were somebody else's problem.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>This is a portfolio project that needs to be accessible to hiring managers and reviewers — Caddy makes that possible without bolting auth logic onto every service</li>
-                                <li><code>forward_auth</code> middleware intercepts every request and calls Ops to validate the Google OAuth token and DB role — auth is enforced at the edge, invisible to everything behind it</li>
-                                <li>Single Caddyfile defines all routing: <code>/</code> → Dashboard, <code>/airflow</code> → Airflow, <code>/grafana</code> → Grafana, <code>/info</code> → public — the entire access model is one readable config file</li>
-                                <li>Automatic TLS via Let's Encrypt — the site is production-grade even if the audience is small</li>
+                                <li>Authentication and authorization are deliberately separate, and neither needs a dedicated identity service: oauth2-proxy proves who you are, and a forward-auth call to Ops decides what that identity may do</li>
+                                <li>Four roles, narrowing from admin to viewer. Someone who authenticates but holds no role is sent to a request-access page rather than a wall</li>
+                                <li>Emails are stored only as a salted SHA-256 hash, never as plaintext — the authorization table cannot leak an address it does not hold</li>
+                                <li>Enforcement happens at the edge, which is why no application service in this stack contains authorization code to review, or to get wrong</li>
+                                <li>Automatic TLS via Let's Encrypt: production-grade even though the audience is small</li>
                             </ul>
                         </div>
                     </div>
                 </div>
 
-                <div class="service-card" data-card="grafana">
+                <div class="service-card" data-card="observability">
                     <img class="service-logo" src="https://cdn.simpleicons.org/grafana/F46800" alt="Grafana" onerror="this.style.display='none'">
                     <div class="service-info">
                         <div class="title-row">
-                            <strong>Grafana</strong>
-                            <span class="service-badge">Observability</span>
+                            <strong>Observability</strong>
+                            <span class="service-badge">Monitoring</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>The answer to "how do we know if something's wrong?" — metrics, logs, and alerting in one place so pipeline failures surface as notifications, not as stale data someone eventually notices.</p>
+                        <p>Metrics, logs, three-state service health, and alerting — designed around the failure this project actually had, which was silence rather than errors.</p>
                         <div class="card-detail" hidden>
                             <ul>
-                                <li>A pipeline this distributed fails silently without observability — a scraper block, a processing backlog, or a staging flush that stopped flushing won't throw an error you'll notice until the data goes stale</li>
-                                <li>Prometheus scrapes metrics from every layer: Airflow DAG success rates, Postgres connection counts, MinIO throughput, host-level resources, and custom DuckDB gauges that expose mart-layer data health directly as Prometheus metrics</li>
-                                <li>Loki aggregates structured logs from all five Python services via Promtail — searchable by level and logger across the whole stack from a single query</li>
-                                <li>Nine alert rules provisioned as code fire to Telegram: scrape volume drops, VIN extraction yield, price staleness, 403 backlog growth, service downtime, and log error spikes — the questions that matter operationally answered without anyone having to check</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="service-card" data-card="testing">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/pytest/0A9EDC" alt="pytest" onerror="this.style.display='none'">
-                    <div class="service-info">
-                        <div class="title-row">
-                            <strong>Testing & CI</strong>
-                            <span class="service-badge">pytest · GitHub Actions</span>
-                            <span class="why-cta">Why?</span>
-                        </div>
-                        <p>A three-layer test strategy that matches the scope of the pipeline — because a project with this many moving pieces needs more than one kind of wrong covered.</p>
-                        <div class="card-detail" hidden>
-                            <ul>
-                                <li>A scraper, six services, twelve DAGs, fifteen dbt models, and a lakehouse backend all have different failure modes — a single test layer would miss most of them</li>
-                                <li>Layer 1 — unit tests: fast, no database, cover parsing logic, backoff behavior, and service internals; run on every commit before anything else</li>
-                                <li>Layer 2 — SQL smoke tests: run every critical query against the real Postgres schema before dbt executes — catch schema regressions that unit tests can't see</li>
-                                <li>Layer 3 — integration tests: full request paths against a real database, real dbt builds against a seeded CI schema, real Airflow DAG execution — no mocks where real behavior matters</li>
-                                <li>Schema changes are versioned Flyway migrations reviewed as PRs — <code>ALTER TABLE</code> in production without a migration history is its own category of wrong, and this project doesn't allow it</li>
-                                <li>Enforced in CI on every commit: lint → unit → build → smoke → integration — a broken pipeline can't merge</li>
+                                <li>A pipeline this distributed fails quietly. A blocked fetch path, a processing backlog, or a flush that stopped flushing throws no error you would notice until the data goes stale</li>
+                                <li>Prometheus scrapes every layer: DAG outcomes, database connections, object-store throughput, host resources, and custom gauges that expose mart-layer data health as metrics directly</li>
+                                <li>Loki aggregates structured logs from every Python service via Promtail, searchable across the whole stack from one query</li>
+                                <li>Health is three-state against a checked-in expected service set, so a service that is <em>absent</em> reads as failure instead of vanishing from the query — and "running, but no healthcheck configured" reads as its own unattractive value rather than as healthy</li>
+                                <li>More than twenty alert rules are provisioned as code and route to Telegram. Several fire on <strong>missing success</strong> rather than on visible errors — no successful bootstrap in a window while failures accumulate, no successful fetch while attempts continue</li>
                             </ul>
                         </div>
                     </div>
@@ -708,103 +1133,337 @@
             })();
         </script>
 
-        <!-- ── 5. Technical highlights ── -->
+        <!-- ── 5. Platform evolution ── -->
         <section>
-            <h2>Technical highlights</h2>
+            <h2>Platform evolution</h2>
+            <div class="evolution">
+                <span class="track-badge">Migration track — not serving users</span>
+                <p>
+                    Everything above is running in production today. The work below is proven and
+                    evidenced, and <strong>none of it is in the path of anything a visitor to this site
+                    sees.</strong> It is listed separately because a portfolio that blurs the two is
+                    telling you about a roadmap while implying it is a system.
+                </p>
+                <ul>
+                    <li><strong>Iceberg via Lakekeeper, exercised through Spark.</strong> Tables register and read, and dbt-Spark parity work runs against them. The dashboard still reads DuckDB, and will until the migration's own gates close.</li>
+                    <li><strong>MLflow experiment provenance</strong> — tracking for the modelling work, not a serving path.</li>
+                    <li><strong>Production-shaped CI lake snapshots</strong>, which give the test suite a fixture with the shape of real data rather than the shape of a fixture.</li>
+                    <li><strong>Adaptive-refresh and backtesting foundations</strong> — the groundwork for deciding what to re-fetch and when, based on how a listing has actually behaved.</li>
+                </ul>
+                <p>
+                    The short version: <strong>the dashboard reads DuckDB.</strong> The Iceberg work is a
+                    migration track with its own gates, not a shipped capability.
+                </p>
+            </div>
+        </section>
+
+        <!-- ── 6. Recent work ── -->
+        <!--
+            The two lists are structural. Stage 1d's build-time generator
+            (scripts/build_public_roadmap.py) writes /static_ops/generated/project-updates.json
+            from docs/PLANS.md and docs/planning/completed_plans.md, and the script at
+            the end of this section renders it into #work-planned / #work-completed.
+
+            The static pointers below are not placeholders any more — they are the
+            fallback. Every failure mode leaves them exactly as authored: no artifact,
+            a non-200, unparseable JSON, an unknown schema_version, or an empty list.
+            The page is correct without JavaScript and correct when the fetch fails.
+        -->
+        <section>
+            <h2>Recent work</h2>
+            <p class="section-lede">
+                Work here is planned and archived in the open: every change is a plan document with a
+                stated trigger and an explicit gate, ordered in one table. Two rules make that record
+                worth reading — <strong>a merged change is not a finished one</strong> while its
+                production gate is outstanding, and a plan reaches the archive only when its evidence
+                does.
+            </p>
+            <div class="work-grid">
+                <div class="work-column">
+                    <h3>Planned next</h3>
+                    <ul class="work-list" id="work-planned" data-source="planned">
+                        <li>
+                            <span class="work-summary">
+                                The top of the ordered build order is whatever comes next.
+                            </span>
+                            <span class="work-meta">
+                                <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/PLANS.md" target="_blank" rel="noopener">Read the build order →</a>
+                            </span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="work-column">
+                    <h3>Recently completed</h3>
+                    <ul class="work-list" id="work-completed" data-source="completed">
+                        <li>
+                            <span class="work-summary">
+                                Newest first, each row dated by the evidence that closed it.
+                            </span>
+                            <span class="work-meta">
+                                <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/planning/completed_plans.md" target="_blank" rel="noopener">Read the archive →</a>
+                            </span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <p class="work-footnote">
+                For the long-form account there is a
+                <a href="/recaps">weekly recap</a>,
+                one page per week written against that week's commits — a point-in-time record, never
+                revised to match a later truth.
+            </p>
+        </section>
+
+        <script>
+            // Stage 1d: render /static_ops/generated/project-updates.json into the two lists
+            // above. Every string goes in through textContent — the source is a
+            // build-time artifact rather than user input, but this is a public page
+            // and the summaries are lifted verbatim out of Markdown, so the rule is
+            // "no markup path" rather than "no markup we expect".
+            (function () {
+                var SOURCE = '/static_ops/generated/project-updates.json';
+                var SCHEMA_VERSION = 1;
+                // The generator emits only blob links into this repository. Anything
+                // else in an href is a payload, not a link, so it is not rendered.
+                var HREF_PREFIX = 'https://github.com/whitewalls86/new_car_tracker/blob/';
+
+                function isNonEmptyString(value) {
+                    return typeof value === 'string' && value.trim() !== '';
+                }
+
+                function isRenderable(item) {
+                    return item
+                        && isNonEmptyString(item.title)
+                        && isNonEmptyString(item.summary)
+                        && isNonEmptyString(item.plan)
+                        && isNonEmptyString(item.href)
+                        && item.href.indexOf(HREF_PREFIX) === 0;
+                }
+
+                function meta(item) {
+                    // Planned rows carry priority and effort; completed rows carry a
+                    // date and neither, because the archive has no such columns.
+                    if (item.state === 'completed') {
+                        return isNonEmptyString(item.date) ? 'Completed ' + item.date : '';
+                    }
+                    var parts = [];
+                    if (typeof item.priority === 'number') parts.push('Priority ' + item.priority);
+                    if (isNonEmptyString(item.effort)) parts.push('Effort ' + item.effort);
+                    return parts.join(' · ');
+                }
+
+                function listItem(item) {
+                    var li = document.createElement('li');
+
+                    var title = document.createElement('span');
+                    title.className = 'work-title';
+                    title.textContent = item.title;
+                    li.appendChild(title);
+
+                    var summary = document.createElement('span');
+                    summary.className = 'work-summary';
+                    summary.textContent = item.summary;
+                    li.appendChild(summary);
+
+                    var metaSpan = document.createElement('span');
+                    metaSpan.className = 'work-meta';
+                    var text = meta(item);
+                    if (text) metaSpan.appendChild(document.createTextNode(text + ' · '));
+
+                    var link = document.createElement('a');
+                    link.href = item.href;
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    link.textContent = 'Plan ' + item.plan + ' →';
+                    metaSpan.appendChild(link);
+                    li.appendChild(metaSpan);
+
+                    return li;
+                }
+
+                function render(list, items) {
+                    // Built off-document and swapped in one go, so a throw partway
+                    // through leaves the authored fallback standing rather than half
+                    // a list.
+                    var fragment = document.createDocumentFragment();
+                    items.forEach(function (item) { fragment.appendChild(listItem(item)); });
+                    list.textContent = '';
+                    list.appendChild(fragment);
+                }
+
+                fetch(SOURCE, { credentials: 'omit' })
+                    .then(function (response) {
+                        if (!response.ok) throw new Error('status ' + response.status);
+                        return response.json();
+                    })
+                    .then(function (data) {
+                        if (!data || data.schema_version !== SCHEMA_VERSION) return;
+
+                        ['planned', 'completed'].forEach(function (key) {
+                            var list = document.getElementById('work-' + key);
+                            var items = data[key];
+                            if (!list || !Array.isArray(items) || items.length === 0) return;
+                            if (!items.every(isRenderable)) return;
+                            render(list, items);
+                        });
+                    })
+                    .catch(function () {
+                        // No artifact, a non-200, or unparseable JSON. The authored
+                        // pointers below the headings are the fallback and are already
+                        // on the page, so there is nothing to do and nothing to log.
+                    });
+            })();
+        </script>
+
+        <!-- ── 7. Decision stories ── -->
+        <section>
+            <h2>Decisions worth explaining</h2>
+            <p class="section-lede">
+                Five choices that changed the shape of the system. Two of them started as something that
+                broke.
+            </p>
             <div class="highlights-grid">
-                <div class="highlight-card">
-                    <h4>The Data Journey: 🥉 → 🥈 → 🥇</h4>
-                    <p>
-                        A car listing enters the pipeline as raw HTML and exits as a deal score. Between those
-                        two points it passes through three storage systems, each chosen for what it does best:
-                        MinIO holds the unprocessed artifact, Postgres buffers the parsed observation for
-                        pipeline operations, Parquet on MinIO preserves the permanent analytical record, and
-                        DuckDB transforms it into something a person can act on. No single tool does all of
-                        that well — the architecture exists because the data has different needs at different stages.
-                    </p>
-                </div>
+
                 <div class="highlight-card expandable" id="highlight-db">
-                    <h4>One database doing everything — and why that had to change</h4>
+                    <h3>Operational state and analytical history are different problems</h3>
                     <p>
-                        The first version stored everything in Postgres — observations, analytics, and operational
-                        state in the same database. Analytical queries slowed operational writes, and dbt ran
-                        against tables that were still being written to. The fix wasn't a bigger database — it
-                        was separating concerns: Postgres owns operational state only, staging tables act as
-                        short-lived write buffers, and the Archiver drains them to Parquet on a schedule.
-                        Each system now does one thing well.
+                        The first version stored everything in Postgres — observations, analytics, and
+                        operational state in one database. Analytical queries slowed operational writes, and
+                        dbt ran against tables that were still being written to. The fix was not a bigger
+                        database. It was noticing that current state and history have different shapes,
+                        different access patterns, and different failure modes, and giving each one a store
+                        that suits it. The dbt build that used to block every scheduling decision now runs
+                        on its own schedule, and the scrape queue reads a Postgres view in milliseconds
+                        instead of waiting 45 seconds for a rebuild.
                     </p>
                     <span class="highlight-read-more"></span>
                     <div class="card-detail" hidden>
-                        <h5>The dependency nobody named</h5>
-                        <p>The pipeline had a hidden coupling. To know what to scrape next, it queried dbt — <code>int_</code> tables that computed staleness scores, mapped listing IDs to VINs, and produced the scrape queue. That meant after every batch of scrapes, the pipeline needed a dbt rebuild before it could schedule the next one. A full build was taking 45 seconds. It couldn't run concurrently — a build lock had to be added after parallel runs started stepping on each other.</p>
-                        <p>The carousel hints problem made it worse. Scraping vehicle A would sometimes surface price updates for B, C, and D in the same response. Those vehicles didn't need their own scrape — but the pipeline couldn't know that without running dbt first. Operational logic and analytical logic were tangled in the same models, running on the same schedule, blocking each other.</p>
-                        <h5>The question that reframed it</h5>
+                        <h4>The dependency nobody named</h4>
+                        <p>The pipeline had a hidden coupling. To know what to fetch next, it queried dbt — intermediate tables that computed staleness scores, mapped listing IDs to VINs, and produced the scrape queue. That meant after every batch of fetches, the pipeline needed a dbt rebuild before it could schedule the next one. A full build was taking 45 seconds. It could not run concurrently — a build lock had to be added after parallel runs started stepping on each other.</p>
+                        <p>The carousel hints problem made it worse. Fetching vehicle A would sometimes surface price updates for B, C, and D in the same response. Those vehicles did not need their own fetch — but the pipeline could not know that without running dbt first. Operational logic and analytical logic were tangled in the same models, running on the same schedule, blocking each other.</p>
+                        <h4>The question that reframed it</h4>
                         <p>The fix came from asking a different question: <em>what should dbt actually own?</em></p>
-                        <p>dbt is good at one thing — transforming a stable, append-only record into analytical assets. Deal scores, price history, national benchmarks. That work runs hourly and can fail and retry without consequence. The scrape queue is different. It needs to reflect the current state of the world right now — which listings are stale, which VINs are blocked, which artifacts haven't been processed. That's operational state. Rebuilding a dbt model to answer "what do I do next?" is the wrong tool for the job.</p>
-                        <h5>The three-schema solution</h5>
-                        <p>Postgres gets an <code>ops</code> schema: HOT tables, one row per entity, always current state. The scrape queue becomes a plain Postgres view reading from those tables — no dbt, no rebuild cycle, no lock. Operational workers own these directly.</p>
-                        <p>A <code>staging</code> schema holds event tables: one row per event, append-only. On a schedule, the Archiver drains them to hive-partitioned Parquet on MinIO and truncates. Postgres never becomes the analytics store — it hands the record off and stays lean.</p>
-                        <p>dbt runs against the Parquet files via DuckDB's <code>httpfs</code> extension. The lake <em>is</em> the warehouse. Deal scores and price history are built from the permanent record, not from operational tables that are still being written to.</p>
-                        <h5>What changed</h5>
-                        <p>The dbt build that used to block the pipeline now runs independently, on its own schedule, without holding anything up. Operational queries that took seconds — building a scrape queue from a dbt model — now take milliseconds from a Postgres view of a HOT table. The staging tables give the analytical layer a clean event stream to work from, and when the Archiver flushes them, Postgres shrinks back down rather than growing.</p>
-                        <p>MinIO started as a storage fix. It ended as the thing that made the separation possible — a clear boundary between what the pipeline needs <em>right now</em> and what the analytics layer needs <em>eventually</em>. Those two things have different access patterns, different failure modes, and different owners. Once the architecture reflected that, both got faster.</p>
+                        <p>dbt is good at one thing — transforming a stable, append-only record into analytical assets. Deal scores, price history, national benchmarks. That work runs hourly and can fail and retry without consequence. The scrape queue is different. It needs to reflect the state of the world right now: which listings are stale, which VINs are cooling down, which artifacts have not been processed. That is operational state. Rebuilding an analytical model to answer "what do I do next?" is the wrong tool for the job.</p>
+                        <h4>The three-schema solution</h4>
+                        <p>Postgres gets an <code>ops</code> schema: HOT tables, one row per entity, always current. The scrape queue becomes a plain Postgres view reading from those tables — no dbt, no rebuild cycle, no lock. Operational workers own these directly.</p>
+                        <p>A <code>staging</code> schema holds event tables: one row per event, append-only. Processing writes the current row and its event in the same transaction. On a schedule the archiver exports those events to hive-partitioned Parquet and deletes what it exported. Postgres never becomes the analytics store — it hands the record off and stays lean.</p>
+                        <p>dbt then runs against the Parquet through DuckDB's <code>httpfs</code> extension. The lake <em>is</em> the warehouse. Deal scores and price history are built from the permanent record rather than from operational tables that are still being written to.</p>
+                        <h4>Where the 403 backoff ended up, and why it matters</h4>
+                        <p>The same question has a second, sharper answer. When a listing gets refused, an exponential cooldown decides when it may be tried again. That looks analytical — it is computed from a history of block events — and it originally lived in a dbt model.</p>
+                        <p>It does not belong there, for the reason above: it is a <em>decision the pipeline executes</em>, not an interpretation of what happened. So the executable backoff now lives in the Postgres <code>ops.ops_detail_scrape_queue</code> view, where the scrape queue reads it transactionally in the same query that claims work. dbt still consumes the same event stream for cohort, funnel, and block-rate analysis.</p>
+                        <p>Two consumers, one event stream, and the split is between <em>deciding</em> and <em>understanding</em> rather than between two copies of the same logic.</p>
+                        <h4>What changed</h4>
+                        <p>The dbt build that used to block the pipeline now runs on its own schedule without holding anything up. Operational queries that took seconds take milliseconds. The staging tables give the analytical layer a clean event stream, and when the archiver drains them, Postgres shrinks back down rather than growing.</p>
+                        <p>Object storage started as a storage fix. It ended as the thing that made the separation possible — a boundary between what the pipeline needs <em>right now</em> and what the analytics layer needs <em>eventually</em>. Once the architecture reflected that, both got faster.</p>
                     </div>
                 </div>
+
                 <div class="highlight-card expandable" id="highlight-n8n">
-                    <h4>Why I replaced the workflow engine mid-project</h4>
+                    <h3>Why I replaced the workflow engine mid-project</h3>
                     <p>
-                        n8n worked until the pipeline got complex enough that bugs in the orchestration
-                        layer were hard to find. The root problem: workflow logic lived in a visual UI,
-                        not in code — it couldn't be unit tested, version controlled, or reviewed like
-                        the rest of the codebase. A broken DAG looked the same as a passing one until
-                        data stopped arriving. The move to Airflow wasn't about features — it was about
-                        making the orchestration layer subject to the same standards as everything else.
-                        Thin DAGs, fat services: scheduling and HTTP calls live in Airflow, all business
-                        logic lives in Python where it can be tested, diffed, and trusted.
+                        n8n worked until the pipeline got complex enough that bugs in the orchestration layer
+                        were hard to find. The root problem: workflow logic lived in a visual UI, not in code
+                        — it could not be unit tested, version controlled, or reviewed like the rest of the
+                        codebase. A broken workflow looked exactly like a passing one until data stopped
+                        arriving. Moving to Airflow was not about features. It was about making the
+                        orchestration layer subject to the same standards as everything else.
                     </p>
                     <span class="highlight-read-more"></span>
                     <div class="card-detail" hidden>
-                        <h5>The problem with logic you can't test</h5>
-                        <p>The issue was that n8n wasn't just an orchestrator — it was holding business logic. SQL queries lived in Postgres nodes inside workflows. Conditional branching, error handling, retry decisions — all of it in a visual UI, exported as JSON. That meant none of it could be unit tested. None of it showed up in a diff in a meaningful way. When a workflow had a bug, diagnosing it meant clicking through a visual interface and guessing at which node was wrong.</p>
-                        <p>The worst part: a broken workflow looked the same as a passing one. n8n would report success on a run that had silently dropped records or skipped a step it shouldn't have. The only way to catch those failures was to notice that data had stopped arriving — which could be hours later.</p>
+                        <h4>The problem with logic you cannot test</h4>
+                        <p>The issue was that n8n was not just an orchestrator — it was holding business logic. SQL queries lived in Postgres nodes inside workflows. Conditional branching, error handling, retry decisions, all of it in a visual UI exported as JSON. None of it could be unit tested. None of it showed up in a diff in any meaningful way. When a workflow had a bug, diagnosing it meant clicking through an interface and guessing which node was wrong.</p>
+                        <p>The worst part: a broken workflow looked the same as a passing one. n8n would report success on a run that had silently dropped records or skipped a step it should not have. The only way to catch it was to notice that data had stopped arriving, which could be hours later. That is the same failure mode the observability section below was eventually redesigned around, arriving from a different direction.</p>
                         <p>I was still patching n8n workflows on April 13th. Two days later, I started building Airflow.</p>
-                        <h5>The insight that drove the switch</h5>
-                        <p>The decision wasn't really about Airflow's feature set. It was about a principle that the n8n experience had made concrete: <em>orchestration logic should be subject to the same standards as everything else.</em></p>
-                        <p>If it can't be unit tested, it's not code — it's configuration. And configuration that holds business logic is the worst kind: it looks trustworthy because it's in the repo, but it isn't testable the way code is.</p>
-                        <p>This became the fat server, thin DAG pattern. DAGs contain only two things: scheduling and HTTP calls. No business logic, no SQL, no conditional branching. All of that lives in the Python services — where it can be tested, diffed, and reviewed like any other function.</p>
-                        <h5>The migration</h5>
-                        <p>Airflow ran in parallel with n8n for four days while the DAGs were built and validated. On April 20th, the n8n workflows were deactivated. Nine days later, the container was removed from docker-compose entirely.</p>
-                        <p>The cutover was clean because the services hadn't changed — only what was calling them. The scraper, processor, and archiver all exposed HTTP endpoints. n8n had been calling those endpoints. Airflow now calls those endpoints. Swapping the orchestrator didn't require touching the services.</p>
-                        <h5>What changed</h5>
-                        <p>A broken DAG now fails in CI before it ships. Every piece of business logic that used to live in a workflow node now lives in a Python function with a test. The twelve DAGs that run the pipeline today are readable in under a minute each — they're scheduling logic, nothing more.</p>
-                        <p>The pipeline didn't get more capable when I switched to Airflow. It got more trustworthy. That turned out to matter more.</p>
+                        <h4>The insight that drove the switch</h4>
+                        <p>The decision was not really about Airflow's feature set. It was about a principle the n8n experience had made concrete: <em>orchestration logic should be subject to the same standards as everything else.</em></p>
+                        <p>If it cannot be unit tested, it is not code — it is configuration. And configuration that holds business logic is the worst kind, because it looks trustworthy sitting in the repository while not being testable the way code is.</p>
+                        <p>This became the fat services, thin DAGs pattern. A DAG contains two things: scheduling and an HTTP call. No business logic, no SQL, no conditional branching. All of that lives in Python services where it can be tested, diffed, and reviewed like any other function.</p>
+                        <h4>The migration</h4>
+                        <p>Airflow ran in parallel with n8n for four days while the DAGs were built and validated. On April 20th the n8n workflows were deactivated. Nine days later the container was removed from Compose entirely.</p>
+                        <p>The cutover was clean because the services had not changed — only what was calling them. The scraper, processor, and archiver already exposed HTTP endpoints. n8n had been calling those endpoints; Airflow now calls those endpoints. Swapping the orchestrator did not require touching a service.</p>
+                        <h4>What changed</h4>
+                        <p>A broken DAG now fails in CI before it ships. Every piece of business logic that used to live in a workflow node lives in a Python function with a test. The DAGs that run the pipeline today are each readable in under a minute, because they are scheduling and nothing else.</p>
+                        <p>The pipeline did not get more capable when I switched to Airflow. It got more trustworthy. That turned out to matter more.</p>
                     </div>
                 </div>
+
                 <div class="highlight-card">
-                    <h4>Deploying without breaking what's already running</h4>
+                    <h3>Deploying without breaking what is already running</h3>
                     <p>
-                        Restarting a container mid-pipeline means lost data, orphaned claims, and partial
-                        writes that are hard to recover from. Every service exposes a <code>/ready</code>
-                        endpoint and tracks in-flight work with a shared job counter — when a deploy is
-                        signaled, Airflow sensors stop scheduling new runs and each service drains to idle
-                        before its container restarts. The coordination happens across services that have no
-                        direct knowledge of each other, mediated entirely through a single
-                        <code>deploy_intent</code> table in Postgres. No external orchestrator, no manual
-                        timing — the pipeline manages its own lifecycle.
+                        Restarting a container mid-pipeline means lost work, orphaned claims, and partial
+                        writes that are awkward to recover from. So a redeploy is a sequence of claims that
+                        must become true: request scoped coordination, drain until admitted work is gone,
+                        recreate only the requested services, wait for each to reach its real health state,
+                        validate, and only then release the gate. The two failure branches differ on
+                        purpose — if validation fails before any container changed, coordination is
+                        released, because the pipeline should not stay paused for a change that never
+                        happened. If a container was already replaced and a later step fails, coordination
+                        stays <strong>held</strong>, because a mixed-version fleet is a worse place to
+                        resume background work than a visible pause.
                     </p>
                 </div>
-                <div class="highlight-card">
-                    <h4>10M+ observations, one server</h4>
+
+                <div class="highlight-card expandable" id="highlight-storage">
+                    <h3>Storage economics: the constraint was not bytes</h3>
                     <p>
-                        The entire stack runs on a single VPS — one Postgres instance, one MinIO node,
-                        one Airflow scheduler, eleven Docker containers. That's a deliberate choice, not
-                        a limitation: the architecture is what keeps it manageable at this scale. Columnar
-                        Parquet storage means DuckDB doesn't break a sweat on 10M rows. Staging tables
-                        mean Postgres never holds more than it needs to. Thin DAGs mean Airflow isn't
-                        doing real work, just coordinating. The bottleneck at this scale isn't the
-                        hardware — it's whether the data model is right. This one is.
+                        Bronze HTML compresses extremely well, and compressing it was the obvious first
+                        move. It was also not the problem. Measuring bytes, objects, and inodes
+                        <em>separately</em> showed the real constraint was object <strong>count</strong>:
+                        millions of small objects cost far more on a disk than their bytes suggested.
+                        That is the kind of finding you only get by measuring the three things apart
+                        instead of asking "how much space is this using?" The first three packed months
+                        turned <strong>2.7 million bronze objects into 222</strong>, and inodes
+                        stopped being the binding constraint — bytes are again, which is where a
+                        storage problem should end up.
                     </p>
+                    <span class="highlight-read-more"></span>
+                    <div class="card-detail" hidden>
+                        <h4>First: compression, with the dictionary problem solved properly</h4>
+                        <p>Fetched HTML from one site is highly repetitive across pages, which is exactly the case a trained compression dictionary is for. Bronze objects are written as independently decompressible zstd frames using a trained dictionary — and the dictionary's ID is encoded in the frame header.</p>
+                        <p>That detail is the whole design. The reader selects the right dictionary <em>from the data itself</em>, not from a mutable "current dictionary" setting somewhere. Training a new dictionary changes future writes; it never makes an existing object unreadable. A scheme that stores the dictionary choice outside the object is a scheme where one configuration change silently orphans years of history.</p>
+                        <h4>Then: measuring the thing that was actually expensive</h4>
+                        <p>Compression bought a large reduction in bytes and did not fix the pressure on the volume. Bytes, object count, and inode consumption were being tracked as one number, and separating them showed why: each artifact is its own object, each object consumes an inode, and inodes ran out long before the disk did. The forecast alert that matters most in this stack is not "disk is filling" but "inodes are exhausted in under seven days."</p>
+                        <h4>Packing, and the rule that makes it safe</h4>
+                        <p>Packing groups a closed month of artifacts into immutable packs with a columnar sidecar index. Reading one artifact becomes a ranged GET plus a single frame decompression rather than a scan, so random access survives the consolidation.</p>
+                        <p>The safety rule is the part worth copying: <strong>a source object may be deleted only after its packed replacement returns byte-identical content</strong>, verified against a hash held in the sidecar. Not "the pack was written successfully" — the packed copy is read back and compared. Deleting the only copy of history on the strength of a successful write is how archives get lost.</p>
+                        <h4>What changed</h4>
+                        <p>The first three packed months turned 2.7 million bronze objects into 222 packs and sidecars. Inodes stopped being the binding constraint on the data volume and bytes became one again, which is where a storage problem should end up — and the object count is the honest way to say it, because a whole-volume percentage would credit packing with a smaller number than it earned while the pipeline kept writing new pages throughout. The stack still runs on a single server — one Postgres, one object store, one scheduler — and that remains a deliberate choice rather than a limitation, because at this scale the bottleneck is whether the data model is right, not what the hardware can do.</p>
+                        <h4>A design that was built, proven, and thrown away</h4>
+                        <p>Section-level deduplication splits each page into named sections and stores each distinct section once. It was implemented, and it is lossless — the audit reconstructs artifacts byte-identically. On bytes alone it looked like a win. Measured against the real backend it came out <strong>223% worse</strong> than simply compressing each page, because this single-drive object store costs roughly 8&nbsp;KB per object in directory and block padding, and 60 artifacts became 556 section objects. Splitting more finely made it worse rather than better: content-defined chunking at 256&nbsp;B reaches 70.5% gross deduplication and nets −622.9%. The redundancy was real and reachable, and collecting it cost far more than it saved. Showing a rejected design is the point — the measurement is what made it a decision rather than a hunch.</p>
+                        <h4>The bigger win that is deliberately not taken</h4>
+                        <p>Storing only the page regions the parser actually reads would cut stored HTML by roughly 96% stacked on the dictionary — the largest reduction measured here, and the only one that is irreversible. It is refused on what bronze is <em>for</em>. Bronze is what arrived; silver and mart are opinions about what it means, and an optimization that keeps only what today's parser understands quietly turns bronze into another opinion. The probe showed it concretely: the projection is parser-equivalent on 60 of 60 active listings, and it silently rewrites a blocked page and an unlisted page to <code>active</code>, discarding the fields that said otherwise. A delisted vehicle reappearing as available is the worst direction that error can run.</p>
+                    </div>
                 </div>
+
+                <div class="highlight-card expandable" id="highlight-liveness">
+                    <h3>Health that a green dashboard cannot fake</h3>
+                    <p>
+                        The lesson that shaped the observability design came from an outage where nothing
+                        was red. The fetch path kept running, its container stayed healthy, and no error
+                        rate spiked — but it had stopped producing successful results, and it stayed that
+                        way for eight hours. Every alert was correctly reporting that the thing it watched
+                        was fine. None of them watched whether the pipeline was <em>working</em> — so the
+                        alerting was rewritten to fire on the absence of success rather than the presence
+                        of errors.
+                    </p>
+                    <span class="highlight-read-more"></span>
+                    <div class="card-detail" hidden>
+                        <h4>Why nothing fired</h4>
+                        <p>Every signal in place was a signal about a component. Is the container up? Is the process responding? Is the error rate elevated? All three answered yes, yes, no — and all three were true. The fetch path was running, responding, and returning without raising anything. It was simply returning nothing useful.</p>
+                        <p>A health check that asks "are you up?" cannot distinguish a service doing its job from a service that has stopped doing its job while remaining up. That gap is not a missing alert. It is a category of alert that did not exist here.</p>
+                        <h4>Change one: absence has to be a value</h4>
+                        <p>Health became three-state, evaluated against a checked-in expected service set. This closes two holes at once.</p>
+                        <p>A service that is stopped or removed does not read as unhealthy in a naive metric — it leaves the metric altogether, and a query over "all known containers" simply stops mentioning it. One absent service is silent by construction. Comparing against an expected set makes absence read as failure, which is what it is.</p>
+                        <p>The second hole: "running, but with no healthcheck configured" used to be indistinguishable from healthy. It now reads as its own unattractive third value, so an unmonitored service looks like what it is rather than like a passing one.</p>
+                        <h4>Change two: alert on missing success</h4>
+                        <p>The rest of the alerting was rewritten to fire on the <em>absence of success</em> rather than on the presence of errors: no successful session bootstrap within a window while non-success outcomes accumulate; no successful fetch while attempts continue. Those two conditions would have caught the outage in minutes.</p>
+                        <p>It is a harder question to ask, because it requires knowing what success looks like and how often to expect it. That is precisely why it is the question worth asking — an error-rate alert only needs to know what a failure looks like, which is why it is the one everybody has and the one that missed this.</p>
+                        <h4>What is still open</h4>
+                        <p>Container health, scrape volume, and log-based alerts route to Telegram, and the missing-success rules are live. <strong>Functional liveness — whether the pipeline is producing correct results at all — remains a separately measured concern, and the work to bound it is in progress rather than finished.</strong></p>
+                        <p>That sentence is deliberately not rounded up. An earlier version of this page said every failure surfaces as a notification, and the outage above is the standing proof that it did not.</p>
+                    </div>
+                </div>
+
                 <div class="highlight-detail-panel" id="highlight-detail-panel" hidden>
                     <div id="highlight-detail-content"></div>
                 </div>
@@ -828,8 +1487,7 @@
                     return last;
                 }
 
-                ['highlight-db', 'highlight-n8n'].forEach(function (id) {
-                    var card = document.getElementById(id);
+                grid.querySelectorAll('.highlight-card.expandable').forEach(function (card) {
                     card.addEventListener('click', function () {
                         if (activeCard === card) {
                             card.classList.remove('active');
@@ -848,15 +1506,77 @@
             })();
         </script>
 
-        <!-- ── 6. Footer CTA ── -->
+        <!-- ── 8. Testing, evidence, and CTA ── -->
+        <section>
+            <h2>How it is tested</h2>
+            <p class="section-lede">
+                More than 3,000 tests run in CI. The count is the least interesting fact about them — the
+                variety of boundaries is the point, because many of the hardest bugs here live
+                <em>between</em> files or engines rather than inside a function.
+            </p>
+            <div class="evidence-grid">
+                <div class="evidence-card">
+                    <h3>Pure behavior</h3>
+                    <p>Parser rules, retry and backoff calculations, pack formats, metrics, state transitions, failure predicates. No database, no Docker, run first.</p>
+                </div>
+                <div class="evidence-card">
+                    <h3>Configuration contracts</h3>
+                    <p>Compose healthcheck coverage, the expected service set, Prometheus jobs, Grafana selectors, log-shipping policy, deployment timeout relationships, planning-document invariants.</p>
+                </div>
+                <div class="evidence-card">
+                    <h3>Real service integration</h3>
+                    <p>Migrated Postgres, object storage, DuckDB extensions, HTTP routers, Airflow DAG loading, archiver operations. No mocks where real behavior is what is in question.</p>
+                </div>
+                <div class="evidence-card">
+                    <h3>Cross-engine equivalence</h3>
+                    <p>The same production-shaped lake fixture is evaluated by dbt and by independently written selector SQL, so an optimization cannot quietly change business meaning and pass as a speedup.</p>
+                </div>
+            </div>
+            <p class="evidence-note">
+                The fixture underneath that fourth layer is built with its arrow reversed. The usual
+                approach takes some production rows and hopes they exercise the code. Here the branches
+                come first: each dbt branch or guard worth protecting is named as a coverage selector,
+                and the selector is a SQL query that goes and finds production entities exhibiting that
+                behavior. There are more than twenty — gaps-and-islands state runs, price-drop and
+                price-increase lags, source-priority ties where a detail row outranks a search-results
+                row, sparse benchmark groups that must not silently disappear, each 403 cooldown bucket
+                boundary. The selected entities are then closed over VINs, listings, and artifacts, so
+                rows arrive with everything they need to join. What the snapshot asserts is coverage
+                itself: a named behavior with no representative is a reported shortfall rather than a
+                branch nobody noticed was untested.
+            </p>
+            <p class="evidence-note">
+                A unit test for the health collector cannot prove every Compose service has a healthcheck,
+                and a dbt model test cannot prove the archiver's separately maintained selector returns the
+                same cohort. Those need repository-level assertions, which is why configuration and
+                equivalence tests are first-class here rather than an afterthought. CI builds a miniature
+                production data plane for every run: real migrations against a real Postgres, the same
+                pinned adapters and extensions the runtime uses, a seeded lake fixture, a real dbt build,
+                and then the integration suites against it. Schema changes are versioned migrations
+                reviewed as pull requests — <code>ALTER TABLE</code> in production without a migration
+                history is its own category of wrong, and this project does not allow it.
+            </p>
+        </section>
+
+        <!-- ── Footer ── -->
         <section>
             <div class="footer-cta">
-                <a href="/request-access" role="button">Request Access</a>
+                <a href="/request-access" role="button">Sign in to request read-only access</a>
                 <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
                 <span class="footer-note">Built by <a href="https://www.linkedin.com/in/andrew-preston-miller/" target="_blank" rel="noopener">Andrew Miller</a> &mdash; <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">GitHub</a> &middot; <a href="https://www.linkedin.com/in/andrew-preston-miller/" target="_blank" rel="noopener">LinkedIn</a></span>
             </div>
-            <p style="font-size:0.75rem; color:var(--pico-muted-color); margin:0.75rem 0 0;">
-                dbt™ is a trademark of dbt Labs, Inc. This project is not affiliated with or endorsed by dbt Labs.
+            <p class="footer-legal">
+                <strong>Not affiliated with Cars.com.</strong> CarTracker is an independent portfolio
+                project, not affiliated with, endorsed by, or connected to Cars.com or to any dealer,
+                manufacturer, or vehicle marketplace whose data or name appears in it. "Cars.com" and all
+                vehicle make, model, and manufacturer names are the trademarks of their respective owners,
+                used here only to describe the data the project collects. Listing pages are collected at
+                modest, rate-limited volume for analysis and demonstration; the project retains no personal
+                data about consumers, and the only personal data it stores about its own users is a salted
+                hash of the email address of anyone who signs in. dbt™ is a trademark of dbt Labs, Inc.;
+                this project is not affiliated with or endorsed by dbt Labs. The source is published so the
+                engineering can be read: the repository carries no <code>LICENSE</code> file and therefore
+                grants no license.
             </p>
         </section>
 

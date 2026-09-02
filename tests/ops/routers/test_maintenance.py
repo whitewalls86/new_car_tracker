@@ -51,20 +51,21 @@ def _stuck_row(aid, path):
 
 
 class TestReapStuckProcessing:
-    def test_retry_when_object_exists(self, mock_cursor_context, mocker):
+    def test_retry_when_artifact_exists(self, mock_cursor_context, mocker):
         _, cursor = mock_cursor_context
         cursor.fetchall.return_value = [_stuck_row(1, "s3://b/a.zst")]
-        mocker.patch("ops.routers.maintenance.object_exists", return_value=True)
+        exists = mocker.patch("ops.routers.maintenance.artifact_exists", return_value=True)
 
         res = _reap_stuck_processing()
 
         assert res == {"stuck": 1, "retried": 1, "skipped": 0}
         assert _executed(cursor, MARK_ARTIFACT_STATUS)[0]["status"] == "retry"
+        exists.assert_called_once_with("s3://b/a.zst")
 
     def test_skip_when_object_missing(self, mock_cursor_context, mocker):
         _, cursor = mock_cursor_context
         cursor.fetchall.return_value = [_stuck_row(1, "s3://b/a.zst")]
-        mocker.patch("ops.routers.maintenance.object_exists", return_value=False)
+        mocker.patch("ops.routers.maintenance.artifact_exists", return_value=False)
 
         res = _reap_stuck_processing()
 
@@ -74,7 +75,7 @@ class TestReapStuckProcessing:
     def test_mixed(self, mock_cursor_context, mocker):
         _, cursor = mock_cursor_context
         cursor.fetchall.return_value = [_stuck_row(1, "s3://b/a.zst"), _stuck_row(2, "s3://b/b.zst")]
-        mocker.patch("ops.routers.maintenance.object_exists", side_effect=[True, False])
+        mocker.patch("ops.routers.maintenance.artifact_exists", side_effect=[True, False])
 
         res = _reap_stuck_processing()
 
@@ -116,6 +117,21 @@ class TestEvictDelistedCooldowns:
         cursor.fetchall.return_value = []
         assert _evict_delisted_cooldowns() == {"evicted": 0}
         assert _executed(cursor, INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT) == []
+
+    def test_route_registered(self, mock_client, mocker):
+        """G6, Plan 162 Stage 6. The two tests above call the helper directly.
+
+        That proves the eviction logic and nothing about the URL -- which is
+        the distinction `container_health` paid eleven hours of production 404
+        to establish.
+        """
+        mocker.patch(
+            "ops.routers.maintenance._evict_delisted_cooldowns",
+            return_value={"evicted": 0},
+        )
+        resp = mock_client.post("/maintenance/evict-delisted-cooldowns")
+        assert resp.status_code == 200
+        assert resp.json() == {"evicted": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -160,3 +176,15 @@ class TestReconcileCooldownCohorts:
         assert _reconcile_cooldown_cohorts() == {
             "counted": 0, "live": 0, "pending_cleared": 0, "cleared": 0,
         }
+
+    def test_route_registered(self, mock_client, mocker):
+        """G6, Plan 162 Stage 6. Reached through the router, not the helper."""
+        mocker.patch(
+            "ops.routers.maintenance._reconcile_cooldown_cohorts",
+            return_value={
+                "counted": 0, "live": 0, "pending_cleared": 0, "cleared": 0,
+            },
+        )
+        resp = mock_client.post("/maintenance/reconcile-cooldown-cohorts")
+        assert resp.status_code == 200
+        assert resp.json()["cleared"] == 0

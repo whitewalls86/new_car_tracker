@@ -147,93 +147,57 @@ is_idle()      # returns True when counter == 0
 1. Set deploy_intent → Airflow sensors block new DAG runs from starting
 2. Poll GET /ready on each draining service until all return {"ready": true}
 3. docker compose up -d --no-deps <service>
-4. Set deploy_intent back to 'none' → sensors unblock, work resumes
+4. Poll docker inspect health until every recreated service is healthy
+5. Set deploy_intent back to 'none' → sensors unblock, work resumes
 ```
+
+`scripts/redeploy.sh` runs steps 3-5. Step 4 replaced a `sleep 10` in Plan 144;
+its timeout is derived from the slowest healthcheck in `docker-compose.yml` and
+checked in CI. Step 5 is conditional: intent is released after a failed *build*,
+because nothing was recreated, and **held** after a failed recreation, because a
+half-deployed fleet should not have work resuming against it.
+
+**This flow only applies when the image changed.** `up -d` on a service Compose
+sees no drift for leaves the container running and exits 0, so steps 3-5 do
+nothing at all; the script detects that and says so rather than reporting a
+deploy. Two cases need a restart instead of a recreate, and both use
+`scripts/redeploy.sh --restart <service>` (spelled `--config` as well):
+
+- **A bind-mounted config file changed.** For the six services that mount a
+  single *file* rather than a directory, `git pull` lands the new content on a
+  new inode and a `SIGHUP` reload silently reloads the old one. The restart path
+  verifies the container is reading the file that is on disk.
+- **A peer's address changed under a long-lived process.** Recreating a
+  container gives it a new IP, and anything holding a cached resolved address —
+  Airflow's StatsD client, over UDP — keeps addressing the dead one, silently.
+  `deploy-followers.txt` names these and the deploy warns.
+
+See [Plan 144](plans/plan_144_deploy_script_hardening.md).
 
 ---
 
 ## Testing Strategy
 
-Three layers, each with a distinct purpose. All three run in CI against a real Postgres instance with Flyway migrations applied.
+The testing contract lives in **[`docs/TESTING.md`](TESTING.md)** and is owned
+by [Plan 161](plans/plan_161_testing_contract.md). It defines the five layers,
+the one convention per concern, what a service owes before it ships, and the
+gap list. It is asserted by a test rather than agreed to.
 
-### Layer 1 — SQL Smoke Tests
+This section deliberately holds no summary of it. The description that stood
+here from Plan 84 until 2026-08-31 was accurate when written and false by
+August in four checkable ways, and nothing in the repository could tell the
+difference — which is the whole reason the contract exists.
 
-**Goal:** Catch schema breakage before it hits production.
+The two architectural facts about testing that belong in *this* document,
+because they are properties of the system rather than of the suite:
 
-Every mission-critical query runs against the real schema and returns without error with expected columns. No business logic assertions — just "this query executes and returns what the app expects."
-
-**Pattern:** Per-test rollback fixtures. Each test opens a transaction, seeds minimal fixture rows, runs the query, asserts columns, rolls back. Nothing is ever committed.
-
-```python
-@pytest.fixture()
-def db_conn(db_conn_factory):
-    conn = db_conn_factory()
-    conn.autocommit = False
-    yield conn
-    conn.rollback()   # teardown — no committed state left behind
-    conn.close()
-```
-
-**Files:** `tests/integration/sql/`
-
----
-
-### Layer 2 — dbt Model Logic Tests
-
-**Goal:** Assert that transformation logic is correct. Known inputs produce known outputs.
-
-dbt runs in a subprocess and cannot see open transactions. A different isolation strategy is required:
-
-1. Seed source data via **autocommit** connection — committed immediately, visible to dbt subprocess
-2. Run `dbt build --select <selector> --target ci` — writes to `analytics_ci` schema
-3. Assert against `analytics_ci.<model>` rows
-4. Module-level teardown TRUNCATEs source tables
-
-All seed data for the entire test session is committed once in the `seed_and_build` session-scoped autouse fixture. Individual test modules contain only assertions — no per-test seeding or dbt invocations.
-
-**ID scheme** prevents primary key conflicts across test groups (100s = VIN mapping, 200s = price percentiles, 300s = ops/staleness, 400s = deal scores, 500s = vehicle attributes, 600s = price history, 700s = days on market, 800s = price events dedup, 900s = vehicle snapshot).
-
-**Key fixture:** `analytics_ci_cur` — a cursor pre-set to `analytics_ci` schema for reading dbt output.
-
-**Files:** `tests/integration/dbt/`
-
----
-
-### Layer 3 — Service API Integration Tests
-
-**Goal:** Assert that service endpoints behave correctly against a real database.
-
-FastAPI `TestClient` against a real Postgres instance. No mocked DB connections. The app processes the full request path — router → business logic → SQL → DB.
-
-```python
-@pytest.fixture(scope="session")
-def api_client():
-    with TestClient(app, raise_server_exceptions=True) as client:
-        yield client
-```
-
-A separate `verify_cur` fixture uses an **autocommit** connection to read committed DB state after a TestClient request, without being inside the same transaction.
-
-Auth is exercised for real: `AUTH_EMAIL_SALT` is set in the test environment, and `auth_email_hash` computes the expected hash so tests can seed `authorized_users` rows that the auth middleware will find.
-
-**Files:** `tests/integration/ops/`, `tests/integration/archiver/`, `tests/integration/airflow/`, `tests/integration/dbt_runner/`
-
----
-
-### Unit Tests
-
-**Goal:** Fast feedback on logic that doesn't require a real DB.
-
-Mock DB connections (psycopg2 mock pattern via `mock_db_conn` fixture). Verify that code calls the correct queries with the correct parameters. Parser tests use real HTML fixtures — no mocking.
-
-**Files:** `tests/ops/`, `tests/scraper/`, `tests/archiver/`, `tests/dbt_runner/`, `tests/shared/`
-
----
-
-### CI Ordering
-
-Layer 1 SQL smoke tests run before Layer 2 dbt tests. A broken schema detected in Layer 1 fails fast without wasting time on a full dbt build.
-
-```
-unit tests → Layer 1 SQL smoke → Layer 2 dbt logic → Layer 3 API integration
-```
+- **CI's database is not production's database.** The suites run against bare
+  `postgres:16` and `minio/minio:latest` service containers rather than the
+  Compose definitions, so Airflow's schema does not exist there and the
+  coordination queries that cross into it cannot be executed by any layer.
+  Closing that is [Plan 139 Stage F](plans/plan_139_test_suite_maintenance.md).
+- **Airflow is tested in its own interpreter**, mirroring its own container in
+  production: `apache-airflow`'s starlette pin conflicts with the FastAPI
+  services', so `tests/integration/airflow/` runs from an isolated venv built
+  inside the CI job. Anything under `tests/airflow/` runs in the main venv and
+  must therefore not import `airflow`.

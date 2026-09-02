@@ -6,7 +6,6 @@ no live Lakekeeper required.
 import io
 import json
 import urllib.error
-from unittest.mock import patch
 
 import pytest
 
@@ -64,71 +63,80 @@ class TestManagementBaseUri:
 
 
 class TestServerBootstrapped:
-    def test_true_when_info_reports_bootstrapped(self, monkeypatch):
+    def test_true_when_info_reports_bootstrapped(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         response = _urlopen_response(200, {"bootstrapped": True})
-        with patch("urllib.request.urlopen", return_value=response):
-            assert server_bootstrapped() is True
+        mocker.patch("urllib.request.urlopen", return_value=response)
 
-    def test_false_when_info_reports_not_bootstrapped(self, monkeypatch):
+        assert server_bootstrapped() is True
+
+    def test_false_when_info_reports_not_bootstrapped(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         response = _urlopen_response(200, {"bootstrapped": False})
-        with patch("urllib.request.urlopen", return_value=response):
-            assert server_bootstrapped() is False
+        mocker.patch("urllib.request.urlopen", return_value=response)
 
-    def test_raises_on_non_200(self, monkeypatch):
+        assert server_bootstrapped() is False
+
+    def test_raises_on_non_200(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         error = urllib.error.HTTPError("url", 500, "err", {}, io.BytesIO(b"{}"))
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError):
-                server_bootstrapped()
+        mocker.patch("urllib.request.urlopen", side_effect=error)
+
+        with pytest.raises(RuntimeError):
+            server_bootstrapped()
 
 
 class TestEnsureBootstrapped:
-    def test_noop_when_already_bootstrapped(self, monkeypatch, capsys):
+    def test_noop_when_already_bootstrapped(self, monkeypatch, capsys, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         response = _urlopen_response(200, {"bootstrapped": True})
-        with patch("urllib.request.urlopen", return_value=response) as mock_urlopen:
-            ensure_bootstrapped()
+        mock_urlopen = mocker.patch("urllib.request.urlopen", return_value=response)
+
+        ensure_bootstrapped()
         assert mock_urlopen.call_count == 1  # only the info GET, no bootstrap POST
         assert "already bootstrapped" in capsys.readouterr().out
 
-    def test_bootstraps_when_fresh_server(self, monkeypatch):
+    def test_bootstraps_when_fresh_server(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         info_response = _urlopen_response(200, {"bootstrapped": False})
         bootstrap_response = _urlopen_response(204, {})
         side_effect = [info_response, bootstrap_response]
-        with patch("urllib.request.urlopen", side_effect=side_effect) as mock_urlopen:
-            ensure_bootstrapped()
+        mock_urlopen = mocker.patch("urllib.request.urlopen", side_effect=side_effect)
+
+        ensure_bootstrapped()
         assert mock_urlopen.call_count == 2
 
-    def test_treats_409_as_success(self, monkeypatch):
+    def test_treats_409_as_success(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         info_response = _urlopen_response(200, {"bootstrapped": False})
         conflict = urllib.error.HTTPError("url", 409, "conflict", {}, io.BytesIO(b"{}"))
-        with patch("urllib.request.urlopen", side_effect=[info_response, conflict]):
-            ensure_bootstrapped()  # must not raise
+        mocker.patch("urllib.request.urlopen", side_effect=[info_response, conflict])
+
+        ensure_bootstrapped()  # must not raise
 
 
 class TestWarehouseExists:
-    def test_true_when_name_present(self, monkeypatch):
+    def test_true_when_name_present(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         response = _urlopen_response(200, {"warehouses": [{"name": WAREHOUSE_NAME}]})
-        with patch("urllib.request.urlopen", return_value=response):
-            assert warehouse_exists(WAREHOUSE_NAME) is True
+        mocker.patch("urllib.request.urlopen", return_value=response)
 
-    def test_false_when_name_absent(self, monkeypatch):
+        assert warehouse_exists(WAREHOUSE_NAME) is True
+
+    def test_false_when_name_absent(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         response = _urlopen_response(200, {"warehouses": [{"name": "some_other_warehouse"}]})
-        with patch("urllib.request.urlopen", return_value=response):
-            assert warehouse_exists(WAREHOUSE_NAME) is False
+        mocker.patch("urllib.request.urlopen", return_value=response)
 
-    def test_raises_on_non_200(self, monkeypatch):
+        assert warehouse_exists(WAREHOUSE_NAME) is False
+
+    def test_raises_on_non_200(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         error = urllib.error.HTTPError("url", 500, "err", {}, io.BytesIO(b"{}"))
-        with patch("urllib.request.urlopen", side_effect=error):
-            with pytest.raises(RuntimeError):
-                warehouse_exists(WAREHOUSE_NAME)
+        mocker.patch("urllib.request.urlopen", side_effect=error)
+
+        with pytest.raises(RuntimeError):
+            warehouse_exists(WAREHOUSE_NAME)
 
 
 class TestRegisterWarehouse:
@@ -137,35 +145,38 @@ class TestRegisterWarehouse:
     idempotency, matching TestEnsureBootstrapped's own coverage of that step.
     """
 
-    def test_noop_when_already_registered(self, monkeypatch, capsys):
+    def test_noop_when_already_registered(self, monkeypatch, capsys, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         monkeypatch.setenv("MINIO_ROOT_USER", "cartracker")
         monkeypatch.setenv("MINIO_ROOT_PASSWORD", "secret")
-        monkeypatch.setattr(module, "ensure_bootstrapped", lambda: None)
+        mocker.patch.object(module, "ensure_bootstrapped", lambda: None)
         response = _urlopen_response(200, {"warehouses": [{"name": WAREHOUSE_NAME}]})
-        with patch("urllib.request.urlopen", return_value=response) as mock_urlopen:
-            register_warehouse()
+        mock_urlopen = mocker.patch("urllib.request.urlopen", return_value=response)
+
+        register_warehouse()
         assert mock_urlopen.call_count == 1  # only the GET, no POST
         assert "already registered" in capsys.readouterr().out
 
-    def test_registers_when_absent(self, monkeypatch):
+    def test_registers_when_absent(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         monkeypatch.setenv("MINIO_ROOT_USER", "cartracker")
         monkeypatch.setenv("MINIO_ROOT_PASSWORD", "secret")
-        monkeypatch.setattr(module, "ensure_bootstrapped", lambda: None)
+        mocker.patch.object(module, "ensure_bootstrapped", lambda: None)
         get_response = _urlopen_response(200, {"warehouses": []})
         post_response = _urlopen_response(201, {"warehouse-id": "abc123"})
         side_effect = [get_response, post_response]
-        with patch("urllib.request.urlopen", side_effect=side_effect) as mock_urlopen:
-            register_warehouse()
+        mock_urlopen = mocker.patch("urllib.request.urlopen", side_effect=side_effect)
+
+        register_warehouse()
         assert mock_urlopen.call_count == 2
 
-    def test_treats_409_as_success(self, monkeypatch):
+    def test_treats_409_as_success(self, monkeypatch, mocker):
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         monkeypatch.setenv("MINIO_ROOT_USER", "cartracker")
         monkeypatch.setenv("MINIO_ROOT_PASSWORD", "secret")
-        monkeypatch.setattr(module, "ensure_bootstrapped", lambda: None)
+        mocker.patch.object(module, "ensure_bootstrapped", lambda: None)
         get_response = _urlopen_response(200, {"warehouses": []})
         conflict = urllib.error.HTTPError("url", 409, "conflict", {}, io.BytesIO(b"{}"))
-        with patch("urllib.request.urlopen", side_effect=[get_response, conflict]):
-            register_warehouse()  # must not raise
+        mocker.patch("urllib.request.urlopen", side_effect=[get_response, conflict])
+
+        register_warehouse()  # must not raise

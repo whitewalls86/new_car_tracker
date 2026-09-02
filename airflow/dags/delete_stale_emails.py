@@ -8,7 +8,7 @@ from airflow import DAG
 
 SQL_DELETE_STALE_EMAILS = (
     Path(__file__).parent.parent / "sql" / "delete_stale_emails.sql"
-).read_text()
+).read_text(encoding="utf-8")
 
 with DAG(
     dag_id="delete_stale_emails",
@@ -17,7 +17,7 @@ with DAG(
     catchup=False,
     tags=["maintenance"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("delete_stale_emails")
 
     cleanup = SQLExecuteQueryOperator(
         task_id="delete_stale_emails",

@@ -1,17 +1,14 @@
 import logging
-import os
 from datetime import datetime, timedelta
 
-import requests
 from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
-from sensors import JsonPostError, http_health_sensor, post_json
+from notifications import send_failure_alert
+from sensors import JsonPostError, deploy_intent_sensor, http_health_sensor, post_json
 
 from airflow import DAG
 
 DBT_RUNNER_URL = "http://dbt_runner:8080"
-_TELEGRAM_API = os.environ.get("TELEGRAM_API", "")
-_TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 logger = logging.getLogger(__name__)
 
@@ -43,37 +40,7 @@ def _run_dbt_build(**context):
 
 
 def _notify(**context):
-    result = context["ti"].xcom_pull(task_ids="dbt_build", key="result")
-    ti = context["ti"]
-
-    if not _TELEGRAM_API or not _TELEGRAM_CHAT_ID:
-        logger.warning("TELEGRAM_API/TELEGRAM_CHAT_ID not configured - skipping notification")
-        return
-
-    lines = [
-        "dbt build FAILED",
-        f"Run:     {ti.dag_run.run_id}",
-        f"Date:    {ti.execution_date}",
-    ]
-
-    if result:
-        if result.get("cmd"):
-            lines.append(f"Command: {result['cmd']}")
-        rc = result.get("returncode")
-        if rc is not None:
-            lines.append(f"Exit:    {rc}")
-        error_body = result.get("stderr") or result.get("stdout") or ""
-        if error_body:
-            lines += ["", error_body[-800:]]
-
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{_TELEGRAM_API}/sendMessage",
-            json={"chat_id": _TELEGRAM_CHAT_ID, "text": "\n".join(lines)},
-            timeout=10,
-        )
-    except requests.RequestException:
-        logger.warning("Failed to send Telegram notification for dbt build failure")
+    send_failure_alert(context, "dbt build FAILED", task_ids=("dbt_build",))
 
 
 with DAG(
@@ -83,6 +50,7 @@ with DAG(
     catchup=False,
     tags=["dbt"],
 ):
+    ready = deploy_intent_sensor("dbt_build")
     dbt_runner_up = http_health_sensor("dbt_runner", DBT_RUNNER_URL)
 
     build = PythonOperator(
@@ -98,4 +66,4 @@ with DAG(
         trigger_rule="one_failed",
     )
 
-    dbt_runner_up >> build >> notify
+    ready >> dbt_runner_up >> build >> notify

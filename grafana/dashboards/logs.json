@@ -2,7 +2,10 @@
   "id": null,
   "uid": "cartracker-logs",
   "title": "Logs",
-  "tags": ["logs", "loki"],
+  "tags": [
+    "logs",
+    "loki"
+  ],
   "timezone": "browser",
   "schemaVersion": 38,
   "refresh": "1m",
@@ -47,7 +50,7 @@
     },
     {
       "id": 2,
-      "title": "Error / Warning Logs",
+      "title": "Error / Warning / Critical Logs",
       "type": "logs",
       "gridPos": {
         "h": 12,
@@ -65,7 +68,7 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "{service=~\".+\", level=~\"ERROR|WARNING\"}",
+          "expr": "{service=~\".+\", level=~\"WARNING|ERROR|CRITICAL\"}",
           "refId": "A"
         }
       ],
@@ -81,7 +84,7 @@
     },
     {
       "id": 3,
-      "title": "Log Volume by Level",
+      "title": "Log Volume by Service / Source / Level",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -99,8 +102,8 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "sum by (level) (count_over_time({service=~\".+\"} [5m]))",
-          "legendFormat": "{{level}}",
+          "expr": "sum by (service, source, level) (count_over_time({service=~\".+\"} [5m]))",
+          "legendFormat": "{{service}} / {{source}} / {{level}}",
           "refId": "A"
         }
       ],
@@ -108,6 +111,110 @@
         "defaults": {
           "unit": "short",
           "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Unclassified Log Lines (5m, expected 0)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartracker-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cartracker-prometheus"
+          },
+          "expr": "sum(increase(logentry_dropped_lines_total{reason=\"application_file_unclassified\"}[5m])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "description": "Application log records Promtail could not classify, counted where they are actually dropped. A Loki query cannot see these: the drop stage removes the line before it is stored, so the same panel read as a Loki count of level=\"\" was 0 by construction."
+    },
+    {
+      "id": 5,
+      "title": "Promtail Drops by Reason (5m)",
+      "description": "Not every drop is a fault: airflow_non_actionable_control_plane and oauth2_successful_auth_subrequest are the retention policy working. This panel exists so each reason is countable and a shift in the mix is visible.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartracker-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cartracker-prometheus"
+          },
+          "expr": "sum by (reason) (increase(logentry_dropped_lines_total[5m]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 10
           }

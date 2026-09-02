@@ -3,12 +3,118 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /tmp/positions.yaml
+  # Survive Promtail recreation so retained Docker stdout is not replayed.
+  filename: /positions/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
+
+  # Container stdout is normally only a bounded Docker transport buffer. Keep
+  # the auth audit trail and Airflow control-plane logs in Loki, while excluding
+  # Loki itself (which would create a feedback loop) and low-value containers.
+  - job_name: docker-operations
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 30s
+        filters:
+          - name: label
+            values: ['promtail.enable=true']
+    relabel_configs:
+      - target_label: job
+        replacement: docker-operations
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/cartracker-(.+)'
+        target_label: service
+        replacement: '$1'
+      - target_label: source
+        replacement: container_stdout
+    pipeline_stages:
+      - docker: {}
+      # Parse severity before filtering: words in logger names and message
+      # bodies are not severity. Three shapes reach these containers and all
+      # three must classify, because an unmatched line is dropped rather than
+      # retained without a level -- structlog `<ts> [error    ]` (the shape
+      # sampled in production), the gunicorn supervisor's `[ts] [7] [CRITICAL]`,
+      # and the classic `[ts] {file.py:123} ERROR -`. Requiring severity in the
+      # second or third whitespace field matched only the first of those.
+      # Kept identical to AIRFLOW_LEVEL_PATTERN in shared/log_ingestion_policy;
+      # test_airflow_container_stdout_parses_then_filters_severity asserts it.
+      # Unparsed continuation lines, including tracebacks, stay excluded.
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
+          stages:
+            - regex:
+                expression: '^(?:.{0,80}?\[\s*|(?:\[[^\]]*\]\s+)?\{[^}]*\}\s+|)(?P<level>(?i:debug|info|warning|error|critical))\b'
+            - template:
+                source: level
+                template: '{{ ToUpper .Value }}'
+            - labels:
+                level:
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)", level=""}'
+          action: drop
+          drop_counter_reason: airflow_unclassified_control_plane
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)", level=~"DEBUG|INFO"}'
+          action: drop
+          drop_counter_reason: airflow_non_actionable_control_plane
+      # OAuth access records carry a numeric status but no severity. HTTP 4xx
+      # is WARNING, 5xx is ERROR, and the remaining access/lifecycle records
+      # are INFO unless the native lifecycle text begins Warning:/Error:.
+      - match:
+          selector: '{service="oauth2-proxy"}'
+          stages:
+            - regex:
+                expression: '^.*?\s(?P<method>[A-Z]+) - "(?P<path>[^"]+)" HTTP/[0-9.]+ "[^"]*" (?P<status>[0-9]{3}) \d+ [0-9.]+$'
+            - regex:
+                expression: '^\[[^\]]+\]\s+\[[^\]]+\]\s+(?P<oauth_level>Warning|ERROR|Error):'
+            - labels:
+                status:
+                oauth_level:
+            - template:
+                source: level
+                template: INFO
+            - match:
+                selector: '{status=~"4.."}'
+                stages:
+                  - template:
+                      source: level
+                      template: WARNING
+            - match:
+                selector: '{status=~"5.."}'
+                stages:
+                  - template:
+                      source: level
+                      template: ERROR
+            - match:
+                selector: '{oauth_level="Warning"}'
+                stages:
+                  - template:
+                      source: level
+                      template: WARNING
+            - match:
+                selector: '{oauth_level=~"ERROR|Error"}'
+                stages:
+                  - template:
+                      source: level
+                      template: ERROR
+            - labels:
+                level:
+            - labeldrop:
+                - oauth_level
+            # Grafana performs this successful auth subrequest for nearly
+            # every datasource request. Do not store its PII-bearing echo.
+            - match:
+                selector: '{status="202"}'
+                stages:
+                  - drop:
+                      source: path
+                      expression: '^/oauth2/auth(?:\?.*)?$'
+                      drop_counter_reason: oauth2_successful_auth_subrequest
+      - labels:
+          stream:
 
   - job_name: ops
     static_configs:
@@ -16,7 +122,8 @@ scrape_configs:
           - localhost
         labels:
           service: ops
-          __path__: /logs/ops/app.log*
+          source: application_file
+          __path__: /logs/ops/app.log
 
     pipeline_stages:
       - json:
@@ -30,6 +137,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="ops", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: scraper
     static_configs:
@@ -37,7 +148,8 @@ scrape_configs:
           - localhost
         labels:
           service: scraper
-          __path__: /logs/scraper/app.log*
+          source: application_file
+          __path__: /logs/scraper/app.log
 
     pipeline_stages:
       - json:
@@ -51,6 +163,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="scraper", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: processing
     static_configs:
@@ -58,7 +174,8 @@ scrape_configs:
           - localhost
         labels:
           service: processing
-          __path__: /logs/processing/app.log*
+          source: application_file
+          __path__: /logs/processing/app.log
 
     pipeline_stages:
       - json:
@@ -72,6 +189,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="processing", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: dbt_runner
     static_configs:
@@ -79,7 +200,8 @@ scrape_configs:
           - localhost
         labels:
           service: dbt_runner
-          __path__: /logs/dbt_runner/app.log*
+          source: application_file
+          __path__: /logs/dbt_runner/app.log
 
     pipeline_stages:
       - json:
@@ -93,6 +215,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="dbt_runner", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: archiver
     static_configs:
@@ -100,7 +226,8 @@ scrape_configs:
           - localhost
         labels:
           service: archiver
-          __path__: /logs/archiver/app.log*
+          source: application_file
+          __path__: /logs/archiver/app.log
 
     pipeline_stages:
       - json:
@@ -114,3 +241,33 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="archiver", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
+
+  - job_name: pack-worker
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: pack-worker
+          source: application_file
+          __path__: /logs/pack-worker/app.log
+
+    pipeline_stages:
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="pack-worker", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified

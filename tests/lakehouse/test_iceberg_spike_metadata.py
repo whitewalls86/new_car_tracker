@@ -50,7 +50,7 @@ class TestCleanupKeys:
         prefix = "lakehouse_spike/warehouse/019f65f6-b861-7363-bc46-0dd926f68637/"
         assert cleanup_keys(["silver_normalized/observations/f3.parquet"], prefix) == []
 
-    def test_raises_if_a_matching_key_somehow_escapes_the_spike_prefix(self, monkeypatch):
+    def test_raises_if_a_matching_key_somehow_escapes_the_spike_prefix(self, mocker):
         # Defense in depth: even a key that happens to start with the given
         # prefix must still pass the shared spike-prefix guard.
         import scripts.spike_iceberg_lakehouse as module
@@ -58,7 +58,7 @@ class TestCleanupKeys:
         def _always_unsafe(key):
             raise UnsafePrefixError(key)
 
-        monkeypatch.setattr(module, "require_spike_prefix", _always_unsafe)
+        mocker.patch.object(module, "require_spike_prefix", _always_unsafe)
         prefix = "lakehouse_spike/warehouse/019f65f6-b861-7363-bc46-0dd926f68637/"
         with pytest.raises(UnsafePrefixError):
             cleanup_keys([f"{prefix}data/f1.parquet"], prefix)

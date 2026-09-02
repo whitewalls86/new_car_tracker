@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-08-30",
+  "planned": [
+    {
+      "plan": "162",
+      "title": "Testing census and CI restructure",
+      "order": 1,
+      "priority": 75,
+      "effort": "L",
+      "state": "planned",
+      "summary": "Stage 6c — every service contract produces an intent row the database accepts: dashboard and pgadmin map to no surfaces, so /deploy/start writes scope='[]' against a CHECK that forbids it",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_162_testing_census_and_restructure.md"
+    },
+    {
+      "plan": "134",
+      "title": "Archiver endpoint failure contract",
+      "order": 2,
+      "priority": 88,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Stage 2 — enforcement, one endpoint per deploy at least 48h apart, in ascending blast radius: compact, then staging, then silver",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
+    },
+    {
+      "plan": "138",
+      "title": "Public surface refresh",
+      "order": 3,
+      "priority": 84,
+      "effort": "L",
+      "state": "planned",
+      "summary": "Stage 8 (CAR-67) — extract docs/PUBLIC_SURFACE.md: the durable public-surface rules leave this plan, and the destination inventory records what a reader is meant to reach",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
+    },
+    {
+      "plan": "164",
+      "title": "Cycle-close ritual",
+      "order": 4,
+      "priority": 70,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Stage 0 — write the close order down, then Stage 3's git-ref and worktree hygiene; both are independent of Linear and buildable now",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
+    }
+  ],
+  "completed": [
+    {
+      "plan": "161",
+      "title": "The testing contract",
+      "date": "2026-08-31",
+      "state": "completed",
+      "summary": "The rules for how this project tests itself used to be a paragraph of documentation that slowly went out of date. They are now a contract the suite checks on every change, so the description cannot quietly stop matching the code.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_161_testing_contract.md"
+    },
+    {
+      "plan": "139",
+      "title": "Test suite maintenance",
+      "date": "2026-08-31",
+      "state": "completed",
+      "summary": "Made test coverage visible on every change instead of measured and thrown away, and fixed a test database that did not match the shape of the real one.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_139_test_suite_maintenance.md"
+    },
+    {
+      "plan": "147",
+      "title": "Scrape state ownership",
+      "date": "2026-08-30",
+      "state": "completed",
+      "summary": "Split one timestamp into two: when a listing was last fetched, and when it was last understood. A backlog in one stage no longer causes the same pages to be fetched over and over.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_147_scrape_state_ownership.md"
+    },
+    {
+      "plan": "158",
+      "title": "Coordination gate deadlock",
+      "date": "2026-08-30",
+      "state": "completed",
+      "summary": "A deploy could wait forever on a signal that was never sent, and looked like it was working while it hung. The signal is now recorded correctly, and a wait that cannot finish fails with the reason named instead of hanging.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_158_coordination_gate_deadlock.md"
+    }
+  ]
+}

@@ -16,6 +16,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests as stdlib_requests
 from curl_cffi import requests as cf_requests
 
+from scraper.metrics import record_solver_outcome
+from shared.challenge import html_title, title_looks_like_challenge
+
 logger_name = "scraper"
 logger = logging.getLogger(logger_name)
 
@@ -94,6 +97,22 @@ def _chrome_major(user_agent: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+def _solver_outcome(html: bytes, http_status: int) -> str:
+    """Classify a solver response the solver itself reported as successful.
+
+    This is the distinction the 2026-08-14 outage turned on. `trawl` kept
+    returning `status: ok` with real `cf_clearance` cookies for eight hours
+    while every page behind them was an interstitial, and its own healthcheck
+    reported `status:ok` throughout. A counter that trusted the solver's
+    self-report would have been just as blind.
+    """
+    if http_status == 403:
+        return "challenge"
+    if title_looks_like_challenge(html_title(html)):
+        return "challenge"
+    return "ok"
+
+
 def browser_headers_for_ua(
     user_agent: str,
     referer: str = "https://www.cars.com/",
@@ -157,24 +176,49 @@ def get_cf_credentials(url: str, timeout_s: int) \
         if _cf_credentials is not None and now < _cf_credentials_expires_at:
             return _cf_credentials, None, None
 
-        resp = stdlib_requests.post(
-            f"{FLARESOLVERR_URL}/v1",
-            json={"cmd": "request.get", "url": url, "maxTimeout": timeout_s * 1000},
-            timeout=timeout_s + 15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        # Plan 136 Stage 2: only a cache *miss* reaches the solver, so this is
+        # the one place a solver request exists to be counted. Every failure
+        # inside this block is an `error`, including the RuntimeError raised
+        # below -- a solver reporting a non-ok status is refusing, and grouping
+        # it with transport failures keeps the label set to what an operator
+        # can act on.
+        try:
+            resp = stdlib_requests.post(
+                f"{FLARESOLVERR_URL}/v1",
+                json={"cmd": "request.get", "url": url, "maxTimeout": timeout_s * 1000},
+                timeout=timeout_s + 15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        if data.get("status") != "ok":
-            raise RuntimeError(f"FlareSolverr failed: {data.get('message', data)}")
+            if data.get("status") != "ok":
+                raise RuntimeError(f"FlareSolverr failed: {data.get('message', data)}")
 
-        solution = data["solution"]
-        user_agent = solution["userAgent"]
-        html = (solution.get("response") or "").encode("utf-8")
-        http_status = solution.get("status", 200)
-        cookie_attrs = solution.get("cookies", [])
-        cookies = {c["name"]: c["value"] for c in cookie_attrs}
+            solution = data["solution"]
+            user_agent = solution["userAgent"]
+            html = (solution.get("response") or "").encode("utf-8")
+            http_status = solution.get("status", 200)
+            cookie_attrs = solution.get("cookies", [])
+            cookies = {c["name"]: c["value"] for c in cookie_attrs}
+        except Exception:
+            record_solver_outcome("error")
+            raise
 
+        outcome = _solver_outcome(html, http_status)
+        record_solver_outcome(outcome)
+        if outcome == "challenge":
+            logger.warning(
+                "FlareSolverr returned an interstitial despite status=ok "
+                "(http_status=%s, title=%r, response_bytes=%d)",
+                http_status,
+                html_title(html),
+                len(html),
+            )
+
+        # Cached regardless of outcome, exactly as before. Refusing to cache an
+        # interstitial would re-bootstrap on every request and hammer the solver
+        # hardest at the moment it is already failing. Changing that is a
+        # behaviour decision for Stage 4's circuit breaker, not for telemetry.
         _cf_credentials = {
             "cookies": cookies,
             "cookie_attrs": cookie_attrs,

@@ -18,3 +18,9 @@ def _load(name: str) -> str:
 UPSERT_BLOCKED_COOLDOWN = _load("upsert_blocked_cooldown")
 GET_BLOCKED_COOLDOWN_ATTEMPTS = _load("get_blocked_cooldown_attempts")
 INSERT_BLOCKED_COOLDOWN_EVENT = _load("insert_blocked_cooldown_event")
+
+# Plan 97: artifacts_queue enqueue, one pair per artifact type
+ENQUEUE_DETAIL_ARTIFACT = _load("enqueue_detail_artifact")
+INSERT_DETAIL_ARTIFACT_EVENT = _load("insert_detail_artifact_event")
+ENQUEUE_RESULTS_ARTIFACT = _load("enqueue_results_artifact")
+INSERT_RESULTS_ARTIFACT_EVENT = _load("insert_results_artifact_event")

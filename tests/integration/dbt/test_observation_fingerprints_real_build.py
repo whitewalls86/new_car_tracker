@@ -3,7 +3,7 @@ Plan 123 Phase 2b: int_listing_observation_fingerprints against the real dbt
 project and the shared MinIO lake-snapshot fixture — not a throwaway
 dbt-duckdb shadow project.
 
-The CI `dbt` job already seeds the base-phase fixture
+The CI `dbt model tests (real build)` job already seeds the base-phase fixture
 (`scripts/seed_lake_snapshot_fixture.py`, phase="base") and runs a full
 `dbt build --target duckdb` before this test runs, so the first half of this
 test just queries the real materialized `int_listing_observation_fingerprints`
@@ -29,19 +29,17 @@ project setup, separate fixture data/expectations) that drifts from the real
 model graph over time. Driving the real project against the real shared
 fixture is slower per-assertion but has no drift surface.
 
-Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt` job).
+Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt model tests (real build)` job).
 Skipped everywhere else — there is no local dbt/MinIO stack to run this
 against.
 """
 import os
-import shutil
-import subprocess
-from pathlib import Path
 
-import duckdb
 import pytest
 
 from scripts import seed_lake_snapshot_fixture as fx
+
+from .real_build import analytics_con, dbt_is_installed, run_dbt
 
 pytestmark = [
     pytest.mark.integration,
@@ -49,36 +47,12 @@ pytestmark = [
         not os.environ.get("MINIO_ENDPOINT") or not os.environ.get("DUCKDB_PATH"),
         reason="MINIO_ENDPOINT/DUCKDB_PATH not set — no local dbt/MinIO stack to build against",
     ),
-    pytest.mark.skipif(shutil.which("dbt") is None, reason="dbt is not installed"),
+    pytest.mark.skipif(not dbt_is_installed(), reason="dbt is not installed"),
 ]
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DBT_DIR = REPO_ROOT / "dbt"
-DBT_BIN = shutil.which("dbt")
-
-
-def _dbt_env() -> dict:
-    env = dict(os.environ)
-    # register_upstream_external_models() (dbt-duckdb's on-run-start hook,
-    # dbt_project.yml) needs POSTGRES_URL on every invocation regardless of
-    # --select. The CI step that runs this test doesn't export it (only the
-    # earlier one-shot "dbt build" step does), so default it to the same
-    # CI Postgres service credentials used elsewhere (tests/integration/conftest.py).
-    env.setdefault("POSTGRES_URL", "postgresql://cartracker:cartracker@localhost:5432/cartracker")
-    return env
-
-
-def _run_dbt(*args):
-    result = subprocess.run(
-        [DBT_BIN, *args, "--profiles-dir", ".", "--target", "duckdb"],
-        cwd=DBT_DIR, capture_output=True, text=True, env=_dbt_env(),
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result
 
 
 def _observation_rows():
-    con = duckdb.connect(os.environ["DUCKDB_PATH"], read_only=True)
+    con = analytics_con()
     try:
         return con.execute(
             "select observation_id, artifact_id, listing_id, vin17, source, price, "
@@ -120,7 +94,7 @@ def test_observation_fingerprints_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
     fx.seed(phase="observation_fingerprint_incremental")
-    _run_dbt("build", "--select", "int_listing_observation_fingerprints")
+    run_dbt("build", "--select", "int_listing_observation_fingerprints")
 
     rows2 = _observation_rows()
     by_key2 = {(r[1], r[2]): r for r in rows2}
@@ -153,10 +127,10 @@ def test_observation_fingerprints_real_build_scenario():
     )
 
     # --- repeated incremental run with no new data is idempotent ---
-    _run_dbt("build", "--select", "int_listing_observation_fingerprints")
+    run_dbt("build", "--select", "int_listing_observation_fingerprints")
     assert _observation_rows() == rows2
 
     # --- incremental output equals a full-refresh over the same final data ---
     incremental_snapshot = sorted(rows2)
-    _run_dbt("build", "--select", "int_listing_observation_fingerprints", "--full-refresh")
+    run_dbt("build", "--select", "int_listing_observation_fingerprints", "--full-refresh")
     assert sorted(_observation_rows()) == incremental_snapshot

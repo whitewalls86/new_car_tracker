@@ -1,5 +1,5 @@
 """
-Layer 1 — SQL smoke tests for dashboard service queries.
+Layer 2 — SQL smoke tests for dashboard service queries.
 
 Imports the exact SQL constants from dashboard.queries (the same module the
 dashboard uses) and executes them against the DuckDB file produced by
@@ -14,6 +14,12 @@ Pipeline Health queries were removed in Plan 101.
 import pytest
 
 from dashboard.queries import (
+    DATA_HEALTH_BATCH_OUTCOMES,
+    DATA_HEALTH_BLOCK_RATE,
+    DATA_HEALTH_COOLDOWN_COHORTS,
+    DATA_HEALTH_INVENTORY_COVERAGE,
+    DATA_HEALTH_PRICE_FRESHNESS,
+    DATA_HEALTH_SCRAPE_VOLUME,
     DEALS_DAYS_ON_MARKET,
     DEALS_MAKES,
     DEALS_PRICE_DROPS,
@@ -127,3 +133,36 @@ class TestMarketTrendsQueries:
 
     def test_price_distribution(self, duckdb_con):
         q(duckdb_con, MARKET_TRENDS_PRICE_DISTRIBUTION)
+
+
+# ============================================================================
+# data_health.py
+# ============================================================================
+
+class TestDataHealthQueries:
+    """The six statements behind the Data Health page.
+
+    Uncovered until Plan 162 Stage 7, and the only page on the dashboard whose
+    queries no layer executed -- the other four pages were already here. Each
+    reads a ``mart_*`` model this same DuckDB build produces, takes no
+    parameters and no ``.format()``, so ``dashboard/pages/data_health.py``
+    calls them exactly as these tests do.
+    """
+
+    def test_scrape_volume(self, duckdb_con):
+        q(duckdb_con, DATA_HEALTH_SCRAPE_VOLUME)
+
+    def test_block_rate(self, duckdb_con):
+        q(duckdb_con, DATA_HEALTH_BLOCK_RATE)
+
+    def test_inventory_coverage(self, duckdb_con):
+        q(duckdb_con, DATA_HEALTH_INVENTORY_COVERAGE)
+
+    def test_price_freshness(self, duckdb_con):
+        q(duckdb_con, DATA_HEALTH_PRICE_FRESHNESS)
+
+    def test_batch_outcomes(self, duckdb_con):
+        q(duckdb_con, DATA_HEALTH_BATCH_OUTCOMES)
+
+    def test_cooldown_cohorts(self, duckdb_con):
+        q(duckdb_con, DATA_HEALTH_COOLDOWN_COHORTS)

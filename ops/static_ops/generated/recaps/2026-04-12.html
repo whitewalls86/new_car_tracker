@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-04-06 to 2026-04-12</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-04-12">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-04-06 to 2026-04-12. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-04-06-to-2026-04-12">Week of 2026-04-06 to 2026-04-12</h1>
+<p><strong>Window:</strong> 2026-04-06 00:00:00 to 2026-04-12 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-29
+<strong>Commits in window:</strong> 118 (99 non-merge, 19 merges)</p>
+<p>This is a backfill written <strong>139 days after the window closed</strong>. It was an
+unusually active week: the measured commit-body/stat read was about 8.9k
+tokens. Work moved from scraper 403 defenses and Parquet archival through CI,
+Oracle ARM deployment, authentication and database-backed user management.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p><code>4b48988</code> names Plan 62 and established the CI/CD foundation: linting, tests,
+Docker builds, dbt validation and Flyway schema migrations. A long sequence of
+follow-ups then corrected imports, dependencies, migration encoding and
+ordering, seed data, and container layouts until the pipeline worked on the
+real service topology.</p>
+<p><code>ab885d7</code> and <code>dcea00d</code> tracked Plan 68 from deployment blockers to completion.
+The result was an Oracle Free Tier ARM deployment with Docker Compose, DuckDNS,
+Caddy HTTPS and a repeatable deploy script. The intervening unattributed
+commits are the practical record of making service imports, dbt, routing and
+reverse-proxy paths work on that host.</p>
+<p><code>eb96c41</code> implemented Plan 65's authentication stack: Caddy delegated access
+checks to oauth2-proxy using Google OAuth, while services received scoped
+database roles. <code>fc81b94</code> then implemented Plan 82's database-backed users,
+roles and access-request workflow; follow-ups added display names and moved
+tier enforcement into the central authorization check.</p>
+<p>The remaining work hardened scraping and storage. FlareSolverr, persistent
+browser state, curl-cffi impersonation, explicit 403 cooldowns and automatic
+impersonation matching made Akamai failures recoverable. The new archiver
+moved raw HTML through MinIO into compressed, partitioned Parquet before local
+deletion, and dashboard/index/workflow cleanups adapted operations around it.
+Those commits are recapped here but remain unattributed because their own
+subject and body do not name a plan.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Six planning-index revisions produced two kinds of transition:</p>
+<ul>
+<li>Plans 29, 64, 66, 69, 70, 71, 77, 79, 81, 82 and 83 entered backlog.</li>
+<li>Plans 0–4, 7–13, 15, 17–23, 26, 28, 30–43, 45–51, 74 and 76 moved from the
+legacy in-index archive to absent. This was a planning-topology migration to
+the separate completed-plan ledger, not evidence that dozens of plans were
+completed during this week.</li>
+</ul>
+<p>Plan documents 29, 53, 62–73, 77 and 79–83 were also created during the
+window. A document being created is not itself a state transition.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>Several newly created documents did not have a matching active-table state at
+the end of the week, and the archive extraction temporarily made older rows
+look absent from <code>docs/PLANS.md</code>. Those were historical filing gaps rather
+than implementation conclusions.</p>
+<p>As of 2026-08-29, the modern index and completed-plan ledger account for the
+plans implicated here, including Plans 62, 65, 68, 72 and 82. No planning-state
+action is owed today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Five non-merge commits carry plan references: <code>4b48988</code> (Plan 62), <code>ab885d7</code>
+and <code>dcea00d</code> (Plan 68), <code>eb96c41</code> (Plan 65), and <code>fc81b94</code> (Plan 82). The
+other 94 are unattributed:</p>
+<pre><code class="language-text">d369cb5 adding flaresolverr support to resolve 403 errors
+e09ebe4 fix: persistent browser context for SRP scraping, chrome146 impersonation
+4a0dc9f fixed new pytest errors
+d80071e Adding 403 handling more robustly
+323aa67 Adding 403 cooldown table.
+25f2b2a quick dashboard tweaks, and n8n workflow updates to make sure everything is current.
+c18e1a5 More Dashboard tweaks
+3d80b31 Adding automatic impersonation matching for flaresolverr and curl_cffi
+664e77b quick reprioritization on scrapes, and planning for parquet archive
+2c7ec8c Planning and project docs revamp
+1798a99 Add parquet archival layer (archiver service + MinIO)
+ac1250f Fix archiver stability and data safety bugs
+02c493d Add indexes to speed up pipeline health dashboard query
+ccd6026 Dashboard improvments. Further archiving tweaks, and json cleanup for n8n.
+8af4af1 Planning and final json and pipline updates
+bd18eaa fixing a bug in results processing
+9a3fa4b Added Linting :)
+8673eec Fix CI: set PythonPath for tests, add missing depdencies. Fix ops Dockerfile to correct DB refrence.
+6989313 Fixing Log pathing for CI deployment
+297e05d Fix test suite compatibility for CI and prevent module collisions
+5fe473f Linting cleanup
+d3257e4 Fix flyway implementation
+0b6d36c flyway encoding challenges
+d291395 fix schema
+b7eb274 just make it work
+25536e7 adding dbt deps
+032883a fixing seed file
+001a212 tweaking the insert again
+3275b72 more fixes
+678ebe8 adding some tweaks to try and resolve ARM deployment
+d6ef0c1 more tweaks
+08a8abd standardize: All uvicorn services copy whole repo and use full module paths
+7c2e334 fix: Update build contexts and Dockerfiles for standardized package structure
+047e402 revert: Revert Dockerfile standardization that broke service imports
+66d77bd fix: Correct scraper Docker build context and COPY path
+d49a422 fix: Copy scraper requirements before copying full project
+780987b fix: Make scraper/db.py available at top level for imports
+51fee3f implementing dns and reverse proxy
+7056d28 tweaking
+f851994 getting dns and reverse proxy sorted
+d7a23a5 getting dns and reverse proxy sorted...
+a21c48c getting dns and reverse proxy sorted...
+39db68f getting dns and reverse proxy sorted...
+613bfab getting dns and reverse proxy sorted...
+0ea23b0 getting dns and reverse proxy sorted...
+b9c3a51 getting dns and reverse proxy sorted...
+24d7246 Caddyfile Casing
+a8e951c Caddyfile...
+77223fb Caddyfile...
+a2217d3 Caddyfile additional routes
+256eb9d Caddyfile additional routes
+816aa7a Caddyfile additional routes
+78663b1 Caddyfile additional routes
+4650818 fixing template pathing
+39a3ed1 fixing template pathing
+20a7a02 fixing n8n pathing
+4da90cc fixing n8n pathing
+6ef8d56 fixing n8n pathing
+b7ff17a fixing n8n pathing
+3e8c51b fixing n8n pathing
+b1f2da0 fixing n8n pathing
+389a5e3 fixing n8n pathing
+3fcd023 fixing n8n pathing
+0b0f804 fixing dbt for ARM infra
+f4bb816 fixing dbt for ARM infra
+27b70bd fixing dbt for ARM infra
+da213cb fixing dbt_runner
+f213b4f fixed code errors on the admin panel
+09e8507 adding deployment script
+ead87f2 linting fix
+abfe545 updating plans and fixing build error
+534b5a0 fix V0001 Migration file encoding
+4227a53 Fix filename
+e4b1c70 fix: Pass Flyway role placeholders for CI
+5ccf1b9 Fix: pass credentials to Caddy Container
+75b00ec Migrate Domain
+344d0fe Fix oauth2-proxy
+e828814 fix dashboard permissions
+e7b4eb5 pg admin routing
+6cf1475 Fix pgDamin routing
+3aa53d0 fixing dbt_runner permissions
+ec17d59 dbt_run credential mismatch
+9282a46 fixing dbt_runner permissions
+bd271ac fixing dbt_runner permissions
+a1907b5 fixing dashboard permissions
+20bbcb3 final planning for next phases
+479ad36 current deploy script
+4208549 fix flyway ci params for testing.
+db4de29 change to supported hashing funciton.
+0f0d2ac Add display_name to access request flow
+6eff6a3 Fix role-based access control by moving tier checks into /auth/check
+320455d Fixing user access roles
+f11b856 fixing linting issue
+a8b7c0c adding readme update and info page
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>Only PR #53's branch names a plan; merges are listed but not recapped.</p>
+<ul>
+<li><code>b4770ba</code> — PR #50 from <code>fix/flaresolverr</code>.</li>
+<li><code>dfe66e6</code> — PR #51 from <code>fix/flaresolverr</code>.</li>
+<li><code>d72dbde</code> — PR #52 from <code>feature/parquet-archival</code>.</li>
+<li><code>061006a</code> — PR #53 from <code>feature/plan-62-cicd</code> (Plan 62).</li>
+<li><code>db1eec9</code> — PR #54 from <code>fix/import-errors</code>.</li>
+<li><code>651d07c</code> — PR #55 from <code>fix/import-errors</code>.</li>
+<li><code>87de211</code> — PR #56 from <code>fix/import-errors</code>.</li>
+<li><code>d204ea6</code> — PR #57 from <code>fix/import-errors</code>.</li>
+<li><code>eebe92d</code> — PR #58 from <code>feature/auth-implementation</code>.</li>
+<li><code>b8182de</code> — PR #59 from <code>feature/auth-implementation</code>.</li>
+<li><code>6964ba5</code> — PR #60 from <code>feature/auth-implementation</code>.</li>
+<li><code>0dee383</code> — PR #61 from <code>feature/auth-implementation</code>.</li>
+<li><code>d762819</code> — PR #62 from <code>feature/auth-implementation</code>.</li>
+<li><code>2948036</code> — branch merge within <code>feature/auth-implementation</code>; no PR named.</li>
+<li><code>4591b37</code> — PR #63 from <code>feature/auth-implementation</code>.</li>
+<li><code>03b226b</code> — PR #64 from <code>feature/user-management</code>.</li>
+<li><code>5659755</code> — PR #65 from <code>feature/user-management</code>.</li>
+<li><code>8aa7dc5</code> — PR #66 from <code>feature/user-management</code>.</li>
+<li><code>6720bdd</code> — PR #67 from <code>feature/user-management</code>.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>955 commits</strong> sit after this window's end as of 2026-08-29.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-04-12 23:59:59'   # 955
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+The complete weeks ending April 19, April 26, May 3, May 10, May 17, May 24,
+May 31, June 7, June 14, June 21, June 28, July 5, July 12, July 19, July 26,
+August 2, August 9, August 16 and August 23 are already covered. No following
+complete week is genuinely uncovered; the week ending August 30 is in progress.</p>
+</main>
+</body>
+</html>

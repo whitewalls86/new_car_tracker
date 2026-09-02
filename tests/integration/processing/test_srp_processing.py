@@ -58,7 +58,7 @@ class TestSrpArtifact:
                 "customer_id": None,
                 "last_seen_at": now,
                 "last_artifact_id": artifact_id,
-                "last_detail_scraped_at": None,
+                "last_detail_enriched_at": None,
             })
 
         # Upsert vin_to_listing for those with VINs
@@ -132,3 +132,70 @@ class TestSrpVinRecencyGuard:
         cur.execute("SELECT mapped_at FROM ops.vin_to_listing WHERE vin = %s", (vin,))
         row = cur.fetchone()
         assert row["mapped_at"] == t_plus_10
+
+
+class TestSrpScrapeStateOwnership:
+    """Plan 147: an SRP write is a price sighting, not a detail fetch.
+
+    It must advance neither the enrichment window nor the fetch backoff, or an
+    SRP sweep would silently suppress detail scraping across the whole result
+    set.
+    """
+
+    def test_srp_write_advances_neither_fetch_nor_enrichment(
+        self, cur, seed_artifact,
+    ):
+        listing_id = str(uuid.uuid4())
+        artifact = seed_artifact(artifact_type="results_page")
+
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 24000,
+            "make": "Honda", "model": "CR-V", "customer_id": None,
+            "last_seen_at": datetime.now(timezone.utc),
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": None,
+        })
+
+        cur.execute(
+            "SELECT price, last_detail_fetched_at, last_detail_enriched_at"
+            " FROM ops.price_observations WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        row = cur.fetchone()
+        assert row["price"] == 24000, "the price sighting is still recorded"
+        assert row["last_detail_fetched_at"] is None
+        assert row["last_detail_enriched_at"] is None
+
+    def test_srp_write_does_not_clear_an_existing_enrichment(
+        self, cur, seed_artifact,
+    ):
+        """COALESCE semantics: a null incoming value preserves the previous
+        one, so an SRP sighting never clears an enrichment."""
+        listing_id = str(uuid.uuid4())
+        artifact = seed_artifact(artifact_type="results_page")
+        enriched_at = datetime.now(timezone.utc)
+
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 28000,
+            "make": "Honda", "model": "CR-V", "customer_id": "cust-1",
+            "last_seen_at": enriched_at,
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": enriched_at,
+        })
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 23500,
+            "make": "Honda", "model": "CR-V", "customer_id": None,
+            "last_seen_at": datetime.now(timezone.utc),
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": None,
+        })
+
+        cur.execute(
+            "SELECT price, customer_id, last_detail_enriched_at"
+            " FROM ops.price_observations WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        row = cur.fetchone()
+        assert row["price"] == 23500
+        assert row["customer_id"] == "cust-1"
+        assert row["last_detail_enriched_at"] == enriched_at

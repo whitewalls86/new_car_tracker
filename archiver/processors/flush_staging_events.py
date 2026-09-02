@@ -19,6 +19,8 @@ before the DELETE, re-running will overwrite the existing file (same partition,
 new filename) and then delete. Duplicate rows in Parquet are acceptable for
 append-only event logs.
 """
+
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +29,11 @@ from typing import Any, Dict, List, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from archiver.queries import (
+    DELETE_STAGING_ROWS_UP_TO_PK,
+    SELECT_STAGING_MAX_PK,
+    SELECT_STAGING_ROWS_UP_TO_PK,
+)
 from shared.db import get_conn
 from shared.minio import BUCKET, get_s3fs
 
@@ -36,6 +43,7 @@ logger = logging.getLogger("archiver")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _to_str(v) -> Optional[str]:
     """Coerce UUID objects and other non-None values to str."""
@@ -55,68 +63,105 @@ def _ensure_utc(v) -> Optional[datetime]:
 # PyArrow schemas (include year/month partition columns)
 # ---------------------------------------------------------------------------
 
-_ARTIFACTS_QUEUE_EVENTS_SCHEMA = pa.schema([
-    pa.field("event_id",      pa.int64()),
-    pa.field("artifact_id",   pa.int64()),
-    pa.field("status",        pa.string()),
-    pa.field("event_at",      pa.timestamp("us", tz="UTC")),
-    pa.field("minio_path",    pa.string()),
-    pa.field("artifact_type", pa.string()),
-    pa.field("fetched_at",    pa.timestamp("us", tz="UTC")),
-    pa.field("listing_id",    pa.string()),
-    pa.field("run_id",        pa.string()),
-    pa.field("year",          pa.int32()),
-    pa.field("month",         pa.int32()),
-])
+_ARTIFACTS_QUEUE_EVENTS_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.int64()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("status", pa.string()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("minio_path", pa.string()),
+        pa.field("artifact_type", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("listing_id", pa.string()),
+        pa.field("run_id", pa.string()),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
 
-_DETAIL_SCRAPE_CLAIM_EVENTS_SCHEMA = pa.schema([
-    pa.field("event_id",     pa.int64()),
-    pa.field("listing_id",   pa.string()),
-    pa.field("run_id",       pa.string()),
-    pa.field("status",       pa.string()),
-    pa.field("stale_reason", pa.string()),
-    pa.field("vin",          pa.string()),
-    pa.field("event_at",     pa.timestamp("us", tz="UTC")),
-    pa.field("year",         pa.int32()),
-    pa.field("month",        pa.int32()),
-])
+_DETAIL_SCRAPE_CLAIM_EVENTS_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.int64()),
+        pa.field("listing_id", pa.string()),
+        pa.field("run_id", pa.string()),
+        pa.field("status", pa.string()),
+        pa.field("stale_reason", pa.string()),
+        pa.field("vin", pa.string()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
 
-_BLOCKED_COOLDOWN_EVENTS_SCHEMA = pa.schema([
-    pa.field("event_id",        pa.int64()),
-    pa.field("listing_id",      pa.string()),
-    pa.field("event_type",      pa.string()),
-    pa.field("num_of_attempts", pa.int32()),
-    pa.field("event_at",        pa.timestamp("us", tz="UTC")),
-    pa.field("year",            pa.int32()),
-    pa.field("month",           pa.int32()),
-])
+_BLOCKED_COOLDOWN_EVENTS_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.int64()),
+        pa.field("listing_id", pa.string()),
+        pa.field("event_type", pa.string()),
+        pa.field("num_of_attempts", pa.int32()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
 
-_PRICE_OBSERVATION_EVENTS_SCHEMA = pa.schema([
-    pa.field("event_id",    pa.int64()),
-    pa.field("listing_id",  pa.string()),
-    pa.field("vin",         pa.string()),
-    pa.field("price",       pa.int32()),
-    pa.field("make",        pa.string()),
-    pa.field("model",       pa.string()),
-    pa.field("artifact_id", pa.int64()),
-    pa.field("event_type",  pa.string()),
-    pa.field("source",      pa.string()),
-    pa.field("event_at",    pa.timestamp("us", tz="UTC")),
-    pa.field("year",        pa.int32()),
-    pa.field("month",       pa.int32()),
-])
+_PRICE_OBSERVATION_EVENTS_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.int64()),
+        pa.field("listing_id", pa.string()),
+        pa.field("vin", pa.string()),
+        pa.field("price", pa.int32()),
+        pa.field("make", pa.string()),
+        pa.field("model", pa.string()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("event_type", pa.string()),
+        pa.field("source", pa.string()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
 
-_VIN_TO_LISTING_EVENTS_SCHEMA = pa.schema([
-    pa.field("event_id",            pa.int64()),
-    pa.field("vin",                 pa.string()),
-    pa.field("listing_id",          pa.string()),
-    pa.field("artifact_id",         pa.int64()),
-    pa.field("event_type",          pa.string()),
-    pa.field("previous_listing_id", pa.string()),
-    pa.field("event_at",            pa.timestamp("us", tz="UTC")),
-    pa.field("year",                pa.int32()),
-    pa.field("month",               pa.int32()),
-])
+_VIN_TO_LISTING_EVENTS_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.int64()),
+        pa.field("vin", pa.string()),
+        pa.field("listing_id", pa.string()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("event_type", pa.string()),
+        pa.field("previous_listing_id", pa.string()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
+
+_COORDINATION_STATE_EVENTS_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.int64()),
+        pa.field("generation", pa.int64()),
+        pa.field("prior_phase", pa.string()),
+        pa.field("phase", pa.string()),
+        pa.field("kind", pa.string()),
+        pa.field("actor", pa.string()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
+
+_COORDINATION_RELEASE_EVIDENCE_SCHEMA = pa.schema(
+    [
+        pa.field("evidence_id", pa.int64()),
+        pa.field("generation", pa.int64()),
+        pa.field("actor", pa.string()),
+        pa.field("submitted_at", pa.timestamp("us", tz="UTC")),
+        pa.field("gate_results", pa.string()),
+        pa.field("evidence_digests", pa.string()),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,63 +179,126 @@ _VIN_TO_LISTING_EVENTS_SCHEMA = pa.schema([
 
 _TABLE_CONFIGS = [
     {
-        "table":        "staging.artifacts_queue_events",
-        "pk":           "event_id",
-        "ts_col":       "event_at",
-        "db_columns":   [
-            "event_id", "artifact_id", "status", "event_at",
-            "minio_path", "artifact_type", "fetched_at", "listing_id", "run_id",
+        "table": "staging.artifacts_queue_events",
+        "pk": "event_id",
+        "ts_col": "event_at",
+        "db_columns": [
+            "event_id",
+            "artifact_id",
+            "status",
+            "event_at",
+            "minio_path",
+            "artifact_type",
+            "fetched_at",
+            "listing_id",
+            "run_id",
         ],
-        "schema":       _ARTIFACTS_QUEUE_EVENTS_SCHEMA,
+        "schema": _ARTIFACTS_QUEUE_EVENTS_SCHEMA,
         "minio_prefix": "ops_normalized/artifacts_queue_events",
-        "uuid_cols":    set(),
+        "uuid_cols": set(),
     },
     {
-        "table":        "staging.detail_scrape_claim_events",
-        "pk":           "event_id",
-        "ts_col":       "event_at",
-        "db_columns":   [
-            "event_id", "listing_id", "run_id", "status",
-            "stale_reason", "vin", "event_at",
+        "table": "staging.detail_scrape_claim_events",
+        "pk": "event_id",
+        "ts_col": "event_at",
+        "db_columns": [
+            "event_id",
+            "listing_id",
+            "run_id",
+            "status",
+            "stale_reason",
+            "vin",
+            "event_at",
         ],
-        "schema":       _DETAIL_SCRAPE_CLAIM_EVENTS_SCHEMA,
+        "schema": _DETAIL_SCRAPE_CLAIM_EVENTS_SCHEMA,
         "minio_prefix": "ops_normalized/detail_scrape_claim_events",
-        "uuid_cols":    {"listing_id", "run_id", "vin"},
+        "uuid_cols": {"listing_id", "run_id", "vin"},
     },
     {
-        "table":        "staging.blocked_cooldown_events",
-        "pk":           "event_id",
-        "ts_col":       "event_at",
-        "db_columns":   [
-            "event_id", "listing_id", "event_type", "num_of_attempts", "event_at",
+        "table": "staging.blocked_cooldown_events",
+        "pk": "event_id",
+        "ts_col": "event_at",
+        "db_columns": [
+            "event_id",
+            "listing_id",
+            "event_type",
+            "num_of_attempts",
+            "event_at",
         ],
-        "schema":       _BLOCKED_COOLDOWN_EVENTS_SCHEMA,
+        "schema": _BLOCKED_COOLDOWN_EVENTS_SCHEMA,
         "minio_prefix": "ops_normalized/blocked_cooldown_events",
-        "uuid_cols":    {"listing_id"},
+        "uuid_cols": {"listing_id"},
     },
     {
-        "table":        "staging.price_observation_events",
-        "pk":           "event_id",
-        "ts_col":       "event_at",
-        "db_columns":   [
-            "event_id", "listing_id", "vin", "price", "make",
-            "model", "artifact_id", "event_type", "source", "event_at",
+        "table": "staging.price_observation_events",
+        "pk": "event_id",
+        "ts_col": "event_at",
+        "db_columns": [
+            "event_id",
+            "listing_id",
+            "vin",
+            "price",
+            "make",
+            "model",
+            "artifact_id",
+            "event_type",
+            "source",
+            "event_at",
         ],
-        "schema":       _PRICE_OBSERVATION_EVENTS_SCHEMA,
+        "schema": _PRICE_OBSERVATION_EVENTS_SCHEMA,
         "minio_prefix": "ops_normalized/price_observation_events",
-        "uuid_cols":    {"listing_id"},
+        "uuid_cols": {"listing_id"},
     },
     {
-        "table":        "staging.vin_to_listing_events",
-        "pk":           "event_id",
-        "ts_col":       "event_at",
-        "db_columns":   [
-            "event_id", "vin", "listing_id", "artifact_id",
-            "event_type", "previous_listing_id", "event_at",
+        "table": "staging.vin_to_listing_events",
+        "pk": "event_id",
+        "ts_col": "event_at",
+        "db_columns": [
+            "event_id",
+            "vin",
+            "listing_id",
+            "artifact_id",
+            "event_type",
+            "previous_listing_id",
+            "event_at",
         ],
-        "schema":       _VIN_TO_LISTING_EVENTS_SCHEMA,
+        "schema": _VIN_TO_LISTING_EVENTS_SCHEMA,
         "minio_prefix": "ops_normalized/vin_to_listing_events",
-        "uuid_cols":    {"listing_id", "previous_listing_id"},
+        "uuid_cols": {"listing_id", "previous_listing_id"},
+    },
+    {
+        "table": "staging.coordination_state_events",
+        "pk": "event_id",
+        "ts_col": "event_at",
+        "db_columns": [
+            "event_id",
+            "generation",
+            "prior_phase",
+            "phase",
+            "kind",
+            "actor",
+            "event_at",
+        ],
+        "schema": _COORDINATION_STATE_EVENTS_SCHEMA,
+        "minio_prefix": "ops_normalized/coordination_state_events",
+        "uuid_cols": set(),
+    },
+    {
+        "table": "staging.coordination_release_evidence",
+        "pk": "evidence_id",
+        "ts_col": "submitted_at",
+        "db_columns": [
+            "evidence_id",
+            "generation",
+            "actor",
+            "submitted_at",
+            "gate_results",
+            "evidence_digests",
+        ],
+        "schema": _COORDINATION_RELEASE_EVIDENCE_SCHEMA,
+        "minio_prefix": "ops_normalized/coordination_release_evidence",
+        "uuid_cols": set(),
+        "json_cols": {"gate_results", "evidence_digests"},
     },
 ]
 
@@ -199,24 +307,26 @@ _TABLE_CONFIGS = [
 # Core flush logic
 # ---------------------------------------------------------------------------
 
+
 def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
     """
     Flush a single staging table to MinIO and DELETE the flushed rows.
 
     Returns {"table": str, "flushed": int, "error": str|None}.
     """
-    table        = config["table"]
-    pk           = config["pk"]
-    ts_col       = config["ts_col"]
-    db_columns   = config["db_columns"]
-    schema       = config["schema"]
+    table = config["table"]
+    pk = config["pk"]
+    ts_col = config["ts_col"]
+    db_columns = config["db_columns"]
+    schema = config["schema"]
     minio_prefix = config["minio_prefix"]
-    uuid_cols    = config["uuid_cols"]
+    uuid_cols = config["uuid_cols"]
+    json_cols = config.get("json_cols", set())
 
     try:
         # 1. Establish snapshot boundary
         with conn.cursor() as cur:
-            cur.execute(f"SELECT MAX({pk}) FROM {table}")  # noqa: S608
+            cur.execute(SELECT_STAGING_MAX_PK.format(pk=pk, table=table))
             max_pk = cur.fetchone()[0]
 
         if max_pk is None:
@@ -227,7 +337,7 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
         cols_sql = ", ".join(db_columns)
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT {cols_sql} FROM {table} WHERE {pk} <= %s ORDER BY {pk}",  # noqa: S608
+                SELECT_STAGING_ROWS_UP_TO_PK.format(columns=cols_sql, table=table, pk=pk),
                 (max_pk,),
             )
             raw_rows = cur.fetchall()
@@ -242,6 +352,9 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
 
             for col in uuid_cols:
                 row[col] = _to_str(row.get(col))
+            for col in json_cols:
+                value = row.get(col)
+                row[col] = json.dumps(value, sort_keys=True) if value is not None else None
 
             for col, val in row.items():
                 if isinstance(val, datetime):
@@ -249,10 +362,10 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
 
             ts = row.get(ts_col)
             if ts is not None:
-                row["year"]  = ts.year
+                row["year"] = ts.year
                 row["month"] = ts.month
             else:
-                row["year"]  = 0
+                row["year"] = 0
                 row["month"] = 0
 
             rows.append(row)
@@ -273,7 +386,7 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
         # 5. Delete flushed rows
         with conn.cursor() as cur:
             cur.execute(
-                f"DELETE FROM {table} WHERE {pk} <= %s",  # noqa: S608
+                DELETE_STAGING_ROWS_UP_TO_PK.format(table=table, pk=pk),
                 (max_pk,),
             )
             deleted = cur.rowcount
@@ -321,7 +434,9 @@ def flush_staging_events() -> Dict[str, Any]:
             except Exception as e:
                 logger.error(
                     "flush_staging: unexpected error for %s: %s",
-                    config["table"], e, exc_info=True,
+                    config["table"],
+                    e,
+                    exc_info=True,
                 )
                 result = {"table": config["table"], "flushed": 0, "error": str(e)}
             results.append(result)
@@ -329,7 +444,7 @@ def flush_staging_events() -> Dict[str, Any]:
         conn.close()
 
     total_flushed = sum(r["flushed"] for r in results)
-    had_errors    = any(r["error"] for r in results)
+    had_errors = any(r["error"] for r in results)
 
     logger.info(
         "flush_staging: complete — total_flushed=%d tables=%d errors=%d",
@@ -340,6 +455,6 @@ def flush_staging_events() -> Dict[str, Any]:
 
     return {
         "total_flushed": total_flushed,
-        "tables":        results,
-        "error":         "one or more tables failed" if had_errors else None,
+        "tables": results,
+        "error": "one or more tables failed" if had_errors else None,
     }

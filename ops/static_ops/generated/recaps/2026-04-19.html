@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-04-13 to 2026-04-19</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-04-19">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-04-13 to 2026-04-19. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-04-13-to-2026-04-19">Week of 2026-04-13 to 2026-04-19</h1>
+<p><strong>Window:</strong> 2026-04-13 00:00:00 to 2026-04-19 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-29
+<strong>Commits in window:</strong> 68 (58 non-merge, 10 merges)</p>
+<p>This is a backfill written <strong>132 days after the window closed</strong>. The measured
+commit-body/stat read was about 6.7k tokens. The week hardened scraping,
+completed three layers of integration testing, and began the migration from
+n8n toward Airflow and dedicated processing services.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p>The first half of the week tightened the existing system. Carousel and blocked
+cooldown cleanup removed stale work, while SRP scraping gained page-one retry,
+Xvfb logging and a curl-cffi plus FlareSolverr path with shared cookie state.
+Database grants, dashboard links, access-request email and deployment docs were
+repaired alongside it.</p>
+<p>Integration testing then expanded in three layers: service SQL smoke tests,
+dbt model tests using a real seeded database, and operations API tests covering
+stateful behavior. Repeated seed, constraint, schema and assertion fixes made
+the suite exercise actual Postgres/dbt behavior rather than mocks.</p>
+<p><code>b15fbe2</code> names Plan 89 in its body for the operational/analytics split and
+Plan 92 for safe service draining. It laid the Airflow foundation, separated
+processing ownership from scraping, refactored archiving, and documented the
+readiness contract needed to avoid interrupting in-flight work. Neighboring
+commits added the first operational tables, processing service, orphan and
+artifact cleanup DAGs, dbt-build DAG and further architecture planning. Those
+neighbors remain unattributed because their own text does not name a plan.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Three planning-index revisions produced these net changes:</p>
+<ul>
+<li>Plans 29, 64, 70, 77, 81 and 82 left backlog without a terminal state being
+recorded in that week's index.</li>
+<li>Plans 86, 87, 88, 90 and 93–97 entered backlog.</li>
+<li>Plan 89 entered the superseded table.</li>
+</ul>
+<p>Documents for Plans 84, 89–97 were created during the window. Plans 84, 91 and
+92 had documents but no index transition by the end of the week.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The missing terminal rows and document-without-index cases above were
+historical filing defects. As of 2026-08-29, the current index and archive
+account for them: Plan 89 is superseded; Plan 90 was later superseded; Plans
+84, 91–93 and 95–97 are archived; and Plan 94 remains explicitly tracked. No
+planning-state action is owed today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Only <code>b15fbe2</code> carries plan references (Plans 89 and 92, in its body). The
+other 57 non-merge commits are unattributed:</p>
+<pre><code class="language-text">0526b2c Add node to results processing to cleaup stg_detail_carousel_hints by deleting unlisted hints. Tweak dashboard to exclude cooling down artifacts from price buckets.
+abbe426 fixing local docker setup to path correctly. Correctly excluding non stale items from backlog due table.
+8a997db adding node to clean up non longer needed blocked cooldown listings
+69aaf3a Harden SRP scraper against Akamai 403s and add page-1 retry flow
+a5ec499 updating n8n flow, Readme.md
+3146f77 Add Xvfb virtual display and structured logging to SRP scraper
+7a5153e dbt fix. Remove invalid source tests.
+1a2a1d4 fixing pgAdmin login, and dbt_runner permissions issue for logging DBT runs.
+bc69bad removing pgAdmin overrides for cloud deployment.
+10b4273 Updating Readme.
+849dbfa Fixing Dashboard Links.
+e68c891 Linting!
+01a6e3e Add opt-in email notifications for access request outcomes
+7b8a129 fixing auth pathing bug
+6af64aa minor workflow fixes
+27ff250 liniting
+5b55b69 fixing CI dependencies
+a3990de updating plans docs
+b56dbf1 Add Layer 1 integration tests — SQL smoke tests for all service queries
+616e43b updating readme and fixing RealDictCursor tests
+212bf61 trying flaresolverr for cookie managment on scrape results.
+b6a16c2 Replace Patchright SRP scraper with curl_cffi + FlareSolverr
+51ae8e5 Initial work on phase two of integration testing. DBT conftest created, first two tables tested.
+44e349e adding national price rank tests
+04b152d Adding testing for ops_vehicle_staleness and ops_detail_scrape_queue
+3bc3826 fixing FK restraing by seeding an entry in runs table.
+58fdb52 linting
+aedd651 fix columns for detail_obs, test contruction, and add resilency to runs seeding.
+ca34ecf fix columns for detail_ops.
+98e9119 Fixing DBT constraints on seed data.
+a001dd3 Adding cascade command to clean up seeded data.
+dcecdc7 Fixing bad column names.
+cd382d5 adding missing value to seed query.
+164cfb9 fixing schema refrences.
+556aa05 run sql smoke tests on clean dbt
+b8a366e Moded to an ingerated seed query, reducing chance of errors
+140331b fix trim column name
+b05db5e fix null values for dbt tests
+42c3315 add Layer 2 Phase 3 integration tests for intermediate dbt models
+19efe2a linting
+ab71464 fixing logic for dedupe test in int_price_events.
+077aea7 linting
+3ca9ae2 add Layer 3 ops API integration tests
+ecae237 fixing access request test with correct ordering for DB state.
+cd5f333 planning
+67fdec9 initial airflow stuff
+b217a71 adding processing service, moving initial logic out of scraper.
+5510cae adding placeholder aiflow password for ci
+c3def34 fixing test assertion to check the right value on new advance rotation logic.
+a26a0ae fix slot useage, use a high-numbered slot to avoid conflicts with seeded data
+7518850 new migrations for basic operation tables.
+d93b17c fix seed data for tests
+dda14f6 Add, orphan checker DAG, and artifact cleanup
+00e6e04 Add dbt_build DAG, job counter to dbt_runner, and integration test coverage
+9d1a3ca fix seeding issues and test executions to match expected constraints
+c9a1c4c fixing PK logic on test cases.
+e053a19 planning work. making architechture changes
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>None of the merge branches names a plan.</p>
+<ul>
+<li><code>8a0baa5</code> — PR #68 from <code>fix/tweak-carousel</code>.</li>
+<li><code>1a87f2c</code> — PR #69 from <code>fix/local-setup</code>.</li>
+<li><code>3a0b57a</code> — PR #70 from <code>improve/search-scrape-403-battle</code>.</li>
+<li><code>60c631b</code> — PR #71 from <code>improve/frontend-work</code>.</li>
+<li><code>ca3c73a</code> — PR #72 from <code>feature/integration-testing</code>.</li>
+<li><code>a605813</code> — PR #73 from <code>fix/scraper-403s</code>.</li>
+<li><code>11506bb</code> — PR #74 from <code>feature/integration-testing</code>.</li>
+<li><code>8beeecb</code> — PR #75 from <code>feature/integration-testing</code>.</li>
+<li><code>8514f7c</code> — PR #76 from <code>feature/integration-testing</code>.</li>
+<li><code>754d798</code> — PR #77 from <code>feature/operational-database-tables</code>.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>887 commits</strong> sit after this window's end as of 2026-08-29.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-04-19 23:59:59'   # 887
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+The complete weeks ending April 26, May 3, May 10, May 17, May 24, May 31,
+June 7, June 14, June 21, June 28, July 5, July 12, July 19, July 26, August 2,
+August 9, August 16 and August 23 are already covered. No following complete
+week is genuinely uncovered; the week ending August 30 is in progress.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,843 @@
+# Plan 139: Test Suite Construction and Maintenance
+
+## Public summary
+
+**Test suite maintenance** — Made test coverage visible on every change instead
+of measured and thrown away, and fixed a test database that did not match the
+shape of the real one.
+
+## Status
+
+**Stages F and G added 2026-08-25**, both about instruments rather than
+tests. **F** — CI's database does not create Airflow's schema, so `ops` queries
+crossing into it cannot be executed by any test; a bug of exactly that shape
+reached production the same day and hung the first deploy of Plan 142's
+coordination gate. **G** — the Promtail contract checker scores an unflushed
+line as "dropped", so it can report a false contract violation during Plan 141's
+Stage 4 soak, where that is indistinguishable from a real one. **Stage G was
+split out to [Plan 160](plan_160_promtail_contract_checker_reliability.md) on
+2026-08-30**, after a fourth occurrence outgrew what a stage of this plan could
+carry.
+
+**STAGE F COMPLETE 2026-08-31** — merged as PR #305 (`7f196ec`), CAR-36. CI
+runs `airflow db migrate` against its own Postgres as `airflow_user` after
+Flyway, the stand-in is retired, and the seven coordination-drain tests execute
+against Airflow's real tables on two cold runners. The audit found no third
+cross-schema exposure. A version-parity test now holds CI's Airflow to the
+Dockerfile's. Stage H moved to Plan 162 the same day, which leaves this plan
+with nothing outstanding: **Plan 139 is complete and archived.**
+
+**STAGES A+B COMPLETE 2026-08-18** — merged as PR #213 (`4fa6c7d`). Surfaced
+2026-08-17 during Plan 135 Stage 4 development, when the unit suite's
+wall-clock time prompted the question "are we missing a mock somewhere?" The
+answer was no. Re-measured 2026-08-18 against **real CI job timings**, which
+overturned the original draft's central assumption and moved one of its steps
+into another plan.
+
+Coverage now reports on every CI run at an 88% baseline with no gate, and the
+critical path is a stable ~260s against the 333s/345s/278s baseline. Both A+B
+have left the build order. Stages C and D remain queued at their lower
+build-order positions.
+
+## What was actually measured
+
+### The local unit suite (2026-08-17, warm)
+
+| Measure | Value |
+|---|---|
+| Unit tests | **2,212** in **~10.8s** (`-m "not integration"`) |
+| Per test | **~4.9ms** |
+| Collection | 1.4s of that |
+| Slowest single test | **0.29s** (`test_html_sections.py`, real detail-page parsing) |
+| Top 25 slowest combined | ~2.5s |
+| Setup/teardown phases over 20ms | **zero** |
+| Coverage (6 service packages) | **88%** — 6,834 statements, 845 missed |
+| Integration tests | 41 files, run in CI's `dbt` job across 6 serialized pytest invocations |
+
+**There is no missing mock.** The empty setup/teardown list is the proof: a
+fixture blocking on real I/O lands in *setup*, normally at 100ms+. Nothing does.
+The residual ~7s is roughly 2,187 tests at ~3ms each — pytest's per-test
+overhead, not work anyone wrote. ~11s is close to the floor for this suite as
+structured.
+
+One correction worth recording: a 15.0s figure quoted earlier that day was a
+**cold** run populating `__pycache__`. Warm local runs are consistently
+10.7–10.9s. **CI is always cold**, and the same suite takes **22s** there — so
+the local number is the wrong one to reason about CI with, and both appear below.
+
+### The full test-area breakdown (2,212 total)
+
+The original draft's table omitted four areas. Corrected and complete:
+
+| Area | Tests | Share |
+|---|---:|---:|
+| **`tests/scripts/`** | **517** | **23%** |
+| `tests/archiver/` | 485 | 22% |
+| `tests/ops/` | 244 | 11% |
+| `tests/scraper/` | 224 | 10% |
+| `tests/processing/` | 197 | 9% |
+| `tests/shared/` | 176 | 8% |
+| `tests/lakehouse/` | 164 | 7% |
+| **`tests/` (root, compose/observability config)** | **130** | **6%** |
+| `tests/dbt_runner/` | 39 | 2% |
+| `tests/airflow/` | 31 | 1% |
+| `tests/dbt/` | 5 | <1% |
+
+The 130 root-level tests matter to name, because they are the *config-coverage
+assertion* tests — `test_observability_config.py`,
+`test_pack_worker_compose_config.py`, and friends — and
+[Plan 140](plan_140_service_health_contract.md) Stage 3 extends exactly that set.
+
+### CI critical path (run `32090798835`, 2026-08-18, representative of three
+consecutive successful runs)
+
+This is the measurement the original draft was missing, and it is the one that
+matters.
+
+```
+lint (13s) ──> unit-tests (62s) ──> dbt (253s)          total: 5m33s
+docker-build (91s) ─────────────────────────────────    (parallel, off path)
+```
+
+Step-level, for the two jobs on the critical path:
+
+| Job | Step | Time |
+|---|---|---:|
+| unit-tests | checkout | 2s |
+| unit-tests | **pip install** | **35s** |
+| unit-tests | **pytest (2,212 tests, cold, `-v`)** | **22s** |
+| dbt | pull flyway image | 7s |
+| dbt | **initialize 3 service containers** | **45s** |
+| dbt | flyway migrate | 3s |
+| dbt | **pip install** | **33s** |
+| dbt | install dbt + deps + duckdb ext | 11s |
+| dbt | seed MinIO fixtures | 2s |
+| dbt | dbt build | 15s |
+| dbt | SQL smoke (Layer 1) | 2s |
+| dbt | API integration (Layer 3) | 2s |
+| dbt | **isolated Airflow venv install** | **25s** |
+| dbt | Airflow integration | 4s |
+| dbt | Archiver integration | 6s |
+| dbt | **selector/dbt equivalence (`tests/integration/dbt/`)** | **92s** |
+| dbt | dbt_runner integration | 0s |
+
+Two facts fall out of this table and neither was visible before:
+
+1. **Dependency installation is 103s of the 333s critical path — 31%.** Four
+   separate uncached `pip install` steps. Nothing is cached; `actions/setup-python`
+   is used without `cache: pip`.
+2. **The six integration invocations are not six comparable costs.** Five of them
+   total 14s. One — `tests/integration/dbt/`, **16 tests** that shell out to real
+   dbt builds — takes **92s**, 87% of all integration test time and 28% of the
+   entire critical path.
+
+---
+
+## Question 1 — Should script tests run on every build?
+
+**Decided: no split on the `scripts/` boundary. Split on "shipped or run by CI"
+vs "one-off measurement", and only after fixing a misfiled script.**
+
+The draft framed this as scripts-vs-production and suspected the real axis was
+load-bearing-vs-one-off. That suspicion was right, and the evidence is sharper
+than expected.
+
+**`scripts/` already contains production code.**
+`scripts/report_dbt_run_results.py` is `COPY`'d into the dbt_runner image
+(`dbt_runner/Dockerfile:21`). It ships. Its 14 tests are not optional and the
+directory it lives in is simply wrong.
+
+**And `scripts/` is not uniformly over-tested — it is unevenly tested.** There are
+**31 scripts and 14 test files.** The 517 tests concentrate on fewer than half the
+scripts; 17 have no tests at all. "Scripts are over-tested" is not the finding.
+"Testing effort in `scripts/` is uncorrelated with what the script is for" is.
+
+Per-file, largest first:
+
+| Test file | Tests | Classification |
+|---|---:|---|
+| `test_rewrite_parquet_layout.py` | 109 | one-off (Plan 110 layout migration, done) |
+| `test_audit_parquet_layout.py` | 78 | one-off measurement |
+| **`test_audit_sectioned_html_storage.py`** | **65** | **one-off for [Plan 114](plan_114_sectioned_html_artifact_audit.md) — measured and rejected** |
+| `test_recompress_bronze_html.py` | 46 | one-off (Plan 129 backfill) |
+| `test_estimate_dictionary_savings.py` | 40 | one-off measurement |
+| `test_estimate_recompression_savings.py` | 36 | one-off; spends tests on argparse error paths |
+| `test_run_local_lakehouse_rehearsal.py` | 27 | **load-bearing** — documented local dev entry point |
+| `test_lake_snapshot_common.py` | 23 | **load-bearing** — imported by 3 other scripts |
+| `test_estimate_pack_savings.py` | 23 | one-off measurement |
+| `test_audit_adaptive_refresh_features.py` | 16 | one-off measurement |
+| `test_train_html_dictionary.py` | 14 | one-off, but reruns if dict v2 is trained |
+| **`test_report_dbt_run_results.py`** | **14** | **ships in the dbt_runner image** |
+| `test_download_lake_snapshot.py` | 14 | **load-bearing** — Plan 120 local/CI snapshot path |
+| `test_seed_lake_snapshot.py` | 12 | **load-bearing** — CI runs `seed_lake_snapshot_fixture.py` |
+
+**65 tests gate every pull request on a script written to measure an approach the
+project measured and rejected.** That is the concrete version of the draft's "some
+of it is thin," and it is the clearest single candidate to move behind a marker.
+
+**Decision:** add a `oneoff` marker, apply it to the six audit/estimate/migrate
+files (~299 tests, 14% of the suite), keep them runnable on demand and in a
+nightly or pre-release run, and deselect them from the per-PR job. Move
+`report_dbt_run_results.py` out of `scripts/` into `dbt_runner/` where it is
+already deployed.
+
+**But note the payoff honestly:** 299 fewer tests saves roughly 1.5s of a 22s
+pytest step inside a 62s job inside a 333s pipeline — **under 0.5% of the
+critical path.** This is a *legibility and intent* change, not a speed change,
+and the plan should not pretend otherwise. It ranks last for that reason.
+
+## Question 2 — Can we parallelize?
+
+**Answer changed on measurement. `pytest-xdist` is real but it is the fifth-best
+lever, not the first.**
+
+The draft said "the wall-clock prize is not the 11s job" and then ranked xdist
+third anyway. With CI step timings in hand, the levers rank cleanly by payoff
+against the 333s critical path:
+
+| # | Lever | Saves | Share of path | Effort | Risk |
+|---|---|---:|---:|---|---|
+| 1 | **Cache pip** (`cache: pip` on all 3 `setup-python` steps + the Airflow venv) | ~60–75s | **~20%** | XS | none |
+| 2 | **Drop `needs: unit-tests` from the `dbt` job** | ~78s | **~23%** | XS (one line) | see below |
+| 3 | **Profile the 92s `tests/integration/dbt/` step** | unknown, up to 90s | up to 27% | S | none to measure |
+| 4 | **Trim the 45s container initialization** | up to ~20s | ~6% | S | image pinning |
+| 5 | `pytest-xdist -n auto` on unit tests | ~14s (22s → ~8s) | **~4%** | S | shared-state, see below |
+
+Levers 1 and 2 together are **~40% of CI wall-clock for two lines of YAML.**
+
+**On lever 2 — `needs:` is a scheduling edge, not an enforcement one.** This is
+the part worth being precise about, because "remove a `needs:`" reads like
+removing a safety gate and it is not. Both jobs still run, both still have to
+pass, and the run is still red if either fails. Nothing merges that would not
+have merged before. The only thing that changes is whether the 253s job starts at
+T+15 or T+80.
+
+There is also no data dependency between them: the `dbt` job does its own
+checkout and its own `pip install`, and no artifact is uploaded by `unit-tests`
+or downloaded by `dbt`. The edge is purely a fail-fast convention.
+
+Measured 2026-08-18, the two things that convention was buying:
+
+- **The repository is public**, so Actions minutes are free and unlimited. The
+  "wastes four minutes of runner time on a broken PR" cost is **$0**.
+- **The gate has never fired**: unit tests passed **40 of the last 40 runs.** The
+  local suite is 11s, so it gets run before pushing and CI catches nothing new.
+
+**The one genuine remaining cost is signal clarity.** If unit tests break, `dbt`
+now fails too, with a wall of downstream integration noise that could pull
+attention away from the actual fault. Small — the `unit-tests` job is still in the
+checks list and still finishes first (62s against 253s) — but it is the real
+argument, and it is the one to weigh. Keep `needs: lint` regardless; the 13s
+syntax gate costs nothing and catches a genuinely different class of error.
+
+> **The 40/40 is a dated measurement, not a property of the suite, and it is
+> expected to stop holding.** It is 40/40 *because* local and CI currently run the
+> same thing against the same inputs, so an 11s pre-push run catches everything
+> first. [Plan 120](plan_120_ci_lake_snapshot_delivery.md) is deliberately
+> changing that: its design pushes snapshot logic into the unit suite as
+> "fast, MinIO-free unit tests" (`base_path=None` reads plain files), and
+> `tests/scripts/test_download_lake_snapshot.py::TestDownloadApiAgainstOpsRouter`
+> is already a real-app `TestClient` round trip **proving downloader/ops route
+> wire compatibility**. That is a cross-component contract test living in the unit
+> suite — the class of test that can pass against a developer's local state and
+> fail in CI. As snapshotting integrates further, the unit job stops being a
+> formality that always passes and starts being a place where CI genuinely learns
+> something.
+>
+> This does not reverse the decision — the gate is still scheduling, not
+> enforcement, and both jobs still block a merge either way. But it sets the
+> **re-evaluation trigger**: if the unit job's CI-only failure rate becomes
+> non-trivial (say it catches something local runs missed more than once or twice
+> in a quarter), restore `needs: unit-tests`. At that point the fail-fast ordering
+> is buying real debugging clarity rather than guarding against an event that has
+> not happened. Re-measure the pass rate when Plan 120 closes out, not on a
+> schedule.
+
+**One interaction between levers 1 and 2.** Serialized, `unit-tests` populates the
+pip cache and `dbt` restores it warm. Run in parallel, both cold-miss and race on
+the same cache key. Across subsequent runs both restore from the prior run's
+cache, so they compose — but the first run after any requirements change loses a
+little. Expected paths against the 333s baseline: caching alone ~281s, dropping
+`needs:` alone ~268s, both ~243s.
+
+**On lever 5, the draft's hazard note stands and is now specific.** Several
+suites mutate process-global state — `tests/archiver/test_app.py` has a
+module-scoped autouse fixture flipping `archiver_app._ALLOW_PACK_JOBS` (8
+occurrences in that file alone), and CI sets a single shared `LOG_PATH=/tmp/app.log`
+that `tests/shared/test_logging_setup.py` writes to. Under xdist each worker is a
+separate process, so the module-global is *probably* fine and the shared log path
+*probably* is not. **Verify before enabling, do not assume**, and note that
+`pytest-xdist` is not currently in `requirements-dev.txt` — it would be a new
+dependency for a 4% gain.
+
+**The draft's hypothesis that the six integration invocations could "share
+setup" is disproved.** Setup is not their cost. Five of the six run in 14s
+combined. The cost is 16 tests in one directory that each drive a real dbt build.
+Sharing setup across them saves nothing; making those 16 tests cheaper might save
+90s. That is lever 3, and it is a measurement task before it is a change.
+
+## Question 3 — What's coverage like? Any holes?
+
+**88% overall**, which is healthy. Three structural gaps matter more than the
+number, and the third has a sequencing correction.
+
+**a) Coverage is not measured in CI at all.** No `--cov` flag, no
+`[tool.coverage]` config, no gate, no trend. The 88% above had to be computed by
+hand for this doc. A number nobody watches will drift.
+
+> **Correction to the draft:** it stated that "`pytest-cov` and `pytest-mock`
+> are [installed]". `pytest-mock` is in `requirements-dev.txt`; **`pytest-cov` is
+> not.** Only the `coverage` package exists, in the local `.venv`, installed by
+> hand. CI installs from `requirements-dev.txt` and therefore has neither. Step 1
+> is "add a dependency and configure it," not "add a flag."
+
+**b) Two directories are outside coverage entirely** — `airflow/dags/` and
+`dashboard/`. DAG logic is currently only exercised by the pure predicate
+functions the DAGs expose (the `try/except ImportError` pattern), which is a
+deliberate and good design, but it means DAG wiring is unmeasured.
+
+**c) The worst-covered files, and which of them actually matter:**
+
+| File | Cover | Note |
+|---|---:|---|
+| `archiver/processors/lake_source_audit.py` | 21% | |
+| **`ops/metrics/duckdb_gauges.py`** | **25%** | **see below — ultimately transferred to Plan 143** |
+| `archiver/processors/lake_snapshot_cohort.py` | 44% | largest single gap, 183 statements |
+| `archiver/processors/lake_snapshot_selectors.py` | 53% | |
+| `scraper/app.py` | 65% | already Plan 103's P2 (recorded there as 69%) |
+
+### The `duckdb_gauges.py` correction — this step must not be done here
+
+The draft ranked "cover `ops/metrics/duckdb_gauges.py`" as step 2, reasoning that
+**"Plan 136 is about to depend on it."** That is backwards, and doing it in this
+plan would actively waste work.
+
+[Plan 136](plan_136_solver_recycle_and_liveness.md) **Stage 1a rewrites this
+module's failure semantics**: on any refresh failure the gauges will be set to
+`float('nan')` instead of retaining their previous value. The module is 132 lines
+of seven nested `try/except` blocks, each of which currently swallows its error
+and leaves a gauge holding a stale reading — which is Plan 136's defect D2 and the
+cause of the 8-hour blind spot.
+
+Writing coverage tests against the module as it stands today means writing
+assertions like *"on a lock conflict, the gauge keeps its last value"* — pinning
+in place the exact behavior Plan 136 Stage 1 exists to delete. The tests would be
+written and then deleted within the same build order.
+
+**Decision: this step first transferred to Plan 136 Stage 1 and is removed from
+Plan 139.** Pre-PR architectural review then moved that whole stage to
+[Plan 143](plan_143_analytics_serving_snapshot.md). The tests still belong with
+the behavior change, encoding the new NaN/freshness convention rather than the
+old silent-stale one; Plan 143 now owns both the replacement producer and its
+coverage.
+
+This also matters for prioritizing Plan 139 at all, because step 2 was the only
+item in it with a dated dependency. Once it moves, nothing in this plan blocks
+anything.
+
+Note also that Plan 103 already owns part of this territory (P1 `ops/info.py`,
+P2 `scraper/app.py`) and Plan 107 folds Plan 103 in. **This plan should not
+duplicate them** — its distinct contribution is the CI measurement gap (a), the
+uncovered directories (b), and the CI wall-clock work in Question 2.
+
+---
+
+## Goal
+
+1. Coverage is a number CI computes and reports on every PR, so drift is visible
+   before it is argued about.
+2. CI's critical path loses the ~40% of its wall-clock that is pure packaging
+   overhead and an unnecessary job dependency.
+3. Test files declare their intent — shipped code, CI-load-bearing, or one-off
+   measurement — rather than being sorted by which directory someone put them in.
+
+Explicitly **not** a goal: a higher coverage percentage.
+
+## Stages
+
+Ordered by payoff-per-effort, which is not the draft's order.
+
+### Stage A — Make coverage visible (XS)
+
+1. Add `pytest-cov` to `requirements-dev.txt`. It is not currently there.
+2. Add `[tool.coverage.run]` / `[tool.coverage.report]` to `pyproject.toml`,
+   next to the existing `[tool.pytest.ini_options]`. Name the six service
+   packages explicitly.
+3. Add `--cov --cov-report=term-missing` to the CI unit-tests step.
+   **Report only. No `--cov-fail-under`.**
+4. Record the resulting CI number in this doc as the baseline, and note whether
+   it differs from the hand-computed 88% (it will — CI's cold run and the
+   `-m "not integration"` selection differ from how the local figure was taken).
+
+**Verify:** the CI unit-tests job prints a coverage table; the job still passes;
+the added time is under 3s.
+
+**Deliberately no gate.** A threshold added before anyone has watched the number
+for a few weeks is a number picked from the air, and its first effect is to block
+an unrelated PR. Decide the gate in Stage D.
+
+### Stage B — Recover the CI critical path (XS, highest payoff)
+
+1. Add `cache: pip` to all three `actions/setup-python@v5` steps, with
+   `cache-dependency-path` covering the requirements files each job installs.
+   Cache the isolated Airflow venv install separately or accept its 25s.
+2. Change the `dbt` job's `needs: unit-tests` to `needs: lint`. This preserves the
+   13s syntax gate and lets the 253s job start ~65s earlier. Both jobs still run
+   and both must still pass — see the enforcement-vs-scheduling note above.
+
+**Verify:** compare three post-change runs against the three-run baseline recorded
+above (333s, 345s, 278s critical path). Expect ~200–230s. If pip caching does not
+help, say so and revert it rather than keeping a cache that only adds a restore
+step.
+
+**Explicit risk on step 2:** when unit tests fail, the `dbt` job now fails
+alongside them with downstream integration noise. If that turns out to cost more
+debugging attention than the 65s is worth, restore the edge — it is a one-line
+revert with no migration.
+
+#### Stages A+B implementation evidence (2026-08-18, PR #213)
+
+The first CI coverage report measured **88%: 6,835 statements, 841 missed** over
+the six configured service packages. This agrees with the hand-computed 88%; the
+four-statement difference (6,834/845 by hand) is measurement-environment noise,
+not a material baseline change. The selected CI suite was 2,224 passed and 399
+deselected.
+
+The default Coverage.py core initially increased the pytest step from 22s to
+43.17s. Setting `COVERAGE_CORE=sysmon` on Python 3.13 reduced it to 22.82s on the
+next run and about 20s on the following run, satisfying the under-3s overhead
+criterion without changing the 88% result.
+
+Three consecutive post-change critical paths, measured from workflow creation
+through completion of the `dbt` job, were:
+
+| Run | Critical path | `dbt` job | Note |
+|---|---:|---:|---|
+| 32103672753 | 307s | 292s | requirements changed; cold dependency key; default coverage core |
+| 32104051715 attempt 1 | 261s | 245s | warm distributions; `sysmon` coverage |
+| 32104051715 attempt 2 | 260s | 243s | warm distributions; `sysmon` coverage |
+
+Against the 333s/345s/278s baseline, the scheduling-edge change removed the
+unit-job wait and produced a stable warm path around 260s. The expected 200-230s
+was not reached because the pip-cache hypothesis was wrong: even on a restored
+cache, the shared dependency install remained 29-32s (33s before), since
+`setup-python` caches downloaded distributions rather than the installed
+environment. That saving is too small to clear the baseline's runner variance.
+Per Stage B's verification rule, all three `cache: pip` additions were reverted;
+the successful `needs: lint` change remains.
+
+Checked against the stage specs after the merge: `pytest-cov` is in
+[requirements-dev.txt](../../requirements-dev.txt); `[tool.coverage.run]` names the
+six service packages and `[tool.coverage.report]` sets `show_missing`;
+[ci.yml](../../.github/workflows/ci.yml) runs `--cov --cov-report=term-missing`
+with **no `--cov-fail-under` anywhere in the repo**, as Stage A required; the
+`dbt` job reads `needs: lint`; and no `cache: pip` remains. Every A+B item is
+either delivered or deliberately reverted under the stage's own rule.
+
+### Stage C — Understand the 92s step (S, measurement first)
+
+`tests/integration/dbt/` is 16 tests and 28% of the CI critical path. Nobody has
+looked at why.
+
+Run it with `--durations=20` in CI and record the per-test breakdown here before
+proposing any change. The likely finding is that each test drives its own real
+dbt invocation and that they could share one build — but that is a hypothesis, and
+the last hypothesis in this plan about integration setup was wrong.
+
+**Constraint:** these tests exist as the coupling guard between the Plan 120
+selector SQL and the real dbt models. Any change must keep them running against a
+real dbt build. Per the project's standing rule, **this work is CI-only** — do not
+pip-install dbt locally to iterate on it; extend
+`scripts/seed_lake_snapshot_fixture.py` if fixture changes are needed.
+
+### Stage D — Intent markers and the coverage decision (S, opportunistic)
+
+1. Move `scripts/report_dbt_run_results.py` into `dbt_runner/`. It ships in that
+   image; it is not a script.
+2. Add a `oneoff` marker to `pyproject.toml`'s `markers` list, with a docstring
+   defining it as "measurement written for a specific plan, kept for
+   reproducibility, not gating."
+3. Apply it to the six audit/estimate/migration test files (~299 tests). Add a
+   nightly or on-demand workflow that runs `-m oneoff` so they do not silently rot.
+
+   > **Mark per test class, not per file, and read each file before marking it.**
+   > `tests/scripts/` is no longer uniformly one-off: `test_download_lake_snapshot.py`
+   > mixes ordinary script tests with `TestDownloadApiAgainstOpsRouter`, a
+   > downloader/ops **wire-compatibility** test that must keep gating. Question 1
+   > classified that file load-bearing and so happens to be safe, but it was
+   > whole-file reasoning and it got the right answer by luck. As
+   > [Plan 120](plan_120_ci_lake_snapshot_delivery.md) puts more cross-component
+   > contract tests in the unit suite, whole-file marking will eventually
+   > de-gate one of them silently — which is the exact failure this repo keeps
+   > having, in a new place.
+4. With several weeks of Stage A data in hand, decide: add `--cov-fail-under` at
+   the observed floor, or record explicitly that there is no gate and why.
+5. Decide whether `airflow/dags/` and `dashboard/` join the coverage
+   configuration, **or** record deliberately that they are excluded and on what
+   argument. Either answer is fine; the current state — unmeasured and unexplained
+   — is not.
+6. Optionally evaluate `pytest-xdist`, having first verified the `LOG_PATH` and
+   `_ALLOW_PACK_JOBS` shared-state hazards under `-n auto`. 4% of the critical
+   path for a new dependency; it may not be worth it, and "we measured it and
+   declined" is an acceptable outcome to record.
+
+### Stage E — Advisory CI impact selection before any new fast path (S, research-gated)
+
+[Plan 142](plan_142_planned_host_maintenance.md) introduces a checked-in
+service-to-operational-surface contract so a targeted deploy can gate and drain
+only affected production work. That graph is useful evidence for CI, but it is
+not itself a CI selector: production asks which live work depends on a service,
+while CI asks which tests, images and integration environments can detect a
+changed path. Shared libraries, migrations, root configuration and test-only
+code make those graphs overlap without making them identical.
+
+Build a separate path-to-CI-impact graph that references Plan 142's stable
+service/surface names rather than adding CI policy to the production registry.
+Its first release is **advisory only**:
+
+1. Classify each non-doc changed path into affected components, test groups,
+   images and integration fixtures. Unknown paths, deletes/renames, root config,
+   migrations, Compose, workflow or classifier changes select full CI.
+2. Compute reverse dependencies and the union for mixed changes; never let the
+   last matching rule win.
+3. On every ordinary full-CI PR, record what the advisory selector would have
+   run and compare that set with every actual failing job/test group.
+4. Treat any failure outside the predicted set as a classifier miss. A miss is
+   evidence against promotion, not a one-off exception to allowlist away.
+5. Keep Ruff, registry/classifier integrity tests and the stable required-check
+   aggregator universal. Keep full CI on `master` or a schedule even if PR
+   selection is later approved.
+6. Decide separately for each expensive class — Docker images and dbt/
+   integration slices first. The unit suite's test time is small enough that
+   selection may cost more complexity than it saves.
+
+Promotion from advisory output to job skipping requires a written observation
+window with zero unexplained misses and a measured wall-clock benefit larger
+than normal runner variance. Classification failure always runs full CI. This
+inherits Plan 148's safe asymmetry: a false negative costs time; a false
+positive can suppress evidence and is unacceptable.
+
+The docs-only fast path remains separate and unchanged. Its proof is stronger:
+every changed path is under `docs/`, and any mixed or ambiguous diff already
+falls back to full CI. Stage E must not weaken that simple boundary or claim its
+production registry makes application selection equally certain.
+
+### Stage F — CI's database does not model production's schemas (S)
+
+**Found 2026-08-25, by shipping a bug no test in any layer could have caught.**
+
+`ops/coordination_drain.py` queried `task_instance` and `dag_run` unqualified,
+and `public.detail_scrape_claims` instead of `ops.detail_scrape_claims`. In
+production the ops role's `search_path` is `ops, staging, public`, so all three
+failed with `relation does not exist`. `_database_count` catches the error and
+returns `unknown`, and unknown fails closed by contract — so the first
+production deploy of the coordination gate **drained forever** rather than
+failing, with the operator seeing only "still draining".
+
+The reason it escaped is structural, not an oversight:
+
+- **`tests/ops/test_coordination_drain.py` patches `_database_count` itself**, so
+  no drain query string reaches a database anywhere in the unit suite. One test
+  even exercises `_database_count` with a literal `"SELECT evidence"` against a
+  mock cursor.
+- **`tests/integration/sql/` is the layer that exists for exactly this** — its
+  own docstring says "every query the ops service runs against Postgres is
+  executed here against a real DB with Flyway migrations applied" — but this SQL
+  never got a row in it.
+- **Even with a row, two of the three queries could not have run.** CI's
+  database is Flyway-only. Flyway creates the empty `airflow` schema, but
+  Airflow owns the tables inside it through its own migrations, and CI points
+  `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` at `sqlite:////tmp/airflow.db`. In
+  production Airflow's metadata is the **same Postgres** (`airflow.task_instance`
+  held 438,355 rows on 2026-08-25). **CI does not model that coupling at all.**
+
+The stopgap shipped with the fix is `airflow_metadata_standin` in
+`tests/integration/sql/conftest.py`: minimal `airflow.task_instance` and
+`airflow.dag_run` created inside the rolled-back test transaction. It was
+validated in both directions — 4/4 pass on the fix, 4/4 fail when the original
+unqualified SQL is reintroduced — so it does catch this bug class. **What it
+cannot catch is Airflow schema drift**: a column renamed by an Airflow upgrade
+passes against our own stand-in and breaks in production.
+
+Scope:
+
+1. Run `airflow db migrate` against the CI Postgres using the existing isolated
+   `/tmp/airflow-venv`, creating the real `airflow` schema.
+2. Move the "Run SQL smoke tests (Layer 1)" step after it — today that step runs
+   at line ~403 and the Airflow venv is not installed until ~418.
+3. Retire `airflow_metadata_standin` once the real schema is present, so the
+   tests bind to Airflow's actual columns.
+4. Audit for other cross-schema queries with the same exposure. `ops` reads
+   `airflow.*`; anything else crossing a schema CI does not create has the same
+   blind spot.
+
+> **The general rule this stage encodes:** a smoke-test layer is only as good as
+> the schemas its database actually contains. "It passed CI" means nothing about
+> a table CI never created. Prefer measuring what CI's database is missing over
+> assuming the Flyway migrations are the whole schema.
+
+Cost is roughly one `airflow db migrate` (~30-60s) on a job that already
+installs Airflow. Weigh that against a defect class that reaches production
+silently and fails closed.
+
+#### Stage F evidence — SHIPPED 2026-08-31 (CAR-36)
+
+All four scoped items landed, plus one guard the stage needed to be worth
+anything.
+
+1. **`airflow db migrate` runs against the CI Postgres.** A new
+   `.github/workflows/ci.yml` step runs it in the existing `/tmp/airflow-venv`
+   as `airflow_user` — the role Flyway V013 already creates, whose
+   `search_path = airflow` is what puts Alembic's tables in that schema. This
+   is production's mechanism, not a CI-only arrangement: `docker-compose.yml`'s
+   `airflow-init` sets `_AIRFLOW_DB_MIGRATE: 'true'` and is gated on
+   `flyway: service_completed_successfully`, so production re-runs this exact
+   command on every stack start. Flyway owns `public`/`ops`/`staging`; Airflow
+   owns everything inside `airflow`. Two migration systems, disjoint tables,
+   one database.
+2. **The SQL smoke step moved after it**, along with the Airflow venv install
+   that had sat 30 lines below it.
+3. **`airflow_metadata_standin` is retired.** Its replacement,
+   `airflow_metadata`, asserts the real tables are present rather than creating
+   any; the two INSERT-based drain tests now bind to Airflow's genuine
+   `dag_run`, which needed `run_type` and `run_after` the stand-in did not have
+   (both NOT NULL, no server default, filled from Python by Airflow). **That
+   breakage on day one is the mechanism working** — those are exactly the
+   columns an upgrade is free to change.
+4. **The audit found no third exposure.** Every schema-qualified reference
+   across `ops/`, `dashboard/sql/`, `archiver/sql/`, `airflow/sql/` and
+   `processing/` resolves to `ops.*`, `staging.*` or `public.*` — all
+   Flyway-created, all modelled by CI. `ops/coordination_drain.py` is the only
+   code that crosses into `airflow` (`airflow.task_instance:117`,
+   `airflow.dag_run:144`), and both queries are now executed.
+
+**The guard the stage needed.** CI pins `apache-airflow==3.2.0` in `ci.yml`;
+production runs `FROM apache/airflow:3.2.0` in `airflow/Dockerfile`. Nothing
+enforced that. `ci.yml`'s own comment claimed the pin "matches
+airflow/Dockerfile's base image tag" — a comment, not a check. Bump the
+Dockerfile alone and CI would keep validating the previous schema, turning this
+stage into a false assurance at the one moment it matters most.
+`tests/integration/airflow/test_airflow_version_parity.py` now asserts the
+Dockerfile tag, the `ci.yml` pin and the installed `airflow.__version__` are
+one version.
+
+**What this does not prove — the limit, so it is not overread later.** CI
+migrates **from empty**. Production migrates from a populated schema
+(`airflow.task_instance` held 438,355 rows on 2026-08-25). So this catches the
+schema Airflow 3.2.0 *builds* and any drift between it and our SQL; it cannot
+catch a failure in the *upgrade path* — an Alembic step that only fails on real
+data, a NOT NULL backfill hitting an existing null, a unique index that
+collides at scale, a migration that runs for twenty minutes. That matters
+because production re-migrates on every deploy and every Airflow service is
+gated on `airflow-init` completing: a failed migrate is a full stop, not a
+degraded mode. Rehearsing it needs a deployed stack with a restored dump, which
+is [Plan 121](plan_121_staging_environment.md)'s to own, not a CI job on the
+critical path [Plan 162](plan_162_testing_census_and_restructure.md) is trying
+to shorten.
+
+**Two dispositions recorded elsewhere, deliberately not done here.** The
+greenfield-vs-populated gap is a Plan 162 census finding; the dump-restore
+rehearsal is a Plan 121 scope line. Both were written into those documents by
+this ticket.
+
+**Measured cost, correcting this stage's own estimate.** The stage guessed
+"roughly one `airflow db migrate` (~30-60s)". Run `33423400902` (PR #305) ran it
+in **3.1s** — 18:11:35.02 to 18:11:38.14 — on an empty Postgres, because Airflow
+builds a fresh metadata DB directly rather than replaying every revision. The
+venv install it needs was already in this job. Postgres logs one
+`relation "log" does not exist` inside that window: Airflow probing for an
+existing install before creating anything. The step exits 0 and it is not a
+defect.
+
+**Verified 2026-08-31, run `33423400902`.** All seven
+`TestCoordinationDrainQueries` tests passed against Airflow's real tables, with
+`REQUIRE_AIRFLOW_SCHEMA=1` set — so they executed rather than skipped, which is
+the whole claim. Both `test_airflow_version_parity.py` tests passed in the
+Airflow venv, confirming the Dockerfile tag, the `ci.yml` pin and the installed
+`airflow.__version__` agree at 3.2.0.
+
+**Local behaviour:** a missing `airflow` schema skips, so the suite still runs
+against a Flyway-only local database. CI sets `REQUIRE_AIRFLOW_SCHEMA=1`, which
+turns that skip into a failure — a skip in CI would silently restore the exact
+blind spot this stage closes.
+
+### Stage G — Moved to Plan 160 (2026-08-30)
+
+**Split out to [Plan 160](plan_160_promtail_contract_checker_reliability.md).**
+Stage G described `scripts/verify_promtail_contract.py` scoring an unflushed
+line as *dropped*, and scoped the fix as "make absence provable rather than
+inferred." A fourth occurrence on 2026-08-30 produced two runs of one branch
+that disagreed with each other, which is stronger evidence than Stage G had and
+also corrected two of its claims — the loss is not tail truncation, and there is
+no output interleaving. The work outgrew a stage of this plan, and Plan 160
+carries the evidence, the corrected mechanism and the fix.
+
+**What stays here**, because Plan 160 depends on it rather than replacing it:
+Stage E's asymmetry — a false negative costs time, a false positive suppresses
+or manufactures evidence — is the argument for why an untrustworthy instrument
+is worse than a slow one, and Plan 160 cites it directly.
+
+### Stage H — Moved to Plan 162 (2026-08-31)
+
+**Split out to [Plan 162](plan_162_testing_census_and_restructure.md).** The
+stage below is kept verbatim as the evidence Plan 162 inherits, because the two
+censuses and the incident that exposed them are the argument for fixing it.
+
+The move follows the stage's own scoping: it places itself "in Stage D's step
+2-3 neighbourhood", and Plan 162 had already absorbed the markers half of
+Stage D. The de-gating agent it names is not a mis-applied marker but *the
+routine local/CI split itself*, which is Plan 162's subject. Plan 161's
+`docs/TESTING.md` also answered part of its second half on 2026-08-31 by
+recording what `-m "not integration"` actually selects. Plan 162 carries it as
+XS and shippable ahead of the census.
+
+#### The evidence, as found
+
+**Stage H — One invariant, two censuses, drifting independently (XS)**
+
+**Found 2026-08-30**, when [PR #293](https://github.com/whitewalls86/new_car_tracker/pull/293)
+deleted two DAGs and CI failed on a count nobody had touched:
+
+```
+AssertionError: found 14 health sensors across the DagBag, expected 16
+```
+
+Two assertions encode the same invariant — *no DAG has silently dropped its
+health sensor* — by counting different units in different files:
+
+| Test | Counts | Marked | Value |
+|---|---|---|---|
+| `tests/airflow/test_health_sensor_demotion.py` | DAG **files** wiring `http_health_sensor` | unit | 13 |
+| `tests/integration/airflow/test_dag_integrity.py` | `check_*_health` **tasks** in the DagBag | `integration` | 14 |
+
+They differ legitimately: `hourly_analytics_refresh` wires two sensors, archiver
+and dbt_runner. Nothing connects them, so [Plan 134](plan_134_archiver_endpoint_failure_contract.md)'s
+deletion updated the first, missed the second, and shipped — `056cde7` claimed
+in its own message to have moved "the census", of which there turned out to be
+two.
+
+**The marker split is what hid it.** The local suite runs `-m "not
+integration"`, so the deletion was verified at 3097 passed — a true number that
+did not include the missed assertion, which only exists in CI. The author could
+not have seen the failure by running the documented local command, and the
+local airflow install cannot run that file at all (`airflow.models` is absent),
+so there is no local command that would have caught it.
+
+> **Why this belongs to Stage D and not to Plan 134.** Stage D warns that
+> whole-file marking will eventually de-gate a cross-component contract test
+> silently, *"which is the exact failure this repo keeps having, in a new
+> place."* This is that failure in another new place, and the de-gating agent is
+> not a marker applied too broadly but the routine local/CI split itself. A
+> gating assertion that the author's own verification structurally cannot reach
+> is de-gated for every purpose except the final CI run.
+
+Scope, in Stage D's step 2–3 neighbourhood: stop maintaining the two numbers
+separately. Either derive one from the other, or have both read one declared
+registry of which DAGs owe a sensor, so that deleting a DAG updates a single
+place and a genuine drop still fails. Failing that, the weaker fix is to make
+each census name the other in an inline comment — done reactively in `33b275e`,
+which is documentation, not a mechanism, and will drift again.
+
+Also record what the local command does not cover. "3097 passed" reading as
+full verification, when an entire marked class is excluded, is the reporting
+half of the same defect.
+
+## Success criteria
+
+1. Every PR shows a coverage number in the CI log, and this doc records the
+   baseline it started from.
+2. Three consecutive post-Stage-B runs show a measured critical path reduction,
+   recorded here against the 333s/345s/278s baseline.
+3. `tests/integration/dbt/`'s 92s has a written per-test explanation, whether or
+   not it gets faster.
+4. Every test file in `tests/scripts/` is either load-bearing (unmarked, gating)
+   or `oneoff` (marked, non-gating, still run on a schedule) — with no third
+   category of "nobody looked."
+5. The coverage gate question is answered in writing, in either direction.
+6. The replacement analytics metric producer has tests — **written under Plan
+   143, asserting the NaN and freshness conventions** — and this plan records
+   that the original 25% gap was closed with the redesign.
+7. Any CI impact selector remains advisory until its predicted set has been
+   compared with full CI over a written observation window with zero
+   unexplained misses; unknown classification still selects full CI.
+
+## Risks
+
+- **Stage B step 2 trades runner minutes for latency.** On a repo with frequent
+  broken pushes this is the wrong trade. It is the right one here, but it is a
+  preference, not a fact, and it should be reverted without ceremony if PR
+  failures become common.
+- **A coverage number invites a coverage target.** The moment 88% is on every PR
+  someone (possibly me) will want it to be 90%. That is Plan 107's fight, on
+  purpose, and this plan's explicit non-goal exists to keep Stage A from becoming
+  it.
+- **The `oneoff` marker can become a place to hide failing tests.** A marked test
+  that nobody runs is worse than a deleted one, because it looks like coverage.
+  Stage D's scheduled `-m oneoff` run is not optional garnish; without it, delete
+  the tests instead of marking them.
+- **Measuring CI by three runs is thin.** GitHub runners vary — the three baseline
+  runs already span 278–345s, a 24% spread. Any claimed improvement smaller than
+  that spread is not an improvement. Both Stage B's and Stage C's verification must
+  clear it.
+
+## Out of scope
+
+- **`ops/metrics/duckdb_gauges.py` coverage.** Transferred through Plan 136 Stage
+  1 to [Plan 143](plan_143_analytics_serving_snapshot.md), for the reason argued
+  above. Listed here so the transfer is a decision on the record and not a
+  dropped item.
+- **`ops/info.py` and `scraper/app.py` coverage.** Owned by
+  [Plan 103](plan_103_test_coverage.md), folded into
+  [Plan 107](plan_107_quality_to_90.md).
+- **Chasing 88% upward as a goal in itself.** The holes named above are worth
+  closing because something depends on them, not to move a number.
+- **Rewriting the integration layering.** [Plan 84](plan_84_integration_testing.md)
+  established Layers 1-3 and the ordering constraint (SQL smoke before dbt); that
+  design is not in question here.
+- **Config-coverage assertions** (compose healthchecks, promtail job sets). Those
+  are [Plan 140](plan_140_service_health_contract.md) Stage 3, which extends the
+  same 130 root-level tests this plan counted. Plan 139 touches `ci.yml`; Plan 140
+  touches `tests/test_observability_config.py`. They are adjacent, not overlapping.
+- **Anything that makes the local suite slower to make CI tidier.**
+- **Using Plan 142's operational-surface registry directly as a CI skip
+  policy.** Plan 142 supplies stable identifiers and production dependency
+  evidence; this plan owns the distinct path/test/image graph and its promotion
+  evidence.
+
+## Where this belongs in the build order
+
+**Recommendation: split it. Stages A+B go early as filler; Stages C+D are
+genuinely opportunistic and rank low.**
+
+The plan as a whole scores **62 — medium**: no production impact, no data-loss
+risk, and after the `duckdb_gauges` transfer it unlocks nothing. By score alone it
+sits at order 11, between Plan 137 (72) and Plan 121 (63).
+
+**But scoring the plan as a whole hides that Stages A and B are two lines of YAML
+and a dependency, and that their payoff compounds across every plan above them.**
+Every one of the eleven plans in the build order will open pull requests that pay
+the current 333s CI cost. Doing Stage B first makes all of them cheaper; doing it
+at order 11 means eleven plans' worth of PRs paid full price for a fix that takes
+an hour.
+
+Concretely:
+
+| Slice | Score | Effort | Placement |
+|---|---:|---|---|
+| **A + B** (coverage visible, CI path recovered) | 70 | XS | **Order 1** — ahead of Plan 136/140 |
+| C (profile the 92s step) | 60 | S | Order 13, after Plan 121 |
+| D (markers, gate decision, xdist) | 52 | S | Order 15, or opportunistic filler |
+
+Adopted in [PLANS.md](../PLANS.md) 2026-08-17 as three separate rows in the default
+build order. That is the point of the split: a slice that is not a row is not
+covered by the "do not start a lower row while a higher one has an executable
+next step" rule, and A+B spent its first week invisible to exactly that rule.
+
+The adjacency argument that PLANS.md already makes for Plan 140 versus Plan 134
+applies here too: **Plan 140 Stage 3 edits CI test configuration, and Stage A+B
+edits `.github/workflows/ci.yml`.** Same file region, same mental model, and
+Plan 140 Stage 3 will want a passing, fast CI to iterate its coverage assertions
+against. Doing A+B in the same sitting costs close to nothing; doing it eleven
+plans later pays the context switch twice.
+
+Stages C and D have no such argument and should wait their turn.

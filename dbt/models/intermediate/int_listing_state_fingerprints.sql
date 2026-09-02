@@ -27,7 +27,7 @@
 -- 'merge', 'insert_overwrite', and 'microbatch'. This model's migration path is
 -- 'merge' on artifact_id — equivalent here because artifact_id is row-unique
 -- (see the `unique` test in the schema file). See
--- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+-- docs/reference/plan_125_portability_audit.md § "Incremental strategy decision".
 --
 -- Plan 125 Gate B: that path is now taken — 'merge' on the spark target. The
 -- row_number() dedupe below is what makes it safe: Iceberg's MERGE raises a

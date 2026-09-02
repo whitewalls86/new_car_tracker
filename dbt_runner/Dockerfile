@@ -13,9 +13,9 @@ WORKDIR /usr/app
 ENV DBT_PROFILES_DIR=/usr/app
 ENV PYTHONUNBUFFERED=1
 
-# Copy dbt project files and the runner app from committed code
+# Copy dbt project files and the complete runner package from committed code
 COPY dbt/ /usr/app/
-COPY dbt_runner/app.py /usr/app/app.py
+COPY dbt_runner/ /usr/app/dbt_runner/
 COPY shared/ /usr/app/shared/
 COPY scripts/audit_adaptive_refresh_features.py /usr/app/scripts/audit_adaptive_refresh_features.py
 COPY scripts/report_dbt_run_results.py /usr/app/scripts/report_dbt_run_results.py
@@ -28,4 +28,4 @@ RUN python -c "import duckdb; con = duckdb.connect(); con.install_extension('htt
 
 EXPOSE 8080
 ENTRYPOINT []
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "dbt_runner.app:app", "--host", "0.0.0.0", "--port", "8080"]

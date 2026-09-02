@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def mock_processing_client(mocker):
+def mock_processing_client(mocker, mock_cursor_context):
     """
     TestClient for the processing FastAPI app.
 

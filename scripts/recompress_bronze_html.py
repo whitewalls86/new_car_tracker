@@ -1,4 +1,4 @@
-"""Recompress existing bronze HTML .html.zst objects to zstd level 9.
+"""Recompress existing bronze HTML objects with a registered zstd dictionary.
 
 Default mode is dry-run: no writes to MinIO. Pass --apply to write.
 Never deletes objects.
@@ -6,10 +6,12 @@ Never deletes objects.
 Usage examples:
   python scripts/recompress_bronze_html.py \\
       --year 2026 --month 6 --artifact-type detail_page \\
+      --dictionary-id 123456789 \\
       --limit 1000 --progress-every 100
 
   python scripts/recompress_bronze_html.py \\
       --prefix html/year=2026/month=6/artifact_type=detail_page/ \\
+      --dictionary-id 123456789 \\
       --apply --checkpoint /tmp/recompress_2026_06.json \\
       --progress-every 500 --json-out /tmp/result_2026_06.json
 """
@@ -132,7 +134,7 @@ def load_checkpoint(path: Path) -> set[str]:
     if not path.exists():
         return set()
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return set(data.get("processed_keys", []))
     except Exception as exc:
         LOG.warning("Failed to load checkpoint %s: %s — starting fresh", path, exc)
@@ -147,7 +149,7 @@ def save_checkpoint(path: Path, processed_keys: set[str], summary: Summary) -> N
             {"processed_keys": sorted(processed_keys), "summary": summary.to_dict()},
             indent=2,
         )
-    )
+    , encoding="utf-8")
     tmp.replace(path)
 
 
@@ -164,10 +166,17 @@ def process_object(
     checkpoint_keys: set[str],
     checkpoint_path: Path | None,
     summary: Summary,
+    dictionary_id: int | None = None,
+    checkpoint_every: int = 1,
 ) -> None:
-    """Download, recompress, and conditionally write one object. Mutates summary in-place."""
-    import zstandard as zstd
-    from zstandard import ZstdError
+    """Download, recompress, and conditionally write one object. Mutates summary in-place.
+
+    ``decompress_frame`` reads the dictionary ID from each frame's own header,
+    so it handles today's plain objects and dictionary objects alike -- which
+    is what makes a resumed or re-run backfill safe over a half-converted
+    prefix. ``dictionary_id`` therefore controls only what is *written*.
+    """
+    from shared.compression import compress_frame, decompress_frame
 
     try:
         old_compressed = client.get_object(Bucket=bucket, Key=obj.key)["Body"].read()
@@ -177,14 +186,14 @@ def process_object(
         return
 
     try:
-        raw = zstd.ZstdDecompressor().decompress(old_compressed)
-    except (ZstdError, Exception) as exc:
+        raw = decompress_frame(old_compressed)
+    except Exception as exc:
         LOG.warning("decompress failed: %s — %s", obj.key, exc)
         summary.failed += 1
         return
 
     try:
-        new_compressed = zstd.ZstdCompressor(level=_TARGET_LEVEL).compress(raw)
+        new_compressed = compress_frame(raw, level=_TARGET_LEVEL, dict_id=dictionary_id)
     except Exception as exc:
         LOG.warning("recompress failed: %s — %s", obj.key, exc)
         summary.failed += 1
@@ -231,7 +240,17 @@ def process_object(
     summary.new_bytes += new_size
 
     checkpoint_keys.add(obj.key)
-    if checkpoint_path:
+    # Checkpointing every object is O(n^2) over a run: save_checkpoint sorts and
+    # re-serialises the whole key set each time, so the cost per object grows
+    # with the number already done. Measured on a real run: 51 ms/object at 66K
+    # keys (6.4 MiB of JSON), which by 515K keys would be ~400 ms/object and
+    # ~14 hours of pure bookkeeping for one month.
+    #
+    # Saving periodically makes it O(n/interval). The only cost is that a
+    # resumed run repeats up to `interval` objects, which is harmless:
+    # recompressing an already-converted object produces identical bytes, so it
+    # is skipped as "not smaller" rather than rewritten.
+    if checkpoint_path and len(checkpoint_keys) % checkpoint_every == 0:
         save_checkpoint(checkpoint_path, checkpoint_keys, summary)
 
     LOG.debug(
@@ -293,7 +312,7 @@ def print_summary(
     if json_out:
         data = summary.to_dict()
         data["mode"] = mode.lower().replace("-", "_")
-        Path(json_out).write_text(json.dumps(data, indent=2))
+        Path(json_out).write_text(json.dumps(data, indent=2), encoding="utf-8")
         LOG.info("Wrote JSON summary to %s", json_out)
 
 
@@ -303,7 +322,7 @@ def print_summary(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Recompress existing bronze HTML .html.zst objects to zstd level 9. "
+            "Recompress existing bronze HTML objects with a registered zstd dictionary. "
             "Default mode is dry-run. Pass --apply to write. "
             "Never deletes objects."
         )
@@ -343,11 +362,27 @@ def parse_args() -> argparse.Namespace:
         help="JSON checkpoint file; load processed keys on start, append on each apply",
     )
     perf.add_argument("--json-out", type=Path, help="Write final summary JSON to PATH")
+    perf.add_argument(
+        "--checkpoint-every", type=int, default=500,
+        help=(
+            "Persist the checkpoint every N processed objects (default 500). "
+            "Writing every object is O(n^2) over a long run; a resume repeats "
+            "at most N objects, which is idempotent."
+        ),
+    )
 
     apply_grp = parser.add_argument_group("Apply mode (default is dry-run)")
     apply_grp.add_argument(
         "--apply", action="store_true",
         help="Write recompressed objects to MinIO",
+    )
+    apply_grp.add_argument(
+        "--dictionary-id", type=int, default=None,
+        help=(
+            "Registered zstd dictionary ID for every output frame. Omit to write "
+            "plain level-9 frames (Plan 116 behaviour), which today's deployed "
+            "readers understand and which therefore needs no prior deploy."
+        ),
     )
     apply_grp.add_argument(
         "--force", action="store_true",
@@ -372,6 +407,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("one of --prefix or --year is required")
     if args.force and not args.apply:
         parser.error("--force requires --apply")
+    if args.dictionary_id is not None and args.dictionary_id <= 0:
+        parser.error("--dictionary-id must be positive")
 
     return args
 
@@ -386,6 +423,30 @@ def main() -> int:
 
     if not args.apply:
         LOG.info("DRY-RUN mode — no writes to MinIO. Pass --apply to write.")
+
+    # Resolve the dictionary once, before touching a single object. Without
+    # this a typo'd ID fails per-object into summary.failed and the run walks
+    # the entire prefix doing nothing -- slowly, since an unresolvable ID also
+    # re-queries the registry for every object.
+    if args.dictionary_id is None:
+        LOG.info(
+            "No --dictionary-id: writing plain level-%d frames, readable by "
+            "every deployed reader.", _TARGET_LEVEL,
+        )
+    else:
+        try:
+            from shared.compression import get_dictionary
+
+            registered = get_dictionary(args.dictionary_id)
+        except Exception as exc:
+            LOG.error("Dictionary ID %s is not usable: %s", args.dictionary_id, exc)
+            return 1
+        LOG.info(
+            "Dictionary %d resolved from %s (%d bytes). Every object written by this "
+            "run becomes unreadable to any service without the dictionary-aware read "
+            "path deployed.",
+            registered.dict_id, registered.source, len(registered.raw),
+        )
 
     fs = get_s3fs()
     client = get_boto3_client()
@@ -429,6 +490,8 @@ def main() -> int:
                 checkpoint_keys=checkpoint_keys,
                 checkpoint_path=args.checkpoint,
                 summary=summary,
+                dictionary_id=args.dictionary_id,
+                checkpoint_every=args.checkpoint_every,
             )
 
             scanned_bytes += obj.size
@@ -443,7 +506,18 @@ def main() -> int:
                 done = True
                 break
 
+    # Flush the tail of the final interval, so a resume never re-does more than
+    # the last --checkpoint-every objects.
+    if args.checkpoint and args.apply:
+        save_checkpoint(args.checkpoint, checkpoint_keys, summary)
+
     print_summary(summary, dry_run=not args.apply, json_out=args.json_out)
+    # A backfill that failed every object must not exit 0. This runs unattended
+    # in month-sized batches, so a clean exit code is the only signal anyone
+    # checks before starting the next one.
+    if summary.failed:
+        LOG.error("%d of %d objects failed", summary.failed, summary.scanned)
+        return 1
     return 0
 
 

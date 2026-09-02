@@ -2,10 +2,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ops.app import app
+from ops.routers.deploy import IntentResult
 
 
 @pytest.fixture
-def mock_client():
+def mock_client(mock_cursor_context):
+    # The process-wide Prometheus registry includes a collector that reads
+    # coordination state at scrape time. Keep every TestClient request offline,
+    # including /metrics requests that exercise that collector.
     return TestClient(app)
 
 
@@ -28,8 +32,12 @@ def mock_intent_status(mocker):
 
 @pytest.fixture
 def mock_set_intent(mocker):
-    return mocker.patch("ops.routers.deploy._set_intent", return_value="ok")
+    return mocker.patch(
+        "ops.routers.deploy._set_intent", return_value=IntentResult("ok")
+    )
 
 @pytest.fixture
 def mock_intent_release(mocker):
-    return mocker.patch("ops.routers.deploy._intent_release", return_value=True)
+    return mocker.patch(
+        "ops.routers.deploy._intent_release", return_value=IntentResult("ok")
+    )

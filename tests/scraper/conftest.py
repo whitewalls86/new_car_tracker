@@ -89,11 +89,13 @@ def clear_jobs():
 
 
 @pytest.fixture
-def mock_scraper_client(mocker):
+def mock_scraper_client(mocker, mock_cursor_context):
     """
     TestClient for the scraper FastAPI app.
     Patches app.get_pool / app.close_pool (the names imported into app.py)
-    so the async lifespan hook never touches a real database connection.
+    so the async lifespan hook never touches a real database connection. The
+    shared cursor mock also isolates collectors on the process-wide metrics
+    registry from PostgreSQL.
     """
     # app.py does `from db import get_pool, close_pool` so we must patch
     # the names in the app module, not the db module.

@@ -17,7 +17,7 @@ FEATURE_DAILY = "feature_daily"
 BACKTEST = "backtest"
 
 # Every dashboard/API-facing model that Plan 123 Phase 1 requires to stay on
-# the hourly cadence (see dashboard/queries.py, ops/metrics/duckdb_gauges.py,
+# the hourly cadence (see dashboard/queries.py, dbt_runner/sql/analytics_metrics_snapshot.sql,
 # ops/routers/info.py, and dashboard/sql/deals_table.sql for the underlying
 # dependency evidence).
 EXPECTED_HOURLY_CORE = {
@@ -37,6 +37,7 @@ EXPECTED_HOURLY_CORE = {
     "mart_detail_batch_outcomes",
     "mart_inventory_coverage",
     "mart_cooldown_cohorts",
+    "mart_cooldown_event_funnel",
     "mart_price_freshness_trend",
 }
 
@@ -52,7 +53,7 @@ def _model_tags() -> dict:
     """Map model name -> set of config.tags, read from every *.schema.yml."""
     tags_by_model = {}
     for schema_path in MODELS_DIR.glob("*/*.schema.yml"):
-        doc = yaml.safe_load(schema_path.read_text())
+        doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
         for model in doc.get("models", []):
             tags = set(model.get("config", {}).get("tags", []))
             tags_by_model[model["name"]] = tags
@@ -60,7 +61,7 @@ def _model_tags() -> dict:
 
 
 def test_selectors_yml_parses_and_defines_expected_names():
-    doc = yaml.safe_load(SELECTORS_PATH.read_text())
+    doc = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
     names = {s["name"] for s in doc["selectors"]}
     assert names == {HOURLY_CORE, FEATURE_DAILY, BACKTEST, "full_validation"}
 
