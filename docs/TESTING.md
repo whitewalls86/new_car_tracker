@@ -481,7 +481,7 @@ Measured on 2026-08-31 (`*.py` excluding `__init__.py`):
 | `ops` | 19 | 18 | 9 | Meets the floor bar the two `/maintenance` routes |
 | `archiver` | 20 | 15 | 9 | Meets the floor |
 | `processing` | 11 | 10 | 6 | Layer 4 exists and **runs nowhere** |
-| `scraper` | 10 | 9 | 2 | Layer 4 arrived in Stage 8: the **detail** fetch path runs unmocked, the **SRP** path still does not ([G8](#the-gap-list)) |
+| `scraper` | 10 | 9 | 2 | Meets the floor — Stage 8 put both fetch paths through Layer 4 unmocked |
 | `dbt_runner` | 4 | 3 | 1 | Plan 84 deferred it; **re-examined below** |
 | `shared` | 14 | 11 | 1 | Meets the floor |
 | `container_health` | 4 | 2 | 2 | Meets the floor — every route reached, Layer 4 added in Stage 6 |
@@ -492,16 +492,17 @@ Measured on 2026-08-31 (`*.py` excluding `__init__.py`):
 - **`dbt_runner` — deferral lifted, and it was already lifted in practice.** It
   has a Layer 4 suite and its serving-snapshot SQL is executed in Layer 2
   against the real DuckDB artifact. It meets the floor.
-- **`scraper` — deferral lifted, and mostly repaid by Stage 8.** It had ten
-  source modules and one integration file (`test_blocked_cooldown.py`) which
-  executes SQL constants against a cursor — Layer 2's shape, in a Layer 4
-  directory — so the service's *writing* half had never run: every route was
+- **`scraper` — deferral lifted and repaid by Stage 8 (CAR-52), 2026-09-02.**
+  It had ten source modules and one integration file, `test_blocked_cooldown.py`,
+  which executed SQL constants against a cursor — Layer 2's shape, in a Layer 4
+  directory. So the service's *writing* half had never run: every route was
   reached only from `tests/scraper/`, whose autouse fixture patches
-  `shared.db.get_conn` and `shared.minio.write_html`. Stage 8 added
-  `test_detail_fetch_path.py`, which runs `POST /scrape_detail` through a
-  loopback origin to real MinIO and real Postgres with nothing mocked. **The
-  SRP half is what remains** — `scrape_results` writes the same pair from a
-  background thread and no layer executes it unmocked. Owner: Plan 162.
+  `shared.db.get_conn` and `shared.minio.write_html`. Both fetch paths now run
+  end to end against a loopback origin serving real captures, to real MinIO and
+  real Postgres, with nothing mocked — `test_detail_fetch_path.py` for
+  `POST /scrape_detail` and `test_results_fetch_path.py` for the background SRP
+  job. The old file was deleted; the one assertion in it that Layer 2 did not
+  already cover moved to `test_processing_queries.py`.
 
 **Who says so:** this table. It is derived, not curated — a new service
 directory with no row is a violation of the contract, not an omission from a
@@ -609,11 +610,11 @@ Every entry is a measured violation of the contract above, as of 2026-08-31.
 Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 
 An entry is deleted when it is repaired, not marked closed: a violations table
-that keeps its dead rows is a list you have to read twice to use. Nine rows
+that keeps its dead rows is a list you have to read twice to use. Ten rows
 have gone that way, all to Plan 162: **G1 and G2** to Stage 1 (CAR-45) and
 **G10** to Stage 2 (CAR-46) on 2026-08-31, **G4, G11 and G13** to Stage 5
 (CAR-49) on 2026-09-01, **G6 and G9** to Stage 6 (CAR-50) on 2026-09-01, and
-**G7** to Stage 8 (CAR-52) on 2026-09-02.
+**G7 and G8** to Stage 8 (CAR-52) on 2026-09-02.
 What the run of those 73 tests found, what unblinding coverage exposed, what
 the 34 mock conversions and 16 layer renames turned up, why five of G6's
 twelve routes turned out never to have been uncovered at all, and which four
@@ -630,7 +631,6 @@ stay the place the history lives.
 | G16 | **The dbt project owes nothing this document can state.** Questions 5 and 6 of [Plan 161](plans/plan_161_testing_contract.md) asked what a *service* owes, and the mechanism is keyed to a Python package: the "enough" table's rows must equal `service_packages()` in both directions, so a `dbt` row fails as a phantom. `dbt_runner` — the service that *invokes* dbt — has a row; the 22 models it builds have none. **17 of 22 have a dbt unit test and five do not**, and the only obligation enforced on a model is that it carries a cadence tag, which is a scheduling rule. Because `dbt/` is a named exemption from the rule above, logic moving out of a `.sql` file and into a mart leaves a counted surface for an uncounted one, and the count drops for something that is not a repair | Not yet asserted. Plan 162 Stage 11 owes both the mechanism and G16's own rule: a `.sql` file may leave `production_sql_files()` only by naming the model that absorbed it | Plan 162 |
 | G17 | **One statement filed twice.** `mark_artifact_status`, `insert_artifact_event` and `insert_blocked_cooldown_cleared_event` each existed byte-identically under both `ops/sql/` and `processing/sql/`. Both services issue them against the same tables, so the schema already coupled the two — the copies decoupled nothing and only made a second place to edit. Worse, the rule above credits a file when Layer 2 names its **stem**, and the pairs shared one, so a test of `processing`'s copy silently credited `ops`'s: three files reported covered by a test that never executed them. Consolidated into `shared/sql/` on 2026-09-01 and re-exported by both services' `queries.py`, so no call site changed | Every production statement compared against every other, normalised for comments and whitespace — asserted by `test_no_two_production_sql_files_hold_the_same_statement`. One waived pair, `cancel_coordination_state` and `release_deploy_coordination`, which are two policies that agree rather than one statement | Plan 162 |
 | G18 | **`dashboard/`: 7 modules, 0 test files, and the suite cannot reach them.** Not under-tested — *unreachable*: `streamlit` and `plotly` are declared in `dashboard/requirements.txt` and nowhere else, and production imports are bare (`from queries import`, `from db import`) because the Dockerfile does `WORKDIR /app; COPY dashboard/ .`, while Layer 2 imports `dashboard.queries`. `import dashboard.pages.deals` raises `ModuleNotFoundError` today. That is the whole of the 9% reading — only `queries.py` is importable, ~30 of 309 statements. Closing it means a CI venv, a resolution of the dual import identity, and a render harness, in that order; the first two are structural changes to a service whose role is undecided. **Of the 483 lines under `pages/`, ~430 are `st.*`/`px.*` presentation and ~35 are logic** | — | Plan 150 |
-| G8 | **`scraper/`: the SRP fetch path still runs nowhere unmocked.** Was "one integration file and nothing else above Layer 1"; **narrowed 2026-09-02 by Stage 8**, which found the real defect was not the file count but that `tests/scraper/conftest.py` patches `shared.db.get_conn` and `shared.minio.write_html` autouse for every scraper test, so the half of the service that *writes* — MinIO object, `ops.artifacts_queue` row, its `staging.artifacts_queue_events` twin, and the blocked-cooldown pair on a 403 — had never executed. `test_detail_fetch_path.py` closes that for `POST /scrape_detail` against a loopback origin serving the real captures in `tests/fixtures/html/`. **What is left is `scrape_results`**: it writes the same hot/staging pair from a `ThreadPoolExecutor` thread behind `POST /scrape_results`, so a test has to join the job before it can assert, and the existing `test_blocked_cooldown.py` is now a Layer 2 test sitting in a Layer 4 directory, duplicated by `test_scraper_queries.py` | Not yet asserted. The route rule already reaches all eight routes, so no existing rule reports this — the mocked-write class is the judgement half of *what must never be mocked* | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G14 | ~~**56 of 76 production `.sql` files are named by no Layer 2 test.**~~ — **closed 2026-09-01 by Plan 162 Stage 7**, `LAYER_2_WAIVERS` is `()`. Was All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 19 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 names it **as a whole word**. Was 54 until 2026-09-01, when Stage 5 found the match was a bare substring and three files were being credited by identifiers that merely contained their stem. Stage 7 drained it: 132 files gained a test importing the constant production imports, 18 lake-snapshot selectors were already executed by `tests/integration/archiver/` and needed the reading widened rather than new tests, and one file was deleted under [G16](#the-gap-list)'s rule because the statement that absorbed it could be named | Plan 162 |
 
