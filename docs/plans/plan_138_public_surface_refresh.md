@@ -1698,7 +1698,8 @@ session loads the dashboard with its websocket connected and no failed
 
 #### Stage 2 evidence — 2026-09-02 (CAR-62): built, deployed, reverted
 
-**Gate 2 is not met.** The slice was built (PR #338), merged, deployed to
+**Gate 2 was not met on this attempt.** (It was met on the re-land below.)
+The slice was built (PR #338), merged, deployed to
 production, and reverted the same night (PR #340) because `/dashboard` stopped
 reaching the Streamlit app. Production is back at `fc3a0e9`'s behaviour, verified
 byte-identical, and the dashboard is confirmed working again.
@@ -1831,9 +1832,66 @@ The dashboard check sat last behind seven checks that all passed. Six green tick
 accumulated toward a conclusion none of them supported. The run sheet now puts it
 first, with "if this fails, stop; nothing below it matters".
 
-**Cost so far: estimate 3, actual 4** — three on the build, one on the deploy and
-revert. The slice is re-landable with `git revert 2b2808b`; it should not be
+**Cost at closeout: estimate 3, actual 2.** The slice is re-landable with `git revert 2b2808b`; it should not be
 until the base-path change is in front of it.
+
+#### Stage 2 evidence — 2026-09-02 (CAR-62): re-landed behind 3b, Gate 2 met
+
+**Gate 2 is met.** PR #341 merged at `6d08b0a` and deployed. Every check below
+was verified against `https://cartracker.info` from outside the host, not
+against a `TestClient`.
+
+| Gate 2 check | Result |
+|---|---|
+| `/` returns 200 to a fresh unauthenticated session | Met — `200 text/html`, `rel=canonical` to `https://cartracker.info/` |
+| `/info` redirects once to `/` | Met — `308`, `num_redirects=1`, final 200 |
+| Recap index and one recap page, 200, no OAuth | Met — `/recaps` and `/recaps/2026-08-30`, both `200 text/html`, 0 redirects; the static duplicate carries `rel=canonical` to the `/recaps` URL |
+| robots and sitemap return real content | Met — `text/plain` and `application/xml`; 22 `<loc>`, 0 duplicates, no protected path, no `static_ops` path |
+| `/dashboard` enters OAuth | Met — `302` to `/oauth2/sign_in` |
+| An authenticated session loads the dashboard | Met — loaded interactively and confirmed working, **as `admin` rather than `viewer`**, and without a devtools inspection of `/_stcore/*`. Server-side confirmation is below |
+
+**3b did what it was verified to do.** Measured inside the running container
+after the recreate: Streamlit returns **404 at `/`** and **200 at
+`/dashboard/`**, and the shell's asset references are relative
+(`./static/js/…`) so they resolve under the prefix. The catch-all is no longer
+load-bearing.
+
+**The deploy was run with the sheet's own precondition unmet, and that is the
+finding.** The run sheet says *"Do not run it again until build-order step 3b is
+deployed."* `cartracker-dashboard` was still on the pre-3b image when Caddy was
+restarted onto the Stage 2 config at 02:17:48 UTC; `ops` was not recreated until
+02:31:17. **For 13.5 minutes Caddy routed `/`, `/recaps`, `/robots.txt` and
+`/sitemap.xml` to an `ops` container with no Stage 2 code**, so three public
+routes served `404` and `/` served `307 → /admin/searches/`.
+
+`/info` returned 200 for the whole window. The Caddy-first order was followed and
+protected exactly what it was chosen to protect — **the order was right and the
+sequence was abandoned halfway.** The window is short by design because `ops`
+follows within seconds; stopping between the two is what converts it into an
+outage.
+
+**`dashboard` cannot be deployed alone, and the error names the wrong
+component.** `POST /deploy/start` with `{"targets":["dashboard"]}` returns
+**503 `{"detail":"Database unavailable."}`** while Postgres is healthy.
+`dashboard` and `pgadmin` are the only services mapping to no surfaces, so
+`_set_intent` writes `scope='[]'`, which `V043__coordination_state.sql:27`
+forbids for any non-`none` phase; a bare `except Exception` then renders the
+constraint violation as a database outage. **Deploying both together —
+`bash scripts/redeploy.sh ops dashboard` — makes the union non-empty and
+succeeds**, which is how this deploy completed. Filed as
+[Plan 162](plan_162_testing_census_and_restructure.md) Stage 6c (CAR-66); it is
+a testing-composition gap, not a Plan 138 defect.
+
+**Verified after the recreate**, rather than inferred from `redeploy.sh`'s exit
+code: the running `ops` and `dashboard` images match the built ones,
+`ops/routers/public.py` is present in the live container, the dashboard `Cmd`
+carries `--server.baseUrlPath dashboard`, both report healthy, and coordination
+released to `phase=none` at generation 55.
+
+**Public surfaces: yes, and corrected in the slice.** The canonical public URL
+moved from `/info` to `/`; `c80f494` updated `README.md`'s live-site line in the
+same commit, and `ops/templates/info.html` states no `/info` self-reference.
+Nothing left outstanding.
 
 ## Stage 3 — Accessibility and static-asset performance
 

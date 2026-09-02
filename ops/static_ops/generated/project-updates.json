@@ -29,7 +29,7 @@
       "priority": 84,
       "effort": "L",
       "state": "planned",
-      "summary": "Stage 2 (CAR-62) — the public root, the /info redirect and the recap routes: makes / the front door and gives Stage 1e's generated pages a canonical URL, replacing the static path that already serves them. Write Stage 5's Streamlit-coupling assertion as part of it, not after",
+      "summary": "Stage 4 (CAR-63) — present the Plan 143 snapshot without request-time dependencies: full, partial, stale and empty states, no database opened in the request",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
     },
     {
