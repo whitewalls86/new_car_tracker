@@ -13,7 +13,7 @@ not started" a day after Stage 2 was deployed.
 | **0** | **Complete.** Both gates closed 2026-08-31 |
 | **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started but unblocked 2026-09-02**, now that 3d's decisions are settled |
 | **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
-| **3** | **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests. **3b, 3c and 3d not started, and every decision they carried is now made (2026-09-02):** the hero media is removed rather than re-encoded, the recap pages keep their inlined `_STYLE`, and `/recaps` leads with the newest week in full. Nothing in Stage 3 is blocked on a question |
+| **3** | **3b and 3c built 2026-09-02 (CAR-68), not yet deployed** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
 | **4** | **Not started.** Unblocked since Plan 143 completed 2026-08-20 |
 | **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
@@ -1922,6 +1922,31 @@ page.** Those are separate decisions, and the second one is not this plan's.
 The file stays at `ops/static_ops/demo.mp4`; only the markup that serves it
 goes.
 
+#### Stage 3b evidence — 2026-09-02 (CAR-68)
+
+**Built 2026-09-02, not yet deployed.** The `<figure class="demo-media">` and
+its `<video>` are gone from `ops/templates/info.html`, and the `.demo-media`
+rules went with them — they were orphaned by the removal and by nothing else.
+`ops/static_ops/demo.mp4` is untouched, as this stage said it must be.
+
+Two tests hold the pair, because each half of the decision can regress
+independently:
+
+| Assertion | Where |
+|---|---|
+| No `<video>` and no `demo.mp4` reference survives on the rendered page | `test_the_hero_video_is_gone_from_the_page` |
+| The file is still in the repository | `test_the_video_file_itself_stays_in_the_repository` |
+
+The second one looks redundant and is not. Removing the markup makes the file
+look like dead weight to the next reader, and the decision that it stays was
+recorded in prose that nothing enforced until now.
+
+**This closes part of 3a for free**, as predicted above: the page's only
+autoplaying element is gone, so the `prefers-reduced-motion` defect it carried
+is retired rather than left for 3a to retrofit. The two remaining 3a items —
+the clickable `<div>` cards and their colour-only active state — are untouched
+and belong to CAR-64.
+
 ### 3c. Local assets and response policy
 
 - Extract inline CSS and JavaScript into versioned `static_ops` files.
@@ -1949,6 +1974,101 @@ and twelve icons on simpleicons. And because the SVG is inline it needs no
 
 Do not apply a landing-page CSP blindly to Grafana, Airflow, Streamlit, MinIO, or
 OAuth routes; scope the header block to the public handlers.
+
+#### Stage 3c evidence — 2026-09-02 (CAR-68)
+
+**Built 2026-09-02, not yet deployed.** The landing page renders with no
+third-party request, and the public routes carry the policy.
+
+| 3c item | State |
+|---|---|
+| Extract inline CSS and JavaScript into versioned `static_ops` files | Met — `ops/static_ops/info.css` and `info.js`, referenced through a content hash |
+| Self-host PicoCSS and the required icons, preserving licence notices | Met — Pico 2.1.1 and eight Simple Icons under `ops/static_ops/vendor/`, with `NOTICE.md` |
+| Fingerprinted assets one year `immutable`; HTML uncached or short revalidation | Met — the `/static_ops/*` block splits on `query v=*`; documents get `no-cache` |
+| Compression for HTML, CSS, JavaScript, SVG and JSON/XML | Met — `encode zstd gzip`, whose default match is exactly that set |
+| CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `frame-ancestors 'none'` on the public handlers only | Met — one snippet, imported by six blocks and no others |
+| Re-run the full external route matrix after the headers land | **Owed.** Nothing is deployed yet |
+
+**The floating version tag was a live drift surface, not just a third-party
+request.** The template asked for `@picocss/pico@2`, a major-version tag, so the
+stylesheet the public page loaded could change without a commit to this
+repository. The vendored copy pins 2.1.1, which is what that tag resolved to on
+2026-09-02, and `.gitattributes` marks `ops/static_ops/vendor/**` as `-text` so
+line-ending normalisation cannot leave the checked-in bytes differing from what
+the stated version published.
+
+**The CDN count in this stage's text was one off, and the correction is worth
+recording rather than silently fixing.** Above it says "twelve icons on
+simpleicons". Measured against the tree at `9561678`: **eleven** `<img>` elements
+pointed at `cdn.simpleicons.org`, across **eight** distinct icons, and the
+twelfth logo was the dbt mark — already served from this origin. Twelve is the
+right number of *logos* and the wrong number of *requests*, which is the truth
+contract's "name the set" rule finding its own plan.
+
+**Three things had to change in the markup that the item list does not mention**,
+each of them a thing `'unsafe-inline'` would otherwise have to permit: three
+inline `style` attributes became classes in `info.css`, twelve
+`onerror="this.style.display='none'"` handlers were removed, and the four
+`<script>` blocks became one deferred file. The JSON-LD block stays inline and
+needs no allowance — a `<script>` whose type is not a JavaScript MIME type is a
+data block and never executes, so `script-src` does not govern it.
+
+**The four extracted scripts gained null guards, and that is the only
+behavioural change in the move.** Each block used to sit immediately after the
+markup it reads, so its elements were guaranteed to exist. In one deferred file
+they all run after parsing, which is equivalent — except that a throw in one
+block would now abort the ones after it.
+
+**The recap pages' inline stylesheet is admitted by hash, not by
+`'unsafe-inline'`.** Stage 3d decided they keep the generator's `_STYLE` rather
+than sharing `info.css`, and the CSP has to accommodate that. `'unsafe-inline'`
+would have cost one word and would also have admitted any style arriving through
+a recap's Markdown. The `sha256-` allowance admits that one constant. The price
+is a coupling between `scripts/build_public_recaps.py` and the `Caddyfile`, and
+`test_the_style_hash_is_the_recap_generators_own_stylesheet` recomputes the hash
+from the generator so the two cannot drift: without it the recap pages would
+render unstyled in production and nothing in CI would fail.
+
+**The cache split on `/static_ops/*` is the one place this stage could have
+broken Stage 7.** That route serves both authored assets, which ship in the ops
+image, and the generated artifacts `git pull` publishes at a stable URL. A blanket
+year of `immutable` would have frozen every republished recap in every returning
+browser for a year — silently, and looking exactly like the generator having
+stopped. Two guards: the Caddyfile matches on `query v=*` so only
+content-addressed URLs get the long life, and `ops/static_assets.py` raises on
+any path under `generated/` rather than handing out a fingerprint for something
+a hash computed at startup cannot track.
+
+**Verified in a browser under the real policy, because the failure this stage
+guards against answers 200.** The rendered page and a generated recap were
+served with the exact `Content-Security-Policy` string read out of the
+`Caddyfile` and loaded in Chrome:
+
+| Checked | Result |
+|---|---|
+| Pico applied | `--pico-primary` resolves; `info.css` rules in effect |
+| All twelve service logos | `naturalWidth` non-zero on every one |
+| `connect-src` and the roadmap fetch | four planned and four completed rows rendered |
+| `script-src` and `info.js` | the analytics timestamp localised to "Aug 18, 12:00 PM" |
+| A recap page's inlined `_STYLE` | stylesheet parsed, 14 rules, `body` at its 46rem max-width |
+
+**And the policy was shown to be enforced rather than merely present.** A probe
+page served from the same origin with an inline `<style>`, an inline `<script>`
+and a `cdn.simpleicons.org` image had all three blocked — no stylesheet, the
+script's DOM write absent, the image at `naturalWidth` 0. Without that probe
+every row of the table above is also what a CSP the browser ignored would
+produce.
+
+`caddy validate` accepts the configuration. The pre-existing "input is not
+formatted" warning is unchanged: the file was space-indented before this stage
+and still is, and reformatting it would bury the diff.
+
+**Two public-page templates deliberately still use the CDN.**
+`ops/templates/admin/base.html` and `ops/templates/request_access.html` both
+load Pico from `cdn.jsdelivr.net`. Neither is a public surface — `/admin*` is
+behind a role check and `/request-access*` behind Google — so neither is inside
+this stage's scope or under the policy. Recorded here so the next reader does
+not take the remaining `cdn.jsdelivr.net` hits in the tree as an oversight.
 
 ### 3d. Recap presentation
 
@@ -2677,14 +2797,16 @@ nothing.
 matrix, including loading the dashboard as `viewer` to confirm the websocket
 connects.
 
-**6. Stage 3b and 3c — the asset and header pass.** The largest user-visible
-quality change available. **Its decision is made (2026-09-02): 3b removes the
-hero media rather than re-encoding it**, so this step is now execution
-throughout. 3c self-hosts PicoCSS and the service icons — the page still makes
-third-party requests to `cdn.jsdelivr.net` and `cdn.simpleicons.org` on every
-visit, twelve icons and one stylesheet, which is what makes a same-origin CSP
-impossible — extracts the inline CSS and JavaScript, and applies the headers and
-caching policy.
+**6. Stage 3b and 3c — the asset and header pass. BUILT 2026-09-02 (CAR-68),
+not yet deployed.** The largest user-visible quality change available. 3b
+removed the hero media rather than re-encoding it, per the decision made the
+same day. 3c vendored PicoCSS and the service icons — the page had been making
+twelve third-party requests on every visit, one stylesheet from
+`cdn.jsdelivr.net` and eleven icons from `cdn.simpleicons.org`, which is what
+made a same-origin CSP impossible — extracted the inline CSS and JavaScript, and
+applied the headers and caching policy to the six public handlers. **The
+route-matrix re-run this step's mitigation calls for is the outstanding half**
+and needs the deploy; see the Stage 3c evidence.
 
 **7. Stage 3a — semantic interactions.** The service and decision cards are
 clickable `<div>` elements: not focusable, not announced, not operable without a

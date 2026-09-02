@@ -50,19 +50,21 @@ https://cartracker.info {
     # ── Public routes (no auth required) ─────────────────────────────────────
     # Plan 138 Stage 2. The root is an EXACT match and must stay one.
     #
-    # dashboard/Dockerfile runs Streamlit with no --server.baseUrlPath, so
-    # Streamlit believes it is mounted at / and serves its own machinery from
-    # there: /_stcore/health (the Compose healthcheck calls exactly that path),
-    # /_stcore/stream for the websocket, and its static bundle. Nothing rewrites
-    # those paths — they resolve only because the final catch-all below forwards
-    # everything unmatched to dashboard:8501.
+    # dashboard/Dockerfile runs Streamlit with --server.baseUrlPath=dashboard,
+    # so it serves its app, its relatively-linked assets, its /_stcore/stream
+    # websocket and the /_stcore/health path the Compose healthcheck calls, all
+    # under /dashboard/*, and it 404s at the origin root. The /dashboard* block
+    # below carries those paths explicitly.
     #
-    # Widening this to /* would take those paths away from Streamlit and break
-    # the dashboard's assets and websocket WHILE /dashboard ITSELF STILL
-    # RETURNS 200 — a failure no status-code check in this plan can see. Plan
-    # 165 is the fix: its own host gives Streamlit its origin back. Until then
-    # the coupling is deliberate, and tests/test_caddy_public_routes.py asserts
-    # it rather than leaving it to whoever reads this block next.
+    # That base path is what makes this root handler safe, and it was added
+    # because the first Stage 2 deploy did not have it: with Streamlit believing
+    # it owned /, moving the root took away the fallback its relative asset
+    # links resolved against, and the dashboard went blank WHILE /dashboard
+    # ITSELF STILL RETURNED 200 — a failure no status-code check in this plan
+    # could see. Widening this handler back to /* would take the origin root
+    # away again, so tests/test_caddy_public_routes.py asserts the matcher is
+    # exactly "/" rather than leaving it to whoever reads this block next.
+    # Plan 165 retires the arrangement entirely by giving Streamlit its own host.
     handle / {
         import public_response_policy
         import public_document_cache
