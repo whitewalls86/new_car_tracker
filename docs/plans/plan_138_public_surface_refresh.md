@@ -1737,19 +1737,64 @@ itself had to be the Streamlit app**, because that is where its client router
 falls back. `/dashboard` was never a route Streamlit recognised — it worked only
 because the fallback landed back on Streamlit through the catch-all.
 
-**The mechanism is still open, and that is recorded rather than guessed.** Two
-hypotheses were formed during the incident and both were disproved within
-minutes. The next attempt needs a local reproduction — `docker compose up caddy
-dashboard ops` against the Stage 2 Caddyfile — and the browser Network tab, which
-was not captured before the revert.
+**The mechanism, found 2026-09-02 after the revert.** Two hypotheses were formed
+during the incident and both were disproved within minutes; the answer came from
+two requests that were available the whole time and that nobody made.
 
-**What Stage 2 now needs, before it is re-attempted.** Give Streamlit
-`--server.baseUrlPath=dashboard` so it owns `/dashboard/*` and stops treating the
-origin root as its own. That is `dashboard/Dockerfile` plus the Compose
-healthcheck path, it retires the catch-all dependency this stage was trying to
-preserve, and it is the near half of [Plan 165](plan_165_service_subdomain_routing.md)
-arriving early. It belongs **in front of** Stage 2, not after it. Until it lands,
-this stage is not deployable as specified.
+Streamlit answers **every unrecognised path with its SPA shell**, and that shell
+references its own assets **relatively** — `./static/js/index….js`. Measured
+against production:
+
+| Request | Response |
+|---|---|
+| `/static/js/index….js` | `application/javascript`, 451,569 bytes — the real bundle |
+| `/dashboard/static/js/index….js` | `text/html`, **11,141 bytes — the shell again** |
+
+That single asymmetry produces both observed failures:
+
+- **`/dashboard/`** — the document base is `/dashboard/`, so the relative asset
+  resolves under the prefix, Streamlit returns HTML, and the browser refuses to
+  execute HTML as a module script. The app never boots. This is the "it just
+  takes longer to fail" case: a page waiting on assets that all return HTML.
+- **`/dashboard`** — the document base is `/`, so the asset resolves to
+  `/static/js/…` and loads through the catch-all. The app *does* boot, which is
+  why the container logged a real script run. Then the client router does not
+  recognise `/dashboard` as a page and navigates to what it believes is the app
+  root, `/`.
+
+The second one worked before this stage **only because `/` was also Streamlit**.
+`/dashboard` was never a route Streamlit recognised. Taking `/` away did not
+break the dashboard's routing; it removed the accident that was hiding it.
+
+**What Stage 2 needed, and now has: build-order step 3b.** Streamlit is given
+`--server.baseUrlPath=dashboard`, so it owns `/dashboard/*` and stops treating
+the origin root as its own. `dashboard/Dockerfile` plus the Compose healthcheck
+path, held by `tests/test_dashboard_base_path.py`.
+
+Verified against a locally built image before any deploy — the step that was
+missing the first time:
+
+| Probe | Before 3b | After 3b |
+|---|---|---|
+| `/dashboard/static/js/index….js` | `text/html`, 11,141 | **`application/javascript`, 527,226** |
+| `/static/js/index….js` | `application/javascript` | **404** |
+| `/dashboard/_stcore/stream` | 404 | **200** |
+| `/_stcore/stream` | 200 | **404** |
+| `/dashboard/_stcore/health` | 404 | **200** |
+| `/_stcore/health` | 200 | **404** — so the healthcheck must move, and does |
+| `/dashboard` | shell, then a client-side bounce to `/` | **307 → `/dashboard/`**, Streamlit's own redirect |
+
+The middle two rows are the ones that matter for this stage: **Streamlit no
+longer claims the origin root**, so the catch-all stops being load-bearing and
+Stage 2 can take `/` without taking anything from the dashboard. The coupling
+this stage was trying to preserve deliberately is simply gone.
+
+**Subdomain routing was considered here and deferred.** Moving the dashboard to
+its own host ([Plan 165](plan_165_service_subdomain_routing.md)) would delete the
+base-path setting again, so 3b is knowingly throwaway work. It was still the
+right trade: Plan 165's own Stage 0 puts the dashboard *last* among hosts and
+answers an open OAuth question first, which is two slices before Stage 2 could
+move. Recorded so the question is not re-opened.
 
 **Two defects in this slice's own run sheet, both caught in flight.**
 
@@ -2427,15 +2472,19 @@ has to resolve. Doing it after would mean writing that route twice. It also has
 to land before step 6, because Stage 3c puts CSS and JavaScript into
 `static_ops/` and the mount's seam depends on those staying on the image side.
 
-**3b. Give Streamlit a base path — NEW, and it blocks step 4.** Added 2026-09-02
-after Stage 2 was deployed and reverted. `dashboard/Dockerfile` runs Streamlit
-with no `--server.baseUrlPath`, so Streamlit owns the origin root: it serves its
-machinery from there *and* falls back there when its client-side router does not
-recognise a path. Moving `/` to the landing page takes that fallback away and
-`/dashboard` stops working, with every other check in Gate 2 passing. Setting
-`--server.baseUrlPath=dashboard`, plus the Compose healthcheck path, confines
-Streamlit to `/dashboard/*` and retires the catch-all dependency. Needs a local
-reproduction of the failure first — see the Stage 2 evidence.
+**3b. Give Streamlit a base path — NEW, and it blocks step 4. BUILT 2026-09-02,
+not yet deployed.** Added after Stage 2 was deployed and reverted.
+`dashboard/Dockerfile` ran Streamlit with no `--server.baseUrlPath`, so Streamlit
+owned the origin root: it served its machinery from there, answered every
+unrecognised path with a shell that links assets relatively, *and* fell back
+there when its client router did not recognise a path. Moving `/` to the landing
+page took that fallback away and `/dashboard` stopped working while every other
+Gate 2 check passed. `--server.baseUrlPath=dashboard` plus the Compose
+healthcheck path confines Streamlit to `/dashboard/*` and retires the catch-all
+dependency; `tests/test_dashboard_base_path.py` holds it. Verified against a
+locally built image — see the Stage 2 evidence for the probe table. **Deploy this
+and confirm the dashboard in a browser before step 4 goes near production
+again.**
 
 **4. Stage 2 — the public root, the `/info` redirect, and the recap routes.**
 **Attempted 2026-09-02 and reverted; blocked on 3b.**

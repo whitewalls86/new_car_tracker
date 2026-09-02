@@ -5,13 +5,18 @@ Green-lighting the deploy that makes `/` the public landing page, forwards
 "deploy Caddy and `ops` together and run the full matrix".
 
 > **This deploy was run on 2026-09-02 and reverted the same night. Do not run it
-> again until Stage 2 gives Streamlit a base path.**
+> again until build-order step 3b is deployed.**
 >
 > Everything in the unauthenticated matrix passed. `/dashboard` still broke:
 > moving `/` to the ops landing page takes away the address Streamlit's
-> client-side router falls back to. PR #338 deployed it, PR #340 reverted it, and
-> the plan document's *Stage 2 evidence* section holds the measurements. The
-> mechanism is **not yet fully understood** — see step 6.
+> client-side router falls back to, and the address its relative asset URLs
+> resolve against. PR #338 deployed it, PR #340 reverted it, and the plan
+> document's *Stage 2 evidence* section holds the measurements.
+>
+> **The mechanism is now understood and fixed** — step 3b gives Streamlit
+> `--server.baseUrlPath=dashboard`, which is built and verified against a local
+> image but **not yet deployed**. Deploy that first, confirm the dashboard in a
+> browser, then run this sheet.
 >
 > This sheet is kept, and corrected, because three of its findings survive the
 > revert and two of its own steps were wrong. Read the corrections before
@@ -359,19 +364,24 @@ What was measured on 2026-09-02:
 | `/dashboard/` with a trailing slash **also** failed | "it just takes longer to fail" — so this is *not* simply Streamlit reading the last path segment as a page name |
 | A Streamlit session did run | `docker logs cartracker-dashboard` at 00:38:26 shows `use_container_width` deprecation warnings, which only fire when the script executes and renders widgets |
 
-**The mechanism is not fully understood, and that is recorded rather than
-guessed.** Two hypotheses were formed and both were wrong: a client-side page
-lookup on the last path segment (disproved by the trailing slash failing too),
-and a total routing failure (disproved by the app executing). The next attempt
-needs a **local reproduction** — `docker compose up caddy dashboard ops` with the
-Stage 2 Caddyfile — not more production debugging.
+**The mechanism, found after the revert from two requests that were available
+all along.** Streamlit answers every unrecognised path with its SPA shell, and
+that shell links its assets **relatively** (`./static/js/index….js`). So
+`/static/js/index….js` returned `application/javascript` at 451,569 bytes while
+`/dashboard/static/js/index….js` returned `text/html` at 11,141 — the shell
+again. At `/dashboard/` the relative asset resolves under the prefix, the browser
+refuses to run HTML as a module, and the app never boots. At bare `/dashboard`
+the asset resolves to `/static/…` via the catch-all, the app *does* boot, and
+then the router bounces to `/`. `/dashboard` was never a route Streamlit
+recognised; `/` being Streamlit was what hid that.
 
-**What this means for Stage 2.** The stage is not deployable as specified. The
-likely fix is to give Streamlit `--server.baseUrlPath=dashboard` so it owns
-`/dashboard/*` and stops treating the origin root as its own — which also
-retires the catch-all dependency and is what [Plan 165](../plans/plan_165_service_subdomain_routing.md)
-anticipates. That is a change to `dashboard/Dockerfile` plus the Compose
-healthcheck path, and it belongs in front of Stage 2, not after it.
+**The fix is build-order step 3b**, built 2026-09-02:
+`--server.baseUrlPath=dashboard` in `dashboard/Dockerfile` plus the Compose
+healthcheck path, held by `tests/test_dashboard_base_path.py`. After it,
+`/dashboard/static/js/…` serves the real 527,226-byte bundle and `/static/js/…`
+is a 404 — **Streamlit no longer claims the origin root**, so the catch-all
+coupling this sheet was written to preserve no longer exists. Deploy 3b and
+confirm the dashboard in a browser before running this sheet again.
 
 ### The check itself
 
