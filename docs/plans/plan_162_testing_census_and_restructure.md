@@ -2773,3 +2773,61 @@ almost all of it was mechanical once the rules existed. **Building the checker
 first is what made it cheap**, and it is the reusable lesson: the rule found
 `maintenance.py:152`, `admin.py`'s six, and the byte-identical trio, none of
 which a reading pass had found in three prior stages of looking at these files.
+
+### Evidence — Stage 6c, a service that pauses no surface can be deployed alone (CAR-66), 2026-09-02
+
+**The defect is closed in production.** `V050` applied 2026-09-02, and `bash
+scripts/redeploy.sh dashboard` — the exact command that returned 503
+`{"detail":"Database unavailable."}` on 2026-09-01 — now completes end to end.
+
+| Deploy | Drain | Healthy | Exit |
+|---|---|---|---|
+| `ops` | 5s | 6s | 0 |
+| `dashboard` alone | **0s** | 6s | 0 |
+| `archiver pack-worker processing scraper dbt_runner` | 1s | 8s | 0 |
+
+**"Drain confirmed after 0s" is this stage's own prediction, observed.** V050's
+comment argued that an empty scope is a true statement rather than a missing
+one, because `required_drain_sources(frozenset())` is empty and every source
+reports not-applicable. The `dashboard` deploy drained in zero seconds where
+every scoped deploy above it took one to five. The readers already agreed; only
+the constraint did not.
+
+**The constraint keeps the invariant worth keeping.** Verified against
+production `pg_constraint` after the migration: the `scope <> '[]'` clause is
+gone and `targets <> '[]'` remains, so an active record must still name what it
+coordinates. Coordination advanced generation 59 → 65 across the three deploys
+and returned to `phase='none'` after each.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+#### The rollout found a gap in the deploy service list, of this stage's own kind
+
+`shared/db.py` changed, and every service that bakes it needed rebuilding. The
+recorded list was archiver, pack-worker, snapshot-worker, processing,
+april-processor, scraper and ops. Measured against the tree, it was wrong in
+both directions:
+
+- **`dbt_runner` bakes `shared/` and was absent from the list** —
+  `dbt_runner/Dockerfile:19` copies it to `/usr/app/shared/`, and the service
+  is `restart: unless-stopped`. It would have kept the old module indefinitely.
+- **`snapshot-worker` and `april-processor` are `profiles:`-gated** and were
+  not running, so they are not deploy targets at all; they load new files on
+  their next invocation, as Stage 7 recorded for `docker compose run --rm`.
+
+`container_health` copies only its own package and `lakehouse` is not a Compose
+service, so neither is affected. **This is Stage 6c's defect one layer out** —
+a contract (which images bake `shared/`) and its consumer (the list an operator
+types) with nothing composing them, and the same failure mode: the list looked
+right and was never asserted against the tree.
+
+#### Cost
+
+Estimate 1 point, actual 1. The stage was sized before the diagnosis was
+written down and still landed on its estimate, which is worth recording as
+plainly as an overrun would be: the expensive half was already spent finding
+the cause on 2026-09-01, and what remained — one migration, two exception
+paths, one shell function and the assertion — was the cheap half. **The
+unmasking cost almost nothing and is the part that pays later**, since the next
+unrelated failure on this path will name itself.
