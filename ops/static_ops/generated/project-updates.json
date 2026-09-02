@@ -23,24 +23,24 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
+      "plan": "172",
+      "title": "The plan-authoring skill",
+      "order": 3,
+      "priority": 80,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Stage 0 — name the two sections a plan owes the public, and the rule that keeps the first stable: it is edited when the plan's purpose changes, never because a stage landed",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
+    },
+    {
       "plan": "138",
       "title": "Public surface refresh",
-      "order": 3,
+      "order": 4,
       "priority": 84,
       "effort": "L",
       "state": "planned",
       "summary": "Stage 8 (CAR-67) — extract docs/PUBLIC_SURFACE.md: the durable public-surface rules leave this plan, and the destination inventory records what a reader is meant to reach",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
-    },
-    {
-      "plan": "164",
-      "title": "Cycle-close ritual",
-      "order": 4,
-      "priority": 70,
-      "effort": "S",
-      "state": "planned",
-      "summary": "Stage 0 — write the close order down, then Stage 3's git-ref and worktree hygiene; both are independent of Linear and buildable now",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
     }
   ],
   "completed": [

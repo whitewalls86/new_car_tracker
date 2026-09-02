@@ -19,6 +19,7 @@ not started" a day after Stage 2 was deployed.
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
 | **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
 | **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
+| **9** | **New 2026-09-02, not started.** Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depends on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads, and is a no-op rather than a breakage until that exists |
 
 **The navigation pane is deliberately unstarted and unticketed**, deferred
 behind Stage 8's destination inventory. Its one carve-out — `/dashboard` is
@@ -2514,6 +2515,105 @@ also stated in this document; every `§` reference in this plan still resolves;
 `public-surface-check` cites the contract rather than this plan; and every
 unsettled destination question is written down as an open item rather than
 answered by omission.
+
+---
+
+## Stage 9 — Publish what a plan is for, not which stage is next
+
+**Raised 2026-09-02 out of Stage 1d, from a measured defect.** The planned list
+republishes `docs/PLANS.md`'s **Next executable slice** cell verbatim as each
+item's `summary`. That cell is the index's answer to "what could anyone pick up
+next", so it is rewritten every time a stage lands — and the public page changes
+with it.
+
+Measured over the 60 days to 2026-09-02, replaying `master`'s first-parent line:
+79 comparable commits touched `docs/PLANS.md`, and **59 of them changed published
+copy — 75%.** Of those, **35 rewrote only a slice cell** while the same four
+plans stayed in the window; the other 24 changed which plans were in it. Plan
+138's own public sentence was rewritten roughly every six days.
+
+**The 24 are not a defect.** The top four genuinely reordered, and a reader is
+better served by the list moving. **The 35 are**, and they are the whole of this
+stage: a public sentence rewritten because a stage landed, when nothing a public
+reader cares about changed.
+
+### The two lists are already in two voices, from two sources
+
+Stage 1d built, for the completed side only, the rule *"a plan says how it wants
+to be described in public, and extraction is the fallback"* — the
+`## Public summary` section, preferred over the archive cell. The planned side
+never got it, so it publishes an internal work pointer:
+
+> **Completed** — *"A deploy could wait forever on a signal that was never sent,
+> and looked like it was working while it hung."*
+
+> **Planned** — *"Stage 8 (CAR-52) — the Layer 2 suite that asserts nothing:
+> `tests/integration/sql/test_dashboard_queries.py` is 25 tests and 0 assertions."*
+
+The second carries a file path, a ticket identifier and a stage number.
+[`PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) §4 governs *what may be shown* and
+never required the **source** to be public copy; that is the hole this stage
+closes.
+
+### What lands
+
+- The generator prefers a plan document's construction-time section for planned
+  rows, exactly as it already prefers `## Public summary` for completed ones.
+- **The slice cell stays the fallback**, so the change is correct on a tree where
+  no plan carries the new section yet, and the page degrades to today's behaviour
+  rather than to nothing.
+- The build's fallback worklist names planned rows too, so it stays the
+  self-emptying list Stage 1d designed rather than a second thing to remember.
+- `docs/PUBLIC_SURFACE.md` §4 gains one sentence: the planned feed publishes what
+  a plan is *for*, and the build order's slice cell stops being published copy —
+  which retires the rule that a one-cell edit changes the live page, and with it
+  the corresponding line in the `plans` skill.
+
+### The dependency: Plan 172 blocks this stage, and the distinction is exit-shaped
+
+**Section A is [Plan 172](plan_172_plan_authoring_skill.md)'s to create** — it
+builds the skill that writes it and the assertion that keeps it present in the
+published window. This stage consumes it, and **[Plan 172](plan_172_plan_authoring_skill.md)
+sits ahead of this plan in the build order for that reason.**
+
+The block is on this stage's *completion*, not on its code, and the difference is
+worth stating because it is easy to mistake for "either order is fine":
+
+- **The code may land first and is harmless if it does.** With the fallback in
+  place, a tree where no plan carries an A publishes exactly what it publishes
+  today.
+- **The stage cannot be *finished* first.** Exit 4 flips `PUBLIC_SURFACE.md` §4
+  and the `plans` skill to say the build order's slice cell is no longer
+  published copy. Until the published window actually carries section A that
+  sentence is **false** — the fallback means the slice cell is still what reaches
+  the page — and this plan would have published a rule about its own surface that
+  its own surface contradicts.
+
+So landing the code early buys nothing and the stage stays open either way. What
+this stage must never do is land *without* the fallback, which would blank the
+planned list on a tree where no plan has an A — which is every tree today.
+
+### Open — this stage owns it
+
+**Does the public list still say which stage is next, anywhere?** Dropping the
+slice from the feed entirely is the smallest change available and removes all 35
+rewrites. Keeping a coarse progress signal beside a stable sentence is more
+informative to a reader and reintroduces a moving field, though a coarser one.
+This is a question about what the page is for, and it is recorded rather than
+answered.
+
+### Exit
+
+1. A planned item's `summary` comes from the plan document when the section is
+   present, and from the slice cell when it is not.
+2. `--check` still means something: unchanged input produces byte-identical
+   output, as it does today.
+3. The fallback worklist names planned rows as well as completed ones.
+4. `PUBLIC_SURFACE.md` §4 and the `plans` skill agree on whether the slice cell
+   is published copy — **both change, or neither does.**
+5. **The measurement is re-run** over a comparable window and the slice-only
+   figure is recorded here beside the 35. A stage about churn that never
+   re-measures its own churn has not demonstrated anything.
 
 ---
 
