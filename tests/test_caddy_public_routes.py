@@ -125,24 +125,51 @@ def _resolve(path: str) -> Block:
 
 @pytest.mark.parametrize(
     "path",
-    ["/_stcore/health", "/_stcore/stream", "/_stcore/static/js/index.js"],
+    [
+        "/dashboard/_stcore/health",
+        "/dashboard/_stcore/stream",
+        "/dashboard/static/js/index.js",
+    ],
 )
-def test_the_public_root_does_not_swallow_streamlit_own_paths(path):
-    """Streamlit serves these from the root and nothing rewrites them.
+def test_streamlits_own_paths_resolve_under_its_base_path(path):
+    """Rewritten 2026-09-02, after the first version of this file shipped a
+    regression it could not see.
 
-    If this fails, the dashboard's websocket and static bundle are being sent to
-    ops while ``/dashboard`` goes on returning 200 -- the failure Gate 2's status
-    codes cannot see.
+    It used to assert that ``/_stcore/*`` at the **origin root** reached the
+    dashboard, because Streamlit ran with no ``--server.baseUrlPath`` and served
+    its machinery from there. That assertion was true, was mutation-tested three
+    ways, stayed true through the whole 2026-09-02 incident -- and the dashboard
+    was unusable, because the failure was never about ``/_stcore/*``. Streamlit
+    answers *any* unrecognised path with its SPA shell, whose asset links are
+    relative, so moving ``/`` moved what those links resolved against.
+
+    Build-order step 3b gave Streamlit a base path. It now serves its app, its
+    assets, its websocket and its health endpoint under ``/dashboard/`` and
+    **404s at the origin root**, so these paths must reach it through the
+    ``/dashboard*`` block rather than through catch-all ordering. That is the
+    coupling replaced by something stated, which is what this file is for.
     """
     block = _resolve(path)
     assert block.upstream == DASHBOARD, (
         f"{path} is Streamlit's own path and now resolves to {block.upstream}"
     )
+    assert not block.is_catch_all, (
+        f"{path} is reaching the dashboard through the catch-all again. The base "
+        f"path exists so that /dashboard* carries it explicitly"
+    )
+    assert block.authenticated, f"{path} must stay behind the role check"
 
 
-def test_the_authenticated_catch_all_still_reaches_the_dashboard():
+def test_the_catch_all_is_no_longer_what_serves_the_dashboard():
+    """It still exists and still points at Streamlit, and nothing depends on it.
+
+    Kept rather than deleted: removing the catch-all is a routing change with its
+    own blast radius and belongs to Plan 165, not here. What changed is that it
+    is no longer load-bearing -- asserted by the test above, which requires every
+    Streamlit path to resolve somewhere else.
+    """
     catch_alls = [block for block in _parse() if block.is_catch_all]
-    assert len(catch_alls) == 1, "the catch-all is what serves Streamlit's root paths"
+    assert len(catch_alls) == 1
     assert catch_alls[0].upstream == DASHBOARD
     assert catch_alls[0].authenticated, "the catch-all must not become public"
 

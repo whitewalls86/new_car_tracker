@@ -4,6 +4,24 @@ Green-lighting the deploy that makes `/` the public landing page, forwards
 `/info`, and gives the weekly recaps a route. This is build-order step 5 —
 "deploy Caddy and `ops` together and run the full matrix".
 
+> **This deploy was run on 2026-09-02 and reverted the same night. Do not run it
+> again until build-order step 3b is deployed.**
+>
+> Everything in the unauthenticated matrix passed. `/dashboard` still broke:
+> moving `/` to the ops landing page takes away the address Streamlit's
+> client-side router falls back to, and the address its relative asset URLs
+> resolve against. PR #338 deployed it, PR #340 reverted it, and the plan
+> document's *Stage 2 evidence* section holds the measurements.
+>
+> **The mechanism is now understood and fixed** — step 3b gives Streamlit
+> `--server.baseUrlPath=dashboard`, which is built and verified against a local
+> image but **not yet deployed**. Deploy that first, confirm the dashboard in a
+> browser, then run this sheet.
+>
+> This sheet is kept, and corrected, because three of its findings survive the
+> revert and two of its own steps were wrong. Read the corrections before
+> trusting any part of it.
+
 **This deploy touches the reverse proxy that serves every route on the host.**
 A bad Caddyfile does not degrade one page; Caddy refuses to start and `:80` and
 `:443` go down together. Step 1 exists to make that impossible, and it costs
@@ -16,9 +34,15 @@ system. Three things only a real deploy can show:
 
 | What the suite cannot see | Step |
 |---|---|
+| **That `/dashboard` still reaches the app at all** — this is what failed | 6 |
 | The dashboard's websocket actually connecting through the real proxy | 6 |
 | That the ops image was rebuilt, so the new static assets exist | 5.4 |
 | That an unauthenticated visitor gets content rather than a Google sign-in | 5.1 |
+
+The first row was not in this table when the deploy was run. It was added
+afterwards, from the failure, and it is the row that matters: the suite asserts
+`/dashboard` *routes to* `dashboard:8501`, which stayed true throughout while the
+page was unusable.
 
 ---
 
@@ -97,14 +121,34 @@ docker compose build ops      # no recreate; the running container is untouched
 
 ## 2. Validate the Caddyfile before restarting into it — THE GATE
 
-The Caddyfile is a bind mount, so the **running** Caddy container is already
-reading the new file off disk. It has not acted on it yet. That means you can
-ask the live container whether the config it would load is valid, before you
-give it the chance to fail on it:
+**Corrected 2026-09-02. The first version of this step validated the wrong
+file and passed.** It said to run `caddy validate` inside the *running*
+container, on the reasoning that a bind mount means the container is already
+reading the new file. That reasoning is wrong, and it is wrong in the way this
+repository has already paid for once.
+
+`./Caddyfile:/etc/caddy/Caddyfile:ro` is a **single-file** bind mount. It pins
+the inode resolved at container start, and `git pull` *replaces* the file rather
+than editing it in place — so the running container goes on reading the old,
+now-unlinked copy. Measured during the 2026-09-02 attempt, after the pull:
+
+```text
+6c83ad730e90bd35f244b83722ef17be  /opt/cartracker/Caddyfile      (host, new)
+1fcd5674ebb02e784d20bdc0c586cc56  /etc/caddy/Caddyfile           (container, old)
+```
+
+The gate returned `Valid configuration` against that stale copy. This is
+`redeploy.sh` decision 4 — "a SIGHUP reload is worse than useless there, it logs
+*Completed loading of configuration file* against the stale config, which is how
+this went unnoticed twice on 2026-08-20" — in a different costume. **Check
+`redeploy.sh`'s own decision list before inventing a pre-flight gate; it has
+already thought about this.**
+
+Validate in a **throwaway container**, which resolves the path now:
 
 ```bash
-docker compose exec caddy caddy validate \
-  --config /etc/caddy/Caddyfile --adapter caddyfile
+docker run --rm -v /opt/cartracker/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:latest caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
 Required output ends with `Valid configuration`.
@@ -117,29 +161,51 @@ deploy does not touch.
 Warnings about `Unnecessary header_up X-Forwarded-Proto` and `input is not
 formatted` are pre-existing and are not a failure.
 
-### Read back the route table
+### Read back the route table — not optional, and it is what caught the stale gate
 
-Optional, and worth the twenty seconds on this particular deploy, because it is
-the only check that shows Caddy's *own* resolution rather than the file:
+Caddy does not evaluate `handle` blocks in source order; it sorts them by matcher
+specificity. This is the only check that shows Caddy's *own* resolution rather
+than the file's text — and on 2026-09-02 it is what revealed that the gate above
+had validated the wrong file, because it printed the **pre-Stage-2** table with
+no `/`, no `/recaps` and no `/robots.txt`.
+
+Run it against the **running** container first. That tells you which file the
+container is actually on:
 
 ```bash
 docker compose exec caddy caddy adapt \
   --config /etc/caddy/Caddyfile --adapter caddyfile 2>/dev/null \
-  | python3 -c 'import json,sys
-cfg=json.load(sys.stdin)
-for r in cfg["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]["routes"]:
-    m=r.get("match",[{}]); print(m[0].get("path") if m else "CATCH-ALL")'
+  > /tmp/adapt-running.json
 ```
 
-`["/"]` must appear as its own entry, and the last line must be `CATCH-ALL`.
-If `/` reads as `["/*"]`, the dashboard is about to break — see step 6.
+Then against a throwaway, which resolves the path now:
+
+```bash
+docker run --rm -v /opt/cartracker/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:latest caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile \
+  2>/dev/null > /tmp/adapt-new.json
+```
+
+Print either one:
+
+```bash
+python3 -c 'import json,sys
+cfg=json.load(open(sys.argv[1]))
+for r in cfg["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]["routes"]:
+    m=r.get("match",[{}]); print(m[0].get("path") if m else "CATCH-ALL")' /tmp/adapt-new.json
+```
+
+**Before** the restart the two must *differ* — that is the inode pinning, and
+seeing them match before a restart means the pull did not land. **After** the
+restart they must agree. In the new table `["/"]` must appear as its own entry
+and the last line must be `CATCH-ALL`; if `/` reads as `["/*"]`, stop.
 
 ---
 
 ## 3. Apply the Caddyfile
 
 ```bash
-./scripts/redeploy.sh --restart caddy
+bash scripts/redeploy.sh --restart caddy
 ```
 
 `--restart` is the correct mode: same image, same Compose config, but the
@@ -160,7 +226,7 @@ now (step 8) rather than continue.
 ## 4. Deploy `ops`
 
 ```bash
-./scripts/redeploy.sh ops
+bash scripts/redeploy.sh ops
 ```
 
 Build + recreate. The image build is what carries `ops/routers/public.py`, the
@@ -268,28 +334,71 @@ security regression and is an immediate rollback.
 
 ---
 
-## 6. The check no terminal can run — the dashboard websocket
+## 6. The check no terminal can run — the dashboard
 
-**This is Gate 2's hard half and the reason this stage was written the way it
-was.** Everything above can pass while the dashboard is broken.
+**This is Gate 2's hard half. On 2026-09-02 it failed, and it is the only step
+that caught the failure.** Everything above passed.
 
 Streamlit runs with no `--server.baseUrlPath`. It believes it is mounted at `/`
 and serves `/_stcore/health`, `/_stcore/stream` (its websocket) and its whole
 static bundle from the root. Nothing rewrites those paths — they resolve only
 because Caddy's final catch-all forwards everything unmatched to
-`dashboard:8501`. This stage took `/` away from that catch-all. If the root
-matcher is a prefix rather than an exact match, Streamlit loses its own
-machinery **and `/dashboard` goes on returning 200 the whole time.**
+`dashboard:8501`.
+
+### The coupling is broader than this plan said, and the plan is wrong
+
+Stage 2's rationale predicted one failure: widen the root matcher to `/*` and
+Streamlit loses `/_stcore/*` while `/dashboard` still returns 200.
+`tests/test_caddy_public_routes.py` asserts exactly that, correctly, and it is
+**blind to what actually happened.**
+
+The root matcher was an exact `/`. `/_stcore/*` kept reaching the dashboard —
+the adapted route table confirmed it. `/dashboard` broke anyway.
+
+What was measured on 2026-09-02:
+
+| Observation | Evidence |
+|---|---|
+| Streamlit serves one SPA shell for every path | `/dashboard` and `/` returned byte-identical bodies from `dashboard:8501` — same `etag`, both 11,141 bytes. Routing is entirely client-side |
+| `/dashboard` errored "page not found", then landed on `/` | reported from the browser; `/` is the ops landing page after this stage, so the fallback address is gone |
+| `/dashboard/` with a trailing slash **also** failed | "it just takes longer to fail" — so this is *not* simply Streamlit reading the last path segment as a page name |
+| A Streamlit session did run | `docker logs cartracker-dashboard` at 00:38:26 shows `use_container_width` deprecation warnings, which only fire when the script executes and renders widgets |
+
+**The mechanism, found after the revert from two requests that were available
+all along.** Streamlit answers every unrecognised path with its SPA shell, and
+that shell links its assets **relatively** (`./static/js/index….js`). So
+`/static/js/index….js` returned `application/javascript` at 451,569 bytes while
+`/dashboard/static/js/index….js` returned `text/html` at 11,141 — the shell
+again. At `/dashboard/` the relative asset resolves under the prefix, the browser
+refuses to run HTML as a module, and the app never boots. At bare `/dashboard`
+the asset resolves to `/static/…` via the catch-all, the app *does* boot, and
+then the router bounces to `/`. `/dashboard` was never a route Streamlit
+recognised; `/` being Streamlit was what hid that.
+
+**The fix is build-order step 3b**, built 2026-09-02:
+`--server.baseUrlPath=dashboard` in `dashboard/Dockerfile` plus the Compose
+healthcheck path, held by `tests/test_dashboard_base_path.py`. After it,
+`/dashboard/static/js/…` serves the real 527,226-byte bundle and `/static/js/…`
+is a 404 — **Streamlit no longer claims the origin root**, so the catch-all
+coupling this sheet was written to preserve no longer exists. Deploy 3b and
+confirm the dashboard in a browser before running this sheet again.
+
+### The check itself
 
 In a browser, signed in as a `viewer` (not admin — use the least-privileged
-account that should work):
+account that should work). **Do this before running the matrix in step 5, not
+after** — on 2026-09-02 every check in step 5 passed and told us nothing:
 
 1. Open DevTools → **Network**, tick *Preserve log*, filter on `_stcore`.
-2. Load `https://cartracker.info/dashboard`.
+2. Load `https://cartracker.info/dashboard` — **the bare path, no trailing
+   slash**, because that is what `ops/email.py` sends every new `viewer` and what
+   the sidebar links use. Then load `/dashboard/` as a separate case; on
+   2026-09-02 the two failed differently and the difference is a clue.
 3. Check, in order:
 
 | Check | Required |
 |---|---|
+| The URL bar, after load settles | still `/dashboard` — **not** bounced to `/` |
 | `/_stcore/stream` | status **101** (Switching Protocols) and the connection stays open |
 | Any `_stcore` request | **no** 4xx, 5xx, or `(failed)` |
 | The page itself | widgets and data render — not a blank page, not a spinner that never resolves, not "Please wait…" |
@@ -297,6 +406,9 @@ account that should work):
 | Interact with a filter or control | the page responds; a dead websocket looks fine until you touch something |
 
 4. Hard-reload (Ctrl+Shift+R) and confirm it survives a cold cache.
+
+**Capture the Network tab before rolling back.** The 2026-09-02 attempt was
+reverted without it, which is why the mechanism is still open.
 
 **A blank or permanently-loading dashboard here is the failure this whole
 runbook exists for.** Roll back Caddy (step 8) — it is a Caddyfile problem, not
@@ -313,19 +425,30 @@ inside the container against `localhost:8501` and never crosses Caddy. A green
 
 ## 7. Green-light criteria
 
+**Reordered 2026-09-02.** Step 6 was last on this list and it was the only item
+that failed. Everything above it passed, which is precisely the shape of the
+problem: a list that ends with the only check that can fail lets you feel six
+green ticks of progress toward a conclusion none of them support. It goes first
+now.
+
 Ship it when **all** of these hold:
 
-- [ ] Step 2 printed `Valid configuration` before Caddy was restarted.
+- [ ] **Step 6: a `viewer` loads `/dashboard` — the bare path — the URL stays
+      `/dashboard`, `/_stcore/stream` is 101, no failed `_stcore` request, and the
+      page is interactive.** If this fails, stop; nothing below it matters.
+- [ ] Step 6 again for `/dashboard/`, with the trailing slash.
+- [ ] Step 2 printed `Valid configuration`, **from a throwaway container**, before
+      Caddy was restarted.
+- [ ] The route table read back after the restart matches the new file.
 - [ ] Every row of 5.1 matches, with `/robots.txt` and `/sitemap.xml` returning
       their real content types rather than `text/html`.
 - [ ] `/info` redirects in exactly one hop to `/`.
 - [ ] The sitemap holds 22 URLs, no duplicates, and names nothing behind OAuth.
 - [ ] `favicon.svg` and `og-preview.png` return 200.
-- [ ] Every path in 5.6 still redirects to Google.
-- [ ] **Step 6: a `viewer` loads the dashboard, `/_stcore/stream` is 101, no
-      failed `_stcore` request, and the page is interactive.**
+- [ ] Every path in 5.6 still redirects to the sign-in.
 
-The last one is not optional and not inferable from a status code.
+The first one is not optional and not inferable from a status code. On
+2026-09-02 the seven below it all passed against a broken dashboard.
 
 ### Worth doing, not gating
 
@@ -348,7 +471,7 @@ Independent, and Caddy is the one that matters.
 git checkout HEAD~1 -- Caddyfile     # or the pre-merge SHA
 docker compose exec caddy caddy validate \
   --config /etc/caddy/Caddyfile --adapter caddyfile
-./scripts/redeploy.sh --restart caddy
+bash scripts/redeploy.sh --restart caddy
 ```
 
 Old Caddy in front of new ops is the "`ops` first" row of step 1's table:
@@ -357,7 +480,7 @@ you roll back Caddy, **roll back ops too** unless you are actively debugging:
 
 ```bash
 git checkout <pre-merge-sha> -- ops/
-./scripts/redeploy.sh ops
+bash scripts/redeploy.sh ops
 ```
 
 Nothing in this stage writes to a database and there is no migration, so there
