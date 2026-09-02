@@ -1,19 +1,32 @@
-"""Plan 138 Stage 2: the Caddy route contract, and the coupling underneath it.
+"""Plan 138: the Caddy route contract, and the two things underneath it.
+
+Stage 2 put the public routes here. Stage 3c added the response policy those
+routes carry, and the line it must not cross.
 
 **Why this file exists, stated plainly.** ``dashboard/Dockerfile`` runs Streamlit
-with no ``--server.baseUrlPath``, so Streamlit believes it is mounted at ``/``
-and serves its own machinery from the root: ``/_stcore/health`` (the Compose
-healthcheck calls exactly that path), ``/_stcore/stream`` for the websocket, and
-its static bundle. Nothing rewrites those paths. They resolved, before Stage 2
-and after it, only because the Caddyfile's final catch-all forwards everything
-unmatched to ``dashboard:8501``.
+with ``--server.baseUrlPath=dashboard``, so it serves its app, its
+relatively-linked assets, its ``/_stcore/stream`` websocket and the
+``/_stcore/health`` path the Compose healthcheck calls all under
+``/dashboard/*``, and it 404s at the origin root. The ``/dashboard*`` block
+carries those paths explicitly.
 
-Stage 2 takes ``/`` away from that catch-all. Widen the new root handler from
-``/`` to ``/*`` and the dashboard loses its assets and its websocket **while**
-``/dashboard`` **itself still returns 200** -- so Gate 2's status-code checks
-pass and the page is blank. That is the regression this file is here to catch,
-and it is why the assertion was written in the slice that made the change rather
-than deferred to Stage 5.
+That base path is what makes the public root safe, and it exists because the
+first Stage 2 deploy did not have it. With Streamlit believing it owned ``/``,
+taking the root away removed the fallback its relative asset links resolved
+against, and the dashboard went blank **while** ``/dashboard`` **itself still
+returned 200** -- so Gate 2's status-code checks passed and the page was empty.
+That is the regression this file is here to catch, which is why the assertion
+was written in the slice that made the change rather than deferred to Stage 5.
+The tests below hold the arrangement from both ends: Streamlit's own paths must
+reach it through ``/dashboard*`` rather than through catch-all ordering, and the
+root matcher must stay exactly ``/``.
+
+**Stage 3c's line is the second thing.** The public response policy -- a
+``default-src 'none'`` CSP, the security headers, compression -- belongs to the
+six public handle blocks and to none of the others. Grafana, Airflow, Streamlit
+and MinIO each serve inline script and style of their own, so importing it there
+would leave every one of them answering 200 with a blank page: the same shape of
+failure as above, from the opposite direction.
 
 **These tests resolve paths rather than read the file.** Caddy does not evaluate
 ``handle`` blocks in source order; it sorts them by matcher specificity. A test
