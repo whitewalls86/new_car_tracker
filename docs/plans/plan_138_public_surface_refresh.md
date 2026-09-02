@@ -2467,6 +2467,118 @@ assumed, because those two `--check` steps exist only in the skipped job.
 **Six of seven exit checks met.** Gate 7's runtime half is owed to the deploy and
 is the only thing between this slice and `Done`. Cost: estimate 1, actual 1.
 
+---
+
+## Stage 8 — Extract the public surface contract
+
+**Raised 2026-09-02, out of a navigation question that could not be answered.**
+Stage 2 gave `/recaps` a canonical route and a sitemap entry, and nothing links
+it. `ops/templates/info.html` has no `<nav>` and mentions `/dashboard` nowhere,
+so a visitor who follows the access CTA, is granted a role and returns has no
+way to reach the thing they were granted. The obvious fix is a public
+navigation pane. It could not be designed, because **nothing in this repository
+says what the public surface is.**
+
+### The gap, named
+
+This plan carries two contracts and needs a third.
+
+| Contract | Answers | Where it lives |
+|---|---|---|
+| Public truth contract | What may be **said** on a public surface | This document, §1–5 |
+| Target route and access contract | What **resolves**, at what status, for whom | This document |
+| **Destination inventory** | **Where a reader is meant to go** | **nowhere** |
+
+The route table says `/recaps` returns 200 without OAuth. It does not say
+whether `/recaps` is a place a reader should be *sent*. That distinction is how
+a canonical route, a sitemap entry and no link shipped in that order.
+
+### The enforcement half already exists, and it is orphaned
+
+`.claude/skills/public-surface-check/SKILL.md` and
+`scripts/public_surface_gate.py` are a reviewer and a commit gate for a contract
+whose document was never written. The skill carries real rules — the two
+quantity rules ("round it", "name the set"), Gate 1's four questions, the table
+of where truth lives for each recurring claim — and it sources its authority
+from a line that expires: *"Plan 138 owns exactly two public surfaces."*
+
+That is the arrangement [`docs/TESTING.md`](../TESTING.md) already has, minus
+the document:
+
+| | Reviewer | Enforcement | Document |
+|---|---|---|---|
+| Testing | `testing-contract` | CI assertions | `docs/TESTING.md`, 647 lines |
+| Public surface | `public-surface-check` | `public_surface_gate.py` | **none** |
+
+A plan is a change: it completes, archives into
+[`completed_plans.md`](../planning/completed_plans.md), and stops being where
+anyone looks. The truth contract's §1–5 is not a change — it is indefinite-life
+policy that happens to live in a change document, enforced by a hook that cites
+a document about to become history.
+
+### What lands
+
+`docs/PUBLIC_SURFACE.md`, and it is mostly an **extraction rather than an
+authorship**.
+
+1. **Move, do not copy.** The truth contract §1–5, the route and access table,
+   Gate 1's four questions, and the two quantity rules the skill currently holds
+   alone. Two copies of a rule is how they drift, which this plan has already
+   written down twice — at Stage 1h's `plans`/`close-out` seam and at Stage 7's
+   publish procedure.
+2. **Preserve the §1–5 numbering.** This document cites "the truth contract's
+   §3" and "§5" in more than a dozen places. Keeping the numbering means those
+   references resolve against the contract instead of needing a sweep that would
+   touch every stage.
+3. **The plan keeps pointers, not prose.** Its "Public truth contract" and
+   "Target route and access contract" sections become short links.
+4. **Add the destination inventory** — the third contract above: each public
+   destination, what it is for, and whether it is a page, a section of `/`, or
+   an anchor.
+5. **Re-source the skill.** `public-surface-check` cites the contract rather
+   than this plan.
+
+### What stays here
+
+Stages, gates, evidence, the 2026-08-17 drift table and its dispositions. **The
+contract holds only what outlives Plan 138.** The moment it carries a stage
+decision it becomes a second plan, and the two drift.
+
+### The destination question is written in, not answered
+
+`TESTING.md` ends with *"Specified here, not yet asserted"*, a gap list, and
+*"What this contract does not decide"*. Stage 8 takes all three, and the open
+destination questions go into them rather than blocking the document:
+
+- whether `/recaps` survives Stage 3 as its own destination or becomes a section
+  of `/`;
+- whether long-form writing is one place or two — 1g currently puts articles
+  inline on `/` and reaches the recaps through their index, a local call nobody
+  has checked against a whole-surface picture;
+- what earns a destination slot at all, so the next generated artifact does not
+  repeat the route-then-sitemap-then-no-link sequence.
+
+Settling those is Stage 3d's and Stage 1g's work. **Recording them as open is
+this stage's**, and it is worth doing on its own: they are currently scattered
+across 3d's open question, 1g's scope note, and nothing at all.
+
+### Navigation is deferred behind this, deliberately
+
+The navigation pane that raised this stage is **not part of it** and is not
+being written as a stage yet. A nav is a projection of the destination
+inventory; designing one while the inventory is open produces rework in the same
+week. It earns its own stage once the questions above are answered.
+
+**One carve-out.** `/dashboard` is a fixed destination that no contract decision
+can move, and the missing link to it is a live dead end on a deployed surface.
+It depends on nothing here and need not wait.
+
+**Gate 8:** `docs/PUBLIC_SURFACE.md` exists and holds the truth contract, the
+route and access contract, and the destination inventory; no rule it carries is
+also stated in this document; every `§` reference in this plan still resolves;
+`public-surface-check` cites the contract rather than this plan; and every
+unsettled destination question is written down as an open item rather than
+answered by omission.
 
 ---
 
@@ -2492,6 +2604,8 @@ is the only thing between this slice and `Done`. Cost: estimate 1, actual 1.
 | `scripts/public_surface_gate.py` | Extend Stage 1c's commit gate to the corpus data file, on the same digest-stamp mechanism |
 | A published-writing reconciliation skill | Stage 1g's two-way check: article against both surfaces, for drift and for harvest |
 | `.claude/skills/close-out/SKILL.md` | Stage 1h's step: did this work change a mechanism, name, or quantity either surface states |
+| `docs/PUBLIC_SURFACE.md` | Stage 8's durable contract: what may be said, what resolves and for whom, and where a reader is meant to go |
+| `.claude/skills/public-surface-check/SKILL.md` | Stage 8 re-sources its authority from the contract rather than from this plan |
 | `dashboard/app.py` | Canonical portfolio and dashboard links |
 | `ops/email.py` | Canonical destinations where needed |
 | `tests/ops/routers/test_info.py` | Stats and template behavior |
@@ -2572,9 +2686,18 @@ mouse, with active state signalled by colour alone.
 completed on 2026-08-20 and **dependent on nothing above**, so it can move
 earlier if shipping the numbers is worth more than the recap route.
 
+**8b. Stage 8 — extract the public surface contract. NEW 2026-09-02.** Raised
+out of a navigation question this plan could not answer: `/recaps` has a
+canonical route and no link, and the landing page links `/dashboard` nowhere.
+It sits **before step 9** because the destination questions it records are
+exactly what 3d and 1g need settled, and it blocks nothing above it — Stage 4 in
+particular is unaffected, so 8 and 8b may run in either order.
+
 **9. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
 question and whether `/recaps` leads with the newest week in full — govern both
-3d's markup and 1g's. Settle them, build 3d, then link the articles.
+3d's markup and 1g's. Settle them, build 3d, then link the articles. **Stage 8's
+destination inventory is the input to both**: whether `/recaps` is a destination
+at all is upstream of how it is laid out.
 
 **10. The remainder of Stage 5, then Stage 6's final verification.**
 
@@ -2621,6 +2744,9 @@ Plan 138 is complete only when:
   blocked by the commit gate;
 - closing out a slice asks, and records, whether the landed work changed a
   mechanism, name, or quantity either surface states;
+- the durable public-surface rules live in `docs/PUBLIC_SURFACE.md` rather than
+  in this plan, with no rule stated in both, and `public-surface-check` cites the
+  contract rather than a plan that has archived;
 - the demo is bounded, lazy, accessible, and cached;
 - interactive content works with keyboard and screen reader semantics;
 - scoped public security headers and local assets are in production;
