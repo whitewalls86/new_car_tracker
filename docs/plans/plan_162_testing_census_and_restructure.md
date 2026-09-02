@@ -2960,6 +2960,52 @@ failed outright outside the conftest that put `scraper/` on `sys.path`. That is
 papered over rather than absent. Both removed; the app imports `scraper.db` like
 every other module in its package.
 
-**This needs a scraper image rebuild**, and the deploy is the one gate this
-stage has not passed. The evidence above is CI's; production still runs the
-image with the `cp` layer.
+**This needed a scraper image rebuild**, which the section below records.
+
+#### Deployed 2026-09-02, and half of it is confirmed
+
+Merged as `ff690e0`; the VM pulled it and `scripts/redeploy.sh scraper` rebuilt
+the image. Coordination drain confirmed in 1s, container recreated, healthy
+after 5s.
+
+**What the container loaded, asked of the container rather than the checkout.**
+A `git pull` is not a deploy and a healthy container is not evidence the new
+code is running, so all four were read out of the running process:
+
+| Check | Result |
+|---|---|
+| `/app/db.py`, the `cp` layer | gone — `No such file or directory` |
+| `app.py:15` | `from scraper.db import close_pool, get_pool` |
+| `app.get_pool.__module__` | `scraper.db` |
+| bare `db` in `sys.modules` | `False` |
+
+**The pacing seam was checked in production, because it is the change that
+fails silently.** In the running container `BASE_URL` is
+`https://www.cars.com/shopping/results/`, `SCRAPER_RESULTS_BASE_URL` is unset,
+and **`PACING_APPLIES` is `True`** — so `_pace()` calls `time.sleep` exactly as
+the code it replaced did. That is the whole risk of keying pacing to the origin,
+answered against production rather than argued.
+
+**The detail path is confirmed.** In the 25 minutes after the deploy: 400 rows
+in `ops.artifacts_queue`, 3,780 rows in `staging.artifacts_queue_events`, and a
+newest MinIO object at 18:45:20 — against a last pre-deploy artifact of
+18:15:47.
+
+**The SRP path is not, and the reason is scheduling rather than a fault.**
+`search_configs` rotates on a **four-hour** cycle at `:30` — `last_queued_at`
+steps 21:30, 01:30, 05:30, 09:30, 13:30, 17:30 — so the `*/30` DAG mostly
+short-circuits on `advance_rotation` returning `configs=[]`. Its runs finish in
+10–19s when nothing is due and took 11m41s at 17:30 when something was. The
+newest `results_page` object in MinIO is **17:41:30, forty minutes before the
+deploy**, and the next slot is 21:30 UTC. `scrape_results` therefore has not
+executed under the new code, and this section will not claim it has.
+
+**`ops.artifacts_queue` cannot evidence the SRP path at all**, which is worth
+recording because it misleads on first reading: the table holds **zero**
+`results_page` rows *all time*, since they are consumed and deleted downstream.
+Only MinIO object timestamps answer the question.
+
+**One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
+checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
+invoked as `bash scripts/redeploy.sh`. Not this stage's to fix, and recorded
+because the next person to deploy will hit it.
