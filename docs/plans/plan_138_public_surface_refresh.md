@@ -2,10 +2,28 @@
 
 ## Status
 
-**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. STAGE 7 BUILT AND UNDEPLOYED.**
-**Stages 2 through 6 not started.**
-Written 2026-08-17 after comparing the live `https://cartracker.info/info` page
-and `README.md` against `master` at `6f6a2ba`.
+**Refreshed 2026-09-02.** Written 2026-08-17 after comparing the live
+`https://cartracker.info/info` page and `README.md` against `master` at
+`6f6a2ba`; the headline below is re-measured against the tree rather than
+carried forward, because the version it replaced still read "Stages 2 through 6
+not started" a day after Stage 2 was deployed.
+
+| Stage | State |
+|---|---|
+| **0** | **Complete.** Both gates closed 2026-08-31 |
+| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started**, blocked on 3d |
+| **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
+| **3** | **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests. **3b, 3c and 3d not started**; 3d carries two open decisions that block 1g |
+| **4** | **Not started.** Unblocked since Plan 143 completed 2026-08-20 |
+| **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
+| **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
+| **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
+| **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
+
+**The navigation pane is deliberately unstarted and unticketed**, deferred
+behind Stage 8's destination inventory. Its one carve-out — `/dashboard` is
+linked from no public surface, so a granted role has no path to what it grants —
+is gap **P1** in the contract.
 
 Both Stage 0 gates closed on 2026-08-31: **Gate 0b** reconciled the internal
 overviews (CAR-37, PR #313) and **Gate 0** recorded the baseline and gave every
