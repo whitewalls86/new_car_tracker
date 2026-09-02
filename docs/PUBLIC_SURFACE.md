@@ -260,13 +260,15 @@ lie of omission.
 
 | # | Question | Settled by |
 |---|---|---|
-| D1 | Does `/recaps` survive as its own destination, or become a section of `/`? | Plan 138 Stage 3d |
+| ~~D1~~ | ~~Does `/recaps` survive as its own destination, or become a section of `/`?~~ **Answered 2026-09-02: it survives, and gains weight.** Plan 138 Stage 3d decided `/recaps` leads with the newest published week rendered in full, with its week stated at the top and `rel=canonical` pointing at that week's own page. A destination you land on and read is not a candidate for folding into `/` | Plan 138 Stage 3d |
 | D2 | Is long-form writing one place or two? Stage 1g currently puts articles inline on `/` and reaches recaps through their index — a local call never checked against a whole-surface picture | Plan 138 Stage 3d and 1g together |
 | D3 | What earns a destination slot at all? Without a rule, the next generated artifact repeats the route-then-sitemap-then-no-link sequence | Plan 138 Stage 3d |
 | D4 | Does a public navigation element exist, and on which surfaces? A nav shared with the recap pages changes what `scripts/build_public_recaps.py` emits | deferred behind D1–D3 |
 
-**D1–D3 are recorded here rather than answered.** Answering them by omission is
-what produced the gap list below.
+**D2 and D3 are recorded here rather than answered.** Answering them by omission
+is what produced the gap list below. D1 was answered on 2026-09-02, two days
+after this contract first recorded it, which is the mechanism working: the
+question was written down where the stage that owns it would see it.
 
 ---
 
@@ -305,7 +307,7 @@ fixed elsewhere. An entry is deleted when it is repaired, not marked closed.
 
 ## What this contract does not decide
 
-- **Which destinations exist.** D1–D4 above are open, and Plan 138's Stages 3d
+- **Which destinations exist.** D2–D4 above are open, and Plan 138's Stages 3d
   and 1g settle them.
 - **The navigation element's design.** A nav is a projection of the destination
   inventory; it is deliberately deferred until the inventory is closed.

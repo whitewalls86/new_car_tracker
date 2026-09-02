@@ -11,9 +11,9 @@ not started" a day after Stage 2 was deployed.
 | Stage | State |
 |---|---|
 | **0** | **Complete.** Both gates closed 2026-08-31 |
-| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started**, blocked on 3d |
+| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started but unblocked 2026-09-02**, now that 3d's decisions are settled |
 | **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
-| **3** | **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests. **3b, 3c and 3d not started**; 3d carries two open decisions that block 1g |
+| **3** | **3b and 3c built 2026-09-02 (CAR-68), not yet deployed** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
 | **4** | **Not started.** Unblocked since Plan 143 completed 2026-08-20 |
 | **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
@@ -39,8 +39,8 @@ reconciled overviews and the assigned replacement claims.
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01 and **deployed the same day**, soaking. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
 | **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01 and deployed the same day**, soaking. **The pages are already public and always were** — `handle /static_ops/*` is unauthenticated, so they served 200 from the moment the image carried them; measured 2026-09-01. They are *unlinked*, not unreachable, and what Stage 2 owes them is a canonical route rather than a first one. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
-| **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
-| **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
+| **3d** Recap presentation | Not started, and **both open decisions were settled 2026-09-02**: the recap pages keep the generator's inlined `_STYLE` rather than sharing `info.css`, and `/recaps` leads with the newest published week rendered in full, with its week stated at the top and `rel=canonical` pointing at the recap's own page. 1g is unblocked |
+| **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed. Unblocked 2026-09-02** — 3d's two decisions, which govern its markup, are settled. 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
 | **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
 
 **The two public surfaces converged on 2026-09-01, and the gap they closed is
@@ -1251,12 +1251,16 @@ about what the reader sees, not about collapsing two mechanisms into one:
   held by 1g's two-way reconciliation. Different questions, and merging them
   would weaken the stronger one.
 
-**One drift to resolve in 3d, not here.** 3d specifies that the recap pages
+**One drift to resolve in 3d, not here.** 3d specified that the recap pages
 "share `info.css`"; the shipped generator inlines its own `_STYLE` and loads no
 external stylesheet, which is the more CSP-friendly choice and may well be right.
-1g cannot conform to a rule the tree contradicts, so **3d owes a decision on
+1g cannot conform to a rule the tree contradicts, so **3d owed a decision on
 which is true** before 1g writes any markup. Flagged here rather than resolved,
-because 1e is in review and this is its stage's call.
+because 1e was in review and this is its stage's call.
+
+**Resolved 2026-09-02 in 3d: the inlined `_STYLE` stands and this stage's text
+was the wrong one.** 1g takes `_STYLE`, and the note block it reuses is the
+generator's, not a landing-page class.
 
 ### 1g. Link the published writing from the landing page
 
@@ -1890,7 +1894,23 @@ picks one:**
 | Keep a still, not a video | One poster image, an accessible caption, kilobytes rather than megabytes |
 | Keep a video, re-encoded | The full list below, for an asset whose subject Plan 150 says is not yet worth showing |
 
-If a video survives that decision, it needs:
+**Decided 2026-09-02: remove the hero media entirely.** The page leads with its
+weakest asset, and no encoding fixes that — a smaller file only makes a weaker
+first impression arrive faster. 1b already moved the visual weight to the
+architecture diagram, and Plan 150 says the dashboard will not improve on this
+plan's timescale, so there is no near-term version of this asset worth the
+budget.
+
+What that removes, measured against the tree at `9561678`: the `<video>` at
+`info.html:555`, autoplaying and looping, with no `controls`, no `preload`, no
+accessible label, and no `prefers-reduced-motion` guard. It is simultaneously
+the largest asset on the page and one of 3a's reduced-motion defects, so this
+decision closes part of 3a as a side effect rather than leaving it to be
+retrofitted.
+
+The requirements list below is therefore **not** in scope for this stage. It is
+kept as written so that a later decision to reintroduce media does not have to
+re-derive it:
 
 - a poster image that communicates the dashboard before playback;
 - a WebM primary plus compressed MP4 fallback;
@@ -1900,6 +1920,33 @@ If a video survives that decision, it needs:
 
 **Do not delete `demo.mp4` from the repository as part of removing it from the
 page.** Those are separate decisions, and the second one is not this plan's.
+The file stays at `ops/static_ops/demo.mp4`; only the markup that serves it
+goes.
+
+#### Stage 3b evidence — 2026-09-02 (CAR-68)
+
+**Built 2026-09-02, not yet deployed.** The `<figure class="demo-media">` and
+its `<video>` are gone from `ops/templates/info.html`, and the `.demo-media`
+rules went with them — they were orphaned by the removal and by nothing else.
+`ops/static_ops/demo.mp4` is untouched, as this stage said it must be.
+
+Two tests hold the pair, because each half of the decision can regress
+independently:
+
+| Assertion | Where |
+|---|---|
+| No `<video>` and no `demo.mp4` reference survives on the rendered page | `test_the_hero_video_is_gone_from_the_page` |
+| The file is still in the repository | `test_the_video_file_itself_stays_in_the_repository` |
+
+The second one looks redundant and is not. Removing the markup makes the file
+look like dead weight to the next reader, and the decision that it stays was
+recorded in prose that nothing enforced until now.
+
+**This closes part of 3a for free**, as predicted above: the page's only
+autoplaying element is gone, so the `prefers-reduced-motion` defect it carried
+is retired rather than left for 3a to retrofit. The two remaining 3a items —
+the clickable `<div>` cards and their colour-only active state — are untouched
+and belong to CAR-64.
 
 ### 3c. Local assets and response policy
 
@@ -1929,20 +1976,135 @@ and twelve icons on simpleicons. And because the SVG is inline it needs no
 Do not apply a landing-page CSP blindly to Grafana, Airflow, Streamlit, MinIO, or
 OAuth routes; scope the header block to the public handlers.
 
+#### Stage 3c evidence — 2026-09-02 (CAR-68)
+
+**Built 2026-09-02, not yet deployed.** The landing page renders with no
+third-party request, and the public routes carry the policy.
+
+| 3c item | State |
+|---|---|
+| Extract inline CSS and JavaScript into versioned `static_ops` files | Met — `ops/static_ops/info.css` and `info.js`, referenced through a content hash |
+| Self-host PicoCSS and the required icons, preserving licence notices | Met — Pico 2.1.1 and eight Simple Icons under `ops/static_ops/vendor/`, with `NOTICE.md` |
+| Fingerprinted assets one year `immutable`; HTML uncached or short revalidation | Met — the `/static_ops/*` block splits on `query v=*`; documents get `no-cache` |
+| Compression for HTML, CSS, JavaScript, SVG and JSON/XML | Met — `encode zstd gzip`, whose default match is exactly that set |
+| CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `frame-ancestors 'none'` on the public handlers only | Met — one snippet, imported by six blocks and no others |
+| Re-run the full external route matrix after the headers land | **Owed.** Nothing is deployed yet |
+
+**The floating version tag was a live drift surface, not just a third-party
+request.** The template asked for `@picocss/pico@2`, a major-version tag, so the
+stylesheet the public page loaded could change without a commit to this
+repository. The vendored copy pins 2.1.1, which is what that tag resolved to on
+2026-09-02, and `.gitattributes` marks `ops/static_ops/vendor/**` as `-text` so
+line-ending normalisation cannot leave the checked-in bytes differing from what
+the stated version published.
+
+**The CDN count in this stage's text was one off, and the correction is worth
+recording rather than silently fixing.** Above it says "twelve icons on
+simpleicons". Measured against the tree at `9561678`: **eleven** `<img>` elements
+pointed at `cdn.simpleicons.org`, across **eight** distinct icons, and the
+twelfth logo was the dbt mark — already served from this origin. Twelve is the
+right number of *logos* and the wrong number of *requests*, which is the truth
+contract's "name the set" rule finding its own plan.
+
+**Three things had to change in the markup that the item list does not mention**,
+each of them a thing `'unsafe-inline'` would otherwise have to permit: three
+inline `style` attributes became classes in `info.css`, twelve
+`onerror="this.style.display='none'"` handlers were removed, and the four
+`<script>` blocks became one deferred file. The JSON-LD block stays inline and
+needs no allowance — a `<script>` whose type is not a JavaScript MIME type is a
+data block and never executes, so `script-src` does not govern it.
+
+**The four extracted scripts gained null guards, and that is the only
+behavioural change in the move.** Each block used to sit immediately after the
+markup it reads, so its elements were guaranteed to exist. In one deferred file
+they all run after parsing, which is equivalent — except that a throw in one
+block would now abort the ones after it.
+
+**The recap pages' inline stylesheet is admitted by hash, not by
+`'unsafe-inline'`.** Stage 3d decided they keep the generator's `_STYLE` rather
+than sharing `info.css`, and the CSP has to accommodate that. `'unsafe-inline'`
+would have cost one word and would also have admitted any style arriving through
+a recap's Markdown. The `sha256-` allowance admits that one constant. The price
+is a coupling between `scripts/build_public_recaps.py` and the `Caddyfile`, and
+`test_the_style_hash_is_the_recap_generators_own_stylesheet` recomputes the hash
+from the generator so the two cannot drift: without it the recap pages would
+render unstyled in production and nothing in CI would fail.
+
+**The cache split on `/static_ops/*` is the one place this stage could have
+broken Stage 7.** That route serves both authored assets, which ship in the ops
+image, and the generated artifacts `git pull` publishes at a stable URL. A blanket
+year of `immutable` would have frozen every republished recap in every returning
+browser for a year — silently, and looking exactly like the generator having
+stopped. Two guards: the Caddyfile matches on `query v=*` so only
+content-addressed URLs get the long life, and `ops/static_assets.py` raises on
+any path under `generated/` rather than handing out a fingerprint for something
+a hash computed at startup cannot track.
+
+**Verified in a browser under the real policy, because the failure this stage
+guards against answers 200.** The rendered page and a generated recap were
+served with the exact `Content-Security-Policy` string read out of the
+`Caddyfile` and loaded in Chrome:
+
+| Checked | Result |
+|---|---|
+| Pico applied | `--pico-primary` resolves; `info.css` rules in effect |
+| All twelve service logos | `naturalWidth` non-zero on every one |
+| `connect-src` and the roadmap fetch | four planned and four completed rows rendered |
+| `script-src` and `info.js` | the analytics timestamp localised to "Aug 18, 12:00 PM" |
+| A recap page's inlined `_STYLE` | stylesheet parsed, 14 rules, `body` at its 46rem max-width |
+
+**And the policy was shown to be enforced rather than merely present.** A probe
+page served from the same origin with an inline `<style>`, an inline `<script>`
+and a `cdn.simpleicons.org` image had all three blocked — no stylesheet, the
+script's DOM write absent, the image at `naturalWidth` 0. Without that probe
+every row of the table above is also what a CSP the browser ignored would
+produce.
+
+`caddy validate` accepts the configuration. The pre-existing "input is not
+formatted" warning is unchanged: the file was space-indented before this stage
+and still is, and reformatting it would bury the diff.
+
+**Two public-page templates deliberately still use the CDN.**
+`ops/templates/admin/base.html` and `ops/templates/request_access.html` both
+load Pico from `cdn.jsdelivr.net`. Neither is a public surface — `/admin*` is
+behind a role check and `/request-access*` behind Google — so neither is inside
+this stage's scope or under the policy. Recorded here so the next reader does
+not take the remaining `cdn.jsdelivr.net` hits in the tree as an oversight.
+
 ### 3d. Recap presentation
 
 The recap pages are the one place on the public surface with a long-form reading
-requirement, and they get it from the same local stylesheet rather than a second
-design.
+requirement.
 
 **Read [the writing surface](#the-writing-surface--what-1e3d-and-1g-share) first.**
 Stage 1g links the published articles from the same section of `/` that reaches
 this index, and takes its list row, note block and date convention from what 1e
-built. Two items there land on 3d: the landing page carries **one** "more depth"
-section rather than a link per corpus, and **3d owes a decision on the stylesheet
-question** — this stage says the recap pages share `info.css`, while the shipped
-generator inlines `_STYLE` and loads no external sheet. 1g cannot conform to a
-rule the tree contradicts.
+built. One item there lands on 3d unchanged: the landing page carries **one**
+"more depth" section rather than a link per corpus.
+
+#### Decided 2026-09-02: the recap pages keep their inlined `_STYLE`
+
+This stage was written saying the pages "share `info.css`", and the shipped
+generator inlines `_STYLE` and loads no external sheet. **The tree is right and
+this stage was wrong.**
+
+Three reasons, and the first is the one that decides it:
+
+- **It is the CSP-friendly shape.** A recap page with no external stylesheet
+  needs no `style-src` host allowance at all, which is the same property that
+  made 1b's inline SVG the easy case for 3c. Sharing `info.css` would make every
+  recap page depend on an asset 3c has not extracted yet, for a stylistic
+  consistency no reader is comparing side by side.
+- **The pages stay self-contained.** A generated artifact that renders correctly
+  on its own is one that cannot be broken by an unrelated change to the landing
+  page's stylesheet — and these are published on `git pull`, with no deploy and
+  no health gate between the edit and the reader.
+- **It is already built, verified and byte-identical under `--check`.** Changing
+  it would be rework whose only benefit is matching a sentence written before
+  the generator existed.
+
+**So 1g conforms to `_STYLE`**, and the blocking question it raised is closed.
+The bullet below is corrected rather than left contradicting the tree.
 
 - A generated index at `/recaps`: newest first, each row the week and a
   one-line lead taken from the file, with no client-side fetch. This page is
@@ -1958,8 +2120,9 @@ rule the tree contradicts.
   and `.diagram-wrap` are an `overflow-x: auto` parent around a `min-width` child,
   which is the pattern that keeps a wide element scrolling inside its own strip
   while `body.scrollWidth` stays at 360.
-- The pages share `info.css`, load no JavaScript, and satisfy Stage 3c's CSP
-  without exception. A recap page that needs a script has been over-built.
+- The pages carry the generator's inlined `_STYLE`, load no external stylesheet
+  and no JavaScript, and satisfy Stage 3c's CSP without exception. A recap page
+  that needs a script has been over-built.
 
 #### Open: does `/recaps` lead with the newest week in full?
 
@@ -2012,6 +2175,35 @@ bare index is real, and the fix is cheap. But the staleness point is what makes
 it a truth-contract question rather than a layout preference, and it is the one
 that would be easy to implement and forget. If the week is not stated at the top,
 this change makes the surface less honest than the list it replaced.
+
+**Decided 2026-09-02: yes, and the week is stated at the top.** The
+recommendation is taken with its binding condition attached, so the three
+consequences above are requirements rather than considerations:
+
+1. **`rel=canonical` on the index points at the recap's own page.** The full
+   rendering at `/recaps` is the duplicate; `/recaps/YYYY-MM-DD` is canonical.
+   The sitemap continues to name the pages the generator rendered, and gains no
+   second entry for the copy on the index. This matches what Stage 2 already
+   does for the `/static_ops/` duplicate, so the mechanism exists and is not
+   being invented here.
+2. **The full recap carries its own §5 note**, naming its week in
+   `_POINT_IN_TIME`'s words, in addition to the index's collection-level note.
+   Two notes doing two jobs, not one merged note doing neither well.
+3. **The week is stated at the top of the rendering, prominently** — not only in
+   the note beneath it. This is the condition the decision rests on: 11 of 31
+   weeks hold no commits and unpublished weeks are skipped, so the newest
+   published recap can be weeks behind today, and a full-bleed article that does
+   not say which week it is reads as "here is where things stand."
+
+**On the overlap with 1b item 6, decided with it:** `/` remains the front door
+for recency, and `/recaps` is the front door for the *account* of it. The
+"Recent work" lists answer "what shipped"; the newest recap answers "what
+happened, and why." They are not two answers to one question, and neither is
+retired.
+
+**This changes 1e's generator, and that is accepted.** `render_index` emits only
+`<li>` rows today, so it grows a full-render path plus the canonical link.
+`--check` covers it the same way it covers everything else the generator writes.
 
 **Gate 3:** all page functions are usable with keyboard only, reduced-motion
 users do not receive autoplay, no third-party request is required to render the
@@ -2705,13 +2897,16 @@ nothing.
 matrix, including loading the dashboard as `viewer` to confirm the websocket
 connects.
 
-**6. Stage 3b and 3c — the asset and header pass.** The largest user-visible
-quality change available, and it starts with a decision rather than an
-encoding: 3b picks whether the 41.7 MB hero video should exist at all. 3c then
-self-hosts PicoCSS and the service icons — the page currently makes third-party
-requests to `cdn.jsdelivr.net` and `cdn.simpleicons.org` on every visit, which
-is what makes a same-origin CSP impossible — extracts the inline CSS and
-JavaScript, and applies the headers and caching policy.
+**6. Stage 3b and 3c — the asset and header pass. BUILT 2026-09-02 (CAR-68),
+not yet deployed.** The largest user-visible quality change available. 3b
+removed the hero media rather than re-encoding it, per the decision made the
+same day. 3c vendored PicoCSS and the service icons — the page had been making
+twelve third-party requests on every visit, one stylesheet from
+`cdn.jsdelivr.net` and eleven icons from `cdn.simpleicons.org`, which is what
+made a same-origin CSP impossible — extracted the inline CSS and JavaScript, and
+applied the headers and caching policy to the six public handlers. **The
+route-matrix re-run this step's mitigation calls for is the outstanding half**
+and needs the deploy; see the Stage 3c evidence.
 
 **7. Stage 3a — semantic interactions.** The service and decision cards are
 clickable `<div>` elements: not focusable, not announced, not operable without a
@@ -2729,10 +2924,10 @@ exactly what 3d and 1g need settled, and it blocks nothing above it — Stage 4 
 particular is unaffected, so 8 and 8b may run in either order.
 
 **9. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
-question and whether `/recaps` leads with the newest week in full — govern both
-3d's markup and 1g's. Settle them, build 3d, then link the articles. **Stage 8's
-destination inventory is the input to both**: whether `/recaps` is a destination
-at all is upstream of how it is laid out.
+question and whether `/recaps` leads with the newest week in full — governed both
+3d's markup and 1g's. **Both were settled 2026-09-02**, so this step is build
+rather than decide: `_STYLE` stands, and `/recaps` leads with the newest week in
+full under the three conditions 3d attaches. Build 3d, then link the articles.
 
 **10. The remainder of Stage 5, then Stage 6's final verification.**
 

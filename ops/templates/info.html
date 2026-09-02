@@ -12,7 +12,7 @@
     <meta name="description" content="A production data pipeline tracking new-car prices from Cars.com: continuous collection, a Postgres, MinIO and DuckDB lakehouse, and a deal-score model.">
     <link rel="canonical" href="https://cartracker.info/">
 
-    <link rel="icon" href="/static_ops/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="{{ asset_url('favicon.svg') }}" type="image/svg+xml">
 
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="CarTracker">
@@ -47,482 +47,14 @@
     }
     </script>
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-    <style>
-        body { padding: 2rem 0; }
-
-        .top-bar {
-            max-width: 900px;
-            margin: 0 auto 1.5rem auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .top-bar a { text-decoration: none; }
-        .prose { max-width: 900px; margin: 0 auto; }
-
-        h2 { border-bottom: 1px solid var(--pico-muted-border-color); padding-bottom: 0.3rem; margin-bottom: 1rem; }
-
-        /* ── Hero ── */
-        .hero { margin-bottom: 2.5rem; }
-        .hero h1 {
-            border-bottom: 2px solid var(--pico-muted-border-color);
-            padding-bottom: 0.4rem;
-            margin-bottom: 1rem;
-        }
-        .hero p { font-size: 1.1rem; color: var(--pico-secondary); margin-bottom: 1.25rem; }
-        .hero-cta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-        }
-        .hero-cta a[role="button"] { margin: 0; }
-
-        /* ── Demo media ── */
-        .demo-media {
-            margin: 1.5rem 0 0;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid var(--pico-muted-border-color);
-        }
-        .demo-media video,
-        .demo-media img {
-            display: block;
-            width: 100%;
-            border-radius: 8px;
-        }
-
-        /* ── Live stats ── */
-        .stats-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2.5rem;
-        }
-        .stat-card {
-            border: 1px solid var(--pico-muted-border-color);
-            border-top: 3px solid var(--pico-primary);
-            border-radius: 8px;
-            padding: 1.1rem 1.2rem 1rem;
-            text-align: center;
-            background: var(--pico-card-background-color);
-        }
-        .stat-card .num { font-size: 2.2rem; font-weight: 700; line-height: 1.1; color: var(--pico-primary); }
-        .stat-card .label { font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 0.3rem; }
-
-        /* ── Services grid ── */
-        .services-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 0.75rem;
-            margin-bottom: 2.5rem;
-        }
-        .service-card {
-            border: 1px solid var(--pico-muted-border-color);
-            border-radius: 8px;
-            padding: 0.85rem 1rem;
-            display: flex;
-            align-items: flex-start;
-            gap: 0.85rem;
-            cursor: pointer;
-            transition: border-color 0.15s, box-shadow 0.15s;
-            user-select: none;
-        }
-        .service-card:hover { border-color: var(--pico-primary-hover); }
-        .service-card.active {
-            border-color: var(--pico-primary);
-            box-shadow: 0 0 0 1px var(--pico-primary);
-        }
-        .service-logo {
-            width: 30px;
-            height: 30px;
-            flex-shrink: 0;
-            margin-top: 0.05rem;
-            object-fit: contain;
-        }
-        .service-logo-placeholder {
-            width: 30px;
-            height: 30px;
-            flex-shrink: 0;
-            border-radius: 6px;
-            background: var(--pico-secondary-background);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.65rem;
-            font-weight: 700;
-            color: var(--pico-secondary);
-            text-align: center;
-            line-height: 1.1;
-        }
-
-        /* ── Service card content ── */
-        .service-info { width: 100%; min-width: 0; }
-        .service-info .title-row {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-            flex-wrap: wrap;
-            margin-bottom: 0.15rem;
-        }
-        .service-info strong { font-size: 0.95rem; }
-        .service-info p {
-            font-size: 0.82rem;
-            color: var(--pico-muted-color);
-            margin: 0;
-        }
-        .service-badge {
-            font-size: 0.72rem;
-            font-weight: 600;
-            background: #374151;
-            color: #ffffff;
-            border-radius: 4px;
-            padding: 0.2rem 0.5rem;
-            white-space: nowrap;
-        }
-        .why-cta {
-            margin-left: auto;
-            font-size: 0.72rem;
-            color: var(--pico-primary);
-            font-weight: 600;
-            flex-shrink: 0;
-        }
-        .service-card:not(.active) .why-cta::after { content: " ▸"; }
-        .service-card.active .why-cta::after { content: " ▾"; }
-
-        /* ── Service detail panel ── */
-        .service-detail-panel {
-            grid-column: 1 / -1;
-            border: 1px solid var(--pico-primary);
-            border-radius: 8px;
-            padding: 1.1rem 1.4rem;
-            background: var(--pico-card-background-color);
-        }
-        .service-detail-panel ul {
-            margin: 0;
-            padding-left: 1.2rem;
-            font-size: 0.85rem;
-            color: var(--pico-muted-color);
-        }
-        .service-detail-panel li { margin-bottom: 0.35rem; }
-
-        /* ── Technical highlights ── */
-        .highlights-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2.5rem;
-        }
-        .highlight-card {
-            border: 1px solid var(--pico-muted-border-color);
-            border-radius: 8px;
-            padding: 1rem 1.2rem;
-        }
-        .highlight-card h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
-        .highlight-card p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
-        .highlight-detail-panel {
-            grid-column: 1 / -1;
-            border: 1px solid var(--pico-primary);
-            border-radius: 8px;
-            padding: 1.1rem 1.4rem;
-            background: var(--pico-card-background-color);
-            font-size: 0.85rem;
-            color: var(--pico-muted-color);
-            line-height: 1.6;
-        }
-        .highlight-detail-panel h4 {
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: var(--pico-color);
-            margin: 1rem 0 0.3rem;
-        }
-        .highlight-detail-panel h4:first-child { margin-top: 0; }
-        .highlight-detail-panel p { margin: 0 0 0.6rem; }
-        .highlight-detail-panel p:last-child { margin-bottom: 0; }
-
-        /* ── Expandable highlight card ── */
-        .highlight-card.expandable { cursor: pointer; user-select: none; transition: border-color 0.15s, box-shadow 0.15s; }
-        .highlight-card.expandable:hover { border-color: var(--pico-primary-hover); }
-        .highlight-card.expandable.active { border-color: var(--pico-primary); box-shadow: 0 0 0 1px var(--pico-primary); }
-        .highlight-read-more {
-            display: inline-block;
-            margin-top: 0.6rem;
-            font-size: 0.78rem;
-            font-weight: 600;
-            color: var(--pico-primary);
-        }
-        .highlight-card:not(.active) .highlight-read-more::after { content: " Read more ▸"; }
-        .highlight-card.active .highlight-read-more::after { content: " Collapse ▴"; }
-
-        /* ── Highlight detail panel (full-width, below grid) ── */
-        .highlight-detail-panel {
-            border: 1px solid var(--pico-primary);
-            border-radius: 8px;
-            padding: 1.4rem 1.6rem;
-            background: var(--pico-card-background-color);
-            margin-top: 0.75rem;
-            font-size: 0.85rem;
-            color: var(--pico-muted-color);
-            line-height: 1.6;
-        }
-        .highlight-detail-panel h4 {
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: var(--pico-color);
-            margin: 1rem 0 0.3rem;
-        }
-        .highlight-detail-panel h4:first-child { margin-top: 0; }
-        .highlight-detail-panel p { margin: 0 0 0.6rem; }
-        .highlight-detail-panel p:last-child { margin-bottom: 0; }
-
-        /* ── Architecture diagram ── */
-        .diagram-wrap {
-            overflow-x: auto;
-            margin-bottom: 0.5rem;
-        }
-        .flow-diagram {
-            display: block;
-            width: 100%;
-            min-width: 680px;
-            height: auto;
-        }
-        /* Layer identity is carried by the badge text inside each node, never by
-           colour alone -- the stroke is reinforcement, not the signal. */
-        .flow-diagram .node rect {
-            fill: var(--pico-card-background-color);
-            stroke: var(--pico-muted-border-color);
-            stroke-width: 1;
-        }
-        .flow-diagram .node[data-layer] rect {
-            stroke: var(--layer-color, var(--pico-muted-border-color));
-            stroke-width: 1.5;
-        }
-        .flow-diagram .node[data-layer="fetch"]       { --layer-color: #2563EB; }
-        .flow-diagram .node[data-layer="parse"]       { --layer-color: #475569; }
-        /* The scrape queue reads the ops tables, so it carries their colour. */
-        .flow-diagram .node[data-layer="decides"]     { --layer-color: #0F766E; }
-        .flow-diagram .node[data-layer="bronze"]      { --layer-color: #B45309; }
-        .flow-diagram .node[data-layer="operational"] { --layer-color: #0F766E; }
-        .flow-diagram .node[data-layer="staging"]     { --layer-color: #0369A1; }
-        .flow-diagram .node[data-layer="silver"]      { --layer-color: #64748B; }
-        .flow-diagram .node[data-layer="mart"]        { --layer-color: #7C3AED; }
-        .flow-diagram .node[data-layer="serving"]     { --layer-color: #059669; }
-        .flow-diagram .node.external rect {
-            fill: none;
-            stroke-dasharray: 4 3;
-        }
-        .flow-diagram .badge {
-            font-size: 8.5px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            fill: var(--layer-color, var(--pico-muted-color));
-        }
-        .flow-diagram .title {
-            font-size: 12px;
-            font-weight: 700;
-            fill: var(--pico-color);
-        }
-        .flow-diagram .sub {
-            font-size: 10px;
-            fill: var(--pico-muted-color);
-        }
-        .flow-diagram .edge {
-            fill: none;
-            stroke: var(--pico-muted-color);
-            stroke-width: 1.4;
-        }
-        /* The control loop is dashed as well as labelled, so the two paths stay
-           distinguishable without relying on colour. */
-        .flow-diagram .edge.loop { stroke-dasharray: 5 4; }
-        .flow-diagram .edge-label {
-            font-size: 9.5px;
-            font-style: italic;
-            fill: var(--pico-muted-color);
-        }
-        .flow-diagram .arrow-head { fill: var(--pico-muted-color); }
-        .diagram-caption {
-            font-size: 0.8rem;
-            color: var(--pico-muted-color);
-            margin: 0 0 1.25rem;
-        }
-
-        /* ── Layer / grain table ── */
-        .layer-table-wrap {
-            overflow-x: auto;
-            margin-bottom: 1rem;
-        }
-        .layer-table {
-            width: 100%;
-            min-width: 640px;
-            border-collapse: collapse;
-            font-size: 0.82rem;
-            margin: 0;
-        }
-        .layer-table th,
-        .layer-table td {
-            text-align: left;
-            vertical-align: top;
-            padding: 0.55rem 0.7rem;
-            border-bottom: 1px solid var(--pico-muted-border-color);
-        }
-        .layer-table th {
-            font-size: 0.7rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            color: var(--pico-muted-color);
-            border-bottom-width: 2px;
-        }
-        .layer-table td { color: var(--pico-muted-color); }
-        .layer-table tbody tr:last-child td { border-bottom: none; }
-        .layer-table .layer-name {
-            white-space: nowrap;
-            font-weight: 700;
-            color: var(--pico-color);
-            border-left: 3px solid var(--layer-color, var(--pico-muted-border-color));
-        }
-        .layer-table tr[data-layer="bronze"]      { --layer-color: #B45309; }
-        .layer-table tr[data-layer="operational"] { --layer-color: #0F766E; }
-        .layer-table tr[data-layer="staging"]     { --layer-color: #0369A1; }
-        .layer-table tr[data-layer="silver"]      { --layer-color: #64748B; }
-        .layer-table tr[data-layer="mart"]        { --layer-color: #7C3AED; }
-
-        .subhead {
-            font-size: 0.85rem;
-            font-weight: 700;
-            margin: 1.25rem 0 0.6rem;
-        }
-
-        /* ── Shared section copy ── */
-        .section-lede {
-            font-size: 0.85rem;
-            color: var(--pico-muted-color);
-            margin-bottom: 0.85rem;
-        }
-        .stats-freshness {
-            font-size: 0.8rem;
-            color: var(--pico-muted-color);
-            margin: 0.75rem 0 0;
-        }
-        .flow-note {
-            font-size: 0.85rem;
-            color: var(--pico-muted-color);
-            margin: 0 0 2.5rem;
-        }
-        .footer-legal {
-            font-size: 0.75rem;
-            color: var(--pico-muted-color);
-            line-height: 1.6;
-            margin: 1rem 0 0;
-        }
-
-        /* ── Platform evolution callout ── */
-        .evolution {
-            border: 1px solid var(--pico-muted-border-color);
-            border-left: 3px solid #7C3AED;
-            border-radius: 8px;
-            padding: 1.1rem 1.4rem;
-            margin-bottom: 2.5rem;
-            background: var(--pico-card-background-color);
-        }
-        .evolution .track-badge {
-            display: inline-block;
-            font-size: 0.65rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            color: #7C3AED;
-            border: 1px solid #7C3AED;
-            border-radius: 4px;
-            padding: 0.15rem 0.45rem;
-            margin-bottom: 0.6rem;
-        }
-        .evolution p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0 0 0.6rem; }
-        .evolution ul {
-            margin: 0 0 0.6rem;
-            padding-left: 1.2rem;
-            font-size: 0.85rem;
-            color: var(--pico-muted-color);
-        }
-        .evolution li { margin-bottom: 0.25rem; }
-        .evolution p:last-child { margin-bottom: 0; }
-
-        /* ── Recent work ── */
-        .work-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-        .work-column {
-            border: 1px solid var(--pico-muted-border-color);
-            border-radius: 8px;
-            padding: 1rem 1.2rem;
-        }
-        .work-column h3 {
-            font-size: 0.8rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            color: var(--pico-muted-color);
-            margin: 0 0 0.75rem;
-        }
-        .work-list { list-style: none; margin: 0; padding: 0; }
-        .work-list li {
-            font-size: 0.85rem;
-            padding-bottom: 0.7rem;
-            margin-bottom: 0.7rem;
-            border-bottom: 1px solid var(--pico-muted-border-color);
-        }
-        .work-list li:last-child {
-            padding-bottom: 0;
-            margin-bottom: 0;
-            border-bottom: none;
-        }
-        .work-list .work-title { font-weight: 600; display: block; margin-bottom: 0.15rem; }
-        .work-list .work-summary { color: var(--pico-muted-color); font-size: 0.82rem; }
-        .work-list .work-meta {
-            display: block;
-            margin-top: 0.25rem;
-            font-size: 0.72rem;
-            color: var(--pico-muted-color);
-        }
-        .work-empty { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
-        .work-footnote { font-size: 0.8rem; color: var(--pico-muted-color); margin: 0 0 2.5rem; }
-
-        /* ── Testing and evidence ── */
-        .evidence-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-        }
-        .evidence-card {
-            border: 1px solid var(--pico-muted-border-color);
-            border-radius: 8px;
-            padding: 0.9rem 1.1rem;
-        }
-        .evidence-card h3 { margin: 0 0 0.3rem; font-size: 0.88rem; }
-        .evidence-card p { font-size: 0.82rem; color: var(--pico-muted-color); margin: 0; }
-        .evidence-note { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0 0 2.5rem; }
-
-        /* ── Footer CTA ── */
-        .footer-cta {
-            border-top: 1px solid var(--pico-muted-border-color);
-            padding-top: 1.5rem;
-            margin-top: 0.5rem;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-            align-items: center;
-        }
-        .footer-cta a[role="button"] { margin: 0; }
-        .footer-cta .footer-note {
-            margin-left: auto;
-            font-size: 0.8rem;
-            color: var(--pico-muted-color);
-        }
-    </style>
+    {# Stage 3c. Pico and the service icons are vendored under
+       static_ops/vendor/; see its NOTICE.md for versions and licences. The
+       page's own CSS and JS were lifted out of this file so it can run under
+       a same-origin CSP with no 'unsafe-inline'. asset_url() appends a
+       content hash, which is what makes the one-year immutable cache safe. #}
+    <link rel="stylesheet" href="{{ asset_url('vendor/pico.min.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('info.css') }}">
+    <script src="{{ asset_url('info.js') }}" defer></script>
 </head>
 <body>
 <main class="container">
@@ -550,10 +82,6 @@
                 <a href="#architecture" role="button">Explore the architecture</a>
                 <a href="/request-access" role="button" class="secondary">Sign in to request read-only access</a>
             </div>
-            <!-- Drop demo.mp4 (or demo.gif) into ops/static_ops/ to activate this preview -->
-            <figure class="demo-media">
-                <video src="/static_ops/demo.mp4" autoplay loop muted playsinline></video>
-            </figure>
         </section>
 
         <!-- ── 2. Live stats ── -->
@@ -580,7 +108,7 @@
                 </div>
                 {% endif %}
             </div>
-            <div class="stats-row" style="margin-top:0.75rem;">
+            <div class="stats-row">
                 {% if stats.price_observations is defined %}
                 <div class="stat-card">
                     <div class="num">{{ stats.price_observations | fmt_stat }}</div>
@@ -595,7 +123,7 @@
                 {% endif %}
                 {% if stats.analytics_data_through_iso %}
                 <div class="stat-card">
-                    <div class="num" style="font-size:1.1rem; padding-top:0.55rem;">
+                    <div class="num num-timestamp">
                         <time id="analytics-data-through" datetime="{{ stats.analytics_data_through_iso }}">{{ stats.analytics_data_through_iso }}</time>
                     </div>
                     <div class="label">Analytics data through{% if stats_snapshot.stale %} (stale){% endif %}</div>
@@ -609,18 +137,6 @@
                 exact figure in hand-written copy is a number nobody updates.
             </p>
         </section>
-        <script>
-            (function () {
-                var el = document.getElementById('analytics-data-through');
-                if (!el) return;
-                var d = new Date(el.getAttribute('datetime'));
-                if (isNaN(d)) return;
-                el.textContent = d.toLocaleString(undefined, {
-                    month: 'short', day: 'numeric',
-                    hour: 'numeric', minute: '2-digit'
-                });
-            })();
-        </script>
         {% endif %}
 
         <!-- ── 3. How data flows ── -->
@@ -821,7 +337,7 @@
             <div class="services-grid" id="services-grid">
 
                 <div class="service-card" data-card="scraper">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/fastapi.svg') }}" alt="FastAPI">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Scraper</strong>
@@ -862,7 +378,7 @@
                 </div>
 
                 <div class="service-card" data-card="processing">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/fastapi.svg') }}" alt="FastAPI">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Processing</strong>
@@ -882,7 +398,7 @@
                 </div>
 
                 <div class="service-card" data-card="archiver">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/fastapi.svg') }}" alt="FastAPI">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Archiver</strong>
@@ -923,9 +439,9 @@
                 </div>
 
                 <div class="service-card" data-card="dbt">
-                    <div style="display:flex;gap:0.35rem;flex-shrink:0;">
-                        <img class="service-logo" src="/static_ops/dbt-bit-standalone.png" alt="dbt" onerror="this.style.display='none'">
-                        <img class="service-logo" src="https://cdn.simpleicons.org/duckdb/FFF000" alt="DuckDB" onerror="this.style.display='none'">
+                    <div class="service-logo-pair">
+                        <img class="service-logo" src="{{ asset_url('dbt-bit-standalone.png') }}" alt="dbt">
+                        <img class="service-logo" src="{{ asset_url('vendor/icons/duckdb.svg') }}" alt="DuckDB">
                     </div>
                     <div class="service-info">
                         <div class="title-row">
@@ -947,7 +463,7 @@
                 </div>
 
                 <div class="service-card" data-card="airflow">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/apacheairflow/017CEE" alt="Apache Airflow" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/apacheairflow.svg') }}" alt="Apache Airflow">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Airflow</strong>
@@ -968,7 +484,7 @@
                 </div>
 
                 <div class="service-card" data-card="ops">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/fastapi.svg') }}" alt="FastAPI">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Ops</strong>
@@ -988,7 +504,7 @@
                 </div>
 
                 <div class="service-card" data-card="dashboard">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/streamlit/FF4B4B" alt="Streamlit" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/streamlit.svg') }}" alt="Streamlit">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Dashboard</strong>
@@ -1008,7 +524,7 @@
                 </div>
 
                 <div class="service-card" data-card="postgres">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/postgresql/4169E1" alt="PostgreSQL" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/postgresql.svg') }}" alt="PostgreSQL">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Postgres</strong>
@@ -1028,7 +544,7 @@
                 </div>
 
                 <div class="service-card" data-card="minio">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/minio/C72E49" alt="MinIO" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/minio.svg') }}" alt="MinIO">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>MinIO</strong>
@@ -1048,7 +564,7 @@
                 </div>
 
                 <div class="service-card" data-card="caddy">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/caddy/22D3EE" alt="Caddy" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/caddy.svg') }}" alt="Caddy">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Caddy + oauth2-proxy</strong>
@@ -1069,7 +585,7 @@
                 </div>
 
                 <div class="service-card" data-card="observability">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/grafana/F46800" alt="Grafana" onerror="this.style.display='none'">
+                    <img class="service-logo" src="{{ asset_url('vendor/icons/grafana.svg') }}" alt="Grafana">
                     <div class="service-info">
                         <div class="title-row">
                             <strong>Observability</strong>
@@ -1096,42 +612,6 @@
 
             </div>
         </section>
-
-        <script>
-            (function () {
-                var grid = document.getElementById('services-grid');
-                var panel = document.getElementById('service-detail-panel');
-                var content = document.getElementById('service-detail-content');
-                var activeCard = null;
-
-                function lastCardInRow(card) {
-                    var cards = Array.from(grid.querySelectorAll('.service-card'));
-                    var rowTop = card.offsetTop;
-                    var last = card;
-                    cards.forEach(function (c) {
-                        if (Math.abs(c.offsetTop - rowTop) < 5) last = c;
-                    });
-                    return last;
-                }
-
-                document.querySelectorAll('.service-card').forEach(function (card) {
-                    card.addEventListener('click', function () {
-                        if (activeCard === card) {
-                            card.classList.remove('active');
-                            panel.hidden = true;
-                            activeCard = null;
-                        } else {
-                            if (activeCard) activeCard.classList.remove('active');
-                            card.classList.add('active');
-                            content.innerHTML = card.querySelector('.card-detail').innerHTML;
-                            lastCardInRow(card).after(panel);
-                            panel.hidden = false;
-                            activeCard = card;
-                        }
-                    });
-                });
-            })();
-        </script>
 
         <!-- ── 5. Platform evolution ── -->
         <section>
@@ -1213,107 +693,6 @@
                 revised to match a later truth.
             </p>
         </section>
-
-        <script>
-            // Stage 1d: render /static_ops/generated/project-updates.json into the two lists
-            // above. Every string goes in through textContent — the source is a
-            // build-time artifact rather than user input, but this is a public page
-            // and the summaries are lifted verbatim out of Markdown, so the rule is
-            // "no markup path" rather than "no markup we expect".
-            (function () {
-                var SOURCE = '/static_ops/generated/project-updates.json';
-                var SCHEMA_VERSION = 1;
-                // The generator emits only blob links into this repository. Anything
-                // else in an href is a payload, not a link, so it is not rendered.
-                var HREF_PREFIX = 'https://github.com/whitewalls86/new_car_tracker/blob/';
-
-                function isNonEmptyString(value) {
-                    return typeof value === 'string' && value.trim() !== '';
-                }
-
-                function isRenderable(item) {
-                    return item
-                        && isNonEmptyString(item.title)
-                        && isNonEmptyString(item.summary)
-                        && isNonEmptyString(item.plan)
-                        && isNonEmptyString(item.href)
-                        && item.href.indexOf(HREF_PREFIX) === 0;
-                }
-
-                function meta(item) {
-                    // Planned rows carry priority and effort; completed rows carry a
-                    // date and neither, because the archive has no such columns.
-                    if (item.state === 'completed') {
-                        return isNonEmptyString(item.date) ? 'Completed ' + item.date : '';
-                    }
-                    var parts = [];
-                    if (typeof item.priority === 'number') parts.push('Priority ' + item.priority);
-                    if (isNonEmptyString(item.effort)) parts.push('Effort ' + item.effort);
-                    return parts.join(' · ');
-                }
-
-                function listItem(item) {
-                    var li = document.createElement('li');
-
-                    var title = document.createElement('span');
-                    title.className = 'work-title';
-                    title.textContent = item.title;
-                    li.appendChild(title);
-
-                    var summary = document.createElement('span');
-                    summary.className = 'work-summary';
-                    summary.textContent = item.summary;
-                    li.appendChild(summary);
-
-                    var metaSpan = document.createElement('span');
-                    metaSpan.className = 'work-meta';
-                    var text = meta(item);
-                    if (text) metaSpan.appendChild(document.createTextNode(text + ' · '));
-
-                    var link = document.createElement('a');
-                    link.href = item.href;
-                    link.target = '_blank';
-                    link.rel = 'noopener';
-                    link.textContent = 'Plan ' + item.plan + ' →';
-                    metaSpan.appendChild(link);
-                    li.appendChild(metaSpan);
-
-                    return li;
-                }
-
-                function render(list, items) {
-                    // Built off-document and swapped in one go, so a throw partway
-                    // through leaves the authored fallback standing rather than half
-                    // a list.
-                    var fragment = document.createDocumentFragment();
-                    items.forEach(function (item) { fragment.appendChild(listItem(item)); });
-                    list.textContent = '';
-                    list.appendChild(fragment);
-                }
-
-                fetch(SOURCE, { credentials: 'omit' })
-                    .then(function (response) {
-                        if (!response.ok) throw new Error('status ' + response.status);
-                        return response.json();
-                    })
-                    .then(function (data) {
-                        if (!data || data.schema_version !== SCHEMA_VERSION) return;
-
-                        ['planned', 'completed'].forEach(function (key) {
-                            var list = document.getElementById('work-' + key);
-                            var items = data[key];
-                            if (!list || !Array.isArray(items) || items.length === 0) return;
-                            if (!items.every(isRenderable)) return;
-                            render(list, items);
-                        });
-                    })
-                    .catch(function () {
-                        // No artifact, a non-200, or unparseable JSON. The authored
-                        // pointers below the headings are the fallback and are already
-                        // on the page, so there is nothing to do and nothing to log.
-                    });
-            })();
-        </script>
 
         <!-- ── 7. Decision stories ── -->
         <section>
@@ -1469,42 +848,6 @@
                 </div>
             </div>
         </section>
-
-        <script>
-            (function () {
-                var grid = document.querySelector('.highlights-grid');
-                var panel = document.getElementById('highlight-detail-panel');
-                var content = document.getElementById('highlight-detail-content');
-                var activeCard = null;
-
-                function lastCardInRow(card) {
-                    var cards = Array.from(grid.querySelectorAll('.highlight-card'));
-                    var rowTop = card.offsetTop;
-                    var last = card;
-                    cards.forEach(function (c) {
-                        if (Math.abs(c.offsetTop - rowTop) < 5) last = c;
-                    });
-                    return last;
-                }
-
-                grid.querySelectorAll('.highlight-card.expandable').forEach(function (card) {
-                    card.addEventListener('click', function () {
-                        if (activeCard === card) {
-                            card.classList.remove('active');
-                            panel.hidden = true;
-                            activeCard = null;
-                        } else {
-                            if (activeCard) activeCard.classList.remove('active');
-                            card.classList.add('active');
-                            content.innerHTML = card.querySelector('.card-detail').innerHTML;
-                            lastCardInRow(card).after(panel);
-                            panel.hidden = false;
-                            activeCard = card;
-                        }
-                    });
-                });
-            })();
-        </script>
 
         <!-- ── 8. Testing, evidence, and CTA ── -->
         <section>
