@@ -560,7 +560,7 @@ def test_event_failure_rolls_back_state_mutation(mock_cursor_context):
     cursor.execute.side_effect = fail_event
     payload = coordination.CoordinationRequest(**_request_payload())
 
-    assert coordination._request(payload) == ("error", None)
+    assert coordination._request(payload) == ("error", "history unavailable")
     conn.commit.assert_not_called()
     conn.rollback.assert_called_once()
 
@@ -633,7 +633,7 @@ def test_request_endpoint_returns_expanded_scope(mock_client, mocker):
 
 @pytest.mark.parametrize(
     ("result", "status_code"),
-    [("conflict", 409), ("invalid", 422), ("error", 503)],
+    [("conflict", 409), ("invalid", 422), ("unavailable", 503), ("error", 500)],
 )
 def test_request_endpoint_maps_failures(mock_client, mocker, result, status_code):
     mocker.patch("ops.routers.coordination._request", return_value=(result, None))
@@ -643,7 +643,30 @@ def test_request_endpoint_maps_failures(mock_client, mocker, result, status_code
     assert response.status_code == status_code
 
 
-def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
+def test_a_refused_request_names_the_cause_instead_of_blaming_the_database(
+    mock_client, mocker
+):
+    """`/coordination/request` masked its failures exactly as `/deploy/start`
+    did, and expands the same contract, so `service_maintenance` on `dashboard`
+    hit the same constraint by the same route. Plan 162 Stage 6c.
+    """
+    violation = (
+        'new row for relation "coordination_state" violates check constraint '
+        '"coordination_state_check"'
+    )
+    mocker.patch(
+        "ops.routers.coordination._request", return_value=("error", violation)
+    )
+
+    response = mock_client.post("/coordination/request", json=_request_payload())
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "coordination_state_check" in detail
+    assert "Database unavailable" not in detail
+
+
+def test_migration_has_single_row_kind_phase_and_named_target_contract():
     sql = Path("db/migrations/V043__coordination_state.sql").read_text(encoding="utf-8")
 
     assert "CHECK (id = 1)" in sql
@@ -651,10 +674,30 @@ def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
         assert f"'{phase}'" in sql
     for kind in ("deploy", "service_maintenance", "host_maintenance"):
         assert f"'{kind}'" in sql
-    assert "scope <> '[]'::jsonb" in sql
+    assert "targets <> '[]'::jsonb" in sql
     assert "generation bigint NOT NULL DEFAULT 0" in sql
     assert "CREATE TABLE public.coordination_gate_observations" in sql
     assert "PRIMARY KEY (generation, dag_id, run_id)" in sql
+
+
+def test_v050_lets_a_record_name_a_target_while_pausing_no_surface():
+    """V043's non-empty-scope half is superseded, and this file was asserting
+    it. `dashboard` and `pgadmin` map to no surfaces by design, so requiring a
+    non-empty scope made those two impossible to deploy alone; the target stays
+    required, because an active record must still name what it coordinates.
+
+    Text-matching a migration says only what the file contains. What the
+    database accepts is asserted against a real Postgres, one service at a
+    time, in tests/integration/ops/test_deploy_intent.py.
+    """
+    sql = Path(
+        "db/migrations/V050__coordination_state_allows_empty_scope.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "DROP CONSTRAINT coordination_state_check" in sql
+    assert "ADD CONSTRAINT coordination_state_check" in sql
+    assert "targets <> '[]'::jsonb" in sql
+    assert "scope <> '[]'::jsonb" not in sql
 
 
 def test_coordination_event_migration_is_append_only_and_archiver_accessible():

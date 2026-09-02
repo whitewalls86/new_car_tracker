@@ -160,23 +160,49 @@ def test_intent_release_no_return(mock_cursor_context):
     assert result is False
 
 
+# ---------------------------------------------------------------------------
+# Which failure it was (Plan 162 Stage 6c)
+#
+# Every one of these returned the bare string "error" and rendered as 503
+# "Database unavailable". Only the first of the three is about an unavailable
+# database; the other two are a healthy Postgres refusing a statement, and
+# saying otherwise sent a production diagnosis after the one component that was
+# working. The exception types are psycopg2's own, raised through the real
+# `db_cursor`, so this asserts the classification rather than a restatement of
+# it.
+# ---------------------------------------------------------------------------
+
+
 def test_set_intent_connection_error(mock_db_connection_error, mock_logger_error):
     result = deploy._set_intent("test")
-    assert result == "error"
+    assert result == ("unavailable", None)
     error_msg = mock_logger_error.call_args[0][0]
     assert "Set-Intent: Unable to connect to Postgres database." in error_msg
 
 
 def test_set_intent_db_error(mock_db_database_error, mock_logger_error):
     result = deploy._set_intent("test")
-    assert result == "error"
+    assert result == ("error", "Other Error")
     assert "Set-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
 
 
 def test_set_intent_execution_error(mock_db_sql_error, mock_logger_error):
     result = deploy._set_intent("test")
-    assert result == "error"
+    assert result == ("error", "Bad SQL")
     assert "Set-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
+
+
+def test_a_failed_write_is_logged_with_the_exception_that_caused_it(
+    mock_db_sql_error, mock_logger_error
+):
+    """The log is the other half. `logger.error(msg)` named the operation and
+    dropped the exception, so the constraint that rejected the row appeared
+    nowhere -- not in the response, not in the log, not on the operator's
+    screen. Stage 7's placeholder defect wore the same face one day earlier.
+    """
+    deploy._set_intent("test")
+
+    assert mock_logger_error.call_args.kwargs.get("exc_info") is True
 
 
 def test_set_intent_success(mock_cursor_context):
@@ -184,7 +210,7 @@ def test_set_intent_success(mock_cursor_context):
     cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
     result = deploy._set_intent("test")
 
-    assert result == "ok"
+    assert result == ("ok", None)
     coordination_update = cursor.execute.call_args_list[-2]
     sql, params = coordination_update.args
     assert "generation = generation + 1" in sql
@@ -209,7 +235,7 @@ def test_set_intent_event_failure_rolls_back_both_records(mock_cursor_context):
 
     cursor.execute.side_effect = fail_event
 
-    assert deploy._set_intent("test") == "error"
+    assert deploy._set_intent("test") == ("error", "history unavailable")
     conn.commit.assert_not_called()
     conn.rollback.assert_called_once()
 
@@ -218,7 +244,7 @@ def test_set_intent_expands_explicit_service_targets(mock_cursor_context):
     conn, cursor = mock_cursor_context
     cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
 
-    assert deploy._set_intent("test", targets={"statsd-exporter"}) == "ok"
+    assert deploy._set_intent("test", targets={"statsd-exporter"}) == ("ok", None)
 
     _, params = cursor.execute.call_args_list[-2].args
     assert json.loads(params[0]) == [
@@ -234,7 +260,7 @@ def test_set_intent_expands_explicit_service_targets(mock_cursor_context):
 def test_set_intent_rejects_unknown_explicit_target_before_database(mock_cursor_context):
     _, cursor = mock_cursor_context
 
-    assert deploy._set_intent("test", targets={"future-service"}) == "invalid"
+    assert deploy._set_intent("test", targets={"future-service"}) == ("invalid", None)
     cursor.execute.assert_not_called()
 
 
@@ -243,7 +269,7 @@ def test_set_intent_no_return(mock_cursor_context, mock_router_logger_warning):
     cursor.fetchone.side_effect = [(None, "none"), None]
     result = deploy._set_intent("test")
 
-    assert result == "locked"
+    assert result == ("locked", None)
     assert "Intent failed to set — already locked." in mock_router_logger_warning.call_args[0][0]
 
 
@@ -260,15 +286,41 @@ def test_set_deploy_health(mock_client, mock_set_intent):
 
 
 def test_set_deploy_health_already_locked(mock_client, mock_set_intent):
-    mock_set_intent.return_value = "locked"
+    mock_set_intent.return_value = deploy.IntentResult("locked")
     response = mock_client.post("/deploy/start")
     assert response.status_code == 409
 
 
-def test_set_deploy_health_db_error(mock_client, mock_set_intent):
-    mock_set_intent.return_value = "error"
+def test_set_deploy_health_unreachable_database(mock_client, mock_set_intent):
+    mock_set_intent.return_value = deploy.IntentResult("unavailable")
     response = mock_client.post("/deploy/start")
     assert response.status_code == 503
+    assert response.json()["detail"] == "Database unavailable."
+
+
+def test_a_refused_write_names_the_cause_instead_of_blaming_the_database(
+    mock_client, mock_set_intent
+):
+    """The response an operator actually reads.
+
+    On 2026-09-01 `POST /deploy/start {"targets":["dashboard"]}` answered 503
+    "Database unavailable" while Postgres was healthy throughout; the real
+    cause was the CHECK constraint below, and it reached nobody. A refusal is
+    a 500 -- the request was well formed and the server failed to record it --
+    and it carries what the database said.
+    """
+    violation = (
+        'new row for relation "coordination_state" violates check constraint '
+        '"coordination_state_check"'
+    )
+    mock_set_intent.return_value = deploy.IntentResult("error", violation)
+
+    response = mock_client.post("/deploy/start")
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "coordination_state_check" in detail
+    assert "Database unavailable" not in detail
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +410,7 @@ def test_set_intent_refuses_active_coordination(mock_cursor_context):
     conn, cursor = mock_cursor_context
     cursor.fetchone.return_value = ("host_maintenance", "requested")
 
-    assert deploy._set_intent("test") == "locked"
+    assert deploy._set_intent("test") == ("locked", None)
 
     assert not any("UPDATE deploy_intent" in call.args[0] for call in cursor.execute.call_args_list)
 
