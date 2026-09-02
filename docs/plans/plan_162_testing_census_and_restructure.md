@@ -2773,3 +2773,193 @@ almost all of it was mechanical once the rules existed. **Building the checker
 first is what made it cheap**, and it is the reusable lesson: the rule found
 `maintenance.py:152`, `admin.py`'s six, and the byte-identical trio, none of
 which a reading pass had found in three prior stages of looking at these files.
+
+### Evidence — Stage 6c, a service that pauses no surface can be deployed alone (CAR-66), 2026-09-02
+
+**The defect is closed in production.** `V050` applied 2026-09-02, and `bash
+scripts/redeploy.sh dashboard` — the exact command that returned 503
+`{"detail":"Database unavailable."}` on 2026-09-01 — now completes end to end.
+
+| Deploy | Drain | Healthy | Exit |
+|---|---|---|---|
+| `ops` | 5s | 6s | 0 |
+| `dashboard` alone | **0s** | 6s | 0 |
+| `archiver pack-worker processing scraper dbt_runner` | 1s | 8s | 0 |
+
+**"Drain confirmed after 0s" is this stage's own prediction, observed.** V050's
+comment argued that an empty scope is a true statement rather than a missing
+one, because `required_drain_sources(frozenset())` is empty and every source
+reports not-applicable. The `dashboard` deploy drained in zero seconds where
+every scoped deploy above it took one to five. The readers already agreed; only
+the constraint did not.
+
+**The constraint keeps the invariant worth keeping.** Verified against
+production `pg_constraint` after the migration: the `scope <> '[]'` clause is
+gone and `targets <> '[]'` remains, so an active record must still name what it
+coordinates. Coordination advanced generation 59 → 65 across the three deploys
+and returned to `phase='none'` after each.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+#### The rollout found a gap in the deploy service list, of this stage's own kind
+
+`shared/db.py` changed, and every service that bakes it needed rebuilding. The
+recorded list was archiver, pack-worker, snapshot-worker, processing,
+april-processor, scraper and ops. Measured against the tree, it was wrong in
+both directions:
+
+- **`dbt_runner` bakes `shared/` and was absent from the list** —
+  `dbt_runner/Dockerfile:19` copies it to `/usr/app/shared/`, and the service
+  is `restart: unless-stopped`. It would have kept the old module indefinitely.
+- **`snapshot-worker` and `april-processor` are `profiles:`-gated** and were
+  not running, so they are not deploy targets at all; they load new files on
+  their next invocation, as Stage 7 recorded for `docker compose run --rm`.
+
+`container_health` copies only its own package and `lakehouse` is not a Compose
+service, so neither is affected. **This is Stage 6c's defect one layer out** —
+a contract (which images bake `shared/`) and its consumer (the list an operator
+types) with nothing composing them, and the same failure mode: the list looked
+right and was never asserted against the tree.
+
+#### Cost
+
+Estimate 1 point, actual 1. The stage was sized before the diagnosis was
+written down and still landed on its estimate, which is worth recording as
+plainly as an overrun would be: the expensive half was already spent finding
+the cause on 2026-09-01, and what remained — one migration, two exception
+paths, one shell function and the assertion — was the cheap half. **The
+unmasking cost almost nothing and is the part that pays later**, since the next
+unrelated failure on this path will name itself.
+
+### Evidence — Stage 8, the assertionless suite and the scraper's write path (CAR-52), 2026-09-02
+
+**G7 and G8 are both closed**, and the gap list is down to seven rows. Confirmed
+in [run 33665172964](https://github.com/whitewalls86/new_car_tracker/actions/runs/33665172964)
+on PR #347, all jobs green.
+
+| Ledger | Start | End |
+|---|---|---|
+| Assertions in `test_dashboard_queries.py` | **0** | 26 tests, all asserting |
+| Assertionless tests under `tests/integration/sql/` | **29** | **0** |
+| Layer 2 tests executed in CI | 242 | **244** |
+| `scraper` Layer 4 files | 1, Layer 2-shaped | **2, both unmocked** |
+| Mutations the harness actually runs | 7 of 24 | **24 of 24** |
+| Unit coverage | 78% | **78.68%** against a floor of 75 |
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+#### The rule found four violations no reading of the suite would have
+
+G7 was written as *"the only Layer 2 suite with none"*, and that was true and
+also not the whole denominator. `test_dashboard_queries.py` had 25 assertionless
+tests; the rule the stage owed found **four more**, one each in
+`test_airflow_dag_queries.py` and `test_archiver_queries.py` and two in
+`test_ops_queries.py` — every one of them sitting directly above a *sibling*
+that asserts, with a comment explaining why. A suite with zero assertions is
+visible to anyone who opens it. Four tests inside suites averaging sixty
+assertions are not, and that is the entire argument for a derived rule over a
+read-through. This is the plan's own recurring lesson landing on the plan:
+**a denominator scoped to what exists when it is written will be wrong.**
+
+The rule checks that an assertion **exists**, never that it is meaningful.
+`assert True` passes it. That distinction is in the contract's row on purpose,
+because *"whether an assertion is meaningful"* is one of the four judgements
+`docs/TESTING.md` says are not mechanically checkable, and a rule that implied
+otherwise would be the instrument problem this plan keeps naming.
+
+#### Writing the contract down found five dead columns, not three
+
+[The narrowing](#stage-8-narrowed-and-g7-now-names-a-different-gap) predicted
+that naming the columns each page reads would surface the ones it does not, and
+put the figure at three, all in `data_health_block_rate.sql`. The measured
+answer is **five**: those three — `total_block_events`, `max_attempts_seen`, and
+the SQL's own `block_rate_pct`, which `data_health.py` discards and recomputes
+in pandas because percentages do not average — plus
+`data_health_scrape_volume.sql`'s `unique_listings` and `vin_extraction_pct`.
+
+**Both files are on the same page, and the reason is structural.** Data Health
+is the one page that renders no frame wholesale: everywhere else
+`st.dataframe(df)` displays every column it is handed, so a column that no line
+of Python names is still shown to a person. A first pass that counted
+never-named columns reported 22 and was wrong about 17 of them for exactly that
+reason. Recorded rather than deleted; Plan 150 Stage 0c owns the modeling half.
+
+#### G8 was not the file count
+
+The row said *"one integration file, and still the whole of the service's
+coverage above Layer 1"*, which framed it as a quantity. Reading the service
+settled that the quantity was a symptom. `tests/scraper/conftest.py` patches
+`shared.db.get_conn` and `shared.minio.write_html` **autouse, for every test in
+the directory**, and the route rule attributes a test by its directory — so all
+eight routes counted as reached while the half of the service that *writes* had
+never executed in any layer: the MinIO object, the `ops.artifacts_queue` row,
+its `staging.artifacts_queue_events` twin, and the blocked-cooldown pair on a
+403. The single integration file, meanwhile, executed SQL constants against a
+cursor and touched no route at all — Layer 2's shape in a Layer 4 directory,
+the same misfiling G9 was.
+
+Both fetch paths now run against a loopback origin serving real captures, to
+real MinIO and real Postgres, with nothing mocked: **12 tests in 2.38s**.
+
+**The two paths needed different work, and the asymmetry is the finding.**
+`scrape_detail` takes `payload.url` from its caller, so Layer 4 could point it
+anywhere and no production change was required. `scrape_results` *composes* its
+URL from a module constant, so it needed one — `SCRAPER_RESULTS_BASE_URL`,
+unset in production. A service is testable to the exact extent that its inputs
+are inputs.
+
+#### The pacing seam is keyed to the origin, and the direction was the decision
+
+`human_delay` sleeps 13–35s before page 1, up to ~80s when its 10% distraction
+branch fires. No CI job can absorb that, so it needed a seam, and the seam's
+failure mode mattered more than its shape. A misconfigured `FLARESOLVERR_URL`
+breaks loudly — no solver, 403s, cooldowns, alerts. A misconfigured *delay*
+switch breaks **silently**: scraping works perfectly, at machine speed, until
+the site notices, which is the 2026-08-14 shape where 22 days of apparent health
+preceded a 0% solve rate.
+
+So pacing keys off the origin already made configurable rather than taking a
+switch of its own, and **the list names the origins that are exempt rather than
+the real sites**. An allowlist of paced origins inverts the failure: add a second
+scrape target, forget the list, and it scrapes un-paced. Written this way a new
+target is paced from its first request and only a loopback double is declared.
+`.env.example` documents the variable and says to leave it unset, because unset
+is the only value that cannot be wrong.
+
+#### The fixture had to be page 1, and the code was right
+
+The first capture pulled from production MinIO was **page 7 of 236**. Against
+it, `scrape_results` fetched, refused to save, and returned zero artifacts —
+because `_fetch_page` sets `_break_no_save` when the page's own
+`result_page_number` disagrees with the page requested, cars.com clamping a
+request being duplicate territory. Nothing was wrong with the code and the
+failure looked nothing like its cause. Replaced with a page-1 capture (24
+listings, page 1 of 19); the conftest records the trap so the next replacement
+does not repeat it.
+
+#### The mutation harness had been aborting for two stages
+
+`scripts/verify_testing_contract_mutations.py` was anchored on the `| G6 |` row
+that **Stage 6 deleted**, so `_edit`'s staleness guard raised and every mutation
+after it stopped running — 17 of 24, unnoticed, across Stages 6, 6b, 6c and 7,
+including guards for rules those stages shipped. This is precisely what Stage 1
+hit on G1 and G2, and it recurred within a fortnight, which says the anchor
+convention is not enough on its own: a mutation anchored on a gap row is
+anchored on the thing the plan is trying to delete. Three anchors were moved to
+live gaps and the full run is now **24 mutations, all caught**.
+
+#### Two production changes, one of them not yet deployed
+
+`scraper/app.py` imported `from db import close_pool, get_pool`, which resolved
+only because the Dockerfile ran `cp scraper/db.py db.py` — so the module existed
+twice under two names, with a `_pool` global in each, and `import scraper.app`
+failed outright outside the conftest that put `scraper/` on `sys.path`. That is
+[G18](../TESTING.md#the-gap-list)'s dual-identity defect, in a second service,
+papered over rather than absent. Both removed; the app imports `scraper.db` like
+every other module in its package.
+
+**This needs a scraper image rebuild**, and the deploy is the one gate this
+stage has not passed. The evidence above is CI's; production still runs the
+image with the `cp` layer.

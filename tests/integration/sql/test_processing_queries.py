@@ -794,6 +794,40 @@ class TestDetailClaimAndCooldownStatements:
         cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": _random_listing_id()})
         assert cur.fetchone() is None
 
+    def test_clear_blocked_cooldown_removes_an_existing_entry(self, cur):
+        """The clear that actually clears, moved here by Plan 162 Stage 8.
+
+        It came from ``tests/integration/scraper/test_blocked_cooldown.py``,
+        which was a Layer 2 suite living in a Layer 4 directory: it executed
+        statements against ``cur`` and never touched a route. The rest of that
+        file duplicated ``test_scraper_queries.py`` and was deleted; this case
+        did not, because the sibling above only proves the statement plans
+        against a listing that matches nothing. A ``DELETE`` whose predicate
+        never matches would pass that test forever.
+
+        The seeding statement is the scraper's, because the two services share
+        this table: the scraper writes the cooldown on a 403 and processing
+        clears it on the next success.
+        """
+        from scraper.queries import UPSERT_BLOCKED_COOLDOWN
+
+        listing_id = _random_listing_id()
+        cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
+        cur.execute(
+            "SELECT count(*) AS cnt FROM ops.blocked_cooldown "
+            "WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        assert cur.fetchone()["cnt"] == 1
+
+        cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
+        cur.execute(
+            "SELECT count(*) AS cnt FROM ops.blocked_cooldown "
+            "WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        assert cur.fetchone()["cnt"] == 0
+
     def test_insert_blocked_cooldown_cleared_event(self, cur):
         cur.execute(INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT, {
             "listing_id": _random_listing_id(),

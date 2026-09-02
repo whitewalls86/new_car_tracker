@@ -1049,12 +1049,23 @@ class TestMaintenanceStatements:
     """
 
     def test_select_stuck_processing_artifacts(self, cur):
+        # The reaper builds its retry payload from these six by name, so the
+        # projection is the contract; nothing here is stuck, which is why the
+        # columns rather than the rows are what this asserts.
         cur.execute(SELECT_STUCK_PROCESSING_ARTIFACTS)
-        cur.fetchall()
+        assert cur.fetchall() == []
+        assert _column_names(cur) == [
+            "artifact_id", "minio_path", "artifact_type", "fetched_at",
+            "listing_id", "run_id",
+        ]
 
     def test_expire_orphan_detail_claims(self, cur):
+        # No fixture seeds a running claim, so the 2-hour predicate matches
+        # nothing and this proves the statement plans and returns what the
+        # caller reads without expiring a claim the test did not create.
         cur.execute(EXPIRE_ORPHAN_DETAIL_CLAIMS)
-        cur.fetchall()
+        assert cur.fetchall() == []
+        assert _column_names(cur) == ["listing_id"]
 
     def test_evict_delisted_cooldowns_takes_a_listing_with_no_observation(self, cur):
         # A cooldown whose listing has no price observation is precisely what
