@@ -3,7 +3,50 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CarTracker</title>
+
+    {# Plan 138 Stage 2. The page answers at / and at /info, so it names which
+       of the two is canonical. Everything below describes the public page only:
+       /dashboard, /admin and the infrastructure tools are behind Google and
+       would be indexed as a sign-in screen. #}
+    <title>CarTracker — a production data pipeline for car prices</title>
+    <meta name="description" content="A production data pipeline tracking new-car prices from Cars.com: continuous collection, a Postgres, MinIO and DuckDB lakehouse, and a deal-score model.">
+    <link rel="canonical" href="https://cartracker.info/">
+
+    <link rel="icon" href="/static_ops/favicon.svg" type="image/svg+xml">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="CarTracker">
+    <meta property="og:url" content="https://cartracker.info/">
+    <meta property="og:title" content="CarTracker — a production data pipeline for car prices">
+    <meta property="og:description" content="Continuous collection from Cars.com, a lakehouse on Postgres, MinIO and DuckDB, and a deal-score model — running on a single host.">
+    <meta property="og:image" content="https://cartracker.info/static_ops/og-preview.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="CarTracker — a production data pipeline for car prices.">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CarTracker — a production data pipeline for car prices">
+    <meta name="twitter:description" content="Continuous collection from Cars.com, a lakehouse on Postgres, MinIO and DuckDB, and a deal-score model — running on a single host.">
+    <meta name="twitter:image" content="https://cartracker.info/static_ops/og-preview.png">
+    <meta name="twitter:image:alt" content="CarTracker — a production data pipeline for car prices.">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareSourceCode",
+      "name": "CarTracker",
+      "description": "A production data pipeline tracking new-car prices from Cars.com.",
+      "url": "https://cartracker.info/",
+      "codeRepository": "https://github.com/whitewalls86/new_car_tracker",
+      "programmingLanguage": ["Python", "SQL"],
+      "author": {
+        "@type": "Person",
+        "name": "Andrew Miller",
+        "url": "https://github.com/whitewalls86"
+      }
+    }
+    </script>
+
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <style>
         body { padding: 2rem 0; }
@@ -1165,8 +1208,8 @@
             </div>
             <p class="work-footnote">
                 For the long-form account there is a
-                <a href="https://github.com/whitewalls86/new_car_tracker/tree/master/docs/recaps" target="_blank" rel="noopener">weekly recap</a>,
-                one file per week written against that week's commits — a point-in-time record, never
+                <a href="/recaps">weekly recap</a>,
+                one page per week written against that week's commits — a point-in-time record, never
                 revised to match a later truth.
             </p>
         </section>

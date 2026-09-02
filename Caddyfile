@@ -1,7 +1,45 @@
 https://cartracker.info {
 
     # ── Public routes (no auth required) ─────────────────────────────────────
+    # Plan 138 Stage 2. The root is an EXACT match and must stay one.
+    #
+    # dashboard/Dockerfile runs Streamlit with no --server.baseUrlPath, so
+    # Streamlit believes it is mounted at / and serves its own machinery from
+    # there: /_stcore/health (the Compose healthcheck calls exactly that path),
+    # /_stcore/stream for the websocket, and its static bundle. Nothing rewrites
+    # those paths — they resolve only because the final catch-all below forwards
+    # everything unmatched to dashboard:8501.
+    #
+    # Widening this to /* would take those paths away from Streamlit and break
+    # the dashboard's assets and websocket WHILE /dashboard ITSELF STILL
+    # RETURNS 200 — a failure no status-code check in this plan can see. Plan
+    # 165 is the fix: its own host gives Streamlit its origin back. Until then
+    # the coupling is deliberate, and tests/test_caddy_public_routes.py asserts
+    # it rather than leaving it to whoever reads this block next.
+    handle / {
+        reverse_proxy ops:8060
+    }
+
+    # The pre-Stage-2 landing URL. ops answers it with a 308 to /. It is printed
+    # on a resume, a LinkedIn profile and a GitHub profile — copies this
+    # repository cannot edit — so it keeps resolving for as long as those do.
     handle /info {
+        reverse_proxy ops:8060
+    }
+
+    # The canonical route for the generated weekly recaps. It needs a handler of
+    # its own: without one the authenticated catch-all would swallow it and put
+    # a Google sign-in page in front of public content.
+    @recaps path /recaps /recaps/*
+    handle @recaps {
+        reverse_proxy ops:8060
+    }
+
+    handle /robots.txt {
+        reverse_proxy ops:8060
+    }
+
+    handle /sitemap.xml {
         reverse_proxy ops:8060
     }
 
