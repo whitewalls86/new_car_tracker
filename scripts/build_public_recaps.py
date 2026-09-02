@@ -79,15 +79,6 @@ OUTPUT_DIR = "ops/static_ops/generated/recaps"
 # non-goals bar from being published as a page of its own.
 BLOB_BASE = "https://github.com/whitewalls86/new_car_tracker/blob/master/"
 
-# Plan 138 Stage 2 gave these pages a canonical route. The generated files are
-# also reachable at their static path -- ``handle /static_ops/*`` is public and
-# has been since the Stage 1e deploy -- so every link the projection emits, and
-# the canonical link on every page, names the route rather than the file. That
-# is what makes the static path a duplicate of one address instead of a second
-# address for the same content.
-PUBLIC_BASE_URL = "https://cartracker.info"
-RECAPS_ROUTE = "/recaps"
-
 PUBLISH_FIELD = "**Publish:**"
 
 _TITLE_RE = re.compile(r"^# Week of (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})\s*$")
@@ -122,12 +113,7 @@ class Recap:
 
     @property
     def output_name(self) -> str:
-        """The file the projection writes. Not the URL -- see ``route``."""
         return f"{self.slug}.html"
-
-    @property
-    def route(self) -> str:
-        return f"{RECAPS_ROUTE}/{self.slug}"
 
     @property
     def title(self) -> str:
@@ -282,7 +268,7 @@ def rewrite_href(href: str, source: Recap, published: set[str]) -> str:
     # GitHub when it was not.
     if relative.parent.as_posix() == RECAPS_DIR and relative.suffix == ".md":
         if relative.stem in published:
-            return f"{RECAPS_ROUTE}/{relative.stem}{suffix}"
+            return f"{relative.stem}.html{suffix}"
         return _blob_url(resolved) + suffix
 
     return _blob_url(resolved) + suffix
@@ -374,7 +360,7 @@ _POINT_IN_TIME = (
 )
 
 
-def _page(title: str, note: str, body: str, canonical: str) -> str:
+def _page(title: str, note: str, body: str) -> str:
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -382,7 +368,6 @@ def _page(title: str, note: str, body: str, canonical: str) -> str:
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{html.escape(title)}</title>\n"
-        f'<link rel="canonical" href="{PUBLIC_BASE_URL}{canonical}">\n'
         f"<style>\n{_STYLE}</style>\n"
         "</head>\n"
         "<body>\n"
@@ -403,7 +388,7 @@ def render_page(recap: Recap, published: set[str]) -> str:
     # corpus holds 381 table rows and some are far wider than a phone.
     body = body.replace("<table>", '<div class="table-scroll"><table>')
     body = body.replace("</table>", "</table></div>")
-    return _page(recap.title, note, body, recap.route)
+    return _page(recap.title, note, body)
 
 
 def render_index(recaps: list[Recap]) -> str:
@@ -411,7 +396,7 @@ def render_index(recaps: list[Recap]) -> str:
     items = []
     for recap in recaps:
         items.append(
-            f'<li><a href="{recap.route}">{html.escape(recap.title)}</a>'
+            f'<li><a href="{recap.output_name}">{html.escape(recap.title)}</a>'
             f'<span class="meta">Week ending {recap.week_end}</span></li>'
         )
     body = (
@@ -425,7 +410,7 @@ def render_index(recaps: list[Recap]) -> str:
         "not revised afterwards. Weeks in which no commits landed are kept in the "
         "repository but are not published here.</p>\n"
     )
-    return _page("Weekly recaps", note, body, RECAPS_ROUTE)
+    return _page("Weekly recaps", note, body)
 
 
 # ---------------------------------------------------------------------------

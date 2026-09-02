@@ -17,7 +17,7 @@ if st.sidebar.button("Refresh Data"):
 # Quicklinks
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Quick Links**")
-st.sidebar.markdown("[Project home](https://cartracker.info/)")
+st.sidebar.markdown("[Project Info](https://cartracker.info/info)")
 st.sidebar.markdown("[Search Config Admin](https://cartracker.info/admin)")
 st.sidebar.markdown("[Airflow](https://cartracker.info/airflow)")
 st.sidebar.markdown("[pgAdmin](https://cartracker.info/pgadmin)")
