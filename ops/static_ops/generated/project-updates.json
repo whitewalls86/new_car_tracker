@@ -29,7 +29,7 @@
       "priority": 84,
       "effort": "L",
       "state": "planned",
-      "summary": "Stage 4 (CAR-63) — present the Plan 143 snapshot without request-time dependencies: full, partial, stale and empty states, no database opened in the request",
+      "summary": "Stage 8 (CAR-67) — extract docs/PUBLIC_SURFACE.md: the durable public-surface rules leave this plan, and the destination inventory records what a reader is meant to reach",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
     },
     {

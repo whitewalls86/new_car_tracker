@@ -2,10 +2,28 @@
 
 ## Status
 
-**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. STAGE 7 BUILT AND UNDEPLOYED.**
-**Stages 2 through 6 not started.**
-Written 2026-08-17 after comparing the live `https://cartracker.info/info` page
-and `README.md` against `master` at `6f6a2ba`.
+**Refreshed 2026-09-02.** Written 2026-08-17 after comparing the live
+`https://cartracker.info/info` page and `README.md` against `master` at
+`6f6a2ba`; the headline below is re-measured against the tree rather than
+carried forward, because the version it replaced still read "Stages 2 through 6
+not started" a day after Stage 2 was deployed.
+
+| Stage | State |
+|---|---|
+| **0** | **Complete.** Both gates closed 2026-08-31 |
+| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started**, blocked on 3d |
+| **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
+| **3** | **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests. **3b, 3c and 3d not started**; 3d carries two open decisions that block 1g |
+| **4** | **Not started.** Unblocked since Plan 143 completed 2026-08-20 |
+| **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
+| **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
+| **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
+| **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
+
+**The navigation pane is deliberately unstarted and unticketed**, deferred
+behind Stage 8's destination inventory. Its one carve-out — `/dashboard` is
+linked from no public surface, so a granted role has no path to what it grants —
+is gap **P1** in the contract.
 
 Both Stage 0 gates closed on 2026-08-31: **Gate 0b** reconciled the internal
 overviews (CAR-37, PR #313) and **Gate 0** recorded the baseline and gave every
@@ -184,106 +202,23 @@ bare domain sees a login screen before seeing what the project is.
 
 ## Public truth contract
 
-Both surfaces must distinguish three kinds of facts.
+**Moved 2026-09-02 to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), by
+Stage 8.** The §1–5 numbering is preserved there, so every reference below to
+"the truth contract's §3" or "§5" resolves against the contract. It is not
+restated here: this plan is a change and will archive, and a rule kept in two
+places is a rule that drifts.
 
-### 1. Production today
-
-- Airflow orchestrates scraping, processing, archival, maintenance, and analytics.
-- Postgres owns current operational state and short-lived event buffers.
-- MinIO holds replayable bronze HTML and permanent Parquet history.
-- dbt and DuckDB currently build and serve the analytical marts used by `/info`,
-  metrics, and Streamlit.
-- Caddy, oauth2-proxy, and the ops authorization check protect application routes.
-
-### 2. Proven but not production-serving
-
-- Production-shaped CI lake snapshots.
-- Iceberg tables registered through Lakekeeper and exercised through Spark.
-- dbt-Spark parity work and MLflow experiment provenance.
-- Adaptive-refresh feature and backtesting foundations.
-
-These belong under a heading such as "Platform evolution," never in language that
-implies the public dashboard already reads Iceberg.
-
-### 3. Volatile operational numbers
-
-Active listings, observations, throughput, tracked pairs, and analytical freshness
-come from the public stats snapshot. They must not also be hard-coded in hero or
-service-card prose. Repository inventory may use rounded statements such as
-"more than a dozen DAGs," "20+ dbt models," and "3,000+ tests," with an explicit
-"verified on" date where precision adds value. (The example read "2,500+ tests"
-until Gate 0 re-measured the suite at 3,661 on 2026-08-31.)
-
-Avoid the phrases "without manual intervention," "every failure alerts," and
-"every service exposes `/ready`." The narrower, true claim is that long-running
-worker services participate in deploy draining, while functional liveness remains
-a separately measured concern.
-
-### 4. Recent and planned work
-
-The public feed is a projection of the roadmap, not a second roadmap:
-
-- "Planned next" comes from the ordered rows in `docs/PLANS.md`'s **Default
-  build order** table. Publish only the first four executable rows.
-- "Recently completed" comes from the newest-first table in
-  [`docs/planning/completed_plans.md`](../planning/completed_plans.md). Publish
-  only the first four rows. **This is a different file from the build order.**
-  Plan 146 removed `docs/PLANS.md`'s duplicate Completed table; what remains
-  under that heading is a pointer, and a generator that parses it finds no rows.
-- Titles, short public summaries, priority, effort, state, and source links may
-  be shown. Internal hostnames, incident payloads, approval records, production
-  object keys, and other operational detail must not be copied into the feed.
-- A plan is not presented as complete until its completion row exists. A merged
-  implementation with an outstanding production gate remains "verification" or
-  "closeout," not "completed."
-
-The plan document remains the detailed source. The landing page is a small,
-current window into it.
-
-### 5. The weekly recaps
-
-The recaps are a fourth kind of fact, and the one with the least editorial
-control: they are written weekly by the `plan-week` skill against git history,
-not authored as public copy.
-
-- They are already public. Stage 1d's roadmap links resolve to
-  `github.com/whitewalls86/new_car_tracker`, so this plan already assumes the
-  repository is publicly readable, and `docs/recaps/` is in it. Publishing them
-  on the site changes their **prominence and framing**, not their disclosure
-  status. The review below is an editorial gate, not a leak gate.
-- They are a record of a week, not evergreen prose. A recap is correct as of its
-  date and is never revised to match a later truth. Every published recap must
-  carry its week and a statement that it is a point-in-time record, so §1's
-  production/experimental split is not contradicted by a six-month-old page.
-- They may name what the truth contract's §3 narrows. The word `trawl` appears
-  eleven times across four recap files — `2026-07-12.md` (2), `2026-07-19.md`
-  (5), `2026-08-23.md` (1) and `2026-08-30.md` (3), which is the complete set —
-  and the scrape path is exactly what the non-goals bar from *authored* public
-  copy. Stage 1e decides the policy; it does not get to be decided silently by a
-  generator.
-
----
+The five sections are §1 Production today, §2 Proven but not production-serving,
+§3 Volatile operational numbers, §4 Recent and planned work, and §5 The weekly
+recaps.
 
 ## Target route and access contract
 
-| Route | Access | Target behavior |
-|---|---|---|
-| `/` | Public | Canonical portfolio landing page, HTTP 200 |
-| `/info` | Public | Permanent redirect to `/` |
-| `/recaps` | Public | Generated recap index, newest first, HTTP 200 |
-| `/recaps/YYYY-MM-DD` | Public | One generated recap page, HTTP 200 |
-| `/static_ops/*` | Public | Versioned local assets with long-lived caching |
-| `/robots.txt` | Public | Allows the public root and references the sitemap |
-| `/sitemap.xml` | Public | Contains only canonical public URLs |
-| `/request-access*` | Google-authenticated | Existing request workflow; CTA explains the sign-in step |
-| `/dashboard*` | `viewer`+ | Existing Streamlit application |
-| `/admin*` | `observer`+ with current mutation rules | Unchanged |
-| infrastructure tools | Existing role requirements | Unchanged |
-
-Caddy should match the exact public root before the final authenticated catch-all.
-It may internally rewrite `/` to the ops `/info` handler during the transition,
-but the browser-visible canonical URL must remain `/`. The `/info` redirect must
-not loop through the internal rewrite.
+**Moved 2026-09-02 to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), by
+Stage 8**, where it is stated against the tree as it now is: the public root is
+an exact match on `/`, and Streamlit no longer owns the origin root. The
+"internal rewrite during the transition" language this section carried described
+a transition that Stage 2 completed.
 
 ---
 
@@ -2467,6 +2402,118 @@ assumed, because those two `--check` steps exist only in the skipped job.
 **Six of seven exit checks met.** Gate 7's runtime half is owed to the deploy and
 is the only thing between this slice and `Done`. Cost: estimate 1, actual 1.
 
+---
+
+## Stage 8 — Extract the public surface contract
+
+**Raised 2026-09-02, out of a navigation question that could not be answered.**
+Stage 2 gave `/recaps` a canonical route and a sitemap entry, and nothing links
+it. `ops/templates/info.html` has no `<nav>` and mentions `/dashboard` nowhere,
+so a visitor who follows the access CTA, is granted a role and returns has no
+way to reach the thing they were granted. The obvious fix is a public
+navigation pane. It could not be designed, because **nothing in this repository
+says what the public surface is.**
+
+### The gap, named
+
+This plan carries two contracts and needs a third.
+
+| Contract | Answers | Where it lives |
+|---|---|---|
+| Public truth contract | What may be **said** on a public surface | This document, §1–5 |
+| Target route and access contract | What **resolves**, at what status, for whom | This document |
+| **Destination inventory** | **Where a reader is meant to go** | **nowhere** |
+
+The route table says `/recaps` returns 200 without OAuth. It does not say
+whether `/recaps` is a place a reader should be *sent*. That distinction is how
+a canonical route, a sitemap entry and no link shipped in that order.
+
+### The enforcement half already exists, and it is orphaned
+
+`.claude/skills/public-surface-check/SKILL.md` and
+`scripts/public_surface_gate.py` are a reviewer and a commit gate for a contract
+whose document was never written. The skill carries real rules — the two
+quantity rules ("round it", "name the set"), Gate 1's four questions, the table
+of where truth lives for each recurring claim — and it sources its authority
+from a line that expires: *"Plan 138 owns exactly two public surfaces."*
+
+That is the arrangement [`docs/TESTING.md`](../TESTING.md) already has, minus
+the document:
+
+| | Reviewer | Enforcement | Document |
+|---|---|---|---|
+| Testing | `testing-contract` | CI assertions | `docs/TESTING.md`, 647 lines |
+| Public surface | `public-surface-check` | `public_surface_gate.py` | **none** |
+
+A plan is a change: it completes, archives into
+[`completed_plans.md`](../planning/completed_plans.md), and stops being where
+anyone looks. The truth contract's §1–5 is not a change — it is indefinite-life
+policy that happens to live in a change document, enforced by a hook that cites
+a document about to become history.
+
+### What lands
+
+`docs/PUBLIC_SURFACE.md`, and it is mostly an **extraction rather than an
+authorship**.
+
+1. **Move, do not copy.** The truth contract §1–5, the route and access table,
+   Gate 1's four questions, and the two quantity rules the skill currently holds
+   alone. Two copies of a rule is how they drift, which this plan has already
+   written down twice — at Stage 1h's `plans`/`close-out` seam and at Stage 7's
+   publish procedure.
+2. **Preserve the §1–5 numbering.** This document cites "the truth contract's
+   §3" and "§5" in more than a dozen places. Keeping the numbering means those
+   references resolve against the contract instead of needing a sweep that would
+   touch every stage.
+3. **The plan keeps pointers, not prose.** Its "Public truth contract" and
+   "Target route and access contract" sections become short links.
+4. **Add the destination inventory** — the third contract above: each public
+   destination, what it is for, and whether it is a page, a section of `/`, or
+   an anchor.
+5. **Re-source the skill.** `public-surface-check` cites the contract rather
+   than this plan.
+
+### What stays here
+
+Stages, gates, evidence, the 2026-08-17 drift table and its dispositions. **The
+contract holds only what outlives Plan 138.** The moment it carries a stage
+decision it becomes a second plan, and the two drift.
+
+### The destination question is written in, not answered
+
+`TESTING.md` ends with *"Specified here, not yet asserted"*, a gap list, and
+*"What this contract does not decide"*. Stage 8 takes all three, and the open
+destination questions go into them rather than blocking the document:
+
+- whether `/recaps` survives Stage 3 as its own destination or becomes a section
+  of `/`;
+- whether long-form writing is one place or two — 1g currently puts articles
+  inline on `/` and reaches the recaps through their index, a local call nobody
+  has checked against a whole-surface picture;
+- what earns a destination slot at all, so the next generated artifact does not
+  repeat the route-then-sitemap-then-no-link sequence.
+
+Settling those is Stage 3d's and Stage 1g's work. **Recording them as open is
+this stage's**, and it is worth doing on its own: they are currently scattered
+across 3d's open question, 1g's scope note, and nothing at all.
+
+### Navigation is deferred behind this, deliberately
+
+The navigation pane that raised this stage is **not part of it** and is not
+being written as a stage yet. A nav is a projection of the destination
+inventory; designing one while the inventory is open produces rework in the same
+week. It earns its own stage once the questions above are answered.
+
+**One carve-out.** `/dashboard` is a fixed destination that no contract decision
+can move, and the missing link to it is a live dead end on a deployed surface.
+It depends on nothing here and need not wait.
+
+**Gate 8:** `docs/PUBLIC_SURFACE.md` exists and holds the truth contract, the
+route and access contract, and the destination inventory; no rule it carries is
+also stated in this document; every `§` reference in this plan still resolves;
+`public-surface-check` cites the contract rather than this plan; and every
+unsettled destination question is written down as an open item rather than
+answered by omission.
 
 ---
 
@@ -2492,6 +2539,8 @@ is the only thing between this slice and `Done`. Cost: estimate 1, actual 1.
 | `scripts/public_surface_gate.py` | Extend Stage 1c's commit gate to the corpus data file, on the same digest-stamp mechanism |
 | A published-writing reconciliation skill | Stage 1g's two-way check: article against both surfaces, for drift and for harvest |
 | `.claude/skills/close-out/SKILL.md` | Stage 1h's step: did this work change a mechanism, name, or quantity either surface states |
+| `docs/PUBLIC_SURFACE.md` | Stage 8's durable contract: what may be said, what resolves and for whom, and where a reader is meant to go |
+| `.claude/skills/public-surface-check/SKILL.md` | Stage 8 re-sources its authority from the contract rather than from this plan |
 | `dashboard/app.py` | Canonical portfolio and dashboard links |
 | `ops/email.py` | Canonical destinations where needed |
 | `tests/ops/routers/test_info.py` | Stats and template behavior |
@@ -2572,9 +2621,18 @@ mouse, with active state signalled by colour alone.
 completed on 2026-08-20 and **dependent on nothing above**, so it can move
 earlier if shipping the numbers is worth more than the recap route.
 
+**8b. Stage 8 — extract the public surface contract. NEW 2026-09-02.** Raised
+out of a navigation question this plan could not answer: `/recaps` has a
+canonical route and no link, and the landing page links `/dashboard` nowhere.
+It sits **before step 9** because the destination questions it records are
+exactly what 3d and 1g need settled, and it blocks nothing above it — Stage 4 in
+particular is unaffected, so 8 and 8b may run in either order.
+
 **9. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
 question and whether `/recaps` leads with the newest week in full — govern both
-3d's markup and 1g's. Settle them, build 3d, then link the articles.
+3d's markup and 1g's. Settle them, build 3d, then link the articles. **Stage 8's
+destination inventory is the input to both**: whether `/recaps` is a destination
+at all is upstream of how it is laid out.
 
 **10. The remainder of Stage 5, then Stage 6's final verification.**
 
@@ -2621,6 +2679,9 @@ Plan 138 is complete only when:
   blocked by the commit gate;
 - closing out a slice asks, and records, whether the landed work changed a
   mechanism, name, or quantity either surface states;
+- the durable public-surface rules live in `docs/PUBLIC_SURFACE.md` rather than
+  in this plan, with no rule stated in both, and `public-surface-check` cites the
+  contract rather than a plan that has archived;
 - the demo is bounded, lazy, accessible, and cached;
 - interactive content works with keyboard and screen reader semantics;
 - scoped public security headers and local assets are in production;
