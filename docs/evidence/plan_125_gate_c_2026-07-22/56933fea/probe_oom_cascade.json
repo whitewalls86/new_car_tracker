@@ -1,0 +1,93 @@
+{
+  "command": "probe-oom-cascade",
+  "run_id": "56933fea",
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "6442450944",
+    "bytes": 6442450944
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.driver.memory": "900m",
+    "spark.master": "local[4]",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "0"
+  },
+  "steps": [
+    {
+      "name": "write_probe_fixture",
+      "ok": true,
+      "seconds": 2.392,
+      "detail": {
+        "path": "s3a://scale-harness/probe/observations"
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "direct_select_before_oom",
+      "ok": true,
+      "seconds": 0.518,
+      "detail": {
+        "n": 100,
+        "sql": "SELECT count(*) AS n FROM parquet.`s3a://scale-harness/probe/observations`"
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "induce_driver_oom",
+      "ok": false,
+      "seconds": 1.979,
+      "detail": {},
+      "error_class": "Py4JJavaError",
+      "error_message": "An error occurred while calling o89.collectToPython.\n: java.lang.OutOfMemoryError: Java heap space\n",
+      "traceback": "Traceback (most recent call last):\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 247, in run_step\n    detail = fn() or {}\n             ~~^^\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 507, in induce_oom\n    rows.collect()\n    ~~~~~~~~~~~~^^\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/sql/dataframe.py\", line 1263, in collect\n    sock_info = self._jdf.collectToPython()\n  File \"/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py\", line 1322, in __call__\n    return_value = get_return_value(\n        answer, self.gateway_client, self.target_id, self.name)\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py\", line 179, in deco\n    return f(*a, **kw)\n  File \"/usr/local/lib/python3.13/site-packages/py4j/protocol.py\", line 326, in get_return_value\n    raise Py4JJavaError(\n        \"An error occurred while calling {0}{1}{2}.\\n\".\n        format(target_id, \".\", name), value)\npy4j.protocol.Py4JJavaError: An error occurred while calling o89.collectToPython.\n: java.lang.OutOfMemoryError: Java heap space\n\n"
+    },
+    {
+      "name": "direct_select_after_oom",
+      "ok": false,
+      "seconds": 0.124,
+      "detail": {},
+      "error_class": "AnalysisException",
+      "error_message": "[UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY] Unsupported data source type for direct query on files: parquet; line 1 pos 26",
+      "traceback": "Traceback (most recent call last):\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 247, in run_step\n    detail = fn() or {}\n             ~~^^\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 515, in <lambda>\n    lambda: {\"n\": spark.sql(direct).collect()[0][\"n\"], \"sql\": direct},\n                  ~~~~~~~~~^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/sql/session.py\", line 1631, in sql\n    return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)\n                     ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py\", line 1322, in __call__\n    return_value = get_return_value(\n        answer, self.gateway_client, self.target_id, self.name)\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py\", line 185, in deco\n    raise converted from None\npyspark.errors.exceptions.captured.AnalysisException: [UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY] Unsupported data source type for direct query on files: parquet; line 1 pos 26\n"
+    },
+    {
+      "name": "iceberg_ctas_after_oom",
+      "ok": false,
+      "seconds": 0.143,
+      "detail": {},
+      "error_class": "Py4JJavaError",
+      "error_message": "An error occurred while calling o67.sql.\n: java.lang.IllegalStateException: Cannot call methods on a stopped SparkContext.\nThis stopped SparkContext was created at:\n\norg.apache.spark.api.java.JavaSparkContext.<init>(JavaSparkContext.scala:58)\njava.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method)\njava.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:77)\njava.base/jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45)\njava.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:500)\njava.base/java.lang.reflect.Constructor.newInstance(Constructor.java:481)\npy4j.reflection.MethodInvoker.invoke(MethodInvoker.java:247)\npy4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)\npy4j.Gateway.invoke(Gateway.java:238)\npy4j.commands.ConstructorCommand.invokeConstructor(ConstructorCommand.java:80)\npy4j.commands.ConstructorCommand.execute(ConstructorCommand.java:69)\npy4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)\npy4j.ClientServerConnection.run(ClientServerConnection.java:106)\njava.base/java.lang.Thread.run(Thread.java:840)\n\nThe currently active SparkContext was created at:\n\n(No active SparkContext.)\n         \n\tat org.apache.spark.SparkContext.assertNotStopped(SparkContext.scala:122)\n\tat org.apache.spark.SparkContext.$anonfun$parallelize$1(SparkContext.scala:937)\n\tat org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:151)\n\tat org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:112)\n\tat org.apache.spark.SparkContext.withScope(SparkContext.scala:919)\n\tat org.apache.spark.SparkContext.parallelize(SparkContext.scala:936)\n\tat org.apache.spark.sql.execution.SparkStrategies.singleRowRdd$lzycompute(SparkStrategies.scala:661)\n\tat org.apache.spark.sql.execution.SparkStrategies.singleRowRdd(SparkStrategies.scala:661)\n\tat org.apache.spark.sql.execution.SparkStrategies$BasicOperators$.apply(SparkStrategies.scala:908)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$1(QueryPlanner.scala:63)\n\tat scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.plan(QueryPlanner.scala:93)\n\tat org.apache.spark.sql.execution.SparkStrategies.plan(SparkStrategies.scala:70)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$3(QueryPlanner.scala:78)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:196)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:194)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat scala.collection.AbstractIterator.foreach(Iterator.scala:1431)\n\tat scala.collection.TraversableOnce.foldLeft(TraversableOnce.scala:199)\n\tat scala.collection.TraversableOnce.foldLeft$(TraversableOnce.scala:192)\n\tat scala.collection.AbstractIterator.foldLeft(Iterator.scala:1431)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$2(QueryPlanner.scala:75)\n\tat scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.plan(QueryPlanner.scala:93)\n\tat org.apache.spark.sql.execution.SparkStrategies.plan(SparkStrategies.scala:70)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$3(QueryPlanner.scala:78)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:196)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:194)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat scala.collection.AbstractIterator.foreach(Iterator",
+      "traceback": "Traceback (most recent call last):\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 247, in run_step\n    detail = fn() or {}\n             ~~^^\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 524, in <lambda>\n    \"sql\": spark.sql(\n           ~~~~~~~~~^\n        f\"CREATE OR REPLACE TABLE {CATALOG_NAME}.{WAREHOUSE_NAME}\"\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        f\".probe_after_oom USING iceberg AS SELECT 1 AS x\"\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/sql/session.py\", line 1631, in sql\n    return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)\n                     ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py\", line 1322, in __call__\n    return_value = get_return_value(\n        answer, self.gateway_client, self.target_id, self.name)\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py\", line 179, in deco\n    return f(*a, **kw)\n  File \"/usr/local/lib/python3.13/site-packages/py4j/protocol.py\", line 326, in get_return_value\n    raise Py4JJavaError(\n        \"An error occurred while calling {0}{1}{2}.\\n\".\n        format(target_id, \".\", name), value)\npy4j.protocol.Py4JJavaError: An error occurred while calling o67.sql.\n: java.lang.IllegalStateException: Cannot call methods on a stopped SparkContext.\nThis stopped SparkContext was created at:\n\norg.apache.spark.api.java.JavaSparkContext.<init>(JavaSparkContext.scala:58)\njava.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method)\njava.base/jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:77)\njava.base/jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45)\njava.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:500)\njava.base/java.lang.reflect.Constructor.newInstance(Constructor.java:481)\npy4j.reflection.MethodInvoker.invoke(MethodInvoker.java:247)\npy4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)\npy4j.Gateway.invoke(Gateway.java:238)\npy4j.commands.ConstructorCommand.invokeConstructor(ConstructorCommand.java:80)\npy4j.commands.ConstructorCommand.execute(ConstructorCommand.java:69)\npy4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)\npy4j.ClientServerConnection.run(ClientServerConnection.java:106)\njava.base/java.lang.Thread.run(Thread.java:840)\n\nThe currently active SparkContext was created at:\n\n(No active SparkContext.)\n         \n\tat org.apache.spark.SparkContext.assertNotStopped(SparkContext.scala:122)\n\tat org.apache.spark.SparkContext.$anonfun$parallelize$1(SparkContext.scala:937)\n\tat org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:151)\n\tat org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:112)\n\tat org.apache.spark.SparkContext.withScope(SparkContext.scala:919)\n\tat org.apache.spark.SparkContext.parallelize(SparkContext.scala:936)\n\tat org.apache.spark.sql.execution.SparkStrategies.singleRowRdd$lzycompute(SparkStrategies.scala:661)\n\tat org.apache.spark.sql.execution.SparkStrategies.singleRowRdd(SparkStrategies.scala:661)\n\tat org.apache.spark.sql.execution.SparkStrategies$BasicOperators$.apply(SparkStrategies.scala:908)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$1(QueryPlanner.scala:63)\n\tat scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.plan(QueryPlanner.scala:93)\n\tat org.apache.spark.sql.execution.SparkStrategies.plan(SparkStrategies.scala:70)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$3(QueryPlanner.scala:78)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:196)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:194)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat scala.collection.AbstractIterator.foreach(Iterator.scala:1431)\n\tat scala.collection.TraversableOnce.foldLeft(TraversableOnce.scala:199)\n\tat scala.collection.TraversableOnce.foldLeft$(TraversableOnce.scala:192)\n\tat scala.collection.AbstractIterator.foldLeft(Iterator.scala:1431)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$2(QueryPlanner.scala:75)\n\tat scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.plan(QueryPlanner.scala:93)\n\tat org.apache.spark.sql.execution.SparkStrategies.plan(SparkStrategies.scala:70)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$3(QueryPlanner.scala:78)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:196)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:194)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat scala.collection.AbstractIterator.foreach(Iterator.scala:1431)\n\tat scala.collection.TraversableOnce.foldLeft(TraversableOnce.scala:199)\n\tat scala.collection.TraversableOnce.foldLeft$(TraversableOnce.scala:192)\n\tat scala.collection.AbstractIterator.foldLeft(Iterator.scala:1431)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$2(QueryPlanner.scala:75)\n\tat scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.plan(QueryPlanner.scala:93)\n\tat org.apache.spark.sql.execution.SparkStrategies.plan(SparkStrategies.scala:70)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$3(QueryPlanner.scala:78)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:196)\n\tat scala.collection.TraversableOnce$folder$1.apply(TraversableOnce.scala:194)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat scala.collection.AbstractIterator.foreach(Iterator.scala:1431)\n\tat scala.collection.TraversableOnce.foldLeft(TraversableOnce.scala:199)\n\tat scala.collection.TraversableOnce.foldLeft$(TraversableOnce.scala:192)\n\tat scala.collection.AbstractIterator.foldLeft(Iterator.scala:1431)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.$anonfun$plan$2(QueryPlanner.scala:75)\n\tat scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)\n\tat scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)\n\tat org.apache.spark.sql.catalyst.planning.QueryPlanner.plan(QueryPlanner.scala:93)\n\tat org.apache.spark.sql.execution.SparkStrategies.plan(SparkStrategies.scala:70)\n\tat org.apache.spark.sql.execution.QueryExecution$.createSparkPlan(QueryExecution.scala:496)\n\tat org.apache.spark.sql.execution.QueryExecution.$anonfun$sparkPlan$1(QueryExecution.scala:171)\n\tat org.apache.spark.sql.catalyst.QueryPlanningTracker.measurePhase(QueryPlanningTracker.scala:138)\n\tat org.apache.spark.sql.execution.QueryExecution.$anonfun$executePhase$2(QueryExecution.scala:219)\n\tat org.apache.spark.sql.execution.QueryExecution$.withInternalError(QueryExecution.scala:546)\n\tat org.apache.spark.sql.execution.QueryExecution.$anonfun$executePhase$1(QueryExecution.scala:219)\n\tat org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)\n\tat org.apache.spark.sql.execution.QueryExecution.executePhase(QueryExecution.scala:218)\n\tat org.apache.spark.sql.execution.QueryExecution.sparkPlan$lzycompute(QueryExecution.scala:171)\n\tat org.apache.spark.sql.execution.QueryExecution.sparkPlan(QueryExecution.scala:164)\n\tat org.apache.spark.sql.execution.QueryExecution.$anonfun$executedPl"
+    }
+  ],
+  "ok": false,
+  "hypothesis": "A driver OutOfMemoryError leaves the shared SparkSession in a state where subsequent `parquet.`path`` direct queries fail with UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY, making the VM's failure 2 a cascade from failure 1 rather than an independent defect.",
+  "oom_rows": 8000000
+}

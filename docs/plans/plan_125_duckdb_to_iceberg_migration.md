@@ -1588,7 +1588,8 @@ results came back:
 | `run-model` | Run dbt over that data with explicit bounded sizing, capturing config, per-node timings, container cgroup limit, peak driver heap, and full error text. |
 
 Every subcommand writes a JSON evidence bundle (credentials redacted) under
-`.cache/lakehouse_scale_harness/<run-id>/`. 26 unit tests in
+`.cache/lakehouse_scale_harness/<run-id>/`; the completed Gate C runs are
+archived in [`docs/evidence/plan_125_gate_c_2026-07-22/`](../evidence/plan_125_gate_c_2026-07-22/), because `.cache/` is gitignored. 26 unit tests in
 `tests/lakehouse/test_scale_harness.py` cover the isolation guard, the sizing
 config, the probe matrix, and — the one most worth keeping — that the
 synthetic schema still covers every field the 28-field fingerprint hashes,
@@ -2370,7 +2371,7 @@ label and provenance disagree, which no green run will ever catch.**
 Instrumented replay of the 2026-07-17 shadow build: same selector, same
 production Parquet sources, same unset `spark.driver.memory` (so Spark's 1g
 default applies). `scripts/gate_c_shadow_replay.py`, evidence archived at
-`.cache/lakehouse_scale_harness/vm_replay/`.
+[`docs/evidence/plan_125_gate_c_2026-07-22/vm_replay/`](../evidence/plan_125_gate_c_2026-07-22/vm_replay/).
 
 **The OOM reproduced, and the stack trace that was lost in July is captured.**
 

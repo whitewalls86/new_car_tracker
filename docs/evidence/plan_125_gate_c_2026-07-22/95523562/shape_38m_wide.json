@@ -1,0 +1,142 @@
+{
+  "command": "describe-dataset",
+  "run_id": "95523562",
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "6442450944",
+    "bytes": 6442450944
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "1g",
+    "spark.driver.memory": "4g",
+    "spark.master": "local[4]"
+  },
+  "steps": [
+    {
+      "name": "row_count",
+      "ok": true,
+      "seconds": 5.823,
+      "detail": {
+        "stats": {
+          "rows": 38600000
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "artifact_fanout",
+      "ok": true,
+      "seconds": 8.43,
+      "detail": {
+        "stats": {
+          "min_rows": 8,
+          "p50": 12,
+          "p95": 12,
+          "p99": 13,
+          "max_rows": 13,
+          "artifacts": 3216667
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "observation_key_groups",
+      "ok": true,
+      "seconds": 13.942,
+      "detail": {
+        "stats": {
+          "max_rows": 2,
+          "p95": 1,
+          "groups": 37056001,
+          "groups_with_duplicates": 1543999
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "string_widths",
+      "ok": true,
+      "seconds": 74.544,
+      "detail": {
+        "stats": {
+          "body_avg": 512.0,
+          "body_p95": 512,
+          "body_max": 512,
+          "canonical_detail_url_avg": 180.0,
+          "canonical_detail_url_p95": 180,
+          "canonical_detail_url_max": 180,
+          "isa_context_avg": 96.0,
+          "isa_context_p95": 96,
+          "isa_context_max": 96,
+          "trid_avg": 64.0,
+          "trid_p95": 64,
+          "trid_max": 64,
+          "dealer_name_avg": 64.0,
+          "dealer_name_p95": 64,
+          "dealer_name_max": 64,
+          "trim_avg": 48.0,
+          "trim_p95": 48,
+          "trim_max": 48,
+          "listing_id_avg": 7.625792150259067,
+          "listing_id_p95": 8,
+          "listing_id_max": 8,
+          "vin_avg": 17.0,
+          "vin_p95": 17,
+          "vin_max": 17,
+          "customer_id_avg": 7.877777461139896,
+          "customer_id_p95": 8,
+          "customer_id_max": 8
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "storage",
+      "ok": true,
+      "seconds": 1.498,
+      "detail": {
+        "files": 1152,
+        "total_bytes": 6031147528,
+        "bytes_per_row": 156.25,
+        "bytes_per_file": 5235371.12
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    }
+  ],
+  "ok": true,
+  "path": "s3a://scale-harness/silver_normalized/observations"
+}

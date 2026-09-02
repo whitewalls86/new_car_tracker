@@ -1,0 +1,124 @@
+{
+  "command": "run-model",
+  "run_id": "1c855c5a",
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "6442450944",
+    "bytes": 6442450944
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "1g",
+    "spark.driver.memory": "1g",
+    "spark.master": "local[4]"
+  },
+  "steps": [
+    {
+      "name": "dbt_invoke",
+      "ok": true,
+      "seconds": 274.083,
+      "detail": {
+        "dbt_success": true,
+        "nodes": [
+          {
+            "node": "cartracker-on-run-start-0",
+            "status": "success",
+            "seconds": 0.01,
+            "message": "cartracker.on-run-start.0 passed"
+          },
+          {
+            "node": "int_latest_observation",
+            "status": "success",
+            "seconds": 69.69,
+            "message": "OK"
+          },
+          {
+            "node": "int_listing_observation_fingerprints",
+            "status": "success",
+            "seconds": 90.35,
+            "message": "OK"
+          },
+          {
+            "node": "int_listing_state_fingerprints",
+            "status": "success",
+            "seconds": 14.68,
+            "message": "OK"
+          },
+          {
+            "node": "int_price_history",
+            "status": "success",
+            "seconds": 6.26,
+            "message": "OK"
+          },
+          {
+            "node": "int_listing_observation_runs",
+            "status": "success",
+            "seconds": 39.79,
+            "message": "OK"
+          },
+          {
+            "node": "int_listing_state_runs",
+            "status": "success",
+            "seconds": 8.9,
+            "message": "OK"
+          },
+          {
+            "node": "int_benchmarks",
+            "status": "success",
+            "seconds": 2.29,
+            "message": "OK"
+          },
+          {
+            "node": "int_listing_volatility_features",
+            "status": "success",
+            "seconds": 35.81,
+            "message": "OK"
+          }
+        ]
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    }
+  ],
+  "ok": true,
+  "dbt_args": [
+    "run",
+    "--full-refresh",
+    "--select",
+    "+int_listing_volatility_features"
+  ],
+  "bucket": "scale-harness",
+  "peak_driver_heap_bytes": 650889744,
+  "jvm_runtime_facts": {
+    "jvm_max_heap_bytes": 1073741824,
+    "jvm_available_processors": 28,
+    "spark.driver.memory": "1g",
+    "spark.master": "local[4]",
+    "spark.sql.shuffle.partitions": "32",
+    "default_parallelism": 4
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "command": "probe-oom-cascade",
+  "run_id": "c7d4e3b8",
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "6442450944",
+    "bytes": 6442450944
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.driver.memory": "900m",
+    "spark.master": "local[4]",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "0"
+  },
+  "steps": [
+    {
+      "name": "write_probe_fixture",
+      "ok": true,
+      "seconds": 2.366,
+      "detail": {
+        "path": "s3a://scale-harness/probe/observations"
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "direct_select_before_oom",
+      "ok": true,
+      "seconds": 0.524,
+      "detail": {
+        "n": 100,
+        "sql": "SELECT count(*) AS n FROM parquet.`s3a://scale-harness/probe/observations`"
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "induce_driver_oom",
+      "ok": false,
+      "seconds": 1.87,
+      "detail": {},
+      "error_class": "Py4JJavaError",
+      "error_message": "An error occurred while calling o89.collectToPython.\n: java.lang.OutOfMemoryError: Java heap space\n\tat org.apache.spark.sql.execution.SparkPlan$$anon$1._next(SparkPlan.scala:417)\n\tat org.apache.spark.sql.execution.SparkPlan$$anon$1.getNext(SparkPlan.scala:426)\n\tat org.apache.spark.sql.execution.SparkPlan$$anon$1.getNext(SparkPlan.scala:412)\n\tat org.apache.spark.util.NextIterator.hasNext(NextIterator.scala:73)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat org.apache.spark.util.NextIterator.foreach(NextIterator.scala:21)\n\tat org.apache.spark.sql.execution.SparkPlan.$anonfun$executeCollect$1(SparkPlan.scala:449)\n\tat org.apache.spark.sql.execution.SparkPlan.$anonfun$executeCollect$1$adapted(SparkPlan.scala:448)\n\tat org.apache.spark.sql.execution.SparkPlan$$Lambda$4426/0x00007a1ad145fac0.apply(Unknown Source)\n\tat scala.collection.IndexedSeqOptimized.foreach(IndexedSeqOptimized.scala:36)\n\tat scala.collection.IndexedSeqOptimized.foreach$(IndexedSeqOptimized.scala:33)\n\tat scala.collection.mutable.ArrayOps$ofRef.foreach(ArrayOps.scala:198)\n\tat org.apache.spark.sql.execution.SparkPlan.executeCollect(SparkPlan.scala:448)\n\tat org.apache.spark.sql.Dataset.$anonfun$collectToPython$1(Dataset.scala:4149)\n\tat org.apache.spark.sql.Dataset$$Lambda$3746/0x00007a1ad1320000.apply(Unknown Source)\n\tat org.apache.spark.sql.Dataset.$anonfun$withAction$2(Dataset.scala:4323)\n\tat org.apache.spark.sql.Dataset$$Lambda$3907/0x00007a1ad1363ac8.apply(Unknown Source)\n\tat org.apache.spark.sql.execution.QueryExecution$.withInternalError(QueryExecution.scala:546)\n\tat org.apache.spark.sql.Dataset.$anonfun$withAction$1(Dataset.scala:4321)\n\tat org.apache.spark.sql.Dataset$$Lambda$3747/0x00007a1ad1320698.apply(Unknown Source)\n\tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)\n\tat org.apache.spark.sql.execution.SQLExecution$$$Lambda$1369/0x00007a1ad09e74a8.apply(Unknown Source)\n\tat org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)\n\tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)\n\tat org.apache.spark.sql.execution.SQLExecution$$$Lambda$1359/0x00007a1ad09e3f60.apply(Unknown Source)\n\tat org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)\n\tat org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)\n\tat org.apache.spark.sql.Dataset.withAction(Dataset.scala:4321)\n\tat org.apache.spark.sql.Dataset.collectToPython(Dataset.scala:4146)\n\tat java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)\n\tat java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)\n",
+      "traceback": "Traceback (most recent call last):\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 247, in run_step\n    detail = fn() or {}\n             ~~^^\n  File \"/app/scripts/lakehouse_scale_harness.py\", line 507, in induce_oom\n    rows.collect()\n    ~~~~~~~~~~~~^^\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/sql/dataframe.py\", line 1263, in collect\n    sock_info = self._jdf.collectToPython()\n  File \"/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py\", line 1322, in __call__\n    return_value = get_return_value(\n        answer, self.gateway_client, self.target_id, self.name)\n  File \"/usr/local/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py\", line 179, in deco\n    return f(*a, **kw)\n  File \"/usr/local/lib/python3.13/site-packages/py4j/protocol.py\", line 326, in get_return_value\n    raise Py4JJavaError(\n        \"An error occurred while calling {0}{1}{2}.\\n\".\n        format(target_id, \".\", name), value)\npy4j.protocol.Py4JJavaError: An error occurred while calling o89.collectToPython.\n: java.lang.OutOfMemoryError: Java heap space\n\tat org.apache.spark.sql.execution.SparkPlan$$anon$1._next(SparkPlan.scala:417)\n\tat org.apache.spark.sql.execution.SparkPlan$$anon$1.getNext(SparkPlan.scala:426)\n\tat org.apache.spark.sql.execution.SparkPlan$$anon$1.getNext(SparkPlan.scala:412)\n\tat org.apache.spark.util.NextIterator.hasNext(NextIterator.scala:73)\n\tat scala.collection.Iterator.foreach(Iterator.scala:943)\n\tat scala.collection.Iterator.foreach$(Iterator.scala:943)\n\tat org.apache.spark.util.NextIterator.foreach(NextIterator.scala:21)\n\tat org.apache.spark.sql.execution.SparkPlan.$anonfun$executeCollect$1(SparkPlan.scala:449)\n\tat org.apache.spark.sql.execution.SparkPlan.$anonfun$executeCollect$1$adapted(SparkPlan.scala:448)\n\tat org.apache.spark.sql.execution.SparkPlan$$Lambda$4426/0x00007a1ad145fac0.apply(Unknown Source)\n\tat scala.collection.IndexedSeqOptimized.foreach(IndexedSeqOptimized.scala:36)\n\tat scala.collection.IndexedSeqOptimized.foreach$(IndexedSeqOptimized.scala:33)\n\tat scala.collection.mutable.ArrayOps$ofRef.foreach(ArrayOps.scala:198)\n\tat org.apache.spark.sql.execution.SparkPlan.executeCollect(SparkPlan.scala:448)\n\tat org.apache.spark.sql.Dataset.$anonfun$collectToPython$1(Dataset.scala:4149)\n\tat org.apache.spark.sql.Dataset$$Lambda$3746/0x00007a1ad1320000.apply(Unknown Source)\n\tat org.apache.spark.sql.Dataset.$anonfun$withAction$2(Dataset.scala:4323)\n\tat org.apache.spark.sql.Dataset$$Lambda$3907/0x00007a1ad1363ac8.apply(Unknown Source)\n\tat org.apache.spark.sql.execution.QueryExecution$.withInternalError(QueryExecution.scala:546)\n\tat org.apache.spark.sql.Dataset.$anonfun$withAction$1(Dataset.scala:4321)\n\tat org.apache.spark.sql.Dataset$$Lambda$3747/0x00007a1ad1320698.apply(Unknown Source)\n\tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)\n\tat org.apache.spark.sql.execution.SQLExecution$$$Lambda$1369/0x00007a1ad09e74a8.apply(Unknown Source)\n\tat org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)\n\tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)\n\tat org.apache.spark.sql.execution.SQLExecution$$$Lambda$1359/0x00007a1ad09e3f60.apply(Unknown Source)\n\tat org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)\n\tat org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)\n\tat org.apache.spark.sql.Dataset.withAction(Dataset.scala:4321)\n\tat org.apache.spark.sql.Dataset.collectToPython(Dataset.scala:4146)\n\tat java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)\n\tat java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)\n\n"
+    },
+    {
+      "name": "direct_select_after_oom",
+      "ok": true,
+      "seconds": 0.193,
+      "detail": {
+        "n": 100,
+        "sql": "SELECT count(*) AS n FROM parquet.`s3a://scale-harness/probe/observations`"
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "iceberg_ctas_after_oom",
+      "ok": true,
+      "seconds": 0.839,
+      "detail": {
+        "sql": "ok"
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    }
+  ],
+  "ok": false,
+  "hypothesis": "A driver OutOfMemoryError leaves the shared SparkSession in a state where subsequent `parquet.`path`` direct queries fail with UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY, making the VM's failure 2 a cascade from failure 1 rather than an independent defect.",
+  "oom_rows": 8000000
+}

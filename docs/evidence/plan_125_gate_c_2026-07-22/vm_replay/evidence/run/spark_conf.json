@@ -1,0 +1,20 @@
+{
+  "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+  "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+  "spark.sql.catalog.cartracker.type": "rest",
+  "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+  "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+  "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+  "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+  "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+  "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+  "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+  "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+  "spark.hadoop.fs.s3a.access.key": "<redacted>",
+  "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+  "spark.hadoop.fs.s3a.path.style.access": "true",
+  "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+  "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+  "spark.sql.defaultCatalog": "cartracker",
+  "spark.sql.session.timeZone": "UTC"
+}

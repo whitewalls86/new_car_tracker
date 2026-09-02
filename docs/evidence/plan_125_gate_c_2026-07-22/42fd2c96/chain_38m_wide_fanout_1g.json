@@ -1,0 +1,124 @@
+{
+  "command": "run-model",
+  "run_id": "42fd2c96",
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "6442450944",
+    "bytes": 6442450944
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "1g",
+    "spark.driver.memory": "1g",
+    "spark.master": "local[4]"
+  },
+  "steps": [
+    {
+      "name": "dbt_invoke",
+      "ok": true,
+      "seconds": 182.925,
+      "detail": {
+        "dbt_success": false,
+        "nodes": [
+          {
+            "node": "cartracker-on-run-start-0",
+            "status": "success",
+            "seconds": 0.01,
+            "message": "cartracker.on-run-start.0 passed"
+          },
+          {
+            "node": "int_latest_observation",
+            "status": "success",
+            "seconds": 86.63,
+            "message": "OK"
+          },
+          {
+            "node": "int_listing_observation_fingerprints",
+            "status": "error",
+            "seconds": 90.27,
+            "message": "Runtime Error in model int_listing_observation_fingerprints (models/intermediate/int_listing_observation_fingerprints.sql)\n  An error occurred while calling o67.sql.\n  : org.apache.spark.SparkException: Job aborted due to stage failure: Task 26 in stage 7.0 failed 1 times, most recent failure: Lost task 26.0 in stage 7.0 (TID 226) (0c3e7dfa2b62 executor driver): java.lang.OutOfMemoryError: Java heap space\n  \n  Driver stacktrace:\n  \tat org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)\n  \tat scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)\n  \tat scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)\n  \tat scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)\n  \tat org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)\n  \tat scala.Option.foreach(Option.scala:407)\n  \tat org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)\n  \tat org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)\n  \tat org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)\n  \tat org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)\n  \tat org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)\n  \tat org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)\n  \tat org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)\n  \tat org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)\n  \tat org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)\n  \tat org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)\n  \tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)\n  \tat org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)\n  \tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)\n  \tat org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)\n  \tat org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)\n  \tat org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)\n  \tat org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)\n  \tat org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)\n  \tat org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)\n  \tat org.apache.spark.sql.catalyst.trees.TreeNode.transfor"
+          },
+          {
+            "node": "int_listing_state_fingerprints",
+            "status": "error",
+            "seconds": 0.11,
+            "message": "Runtime Error in model int_listing_state_fingerprints (models/intermediate/int_listing_state_fingerprints.sql)\n  Runtime Error\n    [Errno 111] Connection refused"
+          },
+          {
+            "node": "int_price_history",
+            "status": "error",
+            "seconds": 0.03,
+            "message": "Runtime Error in model int_price_history (models/intermediate/int_price_history.sql)\n  Runtime Error\n    [Errno 111] Connection refused"
+          },
+          {
+            "node": "int_listing_observation_runs",
+            "status": "skipped",
+            "seconds": 0,
+            "message": ""
+          },
+          {
+            "node": "int_listing_state_runs",
+            "status": "skipped",
+            "seconds": 0,
+            "message": ""
+          },
+          {
+            "node": "int_benchmarks",
+            "status": "skipped",
+            "seconds": 0,
+            "message": ""
+          },
+          {
+            "node": "int_listing_volatility_features",
+            "status": "skipped",
+            "seconds": 0,
+            "message": ""
+          }
+        ]
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    }
+  ],
+  "ok": true,
+  "dbt_args": [
+    "run",
+    "--full-refresh",
+    "--select",
+    "+int_listing_volatility_features"
+  ],
+  "bucket": "scale-harness",
+  "peak_driver_heap_bytes": null,
+  "jvm_runtime_facts": {
+    "jvm_max_heap_bytes": 1073741824,
+    "jvm_available_processors": 28,
+    "spark.driver.memory": "1g",
+    "spark.master": "local[4]",
+    "spark.sql.shuffle.partitions": "32",
+    "default_parallelism": 4
+  }
+}

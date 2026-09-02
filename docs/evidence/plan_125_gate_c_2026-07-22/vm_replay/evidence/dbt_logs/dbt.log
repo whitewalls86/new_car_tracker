@@ -1,0 +1,2736 @@
+[0m23:57:33.023665 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf2943af52120>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf2943e046e90>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf29439f3bb10>]}
+
+
+============================== 23:57:33.032937 | 590fa675-cb8e-47f5-a277-8f7d3a25987e ==============================
+[0m23:57:33.032937 [info ] [MainThread]: Running with dbt=1.10.20
+[0m23:57:33.033469 [debug] [MainThread]: running dbt with arguments {'write_json': 'True', 'send_anonymous_usage_stats': 'True', 'profiles_dir': '/app/dbt', 'version_check': 'True', 'static_parser': 'True', 'log_format': 'default', 'empty': 'None', 'target_path': 'None', 'invocation_command': 'dbt deps', 'quiet': 'False', 'fail_fast': 'False', 'introspect': 'True', 'use_colors': 'True', 'log_cache_events': 'False', 'no_print': 'None', 'log_path': '/app/dbt/logs', 'partial_parse': 'True', 'debug': 'False', 'warn_error': 'None', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'use_experimental_parser': 'False', 'indirect_selection': 'eager', 'printer_width': '80', 'cache_selected_only': 'False'}
+[0m23:57:33.164078 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': '590fa675-cb8e-47f5-a277-8f7d3a25987e', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf2943ae1a190>]}
+[0m23:57:33.181183 [debug] [MainThread]: Set downloads directory='/tmp/dbt-downloads-j0_kn13o'
+[0m23:57:33.181875 [debug] [MainThread]: Making package index registry request: GET https://hub.getdbt.com/api/v1/index.json
+[0m23:57:33.278559 [debug] [MainThread]: Response from registry index: GET https://hub.getdbt.com/api/v1/index.json 200
+[0m23:57:33.280544 [debug] [MainThread]: Making package registry request: GET https://hub.getdbt.com/api/v1/dbt-labs/dbt_utils.json
+[0m23:57:33.326597 [debug] [MainThread]: Response from registry: GET https://hub.getdbt.com/api/v1/dbt-labs/dbt_utils.json 200
+[0m23:57:33.341337 [info ] [MainThread]: Updating lock file in file path: /app/dbt/package-lock.yml
+[0m23:57:33.343622 [debug] [MainThread]: Set downloads directory='/tmp/dbt-downloads-og_nxj0h'
+[0m23:57:33.347740 [info ] [MainThread]: Installing dbt-labs/dbt_utils
+[0m23:57:33.563876 [info ] [MainThread]: Installed from version 1.3.3
+[0m23:57:33.564338 [info ] [MainThread]: Updated version available: 1.4.1
+[0m23:57:33.564723 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'package', 'label': '590fa675-cb8e-47f5-a277-8f7d3a25987e', 'property_': 'install', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf29439f5a580>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf29439f5abe0>]}
+[0m23:57:33.565090 [info ] [MainThread]: 
+[0m23:57:33.565397 [info ] [MainThread]: Updates available for packages: ['dbt-labs/dbt_utils']                 
+Update your versions in packages.yml, then run dbt deps
+[0m23:57:33.566595 [debug] [MainThread]: Resource report: {"command_name": "deps", "command_success": true, "command_wall_clock_time": 0.6123936, "process_in_blocks": "0", "process_kernel_time": 0.176639, "process_mem_max_rss": "103804", "process_out_blocks": "3840", "process_user_time": 1.78302}
+[0m23:57:33.567051 [debug] [MainThread]: Command `dbt deps` succeeded at 23:57:33.566944 after 0.61 seconds
+[0m23:57:33.567350 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf29439d34b50>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf2943a19e030>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xf29439f05a90>]}
+[0m23:57:33.567718 [debug] [MainThread]: Flushing usage events
+[0m23:57:33.797176 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m00:02:50.644067 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8c00a7380>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8c1be1810>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b8b3bed0>]}
+
+
+============================== 00:02:50.648544 | bb35a5d6-0d15-43ab-95c4-26f30dc0c884 ==============================
+[0m00:02:50.648544 [info ] [MainThread]: Running with dbt=1.10.20
+[0m00:02:50.649112 [debug] [MainThread]: running dbt with arguments {'use_colors': 'True', 'quiet': 'False', 'cache_selected_only': 'False', 'fail_fast': 'False', 'printer_width': '80', 'introspect': 'True', 'version_check': 'True', 'target_path': 'None', 'send_anonymous_usage_stats': 'True', 'write_json': 'True', 'warn_error': 'None', 'log_path': '/app/dbt/logs', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'empty': 'False', 'no_print': 'None', 'profiles_dir': '/app/dbt', 'log_cache_events': 'False', 'indirect_selection': 'eager', 'static_parser': 'True', 'debug': 'False', 'use_experimental_parser': 'False', 'log_format': 'default', 'invocation_command': 'dbt --evidence-dir /evidence/run', 'partial_parse': 'True'}
+[0m00:02:50.699326 [debug] [MainThread]: Spark adapter: Setting pyhive.hive logging to ERROR
+[0m00:02:50.699855 [debug] [MainThread]: Spark adapter: Setting thrift.transport logging to ERROR
+[0m00:02:50.700177 [debug] [MainThread]: Spark adapter: Setting thrift.protocol logging to ERROR
+[0m00:02:50.896431 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b98b9ba0>]}
+[0m00:02:50.968981 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'adapter_info', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b8812140>]}
+[0m00:02:50.969771 [info ] [MainThread]: Registered adapter: spark=1.10.3
+[0m00:02:51.064987 [debug] [MainThread]: checksum: 34347fce0aa6cc34c02d0f110bc226b7cd4ea757f50657341381eba5c8f29c1a, vars: {}, profile: , target: spark, version: 1.10.20
+[0m00:02:51.065750 [info ] [MainThread]: Unable to do partial parsing because saved manifest not found. Starting full parse.
+[0m00:02:51.066132 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'partial_parser', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b89d7050>]}
+[0m00:02:53.124445 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.124953 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.146614 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.154989 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.159712 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.160095 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.165475 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.165944 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.170624 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.171035 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.174673 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.368540 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.371919 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.374534 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.374953 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.378033 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.385855 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.386205 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.388321 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.388694 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.392395 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.392823 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.394913 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.417541 [debug] [MainThread]: STDERR: "Unit Test fixtures benefit from having at least one row free of Null values to ensure consistent column types. Failure to meet this recommendation can result in type mismatch errors between unit test source models and `expected` fixtures."
+[0m00:02:53.685275 [warn ] [MainThread]: [[33mWARNING[0m]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
+There are 1 unused configuration paths:
+- models.cartracker.ops
+[0m00:02:53.701079 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'load_project', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b820b5c0>]}
+[0m00:02:54.011698 [debug] [MainThread]: Wrote artifact WritableManifest to /app/dbt/target/manifest.json
+[0m00:02:54.015653 [debug] [MainThread]: Wrote artifact SemanticManifest to /app/dbt/target/semantic_manifest.json
+[0m00:02:54.053586 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'resource_counts', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b3f858d0>]}
+[0m00:02:54.054181 [info ] [MainThread]: Found 22 models, 1 operation, 155 data tests, 6 sources, 670 macros, 65 unit tests
+[0m00:02:54.054627 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b388d160>]}
+[0m00:02:54.059558 [info ] [MainThread]: 
+[0m00:02:54.059982 [info ] [MainThread]: Concurrency: 1 threads (target='spark')
+[0m00:02:54.060280 [info ] [MainThread]: 
+[0m00:02:54.060832 [debug] [MainThread]: Acquiring new spark connection 'master'
+[0m00:02:54.068956 [debug] [ThreadPool]: Acquiring new spark connection 'list_schemas'
+[0m00:02:54.086329 [debug] [ThreadPool]: Using spark connection "list_schemas"
+[0m00:02:54.087232 [debug] [ThreadPool]: On list_schemas: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "connection_name": "list_schemas"} */
+
+    show databases
+  
+[0m00:02:54.087497 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m00:02:54.155697 [debug] [ThreadPool]: SQL status: OK in 0.068 seconds
+[0m00:02:54.198195 [debug] [ThreadPool]: On list_schemas: Close
+[0m00:02:54.202225 [debug] [ThreadPool]: Re-using an available connection from the pool (formerly list_schemas, now list_None_cartracker_experiments)
+[0m00:02:54.209035 [debug] [ThreadPool]: Spark adapter: NotImplemented: add_begin_query
+[0m00:02:54.209415 [debug] [ThreadPool]: Using spark connection "list_None_cartracker_experiments"
+[0m00:02:54.209730 [debug] [ThreadPool]: On list_None_cartracker_experiments: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "connection_name": "list_None_cartracker_experiments"} */
+show table extended in cartracker_experiments like '*'
+  
+[0m00:02:54.210005 [debug] [ThreadPool]: Opening a new connection, currently in state closed
+[0m00:02:54.264770 [debug] [ThreadPool]: Spark adapter: Error while running:
+/* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "connection_name": "list_None_cartracker_experiments"} */
+show table extended in cartracker_experiments like '*'
+  
+[0m00:02:54.265540 [debug] [ThreadPool]: Spark adapter: Runtime Error
+  SHOW TABLE EXTENDED is not supported for v2 tables.;
+  ShowTableExtended *, [namespace#63, tableName#64, isTemporary#65, information#66]
+  +- ResolvedNamespace org.apache.iceberg.spark.SparkCatalog@2abb5258, [cartracker_experiments]
+  
+[0m00:02:54.265937 [debug] [ThreadPool]: Spark adapter: Error while running:
+macro list_relations_without_caching
+[0m00:02:54.266209 [debug] [ThreadPool]: Spark adapter: Runtime Error
+  Runtime Error
+    SHOW TABLE EXTENDED is not supported for v2 tables.;
+    ShowTableExtended *, [namespace#63, tableName#64, isTemporary#65, information#66]
+    +- ResolvedNamespace org.apache.iceberg.spark.SparkCatalog@2abb5258, [cartracker_experiments]
+    
+[0m00:02:54.270573 [debug] [ThreadPool]: Using spark connection "list_None_cartracker_experiments"
+[0m00:02:54.270934 [debug] [ThreadPool]: On list_None_cartracker_experiments: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "connection_name": "list_None_cartracker_experiments"} */
+show tables in cartracker_experiments like '*'
+  
+[0m00:02:54.330790 [debug] [ThreadPool]: SQL status: OK in 0.059 seconds
+[0m00:02:54.353720 [debug] [ThreadPool]: Using spark connection "list_None_cartracker_experiments"
+[0m00:02:54.354145 [debug] [ThreadPool]: On list_None_cartracker_experiments: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "connection_name": "list_None_cartracker_experiments"} */
+describe extended cartracker_experiments.int_latest_observation
+  
+[0m00:02:54.531430 [debug] [ThreadPool]: SQL status: OK in 0.177 seconds
+[0m00:02:54.564672 [debug] [ThreadPool]: On list_None_cartracker_experiments: ROLLBACK
+[0m00:02:54.565371 [debug] [ThreadPool]: Spark adapter: NotImplemented: rollback
+[0m00:02:54.565708 [debug] [ThreadPool]: On list_None_cartracker_experiments: Close
+[0m00:02:54.567576 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b37a68d0>]}
+[0m00:02:54.568145 [debug] [MainThread]: Spark adapter: NotImplemented: add_begin_query
+[0m00:02:54.568467 [debug] [MainThread]: Spark adapter: NotImplemented: commit
+[0m00:02:54.576684 [debug] [MainThread]: Writing injected SQL for node "operation.cartracker.cartracker-on-run-start-0"
+[0m00:02:54.581799 [info ] [MainThread]: 1 of 1 START hook: cartracker.on-run-start.0 ................................... [RUN]
+[0m00:02:54.582368 [info ] [MainThread]: 1 of 1 OK hook: cartracker.on-run-start.0 ...................................... [[32mOK[0m in 0.01s]
+[0m00:02:54.582714 [info ] [MainThread]: 
+[0m00:02:54.593093 [debug] [Thread-4 (]: Began running node model.cartracker.stg_observations
+[0m00:02:54.593638 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly list_None_cartracker_experiments, now model.cartracker.stg_observations)
+[0m00:02:54.594001 [debug] [Thread-4 (]: Began compiling node model.cartracker.stg_observations
+[0m00:02:54.598584 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.stg_observations"
+[0m00:02:54.599646 [debug] [Thread-4 (]: Finished running node model.cartracker.stg_observations
+[0m00:02:54.600045 [debug] [Thread-4 (]: Began running node model.cartracker.stg_price_events
+[0m00:02:54.600462 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.stg_observations, now model.cartracker.stg_price_events)
+[0m00:02:54.601121 [debug] [Thread-4 (]: Began compiling node model.cartracker.stg_price_events
+[0m00:02:54.605500 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.stg_price_events"
+[0m00:02:54.606538 [debug] [Thread-4 (]: Finished running node model.cartracker.stg_price_events
+[0m00:02:54.607386 [debug] [Thread-4 (]: Began running node model.cartracker.int_latest_observation
+[0m00:02:54.607958 [info ] [Thread-4 (]: 1 of 8 START sql incremental model cartracker_experiments.int_latest_observation  [RUN]
+[0m00:02:54.608836 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.stg_price_events, now model.cartracker.int_latest_observation)
+[0m00:02:54.609183 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_latest_observation
+[0m00:02:54.634084 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_latest_observation"
+[0m00:02:54.634926 [debug] [Thread-4 (]: Began executing node model.cartracker.int_latest_observation
+[0m00:02:54.675114 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_latest_observation"
+[0m00:02:54.675597 [debug] [Thread-4 (]: On model.cartracker.int_latest_observation: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_latest_observation"} */
+drop table if exists cartracker_experiments.int_latest_observation
+[0m00:02:54.675942 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:02:54.718840 [debug] [Thread-4 (]: SQL status: OK in 0.042 seconds
+[0m00:02:54.761386 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_latest_observation"
+[0m00:02:54.762398 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:02:54.762817 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_latest_observation"
+[0m00:02:54.763404 [debug] [Thread-4 (]: On model.cartracker.int_latest_observation: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_latest_observation"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_latest_observation
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- One row per VIN: the best data-rich observation, preferring detail > srp > carousel.
+-- Requires make IS NOT NULL so vehicle attributes (make/model/trim/year/dealer etc.)
+-- are always usable downstream.  Unlisted detail pages return no vehicle JSON → NULL make;
+-- those rows are intentionally excluded here.  listing_state for those VINs is handled
+-- via the latest_state CTE in mart_vehicle_snapshot, which reads stg_observations directly.
+--
+-- Replaces: int_vehicle_attributes + int_latest_tier1_observation_by_vin + int_listing_to_vin
+--
+-- Incremental strategy: affected-VIN replacement (Plan 123 Phase 5), same
+-- delete+insert base strategy as int_price_history (Phase 3) and
+-- int_listing_state_runs (Phase 4). This is NOT a simple "latest by time"
+-- model: source-priority ranking (detail > srp > carousel, checked before
+-- recency) means the winning row for a VIN can be an OLDER detail
+-- observation that beats a newer SRP/carousel one. So a VIN touched by any
+-- new, late, or corrected observation inside the lookback window has its
+-- ENTIRE observation history reread and reranked here — not just the recent
+-- rows — or an older detail row could be incorrectly dropped in favor of a
+-- newer but lower-priority observation. On an incremental run, a vin17 is
+-- "affected" if it has a stg_observations row (any source, any make) with
+-- fetched_at at or after max(target.fetched_at) minus
+-- latest_observation_incremental_lookback_days; that recent lookback is used
+-- only to discover which VINs changed, never to filter which rows compete
+-- for the winning rank. First run and --full-refresh skip the filter and
+-- rank the full source, matching prior full-table behavior exactly.
+
+with  __dbt__cte__stg_observations as (
+
+
+-- Unified view of all parsed observations from MinIO silver.
+-- Single source of truth for all three observation types (srp, detail, carousel).
+-- Adds vin17: cleaned, validated 17-character VIN. All other fields pass through.
+--
+-- Plan 125 Gate B: `ephemeral` on the spark target, `view` everywhere else.
+-- Not a semantic difference -- both mean "no stored data, recomputed on demand".
+-- A persisted Spark view stores its body and re-analyzes it against the VIEW's
+-- own catalog on read, which rewrites the parquet.`s3a://...` reference below
+-- into cartracker.parquet.`s3a://...` and fails with TABLE_OR_VIEW_NOT_FOUND.
+-- ephemeral compiles to a CTE, where the reference resolves correctly.
+-- (Found at Gate A on stg_blocked_cooldown_events; same cause here.)
+
+select
+    artifact_id,
+    listing_id,
+    source,
+    listing_state,
+    fetched_at,
+    written_at,
+    vin,
+    case
+        when vin is not null
+         and length(vin) = 17
+         and 
+  (upper(vin) rlike '^[A-Z0-9]{17}$')
+
+        then upper(vin)
+        else null
+    end                  as vin17,
+    price,
+    make,
+    model,
+    trim                 as vehicle_trim,
+    year                 as model_year,
+    mileage,
+    msrp,
+    stock_type,
+    fuel_type,
+    body_style,
+    dealer_name,
+    dealer_zip,
+    dealer_city,
+    dealer_state,
+    customer_id,
+    canonical_detail_url,
+    financing_type,
+    seller_zip,
+    seller_customer_id,
+    page_number,
+    position_on_page,
+    trid,
+    isa_context,
+    body,
+    condition
+from parquet.`s3a://bronze/silver_normalized/observations/`
+), affected_vins as (
+
+    select distinct vin17
+    from __dbt__cte__stg_observations
+    where vin17 is not null
+
+    
+
+),
+
+candidates as (
+
+    select o.*
+    from __dbt__cte__stg_observations o
+    
+    where o.vin17 is not null
+      and o.make is not null
+
+)
+
+-- Plan 125 Gate B (audit F2): `select * exclude (_rn)` is DuckDB-only syntax
+-- and is now spelled out as an explicit column list, which both targets share.
+--
+-- This makes the model's output schema EXPLICIT for the first time. Worth
+-- naming as a real risk rather than a tidy-up: `* exclude` meant this model's
+-- columns were whatever stg_observations happened to select, so a new source
+-- column used to flow through to every downstream consumer automatically. Now
+-- it will not — a column added to stg_observations must be added here too, or
+-- it silently stops appearing downstream.
+--
+-- Nothing currently catches that drift automatically, and it is worth being
+-- precise about why: this model's schema file documents only vin17/source/make,
+-- not the full column list, so it is not a backstop. Until Gate E the Gate B
+-- parity script's column-set check is the thing that would surface a mismatch,
+-- and only while the dual-run lasts. A `select *`-shaped contract cannot be
+-- both portable and drift-proof; explicit + tested beats implicit + unportable.
+--
+-- The list below is stg_observations' select list verbatim (vin17 replacing the
+-- raw vin passthrough position), minus _rn. Keep it in sync with that model.
+select
+    artifact_id,
+    listing_id,
+    source,
+    listing_state,
+    fetched_at,
+    written_at,
+    vin,
+    vin17,
+    price,
+    make,
+    model,
+    vehicle_trim,
+    model_year,
+    mileage,
+    msrp,
+    stock_type,
+    fuel_type,
+    body_style,
+    dealer_name,
+    dealer_zip,
+    dealer_city,
+    dealer_state,
+    customer_id,
+    canonical_detail_url,
+    financing_type,
+    seller_zip,
+    seller_customer_id,
+    page_number,
+    position_on_page,
+    trid,
+    isa_context,
+    body,
+    condition
+from (
+    select
+        *,
+        row_number() over (
+            partition by vin17
+            order by
+                case source when 'detail' then 1 when 'srp' then 2 else 3 end,
+                fetched_at desc,
+                artifact_id desc
+        ) as _rn
+    from candidates
+)
+where _rn = 1
+  
+[0m00:03:42.883095 [debug] [Thread-4 (]: SQL status: OK in 48.119 seconds
+[0m00:03:42.904102 [debug] [Thread-4 (]: On model.cartracker.int_latest_observation: ROLLBACK
+[0m00:03:42.904628 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:03:42.904958 [debug] [Thread-4 (]: On model.cartracker.int_latest_observation: Close
+[0m00:03:42.906716 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b80d0260>]}
+[0m00:03:42.907444 [info ] [Thread-4 (]: 1 of 8 OK created sql incremental model cartracker_experiments.int_latest_observation  [[32mOK[0m in 48.30s]
+[0m00:03:42.908082 [debug] [Thread-4 (]: Finished running node model.cartracker.int_latest_observation
+[0m00:03:42.908544 [debug] [Thread-4 (]: Began running node model.cartracker.int_listing_observation_fingerprints
+[0m00:03:42.909140 [info ] [Thread-4 (]: 2 of 8 START sql incremental model cartracker_experiments.int_listing_observation_fingerprints  [RUN]
+[0m00:03:42.909629 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.int_latest_observation, now model.cartracker.int_listing_observation_fingerprints)
+[0m00:03:42.909986 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_listing_observation_fingerprints
+[0m00:03:42.955304 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_listing_observation_fingerprints"
+[0m00:03:42.956103 [debug] [Thread-4 (]: Began executing node model.cartracker.int_listing_observation_fingerprints
+[0m00:03:42.959827 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_listing_observation_fingerprints"
+[0m00:03:42.960602 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:03:42.960976 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_listing_observation_fingerprints"
+[0m00:03:42.961704 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_fingerprints: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_observation_fingerprints"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_listing_observation_fingerprints
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- One row per observed listing per artifact, across detail, SRP, and carousel
+-- sources (Plan 123 Phase 2b). int_listing_state_fingerprints is detail-only and
+-- keyed on bare artifact_id; that key does not hold here because a single SRP or
+-- carousel artifact can carry many listing_ids, so the row key is
+-- artifact_id + listing_id instead. vin17 is kept when present/resolved but is
+-- NOT required — SRP and carousel rows frequently lack a resolved VIN, and
+-- dropping them would defeat the point of an all-source cadence-learning layer.
+--
+-- parsed_fingerprint hashes every business-state field this project's source
+-- rows carry, source-appropriate ones included even when null for another
+-- source (e.g. carousel's body/condition, detail/SRP's dealer and seller
+-- fields). Carousel dealer/customer fields are inherited context — the
+-- carousel's membership is defined by the dealer, so including them is
+-- semantically meaningful, not fuzzy.
+--
+-- Incremental strategy: 'delete+insert' (not 'merge'), matching
+-- int_listing_state_fingerprints, for the same portability reason (Plan 118).
+--
+-- Plan 125 Gate B: 'merge' on observation_id on the spark target (dbt-spark has
+-- no delete+insert), equivalent because observation_id is row-unique — see the
+-- `unique` test in the schema file, which the row_number() dedupe below
+-- guarantees. Iceberg's MERGE enforces that precondition itself: a duplicated
+-- observation_id in the source is a cardinality error, not a silent duplicate.
+-- The varchar casts in both hashes go through the cast_to_string macro
+-- (`cast(x as varchar)` does not parse on Spark; see dbt/macros/dialect.sql).
+-- This model's 28-field hash is the widest in the project and is the one the
+-- Gate B parity script compares field-for-field on real data.
+-- observation_id is the unique_key, so a source row reappearing inside the
+-- lookback window replaces its existing target row rather than duplicating it.
+-- delete+insert only dedupes against the *existing target* row, so the
+-- row_number()-based dedupe below is required to guarantee the unique_key
+-- actually holds after every run, exactly as in the detail-only model.
+--
+-- Dedupe order is fetched_at desc, then written_at desc, then parsed_fingerprint.
+-- written_at (silver write time) breaks ties when two rows for the same
+-- observation_id share a fetched_at — e.g. a reprocessing correction of an
+-- already-fetched artifact, which lands with the same fetched_at as the
+-- original but a later written_at. written_at is intentionally excluded from
+-- parsed_fingerprint itself: it's processing metadata, not business state.
+--
+-- On an incremental run, only source rows at or after
+-- max(target.fetched_at) minus listing_observation_fingerprint_lookback_days are
+-- rescanned, to pick up late-arriving or corrected observations without
+-- rescanning the full table. A first run (or --full-refresh) has no target to
+-- watermark from, so it scans the full source, matching the non-incremental
+-- behavior exactly. Note this window is fetched_at-based: a reprocessing
+-- correction whose fetched_at already fell outside the lookback window before
+-- the correction landed will not be picked up until the next --full-refresh.
+
+with  __dbt__cte__stg_observations as (
+
+
+-- Unified view of all parsed observations from MinIO silver.
+-- Single source of truth for all three observation types (srp, detail, carousel).
+-- Adds vin17: cleaned, validated 17-character VIN. All other fields pass through.
+--
+-- Plan 125 Gate B: `ephemeral` on the spark target, `view` everywhere else.
+-- Not a semantic difference -- both mean "no stored data, recomputed on demand".
+-- A persisted Spark view stores its body and re-analyzes it against the VIEW's
+-- own catalog on read, which rewrites the parquet.`s3a://...` reference below
+-- into cartracker.parquet.`s3a://...` and fails with TABLE_OR_VIEW_NOT_FOUND.
+-- ephemeral compiles to a CTE, where the reference resolves correctly.
+-- (Found at Gate A on stg_blocked_cooldown_events; same cause here.)
+
+select
+    artifact_id,
+    listing_id,
+    source,
+    listing_state,
+    fetched_at,
+    written_at,
+    vin,
+    case
+        when vin is not null
+         and length(vin) = 17
+         and 
+  (upper(vin) rlike '^[A-Z0-9]{17}$')
+
+        then upper(vin)
+        else null
+    end                  as vin17,
+    price,
+    make,
+    model,
+    trim                 as vehicle_trim,
+    year                 as model_year,
+    mileage,
+    msrp,
+    stock_type,
+    fuel_type,
+    body_style,
+    dealer_name,
+    dealer_zip,
+    dealer_city,
+    dealer_state,
+    customer_id,
+    canonical_detail_url,
+    financing_type,
+    seller_zip,
+    seller_customer_id,
+    page_number,
+    position_on_page,
+    trid,
+    isa_context,
+    body,
+    condition
+from parquet.`s3a://bronze/silver_normalized/observations/`
+), source_rows as (
+
+    select *
+    from __dbt__cte__stg_observations
+    where source in ('detail', 'srp', 'carousel')
+      and listing_id is not null
+
+    
+
+),
+
+fingerprinted as (
+
+    select
+        md5(concat_ws('|',
+            
+  cast(artifact_id as string)
+,
+            coalesce(listing_id, '')
+        ))                              as observation_id,
+        artifact_id,
+        listing_id,
+        vin17,
+        source,
+        fetched_at,
+        written_at,
+        md5(concat_ws('|',
+            coalesce(listing_id,                       ''),
+            coalesce(vin17,                            ''),
+            coalesce(source,                           ''),
+            coalesce(
+  cast(price as string)
+,      ''),
+            coalesce(
+  cast(mileage as string)
+,    ''),
+            coalesce(
+  cast(model_year as string)
+, ''),
+            coalesce(make,                             ''),
+            coalesce(model,                            ''),
+            coalesce(vehicle_trim,                     ''),
+            coalesce(listing_state,                    ''),
+            coalesce(canonical_detail_url,              ''),
+            coalesce(
+  cast(msrp as string)
+,       ''),
+            coalesce(stock_type,                       ''),
+            coalesce(fuel_type,                        ''),
+            coalesce(body_style,                       ''),
+            coalesce(dealer_name,                      ''),
+            coalesce(
+  cast(dealer_zip as string)
+, ''),
+            coalesce(dealer_city,                      ''),
+            coalesce(dealer_state,                     ''),
+            coalesce(customer_id,                      ''),
+            coalesce(seller_customer_id,                ''),
+            coalesce(
+  cast(seller_zip as string)
+, ''),
+            coalesce(financing_type,                    ''),
+            coalesce(
+  cast(page_number as string)
+,      ''),
+            coalesce(
+  cast(position_on_page as string)
+, ''),
+            coalesce(trid,                              ''),
+            coalesce(isa_context,                       ''),
+            coalesce(body,                              ''),
+            coalesce(condition,                         '')
+        ))                              as parsed_fingerprint,
+        price,
+        mileage,
+        listing_state
+
+    from source_rows
+
+),
+
+-- Plan 125 Gate B (audit F15): ranking split into its own CTE because Spark
+-- rejects referencing the parsed_fingerprint alias from the same SELECT list
+-- inside a window ORDER BY (UNSUPPORTED_FEATURE.LATERAL_COLUMN_ALIAS_IN_WINDOW)
+-- where DuckDB permits it. Same fix and same reasoning as
+-- int_listing_state_fingerprints — keeps one copy of the 28-field hash rather
+-- than inlining a second one into the ORDER BY.
+ranked as (
+
+    select
+        *,
+        row_number() over (
+            partition by artifact_id, listing_id
+            order by fetched_at desc, written_at desc, parsed_fingerprint
+        )                               as observation_row_number
+
+    from fingerprinted
+
+)
+
+select
+    observation_id,
+    artifact_id,
+    listing_id,
+    vin17,
+    source,
+    fetched_at,
+    parsed_fingerprint,
+    price,
+    mileage,
+    listing_state
+from ranked
+where observation_row_number = 1
+  
+[0m00:03:42.962446 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:13:04.097315 [debug] [Thread-4 (]: SQL status: OK in 561.135 seconds
+[0m00:13:04.099542 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_fingerprints: ROLLBACK
+[0m00:13:04.099961 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:13:04.100418 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_fingerprints: Close
+[0m00:13:04.101306 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b84d2ad0>]}
+[0m00:13:04.102127 [info ] [Thread-4 (]: 2 of 8 OK created sql incremental model cartracker_experiments.int_listing_observation_fingerprints  [[32mOK[0m in 561.19s]
+[0m00:13:04.102969 [debug] [Thread-4 (]: Finished running node model.cartracker.int_listing_observation_fingerprints
+[0m00:13:04.103489 [debug] [Thread-4 (]: Began running node model.cartracker.int_listing_state_fingerprints
+[0m00:13:04.104035 [info ] [Thread-4 (]: 3 of 8 START sql incremental model cartracker_experiments.int_listing_state_fingerprints  [RUN]
+[0m00:13:04.104833 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.int_listing_observation_fingerprints, now model.cartracker.int_listing_state_fingerprints)
+[0m00:13:04.105444 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_listing_state_fingerprints
+[0m00:13:04.138052 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_listing_state_fingerprints"
+[0m00:13:04.138912 [debug] [Thread-4 (]: Began executing node model.cartracker.int_listing_state_fingerprints
+[0m00:13:04.142635 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_listing_state_fingerprints"
+[0m00:13:04.143397 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:13:04.143815 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_listing_state_fingerprints"
+[0m00:13:04.144564 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_fingerprints: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_state_fingerprints"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_listing_state_fingerprints
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- One row per detail artifact with a valid VIN.
+-- parsed_fingerprint hashes all business-state fields. Field inclusion is intentional:
+--   listing_id:    included — a relisting (same VIN, new listing_id) is a material state
+--                  change and must open a new run without special-case logic
+--   listing_state: included — active→unavailable transitions are state changes
+--   customer_id:   included — dealer identity is business state; same VIN moved to a
+--                  different dealer should open a new run
+--   seller_id:     excluded — overlaps with customer_id and is unreliable for detail pages
+--   seller_customer_id: excluded — SRP-only UUID field, not present on detail pages
+--
+-- Incremental strategy: 'delete+insert' (not 'merge') — it's the base dbt-duckdb
+-- strategy available regardless of DuckDB version, unlike DuckDB's newer native
+-- MERGE. It is also a dbt-postgres strategy.
+--
+-- NOTE (Plan 125 Gate A): this comment previously claimed delete+insert was
+-- "supported by the Postgres/Spark-family adapters this project may migrate onto
+-- later (Plan 118)". That is false for dbt-spark, which validates only 'append',
+-- 'merge', 'insert_overwrite', and 'microbatch'. This model's migration path is
+-- 'merge' on artifact_id — equivalent here because artifact_id is row-unique
+-- (see the `unique` test in the schema file). See
+-- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+--
+-- Plan 125 Gate B: that path is now taken — 'merge' on the spark target. The
+-- row_number() dedupe below is what makes it safe: Iceberg's MERGE raises a
+-- cardinality error if the source carries two rows for one artifact_id, so the
+-- dedupe is no longer just a unique_key guarantee, it is a hard precondition.
+-- The varchar casts inside the hash go through the cast_to_string macro —
+-- `cast(x as varchar)` is a PARSE ERROR on Spark (it demands a length), and
+-- since these feed an md5, a wrong spelling would change every fingerprint.
+--
+-- artifact_id is the unique_key, so a source
+-- artifact_id reappearing inside the lookback window deletes and replaces the
+-- existing target row rather than duplicating it. delete+insert only dedupes
+-- against the *existing target* row, though — it does not collapse multiple
+-- rows sharing an artifact_id within the same incremental batch, so the
+-- dedupe step below (row_number() = 1) is required to guarantee the
+-- unique_key actually holds after every run.
+--
+-- On an incremental run, only source rows at or after
+-- max(target.fetched_at) minus fingerprint_incremental_lookback_days are rescanned,
+-- to pick up late-arriving or corrected artifacts without rescanning the full table.
+-- A first run (or --full-refresh) has no target to watermark from, so it scans the
+-- full source, matching the non-incremental behavior exactly.
+
+with  __dbt__cte__stg_observations as (
+
+
+-- Unified view of all parsed observations from MinIO silver.
+-- Single source of truth for all three observation types (srp, detail, carousel).
+-- Adds vin17: cleaned, validated 17-character VIN. All other fields pass through.
+--
+-- Plan 125 Gate B: `ephemeral` on the spark target, `view` everywhere else.
+-- Not a semantic difference -- both mean "no stored data, recomputed on demand".
+-- A persisted Spark view stores its body and re-analyzes it against the VIEW's
+-- own catalog on read, which rewrites the parquet.`s3a://...` reference below
+-- into cartracker.parquet.`s3a://...` and fails with TABLE_OR_VIEW_NOT_FOUND.
+-- ephemeral compiles to a CTE, where the reference resolves correctly.
+-- (Found at Gate A on stg_blocked_cooldown_events; same cause here.)
+
+select
+    artifact_id,
+    listing_id,
+    source,
+    listing_state,
+    fetched_at,
+    written_at,
+    vin,
+    case
+        when vin is not null
+         and length(vin) = 17
+         and 
+  (upper(vin) rlike '^[A-Z0-9]{17}$')
+
+        then upper(vin)
+        else null
+    end                  as vin17,
+    price,
+    make,
+    model,
+    trim                 as vehicle_trim,
+    year                 as model_year,
+    mileage,
+    msrp,
+    stock_type,
+    fuel_type,
+    body_style,
+    dealer_name,
+    dealer_zip,
+    dealer_city,
+    dealer_state,
+    customer_id,
+    canonical_detail_url,
+    financing_type,
+    seller_zip,
+    seller_customer_id,
+    page_number,
+    position_on_page,
+    trid,
+    isa_context,
+    body,
+    condition
+from parquet.`s3a://bronze/silver_normalized/observations/`
+), source_rows as (
+
+    select *
+    from __dbt__cte__stg_observations
+    where source = 'detail'
+      and vin17 is not null
+
+    
+
+),
+
+fingerprinted as (
+
+    select
+        vin17,
+        listing_id,
+        artifact_id,
+        fetched_at,
+        md5(concat_ws('|',
+            coalesce(listing_id,                       ''),
+            coalesce(vin17,                            ''),
+            coalesce(
+  cast(price as string)
+,      ''),
+            coalesce(
+  cast(mileage as string)
+,    ''),
+            coalesce(
+  cast(msrp as string)
+,       ''),
+            coalesce(make,                             ''),
+            coalesce(model,                            ''),
+            coalesce(vehicle_trim,                     ''),
+            coalesce(
+  cast(model_year as string)
+, ''),
+            coalesce(stock_type,                       ''),
+            coalesce(fuel_type,                        ''),
+            coalesce(body_style,                       ''),
+            coalesce(listing_state,                    ''),
+            coalesce(dealer_name,                      ''),
+            coalesce(dealer_zip,                       ''),
+            coalesce(dealer_city,                      ''),
+            coalesce(dealer_state,                     ''),
+            coalesce(customer_id,                      '')
+        ))                          as parsed_fingerprint,
+        price,
+        mileage,
+        listing_state
+
+    from source_rows
+
+),
+
+-- Plan 125 Gate B (audit F15): the row_number() below used to sit in the same
+-- SELECT list as parsed_fingerprint and order by that alias directly. DuckDB
+-- allows it (a "lateral column alias"); Spark rejects it outright with
+-- UNSUPPORTED_FEATURE.LATERAL_COLUMN_ALIAS_IN_WINDOW. Ranking in its own CTE is
+-- portable to both and, unlike inlining the md5 into the ORDER BY, keeps
+-- exactly ONE copy of the 18-field hash — two copies that must stay
+-- byte-identical forever is the kind of drift this model least tolerates, since
+-- the hash IS the row's identity.
+ranked as (
+
+    select
+        *,
+        row_number() over (
+            partition by artifact_id
+            order by fetched_at desc, parsed_fingerprint
+        )                           as artifact_row_number
+
+    from fingerprinted
+
+)
+
+select
+    vin17,
+    listing_id,
+    artifact_id,
+    fetched_at,
+    parsed_fingerprint,
+    price,
+    mileage,
+    listing_state
+from ranked
+where artifact_row_number = 1
+  
+[0m00:13:04.145305 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:14:07.350981 [debug] [Thread-4 (]: SQL status: OK in 63.206 seconds
+[0m00:14:07.353075 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_fingerprints: ROLLBACK
+[0m00:14:07.353428 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:14:07.353784 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_fingerprints: Close
+[0m00:14:07.354346 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b8145650>]}
+[0m00:14:07.355038 [info ] [Thread-4 (]: 3 of 8 OK created sql incremental model cartracker_experiments.int_listing_state_fingerprints  [[32mOK[0m in 63.25s]
+[0m00:14:07.355717 [debug] [Thread-4 (]: Finished running node model.cartracker.int_listing_state_fingerprints
+[0m00:14:07.356381 [debug] [Thread-4 (]: Began running node model.cartracker.int_price_history
+[0m00:14:07.357291 [info ] [Thread-4 (]: 4 of 8 START sql incremental model cartracker_experiments.int_price_history .... [RUN]
+[0m00:14:07.358011 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.int_listing_state_fingerprints, now model.cartracker.int_price_history)
+[0m00:14:07.358432 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_price_history
+[0m00:14:07.385351 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_price_history"
+[0m00:14:07.386011 [debug] [Thread-4 (]: Began executing node model.cartracker.int_price_history
+[0m00:14:07.389879 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_price_history"
+[0m00:14:07.390548 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:14:07.390908 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_price_history"
+[0m00:14:07.391458 [debug] [Thread-4 (]: On model.cartracker.int_price_history: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_price_history"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_price_history
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- Price history per VIN aggregated from the price observation event stream.
+-- Price drop/increase counts are derived by comparing consecutive prices with LAG().
+--
+-- Replaces: int_price_events + int_price_history_by_vin + int_latest_price_by_vin
+--           + int_listing_days_on_market
+--
+-- Incremental strategy: affected-VIN replacement (Plan 123 Phase 3), same
+-- delete+insert base strategy as int_listing_state_fingerprints (Phase 2).
+--
+-- NOTE (Plan 125 Gate A): this comment previously claimed the strategy was
+-- "portable across the Postgres/Spark-family adapters this project may migrate
+-- onto later (Plan 118)". That is false for dbt-spark, which validates only
+-- 'append', 'merge', 'insert_overwrite', and 'microbatch'. Migration path here
+-- is 'merge' on vin: this model is one row per vin (see the `unique` test in the
+-- schema file), so merge replaces that row rather than a multi-row set. The one
+-- behavioural gap is that merge cannot remove a vin whose events all disappear;
+-- the price event stream is append-only, so that case does not arise. See
+-- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+--
+-- Plan 125 Gate B: that migration path is now taken -- 'merge' on the spark
+-- target. merge is safe here only because `vin` is genuinely row-unique, which
+-- the schema file's `unique` test enforces on every DuckDB build; Iceberg's
+-- MERGE would otherwise fail its cardinality check outright rather than
+-- silently duplicate. arg_max/arg_min go through the dialect macros rather than
+-- bare max_by/min_by: DuckDB's arg_max ignores rows whose VALUE is null and
+-- Spark's max_by does not (measured -- see dbt/macros/dialect.sql).
+--
+-- Consecutive-price LAG() logic depends on the event
+-- immediately before the incremental boundary, so a VIN touched by any new,
+-- late, or corrected event inside the lookback window has its ENTIRE price
+-- history reread and every aggregate recomputed here — not just the new
+-- batch of events.
+--
+-- days_on_market is intentionally NOT computed in this model anymore. It used
+-- to be `datediff('day', min(event_at), now())`, which is time-relative: once
+-- this model stopped rebuilding every VIN on every run, an untouched VIN's row
+-- would freeze at whatever days_on_market it had at its last recomputation
+-- instead of advancing with real time. first_seen_at (stable, event-derived)
+-- is kept here; days_on_market is now computed downstream in
+-- mart_vehicle_snapshot — a full-table rebuild on every hourly_core run —
+-- from first_seen_at against now_ts() at query time, so it stays fresh every
+-- run regardless of which VINs this model reprocessed.
+
+with  __dbt__cte__stg_price_events as (
+
+
+-- Plan 125 Gate B: `ephemeral` on spark, `view` elsewhere -- same reason as
+-- stg_observations (a persisted Spark view re-qualifies the parquet.`s3a://...`
+-- reference against its own catalog and fails). Both mean "no stored data".
+--
+-- Price observation events from MinIO.
+-- One row per write to ops.price_observations — not deduplicated by change,
+-- every observation is recorded. Use this for price history and trend analysis.
+--
+-- event_type values:
+--   'upserted' — price written/updated on the HOT table (srp, detail, carousel)
+--   'added'    — first time this listing_id seen with a price (srp)
+--   'deleted'  — listing went unlisted; price set to NULL
+
+select
+    event_id,
+    listing_id,
+    upper(vin) as vin,
+    price,
+    make,
+    model,
+    artifact_id,
+    event_type,
+    source,
+    event_at
+from parquet.`s3a://bronze/ops_normalized/price_observation_events/`
+where vin is not null
+  and event_type != 'deleted'
+  and price is not null
+  and price > 0
+), affected_vins as (
+
+    select distinct vin
+    from __dbt__cte__stg_price_events
+
+    
+
+),
+
+history as (
+
+    select
+        e.vin,
+        e.price,
+        e.event_at
+    from __dbt__cte__stg_price_events e
+    
+
+),
+
+ordered as (
+    select
+        vin,
+        price,
+        event_at,
+        lag(price) over (partition by vin order by event_at) as prev_price
+    from history
+)
+
+select
+    vin,
+    -- Current price = most recent event
+    
+  max_by(price, event_at) filter (where price is not null)
+                                        as current_price,
+    max(event_at)                                                             as price_observed_at,
+    -- First price = oldest event
+    
+  min_by(price, event_at) filter (where price is not null)
+                                        as first_price,
+    min(price)                                                                as min_price,
+    max(price)                                                                as max_price,
+    count(*)                                                                  as total_price_observations,
+    count(*) filter (where price < prev_price and prev_price is not null)     as price_drop_count,
+    count(*) filter (where price > prev_price and prev_price is not null)     as price_increase_count,
+    min(event_at)                                                             as first_seen_at,
+    max(event_at)                                                             as last_seen_at
+from ordered
+group by vin
+  
+[0m00:14:07.392086 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:14:47.788975 [debug] [Thread-4 (]: SQL status: OK in 40.397 seconds
+[0m00:14:47.791307 [debug] [Thread-4 (]: On model.cartracker.int_price_history: ROLLBACK
+[0m00:14:47.791693 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:14:47.792009 [debug] [Thread-4 (]: On model.cartracker.int_price_history: Close
+[0m00:14:47.792673 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b3fed400>]}
+[0m00:14:47.793363 [info ] [Thread-4 (]: 4 of 8 OK created sql incremental model cartracker_experiments.int_price_history  [[32mOK[0m in 40.43s]
+[0m00:14:47.794218 [debug] [Thread-4 (]: Finished running node model.cartracker.int_price_history
+[0m00:14:47.794944 [debug] [Thread-4 (]: Began running node model.cartracker.int_listing_observation_runs
+[0m00:14:47.796046 [info ] [Thread-4 (]: 5 of 8 START sql table model cartracker_experiments.int_listing_observation_runs  [RUN]
+[0m00:14:47.796574 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.int_price_history, now model.cartracker.int_listing_observation_runs)
+[0m00:14:47.796924 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_listing_observation_runs
+[0m00:14:47.806864 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_listing_observation_runs"
+[0m00:14:47.807769 [debug] [Thread-4 (]: Began executing node model.cartracker.int_listing_observation_runs
+[0m00:14:47.824640 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_listing_observation_runs"
+[0m00:14:47.825573 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_runs: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_observation_runs"} */
+drop table if exists cartracker_experiments.int_listing_observation_runs
+[0m00:14:47.825942 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:14:47.840934 [debug] [Thread-4 (]: SQL status: OK in 0.015 seconds
+[0m00:14:47.843470 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_listing_observation_runs"
+[0m00:14:47.844438 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:14:47.844825 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_listing_observation_runs"
+[0m00:14:47.845497 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_runs: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_observation_runs"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_listing_observation_runs
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- Gaps-and-islands over int_listing_observation_fingerprints (all-source:
+-- detail, SRP, carousel), collapsing consecutive identical observation states
+-- into contiguous runs partitioned by listing_id.
+--
+-- This is NOT the detail-only int_listing_state_runs model. That model
+-- partitions by vin17 because every one of its rows has a resolved VIN by
+-- construction (its source is detail-only, vin17-required
+-- int_listing_state_fingerprints). Here vin17 is frequently null (SRP/carousel
+-- rows commonly lack a resolved VIN), so vin17 cannot be the partition key
+-- without silently dropping or mis-grouping those rows. listing_id is required
+-- (not null) in int_listing_observation_fingerprints, so it is the reliable
+-- partition key for all-source observation cadence. vin17 is carried forward
+-- as any resolved VIN seen within the run (max(vin17), arbitrary but
+-- deterministic) purely for convenience joins downstream — it is not this
+-- model's grain.
+--
+-- Run boundary: this model does NOT reuse int_listing_observation_fingerprints'
+-- parsed_fingerprint for gaps-and-islands, because that hash intentionally
+-- includes `source` (Plan 123 Phase 2b — it disambiguates artifact_id+listing_id
+-- keys, which is correct for that model's purpose). Reusing it here would open
+-- a new "run" every time the observing source changes — e.g. a detail scrape
+-- followed by an SRP re-observation of the identical price/state — which is not
+-- a real cadence signal, just a source alternation. Instead, run boundaries are
+-- computed here from observation_state_key, a hash of only the business-state
+-- fields int_listing_observation_fingerprints actually exposes as plain columns
+-- (price, mileage, listing_state), independent of source. A run therefore
+-- represents a period where the listing's observed price/mileage/state did not
+-- change, regardless of which source(s) observed it — the correct semantics for
+-- "did price/listing-visible state change across observations?" and for
+-- learning all-source refresh cadence. Per-source participation within that
+-- unchanged-state run is preserved via the detail/srp/carousel counts and flags
+-- below, which is how SRP/carousel-only refreshes of an unchanged state remain
+-- visible to the ML trainer.
+--
+-- Incremental strategy: affected-listing_id replacement (same pattern as
+-- int_listing_state_runs' affected-VIN replacement, Plan 123 Phase 4/final
+-- correction), unique_key='listing_id'. listing_id is an ENTITY REPLACEMENT
+-- KEY here, not a row-unique key — the output grain is multiple runs per
+-- listing_id. delete+insert with this unique_key deletes ALL existing target
+-- rows for each affected listing_id and reinserts its complete recomputed run
+-- history, so do not add a `unique` data test on listing_id.
+--
+-- Plan 125 Gate B: full-rebuild `table` on the spark target, for exactly the
+-- reasons spelled out in int_listing_state_runs — entity-replacement
+-- delete+insert has no dbt-spark equivalent, and the deliberate absence of a
+-- `unique` test on listing_id is what rules 'merge' out. Daily model feeding a
+-- full-rebuild table, so this costs compute, not freshness. See
+-- int_listing_state_runs.sql for the full rationale and the Option C deferral.
+-- The varchar casts in observation_state_key go through cast_to_string: they
+-- feed an md5 that defines run boundaries, so a spelling change here would
+-- silently re-cut every run.
+--
+-- A late-arriving or corrected observation can split a previously single run
+-- into two, or collapse what looked like two runs into one — both require
+-- recomputing gaps-and-islands over that listing_id's ENTIRE observation
+-- history, not just the new rows. On an incremental run, only listing_ids
+-- with an observation inside listing_observation_runs_incremental_lookback_days
+-- of the target's max(run_ended_at) are treated as affected, but this model
+-- then reads ALL of that listing_id's history from
+-- int_listing_observation_fingerprints (itself incrementally but fully
+-- maintained) to recompute every run.
+
+with affected_listings as (
+
+    select distinct listing_id
+    from cartracker_experiments.int_listing_observation_fingerprints
+
+    
+
+),
+
+ordered as (
+    select
+        f.listing_id,
+        f.vin17,
+        f.artifact_id,
+        f.source,
+        f.fetched_at,
+        f.price,
+        f.mileage,
+        f.listing_state,
+        md5(concat_ws('|',
+            coalesce(
+  cast(f.price as string)
+, ''),
+            coalesce(
+  cast(f.mileage as string)
+, ''),
+            coalesce(f.listing_state, '')
+        ))                                      as observation_state_key,
+        lag(md5(concat_ws('|',
+            coalesce(
+  cast(f.price as string)
+, ''),
+            coalesce(
+  cast(f.mileage as string)
+, ''),
+            coalesce(f.listing_state, '')
+        ))) over (
+            partition by f.listing_id order by f.fetched_at, f.artifact_id
+        )                                       as prev_state_key
+    from cartracker_experiments.int_listing_observation_fingerprints f
+    
+),
+
+flagged as (
+    select
+        *,
+        case
+            when prev_state_key is null
+              or observation_state_key != prev_state_key
+            then 1
+            else 0
+        end as is_new_run
+    from ordered
+),
+
+numbered as (
+    select
+        *,
+        sum(is_new_run) over (
+            partition by listing_id
+            order by fetched_at, artifact_id
+            rows between unbounded preceding and current row
+        ) as run_id
+    from flagged
+),
+
+collapsed as (
+    select
+        listing_id,
+        observation_state_key,
+        run_id,
+        min(fetched_at)                                    as run_started_at,
+        max(fetched_at)                                     as run_ended_at,
+        count(*)                                            as observation_count,
+        count(*) filter (where source = 'detail')           as detail_observation_count,
+        count(*) filter (where source = 'srp')              as srp_observation_count,
+        count(*) filter (where source = 'carousel')         as carousel_observation_count,
+        count(distinct source)                              as distinct_source_count,
+        max(vin17)                                          as vin17,
+        min(listing_state)                                  as listing_state,
+        min(price)                                          as price,
+        min(mileage)                                        as mileage
+    from numbered
+    group by listing_id, observation_state_key, run_id
+),
+
+with_lead as (
+    select
+        *,
+        lead(run_started_at) over (
+            partition by listing_id order by run_started_at, run_id
+        ) as next_observation_started_at
+    from collapsed
+)
+
+select
+    listing_id,
+    vin17,
+    observation_state_key,
+    listing_state,
+    price,
+    mileage,
+    run_started_at,
+    run_ended_at,
+    observation_count,
+    detail_observation_count,
+    srp_observation_count,
+    carousel_observation_count,
+    distinct_source_count,
+    detail_observation_count > 0                                        as detail_seen,
+    srp_observation_count > 0                                           as srp_seen,
+    carousel_observation_count > 0                                      as carousel_seen,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', run_ended_at))
+     - unix_timestamp(date_trunc('HOUR', run_started_at))) / 3600
+    as bigint
+  )
+              as run_duration_hours,
+    next_observation_started_at,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', next_observation_started_at))
+     - unix_timestamp(date_trunc('HOUR', run_ended_at))) / 3600
+    as bigint
+  )
+ as hours_until_next_observation,
+    next_observation_started_at is null                                 as is_open_run
+from with_lead
+  
+[0m00:16:59.281044 [debug] [Thread-4 (]: Spark adapter: Error while running:
+/* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_observation_runs"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_listing_observation_runs
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- Gaps-and-islands over int_listing_observation_fingerprints (all-source:
+-- detail, SRP, carousel), collapsing consecutive identical observation states
+-- into contiguous runs partitioned by listing_id.
+--
+-- This is NOT the detail-only int_listing_state_runs model. That model
+-- partitions by vin17 because every one of its rows has a resolved VIN by
+-- construction (its source is detail-only, vin17-required
+-- int_listing_state_fingerprints). Here vin17 is frequently null (SRP/carousel
+-- rows commonly lack a resolved VIN), so vin17 cannot be the partition key
+-- without silently dropping or mis-grouping those rows. listing_id is required
+-- (not null) in int_listing_observation_fingerprints, so it is the reliable
+-- partition key for all-source observation cadence. vin17 is carried forward
+-- as any resolved VIN seen within the run (max(vin17), arbitrary but
+-- deterministic) purely for convenience joins downstream — it is not this
+-- model's grain.
+--
+-- Run boundary: this model does NOT reuse int_listing_observation_fingerprints'
+-- parsed_fingerprint for gaps-and-islands, because that hash intentionally
+-- includes `source` (Plan 123 Phase 2b — it disambiguates artifact_id+listing_id
+-- keys, which is correct for that model's purpose). Reusing it here would open
+-- a new "run" every time the observing source changes — e.g. a detail scrape
+-- followed by an SRP re-observation of the identical price/state — which is not
+-- a real cadence signal, just a source alternation. Instead, run boundaries are
+-- computed here from observation_state_key, a hash of only the business-state
+-- fields int_listing_observation_fingerprints actually exposes as plain columns
+-- (price, mileage, listing_state), independent of source. A run therefore
+-- represents a period where the listing's observed price/mileage/state did not
+-- change, regardless of which source(s) observed it — the correct semantics for
+-- "did price/listing-visible state change across observations?" and for
+-- learning all-source refresh cadence. Per-source participation within that
+-- unchanged-state run is preserved via the detail/srp/carousel counts and flags
+-- below, which is how SRP/carousel-only refreshes of an unchanged state remain
+-- visible to the ML trainer.
+--
+-- Incremental strategy: affected-listing_id replacement (same pattern as
+-- int_listing_state_runs' affected-VIN replacement, Plan 123 Phase 4/final
+-- correction), unique_key='listing_id'. listing_id is an ENTITY REPLACEMENT
+-- KEY here, not a row-unique key — the output grain is multiple runs per
+-- listing_id. delete+insert with this unique_key deletes ALL existing target
+-- rows for each affected listing_id and reinserts its complete recomputed run
+-- history, so do not add a `unique` data test on listing_id.
+--
+-- Plan 125 Gate B: full-rebuild `table` on the spark target, for exactly the
+-- reasons spelled out in int_listing_state_runs — entity-replacement
+-- delete+insert has no dbt-spark equivalent, and the deliberate absence of a
+-- `unique` test on listing_id is what rules 'merge' out. Daily model feeding a
+-- full-rebuild table, so this costs compute, not freshness. See
+-- int_listing_state_runs.sql for the full rationale and the Option C deferral.
+-- The varchar casts in observation_state_key go through cast_to_string: they
+-- feed an md5 that defines run boundaries, so a spelling change here would
+-- silently re-cut every run.
+--
+-- A late-arriving or corrected observation can split a previously single run
+-- into two, or collapse what looked like two runs into one — both require
+-- recomputing gaps-and-islands over that listing_id's ENTIRE observation
+-- history, not just the new rows. On an incremental run, only listing_ids
+-- with an observation inside listing_observation_runs_incremental_lookback_days
+-- of the target's max(run_ended_at) are treated as affected, but this model
+-- then reads ALL of that listing_id's history from
+-- int_listing_observation_fingerprints (itself incrementally but fully
+-- maintained) to recompute every run.
+
+with affected_listings as (
+
+    select distinct listing_id
+    from cartracker_experiments.int_listing_observation_fingerprints
+
+    
+
+),
+
+ordered as (
+    select
+        f.listing_id,
+        f.vin17,
+        f.artifact_id,
+        f.source,
+        f.fetched_at,
+        f.price,
+        f.mileage,
+        f.listing_state,
+        md5(concat_ws('|',
+            coalesce(
+  cast(f.price as string)
+, ''),
+            coalesce(
+  cast(f.mileage as string)
+, ''),
+            coalesce(f.listing_state, '')
+        ))                                      as observation_state_key,
+        lag(md5(concat_ws('|',
+            coalesce(
+  cast(f.price as string)
+, ''),
+            coalesce(
+  cast(f.mileage as string)
+, ''),
+            coalesce(f.listing_state, '')
+        ))) over (
+            partition by f.listing_id order by f.fetched_at, f.artifact_id
+        )                                       as prev_state_key
+    from cartracker_experiments.int_listing_observation_fingerprints f
+    
+),
+
+flagged as (
+    select
+        *,
+        case
+            when prev_state_key is null
+              or observation_state_key != prev_state_key
+            then 1
+            else 0
+        end as is_new_run
+    from ordered
+),
+
+numbered as (
+    select
+        *,
+        sum(is_new_run) over (
+            partition by listing_id
+            order by fetched_at, artifact_id
+            rows between unbounded preceding and current row
+        ) as run_id
+    from flagged
+),
+
+collapsed as (
+    select
+        listing_id,
+        observation_state_key,
+        run_id,
+        min(fetched_at)                                    as run_started_at,
+        max(fetched_at)                                     as run_ended_at,
+        count(*)                                            as observation_count,
+        count(*) filter (where source = 'detail')           as detail_observation_count,
+        count(*) filter (where source = 'srp')              as srp_observation_count,
+        count(*) filter (where source = 'carousel')         as carousel_observation_count,
+        count(distinct source)                              as distinct_source_count,
+        max(vin17)                                          as vin17,
+        min(listing_state)                                  as listing_state,
+        min(price)                                          as price,
+        min(mileage)                                        as mileage
+    from numbered
+    group by listing_id, observation_state_key, run_id
+),
+
+with_lead as (
+    select
+        *,
+        lead(run_started_at) over (
+            partition by listing_id order by run_started_at, run_id
+        ) as next_observation_started_at
+    from collapsed
+)
+
+select
+    listing_id,
+    vin17,
+    observation_state_key,
+    listing_state,
+    price,
+    mileage,
+    run_started_at,
+    run_ended_at,
+    observation_count,
+    detail_observation_count,
+    srp_observation_count,
+    carousel_observation_count,
+    distinct_source_count,
+    detail_observation_count > 0                                        as detail_seen,
+    srp_observation_count > 0                                           as srp_seen,
+    carousel_observation_count > 0                                      as carousel_seen,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', run_ended_at))
+     - unix_timestamp(date_trunc('HOUR', run_started_at))) / 3600
+    as bigint
+  )
+              as run_duration_hours,
+    next_observation_started_at,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', next_observation_started_at))
+     - unix_timestamp(date_trunc('HOUR', run_ended_at))) / 3600
+    as bigint
+  )
+ as hours_until_next_observation,
+    next_observation_started_at is null                                 as is_open_run
+from with_lead
+  
+[0m00:16:59.325833 [debug] [Thread-4 (]: Spark adapter: An error occurred while calling o60.sql.
+: org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)
+	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)
+	at scala.Option.foreach(Option.scala:407)
+	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)
+	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)
+	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)
+	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)
+	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)
+	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)
+	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)
+	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:142)
+	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.$anonfun$writeToTable$1(WriteToDataSourceV2Exec.scala:582)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1397)
+	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable(WriteToDataSourceV2Exec.scala:578)
+	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable$(WriteToDataSourceV2Exec.scala:572)
+	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.writeToTable(WriteToDataSourceV2Exec.scala:186)
+	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.run(WriteToDataSourceV2Exec.scala:221)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+[0m00:16:59.368182 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_runs: ROLLBACK
+[0m00:16:59.368732 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:16:59.369050 [debug] [Thread-4 (]: On model.cartracker.int_listing_observation_runs: Close
+[0m00:16:59.420523 [debug] [Thread-4 (]: Runtime Error in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)
+  An error occurred while calling o60.sql.
+  : org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+  Driver stacktrace:
+  	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)
+  	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+  	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+  	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)
+  	at scala.Option.foreach(Option.scala:407)
+  	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)
+  	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)
+  	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:142)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.$anonfun$writeToTable$1(WriteToDataSourceV2Exec.scala:582)
+  	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1397)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable(WriteToDataSourceV2Exec.scala:578)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable$(WriteToDataSourceV2Exec.scala:572)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.writeToTable(WriteToDataSourceV2Exec.scala:186)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.run(WriteToDataSourceV2Exec.scala:221)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+  	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+  	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+  	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+  	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+  	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+  	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+  	at py4j.Gateway.invoke(Gateway.java:282)
+  	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+  	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+  	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+  	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+  	at java.base/java.lang.Thread.run(Thread.java:840)
+  Caused by: java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+[0m00:16:59.422077 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b3856e70>]}
+[0m00:16:59.422815 [error] [Thread-4 (]: 5 of 8 ERROR creating sql table model cartracker_experiments.int_listing_observation_runs  [[31mERROR[0m in 131.63s]
+[0m00:16:59.424170 [debug] [Thread-4 (]: Finished running node model.cartracker.int_listing_observation_runs
+[0m00:16:59.424623 [debug] [Thread-4 (]: Began running node model.cartracker.int_listing_state_runs
+[0m00:16:59.425991 [debug] [Thread-7 (]: Marking all children of 'model.cartracker.int_listing_observation_runs' to be skipped because of status 'error'.  Reason: Runtime Error in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)
+  An error occurred while calling o60.sql.
+  : org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+  Driver stacktrace:
+  	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)
+  	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+  	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+  	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)
+  	at scala.Option.foreach(Option.scala:407)
+  	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)
+  	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)
+  	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:142)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.$anonfun$writeToTable$1(WriteToDataSourceV2Exec.scala:582)
+  	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1397)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable(WriteToDataSourceV2Exec.scala:578)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable$(WriteToDataSourceV2Exec.scala:572)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.writeToTable(WriteToDataSourceV2Exec.scala:186)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.run(WriteToDataSourceV2Exec.scala:221)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+  	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+  	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+  	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+  	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+  	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+  	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+  	at py4j.Gateway.invoke(Gateway.java:282)
+  	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+  	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+  	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+  	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+  	at java.base/java.lang.Thread.run(Thread.java:840)
+  Caused by: java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  .
+[0m00:16:59.427318 [info ] [Thread-4 (]: 6 of 8 START sql table model cartracker_experiments.int_listing_state_runs ..... [RUN]
+[0m00:16:59.429447 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.int_listing_observation_runs, now model.cartracker.int_listing_state_runs)
+[0m00:16:59.429886 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_listing_state_runs
+[0m00:16:59.437819 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_listing_state_runs"
+[0m00:16:59.438417 [debug] [Thread-4 (]: Began executing node model.cartracker.int_listing_state_runs
+[0m00:16:59.442834 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_listing_state_runs"
+[0m00:16:59.443212 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_runs: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_state_runs"} */
+drop table if exists cartracker_experiments.int_listing_state_runs
+[0m00:16:59.443541 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:16:59.461471 [debug] [Thread-4 (]: SQL status: OK in 0.017 seconds
+[0m00:16:59.463492 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_listing_state_runs"
+[0m00:16:59.464191 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:16:59.464595 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_listing_state_runs"
+[0m00:16:59.465138 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_runs: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_state_runs"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_listing_state_runs
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- Gaps-and-islands: collapses consecutive identical parsed_fingerprints into
+-- contiguous runs, partitioned by vin17.
+-- listing_id is a safe group key because it is included in the fingerprint hash —
+-- a listing_id change always produces a new fingerprint and therefore a new run.
+-- listing_state is constant within a run (it's in the hash) and is carried forward
+-- to avoid a range-join back to int_listing_state_fingerprints in downstream models.
+--
+-- Incremental strategy: affected-VIN replacement (Plan 123 Phase 4), same
+-- delete+insert base strategy as int_listing_state_fingerprints (Phase 2) and
+-- int_price_history (Phase 3). unique_key='vin17' here is an ENTITY
+-- REPLACEMENT KEY, not a row-unique key — the output grain is multiple runs
+-- per vin17. delete+insert with this unique_key deletes ALL existing target
+-- rows for each affected vin17 and reinserts its complete recomputed run
+-- history, so do not add a `unique` data test on vin17.
+--
+-- Plan 125 Gate B: on the spark target this is a full-rebuild `table`, and that
+-- is a deliberate downgrade, not an oversight. There is NO dbt-spark equivalent
+-- of entity-replacement delete+insert: 'merge' matches one target row per key
+-- and would strand this model's other runs for the same vin17, and the very
+-- absence of a `unique` test on vin17 (above) is what proves merge unsafe here.
+-- 'insert_overwrite' would need vin17 to be a partition column, which would
+-- shatter the table into one partition per VIN. dbt-spark supports no custom
+-- strategies at all (audit F1), so a forked materialization (Option C) is the
+-- only alternative and is explicitly deferred to Gate C behind a measured-
+-- necessity bar. This model is daily and already feeds a full-rebuild table
+-- (int_listing_volatility_features), so the cost is compute, not freshness.
+-- The `unique_key`/`incremental_strategy` configs above are inert under `table`
+-- and are kept solely for the duckdb target.
+--
+-- A late-arriving or corrected fingerprint can split a previously single run
+-- into two, or collapse what looked like two runs into one — both require
+-- recomputing gaps-and-islands over that VIN's ENTIRE fingerprint history, not
+-- just the new rows. On an incremental run, only vin17s with a fingerprint
+-- inside listing_state_runs_incremental_lookback_days of the target's
+-- max(run_ended_at) are treated as affected, but this model then reads ALL of
+-- that vin17's history from int_listing_state_fingerprints (itself
+-- incrementally but fully maintained) to recompute every run.
+
+with affected_vins as (
+
+    select distinct vin17
+    from cartracker_experiments.int_listing_state_fingerprints
+
+    
+
+),
+
+ordered as (
+    select
+        f.vin17,
+        f.listing_id,
+        f.artifact_id,
+        f.fetched_at,
+        f.parsed_fingerprint,
+        f.listing_state,
+        lag(f.parsed_fingerprint) over (
+            partition by f.vin17 order by f.fetched_at, f.artifact_id
+        ) as prev_fingerprint
+    from cartracker_experiments.int_listing_state_fingerprints f
+    
+),
+
+flagged as (
+    select
+        *,
+        case
+            when prev_fingerprint is null
+              or parsed_fingerprint != prev_fingerprint
+            then 1
+            else 0
+        end as is_new_run
+    from ordered
+),
+
+numbered as (
+    select
+        *,
+        sum(is_new_run) over (
+            partition by vin17
+            order by fetched_at, artifact_id
+            rows between unbounded preceding and current row
+        ) as run_id
+    from flagged
+),
+
+collapsed as (
+    select
+        vin17,
+        listing_id,
+        parsed_fingerprint,
+        run_id,
+        min(fetched_at)    as run_started_at,
+        max(fetched_at)    as run_ended_at,
+        count(*)           as artifact_count,
+        min(listing_state) as listing_state
+    from numbered
+    group by vin17, listing_id, parsed_fingerprint, run_id
+),
+
+with_lead as (
+    select
+        *,
+        lead(run_started_at) over (
+            partition by vin17 order by run_started_at, run_id
+        ) as next_state_started_at
+    from collapsed
+)
+
+select
+    vin17,
+    listing_id,
+    parsed_fingerprint,
+    listing_state,
+    run_started_at,
+    run_ended_at,
+    artifact_count,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', run_ended_at))
+     - unix_timestamp(date_trunc('HOUR', run_started_at))) / 3600
+    as bigint
+  )
+        as run_duration_hours,
+    next_state_started_at,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', next_state_started_at))
+     - unix_timestamp(date_trunc('HOUR', run_ended_at))) / 3600
+    as bigint
+  )
+ as hours_until_change,
+    next_state_started_at is null                                 as is_open_run
+from with_lead
+  
+[0m00:16:59.567695 [debug] [Thread-4 (]: Spark adapter: Error while running:
+/* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_listing_state_runs"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_listing_state_runs
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- Gaps-and-islands: collapses consecutive identical parsed_fingerprints into
+-- contiguous runs, partitioned by vin17.
+-- listing_id is a safe group key because it is included in the fingerprint hash —
+-- a listing_id change always produces a new fingerprint and therefore a new run.
+-- listing_state is constant within a run (it's in the hash) and is carried forward
+-- to avoid a range-join back to int_listing_state_fingerprints in downstream models.
+--
+-- Incremental strategy: affected-VIN replacement (Plan 123 Phase 4), same
+-- delete+insert base strategy as int_listing_state_fingerprints (Phase 2) and
+-- int_price_history (Phase 3). unique_key='vin17' here is an ENTITY
+-- REPLACEMENT KEY, not a row-unique key — the output grain is multiple runs
+-- per vin17. delete+insert with this unique_key deletes ALL existing target
+-- rows for each affected vin17 and reinserts its complete recomputed run
+-- history, so do not add a `unique` data test on vin17.
+--
+-- Plan 125 Gate B: on the spark target this is a full-rebuild `table`, and that
+-- is a deliberate downgrade, not an oversight. There is NO dbt-spark equivalent
+-- of entity-replacement delete+insert: 'merge' matches one target row per key
+-- and would strand this model's other runs for the same vin17, and the very
+-- absence of a `unique` test on vin17 (above) is what proves merge unsafe here.
+-- 'insert_overwrite' would need vin17 to be a partition column, which would
+-- shatter the table into one partition per VIN. dbt-spark supports no custom
+-- strategies at all (audit F1), so a forked materialization (Option C) is the
+-- only alternative and is explicitly deferred to Gate C behind a measured-
+-- necessity bar. This model is daily and already feeds a full-rebuild table
+-- (int_listing_volatility_features), so the cost is compute, not freshness.
+-- The `unique_key`/`incremental_strategy` configs above are inert under `table`
+-- and are kept solely for the duckdb target.
+--
+-- A late-arriving or corrected fingerprint can split a previously single run
+-- into two, or collapse what looked like two runs into one — both require
+-- recomputing gaps-and-islands over that VIN's ENTIRE fingerprint history, not
+-- just the new rows. On an incremental run, only vin17s with a fingerprint
+-- inside listing_state_runs_incremental_lookback_days of the target's
+-- max(run_ended_at) are treated as affected, but this model then reads ALL of
+-- that vin17's history from int_listing_state_fingerprints (itself
+-- incrementally but fully maintained) to recompute every run.
+
+with affected_vins as (
+
+    select distinct vin17
+    from cartracker_experiments.int_listing_state_fingerprints
+
+    
+
+),
+
+ordered as (
+    select
+        f.vin17,
+        f.listing_id,
+        f.artifact_id,
+        f.fetched_at,
+        f.parsed_fingerprint,
+        f.listing_state,
+        lag(f.parsed_fingerprint) over (
+            partition by f.vin17 order by f.fetched_at, f.artifact_id
+        ) as prev_fingerprint
+    from cartracker_experiments.int_listing_state_fingerprints f
+    
+),
+
+flagged as (
+    select
+        *,
+        case
+            when prev_fingerprint is null
+              or parsed_fingerprint != prev_fingerprint
+            then 1
+            else 0
+        end as is_new_run
+    from ordered
+),
+
+numbered as (
+    select
+        *,
+        sum(is_new_run) over (
+            partition by vin17
+            order by fetched_at, artifact_id
+            rows between unbounded preceding and current row
+        ) as run_id
+    from flagged
+),
+
+collapsed as (
+    select
+        vin17,
+        listing_id,
+        parsed_fingerprint,
+        run_id,
+        min(fetched_at)    as run_started_at,
+        max(fetched_at)    as run_ended_at,
+        count(*)           as artifact_count,
+        min(listing_state) as listing_state
+    from numbered
+    group by vin17, listing_id, parsed_fingerprint, run_id
+),
+
+with_lead as (
+    select
+        *,
+        lead(run_started_at) over (
+            partition by vin17 order by run_started_at, run_id
+        ) as next_state_started_at
+    from collapsed
+)
+
+select
+    vin17,
+    listing_id,
+    parsed_fingerprint,
+    listing_state,
+    run_started_at,
+    run_ended_at,
+    artifact_count,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', run_ended_at))
+     - unix_timestamp(date_trunc('HOUR', run_started_at))) / 3600
+    as bigint
+  )
+        as run_duration_hours,
+    next_state_started_at,
+    
+  cast(
+    (unix_timestamp(date_trunc('HOUR', next_state_started_at))
+     - unix_timestamp(date_trunc('HOUR', run_ended_at))) / 3600
+    as bigint
+  )
+ as hours_until_change,
+    next_state_started_at is null                                 as is_open_run
+from with_lead
+  
+[0m00:16:59.568649 [debug] [Thread-4 (]: Spark adapter: Runtime Error
+  [TABLE_OR_VIEW_NOT_FOUND] The table or view `cartracker_experiments`.`int_listing_state_fingerprints` cannot be found. Verify the spelling and correctness of the schema and catalog.
+  If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.
+  To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 77 pos 9;
+  'ReplaceTableAsSelect TableSpec(Map(),Some(iceberg),Map(),None,None,None,false), true, false
+  :- ResolvedIdentifier V2SessionCatalog(spark_catalog), cartracker_experiments.int_listing_state_runs
+  +- 'Project ['vin17, 'listing_id, 'parsed_fingerprint, 'listing_state, 'run_started_at, 'run_ended_at, 'artifact_count, cast((('unix_timestamp('date_trunc(HOUR, 'run_ended_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_started_at))) / 3600) as bigint) AS run_duration_hours#537, 'next_state_started_at, cast((('unix_timestamp('date_trunc(HOUR, 'next_state_started_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_ended_at))) / 3600) as bigint) AS hours_until_change#538, isnull('next_state_started_at) AS is_open_run#539]
+     +- 'SubqueryAlias with_lead
+        +- 'Project [*, 'lead('run_started_at) windowspecdefinition('vin17, 'run_started_at ASC NULLS FIRST, 'run_id ASC NULLS FIRST, unspecifiedframe$()) AS next_state_started_at#547]
+           +- 'SubqueryAlias collapsed
+              +- 'Aggregate ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id], ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id, 'min('fetched_at) AS run_started_at#543, 'max('fetched_at) AS run_ended_at#544, count(1) AS artifact_count#545L, 'min('listing_state) AS listing_state#546]
+                 +- 'SubqueryAlias numbered
+                    +- 'Project [*, 'sum('is_new_run) windowspecdefinition('vin17, 'fetched_at ASC NULLS FIRST, 'artifact_id ASC NULLS FIRST, specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS run_id#542]
+                       +- 'SubqueryAlias flagged
+                          +- 'Project [*, CASE WHEN (isnull('prev_fingerprint) OR NOT ('parsed_fingerprint = 'prev_fingerprint)) THEN 1 ELSE 0 END AS is_new_run#541]
+                             +- 'SubqueryAlias ordered
+                                +- 'Project ['f.vin17, 'f.listing_id, 'f.artifact_id, 'f.fetched_at, 'f.parsed_fingerprint, 'f.listing_state, 'lag('f.parsed_fingerprint) windowspecdefinition('f.vin17, 'f.fetched_at ASC NULLS FIRST, 'f.artifact_id ASC NULLS FIRST, unspecifiedframe$()) AS prev_fingerprint#540]
+                                   +- 'SubqueryAlias f
+                                      +- 'UnresolvedRelation [cartracker_experiments, int_listing_state_fingerprints], [], false
+  
+[0m00:16:59.569244 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_runs: ROLLBACK
+[0m00:16:59.569626 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:16:59.569963 [debug] [Thread-4 (]: On model.cartracker.int_listing_state_runs: Close
+[0m00:16:59.577464 [debug] [Thread-4 (]: Runtime Error in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)
+  Runtime Error
+    [TABLE_OR_VIEW_NOT_FOUND] The table or view `cartracker_experiments`.`int_listing_state_fingerprints` cannot be found. Verify the spelling and correctness of the schema and catalog.
+    If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.
+    To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 77 pos 9;
+    'ReplaceTableAsSelect TableSpec(Map(),Some(iceberg),Map(),None,None,None,false), true, false
+    :- ResolvedIdentifier V2SessionCatalog(spark_catalog), cartracker_experiments.int_listing_state_runs
+    +- 'Project ['vin17, 'listing_id, 'parsed_fingerprint, 'listing_state, 'run_started_at, 'run_ended_at, 'artifact_count, cast((('unix_timestamp('date_trunc(HOUR, 'run_ended_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_started_at))) / 3600) as bigint) AS run_duration_hours#537, 'next_state_started_at, cast((('unix_timestamp('date_trunc(HOUR, 'next_state_started_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_ended_at))) / 3600) as bigint) AS hours_until_change#538, isnull('next_state_started_at) AS is_open_run#539]
+       +- 'SubqueryAlias with_lead
+          +- 'Project [*, 'lead('run_started_at) windowspecdefinition('vin17, 'run_started_at ASC NULLS FIRST, 'run_id ASC NULLS FIRST, unspecifiedframe$()) AS next_state_started_at#547]
+             +- 'SubqueryAlias collapsed
+                +- 'Aggregate ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id], ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id, 'min('fetched_at) AS run_started_at#543, 'max('fetched_at) AS run_ended_at#544, count(1) AS artifact_count#545L, 'min('listing_state) AS listing_state#546]
+                   +- 'SubqueryAlias numbered
+                      +- 'Project [*, 'sum('is_new_run) windowspecdefinition('vin17, 'fetched_at ASC NULLS FIRST, 'artifact_id ASC NULLS FIRST, specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS run_id#542]
+                         +- 'SubqueryAlias flagged
+                            +- 'Project [*, CASE WHEN (isnull('prev_fingerprint) OR NOT ('parsed_fingerprint = 'prev_fingerprint)) THEN 1 ELSE 0 END AS is_new_run#541]
+                               +- 'SubqueryAlias ordered
+                                  +- 'Project ['f.vin17, 'f.listing_id, 'f.artifact_id, 'f.fetched_at, 'f.parsed_fingerprint, 'f.listing_state, 'lag('f.parsed_fingerprint) windowspecdefinition('f.vin17, 'f.fetched_at ASC NULLS FIRST, 'f.artifact_id ASC NULLS FIRST, unspecifiedframe$()) AS prev_fingerprint#540]
+                                     +- 'SubqueryAlias f
+                                        +- 'UnresolvedRelation [cartracker_experiments, int_listing_state_fingerprints], [], false
+    
+[0m00:16:59.578162 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b34861b0>]}
+[0m00:16:59.578873 [error] [Thread-4 (]: 6 of 8 ERROR creating sql table model cartracker_experiments.int_listing_state_runs  [[31mERROR[0m in 0.15s]
+[0m00:16:59.579735 [debug] [Thread-4 (]: Finished running node model.cartracker.int_listing_state_runs
+[0m00:16:59.580197 [debug] [Thread-4 (]: Began running node model.cartracker.int_benchmarks
+[0m00:16:59.581429 [info ] [Thread-4 (]: 7 of 8 START sql table model cartracker_experiments.int_benchmarks ............. [RUN]
+[0m00:16:59.580825 [debug] [Thread-7 (]: Marking all children of 'model.cartracker.int_listing_state_runs' to be skipped because of status 'error'.  Reason: Runtime Error in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)
+  Runtime Error
+    [TABLE_OR_VIEW_NOT_FOUND] The table or view `cartracker_experiments`.`int_listing_state_fingerprints` cannot be found. Verify the spelling and correctness of the schema and catalog.
+    If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.
+    To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 77 pos 9;
+    'ReplaceTableAsSelect TableSpec(Map(),Some(iceberg),Map(),None,None,None,false), true, false
+    :- ResolvedIdentifier V2SessionCatalog(spark_catalog), cartracker_experiments.int_listing_state_runs
+    +- 'Project ['vin17, 'listing_id, 'parsed_fingerprint, 'listing_state, 'run_started_at, 'run_ended_at, 'artifact_count, cast((('unix_timestamp('date_trunc(HOUR, 'run_ended_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_started_at))) / 3600) as bigint) AS run_duration_hours#537, 'next_state_started_at, cast((('unix_timestamp('date_trunc(HOUR, 'next_state_started_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_ended_at))) / 3600) as bigint) AS hours_until_change#538, isnull('next_state_started_at) AS is_open_run#539]
+       +- 'SubqueryAlias with_lead
+          +- 'Project [*, 'lead('run_started_at) windowspecdefinition('vin17, 'run_started_at ASC NULLS FIRST, 'run_id ASC NULLS FIRST, unspecifiedframe$()) AS next_state_started_at#547]
+             +- 'SubqueryAlias collapsed
+                +- 'Aggregate ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id], ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id, 'min('fetched_at) AS run_started_at#543, 'max('fetched_at) AS run_ended_at#544, count(1) AS artifact_count#545L, 'min('listing_state) AS listing_state#546]
+                   +- 'SubqueryAlias numbered
+                      +- 'Project [*, 'sum('is_new_run) windowspecdefinition('vin17, 'fetched_at ASC NULLS FIRST, 'artifact_id ASC NULLS FIRST, specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS run_id#542]
+                         +- 'SubqueryAlias flagged
+                            +- 'Project [*, CASE WHEN (isnull('prev_fingerprint) OR NOT ('parsed_fingerprint = 'prev_fingerprint)) THEN 1 ELSE 0 END AS is_new_run#541]
+                               +- 'SubqueryAlias ordered
+                                  +- 'Project ['f.vin17, 'f.listing_id, 'f.artifact_id, 'f.fetched_at, 'f.parsed_fingerprint, 'f.listing_state, 'lag('f.parsed_fingerprint) windowspecdefinition('f.vin17, 'f.fetched_at ASC NULLS FIRST, 'f.artifact_id ASC NULLS FIRST, unspecifiedframe$()) AS prev_fingerprint#540]
+                                     +- 'SubqueryAlias f
+                                        +- 'UnresolvedRelation [cartracker_experiments, int_listing_state_fingerprints], [], false
+    .
+[0m00:16:59.582035 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly model.cartracker.int_listing_state_runs, now model.cartracker.int_benchmarks)
+[0m00:16:59.582609 [debug] [Thread-4 (]: Began compiling node model.cartracker.int_benchmarks
+[0m00:16:59.588713 [debug] [Thread-4 (]: Writing injected SQL for node "model.cartracker.int_benchmarks"
+[0m00:16:59.589346 [debug] [Thread-4 (]: Began executing node model.cartracker.int_benchmarks
+[0m00:16:59.594581 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_benchmarks"
+[0m00:16:59.594949 [debug] [Thread-4 (]: On model.cartracker.int_benchmarks: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_benchmarks"} */
+drop table if exists cartracker_experiments.int_benchmarks
+[0m00:16:59.595250 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m00:16:59.606080 [debug] [Thread-4 (]: SQL status: OK in 0.011 seconds
+[0m00:16:59.608018 [debug] [Thread-4 (]: Writing runtime sql for node "model.cartracker.int_benchmarks"
+[0m00:16:59.608715 [debug] [Thread-4 (]: Spark adapter: NotImplemented: add_begin_query
+[0m00:16:59.609059 [debug] [Thread-4 (]: Using spark connection "model.cartracker.int_benchmarks"
+[0m00:16:59.609629 [debug] [Thread-4 (]: On model.cartracker.int_benchmarks: /* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_benchmarks"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_benchmarks
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- National market benchmarks per make/model.
+-- Computed from current prices across all VINs we track.
+-- Used by mart_deal_scores for deal scoring and national comparison.
+--
+-- Replaces: int_model_price_benchmarks + int_price_percentiles_by_vin
+--
+-- Plan 125 Gate B. Three separate cast questions live in this model, and the
+-- audit (F10/F12) got the ranking backwards on all three:
+--
+--  * `percentile_cont(p) within group (order by ...)` — flagged F10 as the
+--    rounding risk. It is not: the syntax works unchanged on Spark 3.5.3 and
+--    the raw values agree exactly (p10 over 1..10 = 1.9 on both engines).
+--  * `::int` — the ACTUAL source of the audit's predicted "one-dollar
+--    difference on every benchmark row". DuckDB's ::int ROUNDS; Spark's
+--    cast(x as int) TRUNCATES, so 1.9 becomes 2 on DuckDB and 1 on Spark. It
+--    is an F12 bug, not an F10 one. cast_to_int uses bround (half-to-even),
+--    because that is what DuckDB does to a DOUBLE — round() would be half-up
+--    and wrong at 2.5. This is exactly why the parity script asserts exact
+--    equality: a ±1 numeric tolerance would hide this bug rather than catch it.
+--  * bare `::numeric` — NOT the same item as `::numeric(5,2)` below, which is
+--    genuinely identical across engines and stays a literal cast. Bare
+--    `numeric` is DECIMAL(18,3) on DuckDB but DECIMAL(10,0) on Spark, and
+--    DuckDB's division then promotes the whole expression to DOUBLE where
+--    Spark's stays decimal. cast_to_numeric reproduces the DOUBLE. Here the
+--    trailing ::numeric(5,2) happens to round all spellings to the same answer,
+--    but that is a coincidence of magnitude, not a guarantee — the same
+--    expression in int_listing_volatility_features is exposed raw and does
+--    diverge visibly.
+
+select
+    obs.make,
+    obs.model,
+    count(*)                                                                             as national_listing_count,
+    
+  cast(bround(avg(ph.current_price)) as int)
+                                           as national_avg_price,
+    
+  cast(bround(percentile_cont(0.5)  within group (order by ph.current_price)) as int)
+  as national_median_price,
+    
+  cast(bround(percentile_cont(0.10) within group (order by ph.current_price)) as int)
+  as national_p10_price,
+    
+  cast(bround(percentile_cont(0.25) within group (order by ph.current_price)) as int)
+  as national_p25_price,
+    
+  cast(bround(percentile_cont(0.75) within group (order by ph.current_price)) as int)
+  as national_p75_price,
+    
+  cast(bround(percentile_cont(0.90) within group (order by ph.current_price)) as int)
+  as national_p90_price,
+    cast(avg(case when obs.msrp > 0
+             then 
+  cast((obs.msrp - ph.current_price) as double)
+ / obs.msrp * 100
+        end) as decimal(5,2))                                                            as national_avg_discount_pct
+from cartracker_experiments.int_latest_observation obs
+join cartracker_experiments.int_price_history ph on ph.vin = obs.vin17
+where ph.current_price > 0
+  and obs.make is not null
+  and obs.model is not null
+group by obs.make, obs.model
+  
+[0m00:17:00.389472 [debug] [Thread-4 (]: Spark adapter: Error while running:
+/* {"app": "dbt", "dbt_version": "1.10.20", "profile_name": "cartracker", "target_name": "spark", "node_id": "model.cartracker.int_benchmarks"} */
+
+  
+    
+        create or replace table cartracker_experiments.int_benchmarks
+      
+      
+    using iceberg
+      
+      
+      
+      
+      
+      
+
+      as
+      
+
+-- National market benchmarks per make/model.
+-- Computed from current prices across all VINs we track.
+-- Used by mart_deal_scores for deal scoring and national comparison.
+--
+-- Replaces: int_model_price_benchmarks + int_price_percentiles_by_vin
+--
+-- Plan 125 Gate B. Three separate cast questions live in this model, and the
+-- audit (F10/F12) got the ranking backwards on all three:
+--
+--  * `percentile_cont(p) within group (order by ...)` — flagged F10 as the
+--    rounding risk. It is not: the syntax works unchanged on Spark 3.5.3 and
+--    the raw values agree exactly (p10 over 1..10 = 1.9 on both engines).
+--  * `::int` — the ACTUAL source of the audit's predicted "one-dollar
+--    difference on every benchmark row". DuckDB's ::int ROUNDS; Spark's
+--    cast(x as int) TRUNCATES, so 1.9 becomes 2 on DuckDB and 1 on Spark. It
+--    is an F12 bug, not an F10 one. cast_to_int uses bround (half-to-even),
+--    because that is what DuckDB does to a DOUBLE — round() would be half-up
+--    and wrong at 2.5. This is exactly why the parity script asserts exact
+--    equality: a ±1 numeric tolerance would hide this bug rather than catch it.
+--  * bare `::numeric` — NOT the same item as `::numeric(5,2)` below, which is
+--    genuinely identical across engines and stays a literal cast. Bare
+--    `numeric` is DECIMAL(18,3) on DuckDB but DECIMAL(10,0) on Spark, and
+--    DuckDB's division then promotes the whole expression to DOUBLE where
+--    Spark's stays decimal. cast_to_numeric reproduces the DOUBLE. Here the
+--    trailing ::numeric(5,2) happens to round all spellings to the same answer,
+--    but that is a coincidence of magnitude, not a guarantee — the same
+--    expression in int_listing_volatility_features is exposed raw and does
+--    diverge visibly.
+
+select
+    obs.make,
+    obs.model,
+    count(*)                                                                             as national_listing_count,
+    
+  cast(bround(avg(ph.current_price)) as int)
+                                           as national_avg_price,
+    
+  cast(bround(percentile_cont(0.5)  within group (order by ph.current_price)) as int)
+  as national_median_price,
+    
+  cast(bround(percentile_cont(0.10) within group (order by ph.current_price)) as int)
+  as national_p10_price,
+    
+  cast(bround(percentile_cont(0.25) within group (order by ph.current_price)) as int)
+  as national_p25_price,
+    
+  cast(bround(percentile_cont(0.75) within group (order by ph.current_price)) as int)
+  as national_p75_price,
+    
+  cast(bround(percentile_cont(0.90) within group (order by ph.current_price)) as int)
+  as national_p90_price,
+    cast(avg(case when obs.msrp > 0
+             then 
+  cast((obs.msrp - ph.current_price) as double)
+ / obs.msrp * 100
+        end) as decimal(5,2))                                                            as national_avg_discount_pct
+from cartracker_experiments.int_latest_observation obs
+join cartracker_experiments.int_price_history ph on ph.vin = obs.vin17
+where ph.current_price > 0
+  and obs.make is not null
+  and obs.model is not null
+group by obs.make, obs.model
+  
+[0m00:17:00.390170 [debug] [Thread-4 (]: Spark adapter: py4j does not exist in the JVM
+[0m00:17:00.390631 [debug] [Thread-4 (]: On model.cartracker.int_benchmarks: ROLLBACK
+[0m00:17:00.390973 [debug] [Thread-4 (]: Spark adapter: NotImplemented: rollback
+[0m00:17:00.391269 [debug] [Thread-4 (]: On model.cartracker.int_benchmarks: Close
+[0m00:17:00.396676 [debug] [Thread-4 (]: Runtime Error in model int_benchmarks (models/intermediate/int_benchmarks.sql)
+  py4j does not exist in the JVM
+[0m00:17:00.397357 [debug] [Thread-4 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'bb35a5d6-0d15-43ab-95c4-26f30dc0c884', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b3382870>]}
+[0m00:17:00.398133 [error] [Thread-4 (]: 7 of 8 ERROR creating sql table model cartracker_experiments.int_benchmarks .... [[31mERROR[0m in 0.82s]
+[0m00:17:00.398766 [debug] [Thread-4 (]: Finished running node model.cartracker.int_benchmarks
+[0m00:17:00.399583 [debug] [Thread-7 (]: Marking all children of 'model.cartracker.int_benchmarks' to be skipped because of status 'error'.  Reason: Runtime Error in model int_benchmarks (models/intermediate/int_benchmarks.sql)
+  py4j does not exist in the JVM.
+[0m00:17:00.400621 [debug] [Thread-4 (]: Began running node model.cartracker.int_listing_volatility_features
+[0m00:17:00.401172 [info ] [Thread-4 (]: 8 of 8 SKIP relation cartracker_experiments.int_listing_volatility_features .... [[33mSKIP[0m]
+[0m00:17:00.401661 [debug] [Thread-4 (]: Finished running node model.cartracker.int_listing_volatility_features
+[0m00:17:00.403131 [debug] [MainThread]: On master: ROLLBACK
+[0m00:17:00.403529 [debug] [MainThread]: Opening a new connection, currently in state init
+[0m00:17:00.403854 [debug] [MainThread]: Spark adapter: NotImplemented: rollback
+[0m00:17:00.404121 [debug] [MainThread]: Spark adapter: NotImplemented: add_begin_query
+[0m00:17:00.404414 [debug] [MainThread]: Spark adapter: NotImplemented: commit
+[0m00:17:00.404769 [debug] [MainThread]: On master: ROLLBACK
+[0m00:17:00.405051 [debug] [MainThread]: Spark adapter: NotImplemented: rollback
+[0m00:17:00.405354 [debug] [MainThread]: On master: Close
+[0m00:17:00.405780 [debug] [MainThread]: Connection 'master' was properly closed.
+[0m00:17:00.406057 [debug] [MainThread]: Connection 'model.cartracker.int_benchmarks' was properly closed.
+[0m00:17:00.406436 [info ] [MainThread]: 
+[0m00:17:00.406855 [info ] [MainThread]: Finished running 4 incremental models, 1 project hook, 4 table models in 0 hours 14 minutes and 6.35 seconds (846.35s).
+[0m00:17:00.409419 [debug] [MainThread]: Command end result
+[0m00:17:00.500247 [debug] [MainThread]: Wrote artifact WritableManifest to /app/dbt/target/manifest.json
+[0m00:17:00.504826 [debug] [MainThread]: Wrote artifact SemanticManifest to /app/dbt/target/semantic_manifest.json
+[0m00:17:00.512099 [debug] [MainThread]: Wrote artifact RunExecutionResult to /app/dbt/target/run_results.json
+[0m00:17:00.512641 [info ] [MainThread]: 
+[0m00:17:00.513065 [info ] [MainThread]: [31mCompleted with 3 errors, 0 partial successes, and 0 warnings:[0m
+[0m00:17:00.513416 [info ] [MainThread]: 
+[0m00:17:00.513943 [error] [MainThread]: [31mFailure in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)[0m
+[0m00:17:00.515102 [error] [MainThread]:   Runtime Error in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)
+  An error occurred while calling o60.sql.
+  : org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+  Driver stacktrace:
+  	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)
+  	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+  	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+  	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)
+  	at scala.Option.foreach(Option.scala:407)
+  	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)
+  	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)
+  	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:142)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.$anonfun$writeToTable$1(WriteToDataSourceV2Exec.scala:582)
+  	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1397)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable(WriteToDataSourceV2Exec.scala:578)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable$(WriteToDataSourceV2Exec.scala:572)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.writeToTable(WriteToDataSourceV2Exec.scala:186)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.run(WriteToDataSourceV2Exec.scala:221)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+  	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+  	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+  	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+  	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+  	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+  	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+  	at py4j.Gateway.invoke(Gateway.java:282)
+  	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+  	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+  	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+  	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+  	at java.base/java.lang.Thread.run(Thread.java:840)
+  Caused by: java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+[0m00:17:00.516356 [info ] [MainThread]: 
+[0m00:17:00.516826 [info ] [MainThread]:   compiled code at target/compiled/cartracker/models/intermediate/int_listing_observation_runs.sql
+[0m00:17:00.517216 [info ] [MainThread]: 
+[0m00:17:00.517702 [error] [MainThread]: [31mFailure in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)[0m
+[0m00:17:00.518583 [error] [MainThread]:   Runtime Error in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)
+  Runtime Error
+    [TABLE_OR_VIEW_NOT_FOUND] The table or view `cartracker_experiments`.`int_listing_state_fingerprints` cannot be found. Verify the spelling and correctness of the schema and catalog.
+    If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.
+    To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 77 pos 9;
+    'ReplaceTableAsSelect TableSpec(Map(),Some(iceberg),Map(),None,None,None,false), true, false
+    :- ResolvedIdentifier V2SessionCatalog(spark_catalog), cartracker_experiments.int_listing_state_runs
+    +- 'Project ['vin17, 'listing_id, 'parsed_fingerprint, 'listing_state, 'run_started_at, 'run_ended_at, 'artifact_count, cast((('unix_timestamp('date_trunc(HOUR, 'run_ended_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_started_at))) / 3600) as bigint) AS run_duration_hours#537, 'next_state_started_at, cast((('unix_timestamp('date_trunc(HOUR, 'next_state_started_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_ended_at))) / 3600) as bigint) AS hours_until_change#538, isnull('next_state_started_at) AS is_open_run#539]
+       +- 'SubqueryAlias with_lead
+          +- 'Project [*, 'lead('run_started_at) windowspecdefinition('vin17, 'run_started_at ASC NULLS FIRST, 'run_id ASC NULLS FIRST, unspecifiedframe$()) AS next_state_started_at#547]
+             +- 'SubqueryAlias collapsed
+                +- 'Aggregate ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id], ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id, 'min('fetched_at) AS run_started_at#543, 'max('fetched_at) AS run_ended_at#544, count(1) AS artifact_count#545L, 'min('listing_state) AS listing_state#546]
+                   +- 'SubqueryAlias numbered
+                      +- 'Project [*, 'sum('is_new_run) windowspecdefinition('vin17, 'fetched_at ASC NULLS FIRST, 'artifact_id ASC NULLS FIRST, specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS run_id#542]
+                         +- 'SubqueryAlias flagged
+                            +- 'Project [*, CASE WHEN (isnull('prev_fingerprint) OR NOT ('parsed_fingerprint = 'prev_fingerprint)) THEN 1 ELSE 0 END AS is_new_run#541]
+                               +- 'SubqueryAlias ordered
+                                  +- 'Project ['f.vin17, 'f.listing_id, 'f.artifact_id, 'f.fetched_at, 'f.parsed_fingerprint, 'f.listing_state, 'lag('f.parsed_fingerprint) windowspecdefinition('f.vin17, 'f.fetched_at ASC NULLS FIRST, 'f.artifact_id ASC NULLS FIRST, unspecifiedframe$()) AS prev_fingerprint#540]
+                                     +- 'SubqueryAlias f
+                                        +- 'UnresolvedRelation [cartracker_experiments, int_listing_state_fingerprints], [], false
+    
+[0m00:17:00.519177 [info ] [MainThread]: 
+[0m00:17:00.519639 [info ] [MainThread]:   compiled code at target/compiled/cartracker/models/intermediate/int_listing_state_runs.sql
+[0m00:17:00.519979 [info ] [MainThread]: 
+[0m00:17:00.520536 [error] [MainThread]: [31mFailure in model int_benchmarks (models/intermediate/int_benchmarks.sql)[0m
+[0m00:17:00.521005 [error] [MainThread]:   Runtime Error in model int_benchmarks (models/intermediate/int_benchmarks.sql)
+  py4j does not exist in the JVM
+[0m00:17:00.521461 [info ] [MainThread]: 
+[0m00:17:00.521968 [info ] [MainThread]:   compiled code at target/compiled/cartracker/models/intermediate/int_benchmarks.sql
+[0m00:17:00.522430 [info ] [MainThread]: 
+[0m00:17:00.522946 [info ] [MainThread]: Done. PASS=5 WARN=0 ERROR=3 SKIP=1 NO-OP=0 TOTAL=9
+[0m00:17:00.524979 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": false, "command_wall_clock_time": 849.95593, "process_in_blocks": "1232", "process_kernel_time": 1.412207, "process_mem_max_rss": "246308", "process_out_blocks": "11328", "process_user_time": 7.862184}
+[0m00:17:00.525654 [debug] [MainThread]: Command `cli run` failed at 00:17:00.525464 after 849.96 seconds
+[0m00:17:00.526115 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b8da2db0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b338a9f0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0xe1b8b338b950>]}
+[0m00:17:00.526604 [debug] [MainThread]: Flushing usage events
+[0m00:17:00.711987 [debug] [MainThread]: An error was encountered while trying to flush usage events

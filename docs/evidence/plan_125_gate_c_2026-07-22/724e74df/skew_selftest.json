@@ -1,0 +1,563 @@
+{
+  "command": "describe-dataset",
+  "run_id": "724e74df",
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "6442450944",
+    "bytes": 6442450944
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "1g",
+    "spark.driver.memory": "3g",
+    "spark.master": "local[4]"
+  },
+  "steps": [
+    {
+      "name": "row_count",
+      "ok": true,
+      "seconds": 5.79,
+      "detail": {
+        "stats": {
+          "rows": 38600000
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "source_distribution",
+      "ok": true,
+      "seconds": 2.22,
+      "detail": {
+        "stats": {
+          "carousel": 12866666,
+          "detail": 12866667,
+          "srp": 12866667
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "artifact_fanout",
+      "ok": true,
+      "seconds": 8.29,
+      "detail": {
+        "stats": {
+          "fanout_p50": 7,
+          "fanout_p95": 7,
+          "fanout_p99": 8,
+          "fanout_max": 8,
+          "fanout_avg": 6.999999637305718,
+          "fanout_min": 5,
+          "artifacts": 5514286
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "observation_key_groups",
+      "ok": true,
+      "seconds": 18.441,
+      "detail": {
+        "stats": {
+          "group_p50": 1,
+          "group_p95": 1,
+          "group_p99": 2,
+          "group_max": 2,
+          "group_avg": 1.04166663855606,
+          "groups": 37056001,
+          "groups_with_duplicates": 1543999
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "artifact_skew_top",
+      "ok": true,
+      "seconds": 7.304,
+      "detail": {
+        "stats": [
+          {
+            "artifact_id": 5172649,
+            "n": 8
+          },
+          {
+            "artifact_id": 5173324,
+            "n": 8
+          },
+          {
+            "artifact_id": 5171349,
+            "n": 8
+          },
+          {
+            "artifact_id": 5203249,
+            "n": 8
+          },
+          {
+            "artifact_id": 5171499,
+            "n": 8
+          },
+          {
+            "artifact_id": 5174224,
+            "n": 8
+          },
+          {
+            "artifact_id": 5195349,
+            "n": 8
+          },
+          {
+            "artifact_id": 5170299,
+            "n": 8
+          },
+          {
+            "artifact_id": 5170724,
+            "n": 8
+          },
+          {
+            "artifact_id": 5174324,
+            "n": 8
+          },
+          {
+            "artifact_id": 5171399,
+            "n": 8
+          },
+          {
+            "artifact_id": 5185749,
+            "n": 8
+          },
+          {
+            "artifact_id": 5189999,
+            "n": 8
+          },
+          {
+            "artifact_id": 5202249,
+            "n": 8
+          },
+          {
+            "artifact_id": 5187249,
+            "n": 8
+          },
+          {
+            "artifact_id": 5187599,
+            "n": 8
+          },
+          {
+            "artifact_id": 5194599,
+            "n": 8
+          },
+          {
+            "artifact_id": 5170549,
+            "n": 8
+          },
+          {
+            "artifact_id": 5187524,
+            "n": 8
+          },
+          {
+            "artifact_id": 5189824,
+            "n": 8
+          }
+        ]
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "observation_key_skew_top",
+      "ok": true,
+      "seconds": 13.101,
+      "detail": {
+        "stats": [
+          {
+            "artifact_id": 60,
+            "listing_id": "L424",
+            "n": 2
+          },
+          {
+            "artifact_id": 5171307,
+            "listing_id": "L199149",
+            "n": 2
+          },
+          {
+            "artifact_id": 5170874,
+            "listing_id": "L196124",
+            "n": 2
+          },
+          {
+            "artifact_id": 5180946,
+            "listing_id": "L266624",
+            "n": 2
+          },
+          {
+            "artifact_id": 5171089,
+            "listing_id": "L197624",
+            "n": 2
+          },
+          {
+            "artifact_id": 5171735,
+            "listing_id": "L202149",
+            "n": 2
+          },
+          {
+            "artifact_id": 5183946,
+            "listing_id": "L287624",
+            "n": 2
+          },
+          {
+            "artifact_id": 5177089,
+            "listing_id": "L239624",
+            "n": 2
+          },
+          {
+            "artifact_id": 17,
+            "listing_id": "L124",
+            "n": 2
+          },
+          {
+            "artifact_id": 5180346,
+            "listing_id": "L262424",
+            "n": 2
+          },
+          {
+            "artifact_id": 5171135,
+            "listing_id": "L197949",
+            "n": 2
+          },
+          {
+            "artifact_id": 5177778,
+            "listing_id": "L244449",
+            "n": 2
+          },
+          {
+            "artifact_id": 5187507,
+            "listing_id": "L312549",
+            "n": 2
+          },
+          {
+            "artifact_id": 5170021,
+            "listing_id": "L190149",
+            "n": 2
+          },
+          {
+            "artifact_id": 5176964,
+            "listing_id": "L238749",
+            "n": 2
+          },
+          {
+            "artifact_id": 5178035,
+            "listing_id": "L246249",
+            "n": 2
+          },
+          {
+            "artifact_id": 28,
+            "listing_id": "L199",
+            "n": 2
+          },
+          {
+            "artifact_id": 5171864,
+            "listing_id": "L203049",
+            "n": 2
+          },
+          {
+            "artifact_id": 5177007,
+            "listing_id": "L239049",
+            "n": 2
+          },
+          {
+            "artifact_id": 5178332,
+            "listing_id": "L248324",
+            "n": 2
+          }
+        ]
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "row_bytes",
+      "ok": true,
+      "seconds": 62.218,
+      "detail": {
+        "stats": {
+          "row_bytes_p50": 283,
+          "row_bytes_p95": 336,
+          "row_bytes_p99": 339,
+          "row_bytes_max": 347,
+          "row_bytes_avg": 275.75583922279793
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "string_fields",
+      "ok": true,
+      "seconds": 145.928,
+      "detail": {
+        "stats": {
+          "listing_id": {
+            "p50": 8,
+            "p95": 8,
+            "p99": 8,
+            "max": 8,
+            "avg": 7.625792150259067,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "vin": {
+            "p50": 17,
+            "p95": 17,
+            "p99": 17,
+            "max": 17,
+            "avg": 17.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "source": {
+            "p50": 6,
+            "p95": 8,
+            "p99": 8,
+            "max": 8,
+            "avg": 5.666666606217617,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "make": {
+            "p50": 5,
+            "p95": 6,
+            "p99": 6,
+            "max": 6,
+            "avg": 5.2,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "model": {
+            "p50": 5,
+            "p95": 7,
+            "p99": 7,
+            "max": 7,
+            "avg": 5.571428549222798,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "trim": {
+            "p50": 23,
+            "p95": 23,
+            "p99": 23,
+            "max": 23,
+            "avg": 23.0,
+            "nulls": 29301260,
+            "null_pct": 75.91
+          },
+          "listing_state": {
+            "p50": 6,
+            "p95": 11,
+            "p99": 11,
+            "max": 11,
+            "avg": 6.294117746113989,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "canonical_detail_url": {
+            "p50": 72,
+            "p95": 72,
+            "p99": 72,
+            "max": 72,
+            "avg": 72.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "stock_type": {
+            "p50": 4,
+            "p95": 4,
+            "p99": 4,
+            "max": 4,
+            "avg": 3.5,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "fuel_type": {
+            "p50": 8,
+            "p95": 8,
+            "p99": 8,
+            "max": 8,
+            "avg": 7.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "body_style": {
+            "p50": 5,
+            "p95": 5,
+            "p99": 5,
+            "max": 5,
+            "avg": 4.333333316062176,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "dealer_name": {
+            "p50": 35,
+            "p95": 35,
+            "p99": 35,
+            "max": 35,
+            "avg": 35.0,
+            "nulls": 4068440,
+            "null_pct": 10.54
+          },
+          "dealer_zip": {
+            "p50": 5,
+            "p95": 5,
+            "p99": 5,
+            "max": 5,
+            "avg": 5.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "dealer_city": {
+            "p50": 7,
+            "p95": 7,
+            "p99": 7,
+            "max": 7,
+            "avg": 6.725,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "dealer_state": {
+            "p50": 2,
+            "p95": 2,
+            "p99": 2,
+            "max": 2,
+            "avg": 2.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "customer_id": {
+            "p50": 8,
+            "p95": 8,
+            "p99": 8,
+            "max": 8,
+            "avg": 7.877777461139896,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "seller_customer_id": {
+            "p50": 6,
+            "p95": 6,
+            "p99": 6,
+            "max": 6,
+            "avg": 5.842856735751296,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "seller_zip": {
+            "p50": 5,
+            "p95": 5,
+            "p99": 5,
+            "max": 5,
+            "avg": 5.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "financing_type": {
+            "p50": 5,
+            "p95": 5,
+            "p99": 5,
+            "max": 5,
+            "avg": 4.6666666580310885,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "trid": {
+            "p50": 22,
+            "p95": 22,
+            "p99": 22,
+            "max": 22,
+            "avg": 22.0,
+            "nulls": 34902120,
+            "null_pct": 90.42
+          },
+          "isa_context": {
+            "p50": 8,
+            "p95": 8,
+            "p99": 8,
+            "max": 8,
+            "avg": 8.0,
+            "nulls": 34902120,
+            "null_pct": 90.42
+          },
+          "body": {
+            "p50": 47,
+            "p95": 47,
+            "p99": 47,
+            "max": 47,
+            "avg": 47.0,
+            "nulls": 9669300,
+            "null_pct": 25.05
+          },
+          "condition": {
+            "p50": 4,
+            "p95": 4,
+            "p99": 4,
+            "max": 4,
+            "avg": 3.5,
+            "nulls": 0,
+            "null_pct": 0.0
+          }
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "storage",
+      "ok": true,
+      "seconds": 1.667,
+      "detail": {
+        "files": 1152,
+        "total_bytes": 4490089085,
+        "bytes_per_row": 116.32,
+        "bytes_per_file": 3897646.78
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    }
+  ],
+  "ok": true,
+  "path": "s3a://scale-harness-dupes/silver_normalized/observations",
+  "reads_production": false
+}

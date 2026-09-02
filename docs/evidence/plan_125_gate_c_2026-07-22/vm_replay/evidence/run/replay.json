@@ -1,0 +1,283 @@
+{
+  "command": "gate-c-shadow-replay",
+  "started_at": "2026-07-22T00:02:37Z",
+  "selector": "+int_listing_volatility_features",
+  "source_bucket": "bronze",
+  "write_namespace": "cartracker.cartracker_experiments",
+  "image_digest": "sha256:01d9a5c0e0fffe4dc8cde4dbea7aecc15917916938b4b397e53dbddc1ae791ed",
+  "pre": {
+    "cgroup": {
+      "memory.max": 6442450944,
+      "memory.high": "max",
+      "memory.current": 12705792,
+      "memory.peak": 12709888,
+      "memory.events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memory.stat": {
+        "anon": 11710464,
+        "file": 241664,
+        "sock": 0,
+        "slab": 503816,
+        "pgmajfault": 0
+      }
+    },
+    "meminfo": {
+      "MemTotal": "24555892 kB",
+      "MemFree": "3801068 kB",
+      "MemAvailable": "14374168 kB",
+      "SwapTotal": "0 kB",
+      "SwapFree": "0 kB"
+    },
+    "dependencies": {
+      "python": "3.13.14",
+      "packages": [
+        "boto3==1.43.53",
+        "dbt-core==1.10.20",
+        "dbt-spark==1.10.3",
+        "duckdb==1.5.4",
+        "py4j==0.10.9.7",
+        "pyarrow==25.0.0",
+        "pyspark==3.5.3"
+      ]
+    },
+    "jvm": {
+      "jvm_max_heap_bytes": 1073741824,
+      "jvm_available_processors": 4,
+      "spark.driver.memory": "<unset>",
+      "spark.master": "local[*]",
+      "spark.sql.shuffle.partitions": "200",
+      "default_parallelism": 4
+    },
+    "jvm_input_arguments": {
+      "input_arguments": [
+        "-Xmx1g",
+        "-XX:+IgnoreUnrecognizedVMOptions",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+        "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+        "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED",
+        "-Djdk.reflect.useDirectMethodHandle=false"
+      ],
+      "xmx_flags": [
+        "-Xmx1g"
+      ]
+    },
+    "catalog_state": {
+      "namespace": "cartracker_experiments",
+      "tables": [
+        {
+          "table": "int_latest_observation",
+          "rows": 258374
+        }
+      ]
+    },
+    "source_inventory": {
+      "files": 1041,
+      "total_bytes": 575474258,
+      "largest_file_bytes": 55589771,
+      "smallest_file_bytes": 13157,
+      "row_group_sample": [
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=1/compacted-through-2026-01-31.parquet",
+          "rows": 280930,
+          "row_groups": 1,
+          "max_row_group_bytes": 28814630,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=2/compacted-through-2026-02-28.parquet",
+          "rows": 3093854,
+          "row_groups": 3,
+          "max_row_group_bytes": 61521784,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=3/compacted-through-2026-03-31.parquet",
+          "rows": 3155979,
+          "row_groups": 4,
+          "max_row_group_bytes": 87800666,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=4/compacted-through-2026-04-30.parquet",
+          "rows": 5971440,
+          "row_groups": 6,
+          "max_row_group_bytes": 78397732,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=5/compacted-through-2026-05-31.parquet",
+          "rows": 7475139,
+          "row_groups": 8,
+          "max_row_group_bytes": 44786948,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=6/compacted-through-2026-06-30.parquet",
+          "rows": 8306390,
+          "row_groups": 8,
+          "max_row_group_bytes": 33961060,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=7/part-0089d2c8-309e-4f43-afaf-4b52fe5a3fed-0.parquet",
+          "rows": 6901,
+          "row_groups": 1,
+          "max_row_group_bytes": 457826,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=7/part-00d4258b-ac8c-453f-b493-163750e2dd39-0.parquet",
+          "rows": 348,
+          "row_groups": 1,
+          "max_row_group_bytes": 33149,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=7/part-00e7cfce-a1b0-4423-8224-401936f2d856-0.parquet",
+          "rows": 14138,
+          "row_groups": 1,
+          "max_row_group_bytes": 1047089,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=7/part-01500248-e981-4262-8e91-7191d0c0d89c-0.parquet",
+          "rows": 2378,
+          "row_groups": 1,
+          "max_row_group_bytes": 187578,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=7/part-03d0b7f9-cc05-4079-a2f0-287b5c7aca95-0.parquet",
+          "rows": 3693,
+          "row_groups": 1,
+          "max_row_group_bytes": 249267,
+          "columns": 38
+        },
+        {
+          "key": "silver_normalized/observations/source=carousel/obs_year=2026/obs_month=7/part-0419cd1f-e7eb-49c4-9011-4bb186bc15c5-0.parquet",
+          "rows": 9460,
+          "row_groups": 1,
+          "max_row_group_bytes": 720109,
+          "columns": 38
+        }
+      ]
+    }
+  },
+  "run": {
+    "seconds": 851.58,
+    "dbt_success": false,
+    "nodes": [
+      {
+        "node": "cartracker-on-run-start-0",
+        "status": "success",
+        "seconds": 0.01,
+        "message": "cartracker.on-run-start.0 passed"
+      },
+      {
+        "node": "int_latest_observation",
+        "status": "success",
+        "seconds": 48.3,
+        "message": "OK"
+      },
+      {
+        "node": "int_listing_observation_fingerprints",
+        "status": "success",
+        "seconds": 561.19,
+        "message": "OK"
+      },
+      {
+        "node": "int_listing_state_fingerprints",
+        "status": "success",
+        "seconds": 63.25,
+        "message": "OK"
+      },
+      {
+        "node": "int_price_history",
+        "status": "success",
+        "seconds": 40.43,
+        "message": "OK"
+      },
+      {
+        "node": "int_listing_observation_runs",
+        "status": "error",
+        "seconds": 131.63,
+        "message": "Runtime Error in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)\n  An error occurred while calling o60.sql.\n  : org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space\n  \tat java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)\n  \tat java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)\n  \tat org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)\n  \tat org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)\n  \tat org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)\n  \tat org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)\n  \tat org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)\n  \tat org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)\n  \tat org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)\n  \tat org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)\n  \tat org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)\n  \tat org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)\n  \tat org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)\n  \tat org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)\n  \tat org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)\n  \tat org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)\n  \tat org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)\n  \tat org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)\n  \tat org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)\n  \tat org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)\n  \tat org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)\n  \tat org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)\n  \tat org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)\n  \tat org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)\n  \tat org.apache.spark.rdd.RDD.iterator(RDD.scala:331)\n  \tat org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)\n  \n  Driver stacktrace:\n  \tat org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)\n  \tat scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)\n  \tat scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)\n  \tat scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)\n  \tat org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)\n  \tat org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)\n  \tat scala.Option.foreach(Option.scala:407)\n  \tat org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)\n  \tat org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)\n  \tat org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)\n  \tat org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)\n  \tat org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)\n  \tat org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)\n  \tat org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)\n  \tat org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)\n  \tat org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)\n  \tat org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)\n  \tat org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)\n  \tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)\n  \tat org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)\n  \tat org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)\n  \tat org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)\n  \tat org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)\n  \tat org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)\n  \tat org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)\n  \tat org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)\n  \tat org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)\n  \tat org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)\n  \tat org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)\n  \tat org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)\n  \tat org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)\n  \tat org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)\n  \tat org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)\n  \tat org.apache.spark.sql.catalyst.tree"
+      },
+      {
+        "node": "int_listing_state_runs",
+        "status": "error",
+        "seconds": 0.15,
+        "message": "Runtime Error in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)\n  Runtime Error\n    [TABLE_OR_VIEW_NOT_FOUND] The table or view `cartracker_experiments`.`int_listing_state_fingerprints` cannot be found. Verify the spelling and correctness of the schema and catalog.\n    If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.\n    To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 77 pos 9;\n    'ReplaceTableAsSelect TableSpec(Map(),Some(iceberg),Map(),None,None,None,false), true, false\n    :- ResolvedIdentifier V2SessionCatalog(spark_catalog), cartracker_experiments.int_listing_state_runs\n    +- 'Project ['vin17, 'listing_id, 'parsed_fingerprint, 'listing_state, 'run_started_at, 'run_ended_at, 'artifact_count, cast((('unix_timestamp('date_trunc(HOUR, 'run_ended_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_started_at))) / 3600) as bigint) AS run_duration_hours#537, 'next_state_started_at, cast((('unix_timestamp('date_trunc(HOUR, 'next_state_started_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_ended_at))) / 3600) as bigint) AS hours_until_change#538, isnull('next_state_started_at) AS is_open_run#539]\n       +- 'SubqueryAlias with_lead\n          +- 'Project [*, 'lead('run_started_at) windowspecdefinition('vin17, 'run_started_at ASC NULLS FIRST, 'run_id ASC NULLS FIRST, unspecifiedframe$()) AS next_state_started_at#547]\n             +- 'SubqueryAlias collapsed\n                +- 'Aggregate ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id], ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id, 'min('fetched_at) AS run_started_at#543, 'max('fetched_at) AS run_ended_at#544, count(1) AS artifact_count#545L, 'min('listing_state) AS listing_state#546]\n                   +- 'SubqueryAlias numbered\n                      +- 'Project [*, 'sum('is_new_run) windowspecdefinition('vin17, 'fetched_at ASC NULLS FIRST, 'artifact_id ASC NULLS FIRST, specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS run_id#542]\n                         +- 'SubqueryAlias flagged\n                            +- 'Project [*, CASE WHEN (isnull('prev_fingerprint) OR NOT ('parsed_fingerprint = 'prev_fingerprint)) THEN 1 ELSE 0 END AS is_new_run#541]\n                               +- 'SubqueryAlias ordered\n                                  +- 'Project ['f.vin17, 'f.listing_id, 'f.artifact_id, 'f.fetched_at, 'f.parsed_fingerprint, 'f.listing_state, 'lag('f.parsed_fingerprint) windowspecdefinition('f.vin17, 'f.fetched_at ASC NULLS FIRST, 'f.artifact_id ASC NULLS FIRST, unspecifiedframe$()) AS prev_fingerprint#540]\n                                     +- 'SubqueryAlias f\n                                        +- 'UnresolvedRelation [cartracker_experiments, int_listing_state_fingerprints], [], false\n    "
+      },
+      {
+        "node": "int_benchmarks",
+        "status": "error",
+        "seconds": 0.82,
+        "message": "Runtime Error in model int_benchmarks (models/intermediate/int_benchmarks.sql)\n  py4j does not exist in the JVM"
+      },
+      {
+        "node": "int_listing_volatility_features",
+        "status": "skipped",
+        "seconds": 0,
+        "message": ""
+      }
+    ],
+    "first_failed_node": "int_listing_observation_runs",
+    "failure": {},
+    "phase": "oom_during_iceberg_write_or_commit"
+  },
+  "post": {
+    "cgroup": {
+      "memory.max": 6442450944,
+      "memory.high": "max",
+      "memory.current": 182976512,
+      "memory.peak": 6442450944,
+      "memory.events": {
+        "low": 0,
+        "high": 0,
+        "max": 2922,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "memory.stat": {
+        "anon": 169902080,
+        "file": 2600960,
+        "sock": 8192,
+        "slab": 9432456,
+        "pgmajfault": 403
+      }
+    },
+    "meminfo": {
+      "MemTotal": "24555892 kB",
+      "MemFree": "5399372 kB",
+      "MemAvailable": "14339668 kB",
+      "SwapTotal": "0 kB",
+      "SwapFree": "0 kB"
+    },
+    "heap_pool_peaks": {
+      "error": "java does not exist in the JVM"
+    },
+    "catalog_state": {
+      "error": "[Errno 111] Connection refused"
+    }
+  }
+}

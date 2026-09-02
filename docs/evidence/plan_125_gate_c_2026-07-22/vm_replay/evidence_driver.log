@@ -1,0 +1,753 @@
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/07/22 00:02:39 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[0m00:02:50  Running with dbt=1.10.20
+[0m00:02:50  Registered adapter: spark=1.10.3
+[0m00:02:51  Unable to do partial parsing because saved manifest not found. Starting full parse.
+[0m00:02:53  [[33mWARNING[0m]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
+There are 1 unused configuration paths:
+- models.cartracker.ops
+[0m00:02:54  Found 22 models, 1 operation, 155 data tests, 6 sources, 670 macros, 65 unit tests
+[0m00:02:54  
+[0m00:02:54  Concurrency: 1 threads (target='spark')
+[0m00:02:54  
+26/07/22 00:02:54 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:02:54 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:02:54 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:02:54 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+[0m00:02:54  1 of 1 START hook: cartracker.on-run-start.0 ................................... [RUN]
+[0m00:02:54  1 of 1 OK hook: cartracker.on-run-start.0 ...................................... [[32mOK[0m in 0.01s]
+[0m00:02:54  
+[0m00:02:54  1 of 8 START sql incremental model cartracker_experiments.int_latest_observation  [RUN]
+26/07/22 00:02:54 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:02:54 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:02:55 WARN MetricsConfig: Cannot locate configuration: tried hadoop-metrics2-s3a-file-system.properties,hadoop-metrics2.properties
+26/07/22 00:02:57 WARN SparkStringUtils: Truncated the string representation of a plan since it was too large. This behavior can be adjusted by setting 'spark.sql.debug.maxToStringFields'.
+[Stage 4:>                                                         (0 + 4) / 37][Stage 4:=>                                                        (1 + 4) / 37][Stage 4:===>                                                      (2 + 4) / 37][Stage 4:====>                                                     (3 + 4) / 37][Stage 4:======>                                                   (4 + 4) / 37][Stage 4:=======>                                                  (5 + 4) / 37][Stage 4:=========>                                                (6 + 4) / 37][Stage 4:==========>                                               (7 + 4) / 37][Stage 4:============>                                             (8 + 4) / 37][Stage 4:==============>                                           (9 + 4) / 37][Stage 4:================>                                        (11 + 4) / 37][Stage 4:==================>                                      (12 + 4) / 37][Stage 4:====================>                                    (13 + 4) / 37][Stage 4:=====================>                                   (14 + 4) / 37][Stage 4:=======================>                                 (15 + 4) / 37][Stage 4:========================>                                (16 + 4) / 37][Stage 4:==========================>                              (17 + 4) / 37][Stage 4:=============================>                           (19 + 4) / 37][Stage 4:==============================>                          (20 + 4) / 37][Stage 4:================================>                        (21 + 4) / 37][Stage 4:=================================>                       (22 + 4) / 37][Stage 4:===================================>                     (23 + 4) / 37][Stage 4:====================================>                    (24 + 4) / 37][Stage 4:======================================>                  (25 + 4) / 37][Stage 4:========================================>                (26 + 4) / 37][Stage 4:=========================================>               (27 + 4) / 37][Stage 4:===========================================>             (28 + 4) / 37][Stage 4:==============================================>          (30 + 4) / 37][Stage 4:===============================================>         (31 + 4) / 37][Stage 4:==================================================>      (33 + 4) / 37][Stage 4:====================================================>    (34 + 3) / 37][Stage 4:=====================================================>   (35 + 2) / 37][Stage 4:=======================================================> (36 + 1) / 37][Stage 6:>                                                          (0 + 4) / 4]                                                                                [0m00:03:42  1 of 8 OK created sql incremental model cartracker_experiments.int_latest_observation  [[32mOK[0m in 48.30s]
+[0m00:03:42  2 of 8 START sql incremental model cartracker_experiments.int_listing_observation_fingerprints  [RUN]
+26/07/22 00:03:42 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+[Stage 8:>                                                         (0 + 4) / 37][Stage 8:=>                                                        (1 + 4) / 37][Stage 8:===>                                                      (2 + 4) / 37][Stage 8:====>                                                     (3 + 4) / 37][Stage 8:======>                                                   (4 + 4) / 37][Stage 8:=======>                                                  (5 + 4) / 37][Stage 8:=========>                                                (6 + 4) / 37][Stage 8:==========>                                               (7 + 4) / 37][Stage 8:============>                                             (8 + 4) / 37][Stage 8:==============>                                           (9 + 4) / 37][Stage 8:===============>                                         (10 + 4) / 37][Stage 8:================>                                        (11 + 4) / 37][Stage 8:==================>                                      (12 + 4) / 37][Stage 8:====================>                                    (13 + 4) / 37][Stage 8:=====================>                                   (14 + 4) / 37][Stage 8:=======================>                                 (15 + 4) / 37][Stage 8:========================>                                (16 + 4) / 37][Stage 8:==========================>                              (17 + 4) / 37][Stage 8:===========================>                             (18 + 4) / 37][Stage 8:=============================>                           (19 + 4) / 37][Stage 8:==============================>                          (20 + 4) / 37][Stage 8:=================================>                       (22 + 4) / 37][Stage 8:===================================>                     (23 + 4) / 37][Stage 8:====================================>                    (24 + 4) / 37][Stage 8:======================================>                  (25 + 4) / 37][Stage 8:========================================>                (26 + 4) / 37][Stage 8:=========================================>               (27 + 4) / 37][Stage 8:===========================================>             (28 + 4) / 37][Stage 8:============================================>            (29 + 4) / 37][Stage 8:===============================================>         (31 + 4) / 37][Stage 8:=================================================>       (32 + 4) / 37][Stage 8:==================================================>      (33 + 4) / 37][Stage 8:====================================================>    (34 + 3) / 37][Stage 8:=====================================================>   (35 + 2) / 37][Stage 8:=====================================================>   (35 + 2) / 37][Stage 8:=====================================================>   (35 + 2) / 37][Stage 8:=====================================================>   (35 + 2) / 37][Stage 8:=======================================================> (36 + 1) / 37][Stage 10:>                                                       (0 + 4) / 100][Stage 10:>                                                       (1 + 4) / 100][Stage 10:=>                                                      (3 + 4) / 100][Stage 10:==>                                                     (4 + 4) / 100][Stage 10:==>                                                     (5 + 4) / 100][Stage 10:===>                                                    (6 + 4) / 100][Stage 10:====>                                                   (8 + 4) / 100][Stage 10:=====>                                                  (9 + 4) / 100][Stage 10:=====>                                                  (9 + 5) / 100][Stage 10:=====>                                                 (10 + 4) / 100][Stage 10:======>                                                (11 + 4) / 100][Stage 10:======>                                                (12 + 4) / 100][Stage 10:=======>                                               (13 + 4) / 100][Stage 10:=======>                                               (14 + 4) / 100][Stage 10:========>                                              (15 + 4) / 100][Stage 10:========>                                              (16 + 4) / 100][Stage 10:=========>                                             (17 + 4) / 100][Stage 10:=========>                                             (18 + 4) / 100][Stage 10:===========>                                           (20 + 4) / 100][Stage 10:===========>                                           (21 + 4) / 100][Stage 10:============>                                          (22 + 4) / 100][Stage 10:============>                                          (23 + 4) / 100][Stage 10:=============>                                         (24 + 4) / 100][Stage 10:=============>                                         (25 + 4) / 100][Stage 10:==============>                                        (26 + 4) / 100][Stage 10:==============>                                        (27 + 4) / 100][Stage 10:===============>                                       (28 + 4) / 100][Stage 10:===============>                                       (29 + 4) / 100][Stage 10:================>                                      (30 + 4) / 100][Stage 10:=================>                                     (32 + 4) / 100][Stage 10:==================>                                    (33 + 4) / 100][Stage 10:==================>                                    (34 + 4) / 100][Stage 10:===================>                                   (35 + 4) / 100][Stage 10:===================>                                   (36 + 4) / 100][Stage 10:====================>                                  (37 + 4) / 100][Stage 10:====================>                                  (38 + 4) / 100][Stage 10:=====================>                                 (39 + 4) / 100][Stage 10:======================>                                (40 + 4) / 100][Stage 10:======================>                                (41 + 4) / 100][Stage 10:=======================>                               (43 + 4) / 100][Stage 10:========================>                              (44 + 4) / 100][Stage 10:========================>                              (45 + 4) / 100][Stage 10:=========================>                             (46 + 4) / 100][Stage 10:=========================>                             (47 + 4) / 100][Stage 10:==========================>                            (48 + 4) / 100][Stage 10:==========================>                            (49 + 4) / 100][Stage 10:===========================>                           (50 + 4) / 100][Stage 10:============================>                          (51 + 4) / 100][Stage 10:============================>                          (52 + 4) / 100][Stage 10:=============================>                         (53 + 4) / 100][Stage 10:=============================>                         (54 + 4) / 100][Stage 10:==============================>                        (55 + 4) / 100][Stage 10:==============================>                        (56 + 4) / 100][Stage 10:===============================>                       (57 + 4) / 100][Stage 10:===============================>                       (58 + 4) / 100][Stage 10:================================>                      (59 + 4) / 100][Stage 10:=================================>                     (60 + 4) / 100][Stage 10:=================================>                     (61 + 4) / 100][Stage 10:==================================>                    (62 + 4) / 100][Stage 10:==================================>                    (63 + 4) / 100][Stage 10:===================================>                   (64 + 4) / 100][Stage 10:===================================>                   (65 + 4) / 100][Stage 10:====================================>                  (66 + 4) / 100][Stage 10:====================================>                  (67 + 4) / 100][Stage 10:=====================================>                 (68 + 4) / 100][Stage 10:=====================================>                 (69 + 4) / 100][Stage 10:======================================>                (70 + 4) / 100][Stage 10:=======================================>               (71 + 4) / 100][Stage 10:=======================================>               (72 + 4) / 100][Stage 10:========================================>              (73 + 4) / 100][Stage 10:========================================>              (74 + 4) / 100][Stage 10:=========================================>             (75 + 4) / 100][Stage 10:=========================================>             (76 + 4) / 100][Stage 10:==========================================>            (77 + 4) / 100][Stage 10:==========================================>            (78 + 4) / 100][Stage 10:===========================================>           (79 + 4) / 100][Stage 10:============================================>          (80 + 4) / 100][Stage 10:============================================>          (81 + 4) / 100][Stage 10:=============================================>         (82 + 4) / 100][Stage 10:=============================================>         (83 + 4) / 100][Stage 10:==============================================>        (84 + 4) / 100][Stage 10:==============================================>        (85 + 4) / 100][Stage 10:===============================================>       (86 + 4) / 100][Stage 10:===============================================>       (87 + 4) / 100][Stage 10:================================================>      (88 + 4) / 100][Stage 10:================================================>      (89 + 4) / 100][Stage 10:=================================================>     (90 + 4) / 100][Stage 10:==================================================>    (91 + 4) / 100][Stage 10:==================================================>    (92 + 4) / 100][Stage 10:===================================================>   (93 + 4) / 100][Stage 10:===================================================>   (94 + 4) / 100][Stage 10:====================================================>  (95 + 4) / 100][Stage 10:====================================================>  (96 + 4) / 100][Stage 10:=====================================================> (97 + 3) / 100][Stage 10:=====================================================> (98 + 2) / 100][Stage 10:======================================================>(99 + 1) / 100]                                                                                [0m00:13:04  2 of 8 OK created sql incremental model cartracker_experiments.int_listing_observation_fingerprints  [[32mOK[0m in 561.19s]
+[0m00:13:04  3 of 8 START sql incremental model cartracker_experiments.int_listing_state_fingerprints  [RUN]
+26/07/22 00:13:04 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+[Stage 12:>                                                        (0 + 4) / 16][Stage 12:===>                                                     (1 + 4) / 16][Stage 12:=======>                                                 (2 + 4) / 16][Stage 12:==========>                                              (3 + 4) / 16][Stage 12:=================>                                       (5 + 4) / 16][Stage 12:=====================>                                   (6 + 4) / 16][Stage 12:============================>                            (8 + 4) / 16][Stage 12:================================>                        (9 + 4) / 16][Stage 12:===================================>                    (10 + 4) / 16][Stage 12:======================================>                 (11 + 4) / 16][Stage 12:==========================================>             (12 + 4) / 16][Stage 12:====================================================>   (15 + 1) / 16][Stage 14:>                                                        (0 + 4) / 11][Stage 14:=====>                                                   (1 + 4) / 11][Stage 14:===============>                                         (3 + 4) / 11][Stage 14:====================>                                    (4 + 4) / 11][Stage 14:=========================>                               (5 + 4) / 11][Stage 14:===============================>                         (6 + 4) / 11][Stage 14:====================================>                    (7 + 4) / 11][Stage 14:=========================================>               (8 + 3) / 11][Stage 14:==============================================>          (9 + 2) / 11][Stage 14:==================================================>     (10 + 1) / 11]                                                                                [0m00:14:07  3 of 8 OK created sql incremental model cartracker_experiments.int_listing_state_fingerprints  [[32mOK[0m in 63.25s]
+[0m00:14:07  4 of 8 START sql incremental model cartracker_experiments.int_price_history .... [RUN]
+26/07/22 00:14:07 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+[Stage 16:>                                                        (0 + 4) / 20][Stage 16:==>                                                      (1 + 4) / 20][Stage 16:=====>                                                   (2 + 4) / 20][Stage 16:========>                                                (3 + 4) / 20][Stage 16:===========>                                             (4 + 4) / 20][Stage 16:==============>                                          (5 + 4) / 20][Stage 16:=================>                                       (6 + 4) / 20][Stage 16:===================>                                     (7 + 4) / 20][Stage 16:======================>                                  (8 + 4) / 20][Stage 16:============================>                           (10 + 4) / 20][Stage 16:============================>                           (10 + 5) / 20][Stage 16:==============================>                         (11 + 4) / 20][Stage 16:=======================================>                (14 + 4) / 20][Stage 16:==========================================>             (15 + 4) / 20][Stage 16:==================================================>     (18 + 2) / 20][Stage 18:>                                                         (0 + 4) / 9]26/07/22 00:14:31 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+26/07/22 00:14:31 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+26/07/22 00:14:32 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+26/07/22 00:14:33 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+[Stage 18:======>                                                   (1 + 4) / 9][Stage 18:============>                                             (2 + 4) / 9][Stage 18:=========================>                                (4 + 4) / 9]26/07/22 00:14:40 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+26/07/22 00:14:42 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+26/07/22 00:14:42 WARN RowBasedKeyValueBatch: Calling spill() on RowBasedKeyValueBatch. Will not spill but return 0.
+[Stage 18:================================>                         (5 + 4) / 9][Stage 18:======================================>                   (6 + 3) / 9][Stage 18:===================================================>      (8 + 1) / 9]                                                                                [0m00:14:47  4 of 8 OK created sql incremental model cartracker_experiments.int_price_history  [[32mOK[0m in 40.43s]
+[0m00:14:47  5 of 8 START sql table model cartracker_experiments.int_listing_observation_runs  [RUN]
+26/07/22 00:14:47 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:14:47 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+[Stage 19:>                                                       (0 + 4) / 100][Stage 19:=>                                                      (2 + 4) / 100][Stage 19:=>                                                      (3 + 4) / 100][Stage 19:==>                                                     (4 + 4) / 100][Stage 19:===>                                                    (6 + 4) / 100][Stage 19:===>                                                    (7 + 4) / 100][Stage 19:====>                                                   (8 + 4) / 100][Stage 19:=====>                                                 (10 + 4) / 100][Stage 19:======>                                                (11 + 4) / 100][Stage 19:======>                                                (12 + 4) / 100][Stage 19:=======>                                               (13 + 4) / 100][Stage 19:========>                                              (15 + 4) / 100][Stage 19:========>                                              (16 + 4) / 100][Stage 19:=========>                                             (17 + 4) / 100][Stage 19:==========>                                            (19 + 4) / 100][Stage 19:===========>                                           (20 + 4) / 100][Stage 19:===========>                                           (21 + 4) / 100][Stage 19:============>                                          (22 + 4) / 100][Stage 19:============>                                          (22 + 5) / 100][Stage 19:============>                                          (23 + 4) / 100][Stage 19:=============>                                         (24 + 4) / 100][Stage 19:=============>                                         (25 + 4) / 100][Stage 19:==============>                                        (26 + 4) / 100][Stage 19:==============>                                        (27 + 4) / 100][Stage 19:===============>                                       (28 + 4) / 100][Stage 19:===============>                                       (29 + 4) / 100][Stage 19:================>                                      (30 + 4) / 100][Stage 19:=================>                                     (32 + 4) / 100][Stage 19:==================>                                    (33 + 4) / 100][Stage 19:==================>                                    (34 + 4) / 100][Stage 19:===================>                                   (35 + 4) / 100][Stage 19:===================>                                   (36 + 4) / 100][Stage 19:====================>                                  (37 + 4) / 100][Stage 19:=====================>                                 (39 + 4) / 100][Stage 19:======================>                                (40 + 4) / 100][Stage 19:======================>                                (41 + 4) / 100][Stage 19:========================>                              (44 + 4) / 100][Stage 19:========================>                              (45 + 4) / 100][Stage 19:=========================>                             (46 + 4) / 100][Stage 19:=========================>                             (47 + 4) / 100][Stage 19:==========================>                            (48 + 4) / 100][Stage 19:==========================>                            (49 + 4) / 100][Stage 19:===========================>                           (50 + 4) / 100][Stage 19:============================>                          (51 + 4) / 100][Stage 19:============================>                          (52 + 4) / 100][Stage 19:=============================>                         (53 + 4) / 100][Stage 19:=============================>                         (54 + 4) / 100][Stage 19:==============================>                        (55 + 4) / 100][Stage 19:==============================>                        (56 + 4) / 100][Stage 19:===============================>                       (57 + 4) / 100][Stage 19:===============================>                       (58 + 4) / 100][Stage 19:================================>                      (59 + 4) / 100][Stage 19:=================================>                     (60 + 4) / 100][Stage 19:=================================>                     (61 + 4) / 100][Stage 19:==================================>                    (62 + 4) / 100][Stage 19:==================================>                    (63 + 4) / 100][Stage 19:===================================>                   (64 + 4) / 100][Stage 19:====================================>                  (66 + 4) / 100][Stage 19:====================================>                  (67 + 4) / 100][Stage 19:=====================================>                 (69 + 4) / 100][Stage 19:======================================>                (70 + 4) / 100][Stage 19:=======================================>               (71 + 4) / 100][Stage 19:=======================================>               (72 + 4) / 100][Stage 19:========================================>              (74 + 4) / 100][Stage 19:=========================================>             (75 + 4) / 100][Stage 19:=========================================>             (76 + 4) / 100][Stage 19:==========================================>            (77 + 4) / 100][Stage 19:==========================================>            (78 + 4) / 100][Stage 19:===========================================>           (79 + 4) / 100][Stage 19:============================================>          (80 + 4) / 100][Stage 19:============================================>          (81 + 4) / 100][Stage 19:=============================================>         (82 + 4) / 100][Stage 19:=============================================>         (83 + 4) / 100][Stage 19:==============================================>        (85 + 4) / 100][Stage 19:===============================================>       (86 + 4) / 100][Stage 19:===============================================>       (87 + 4) / 100][Stage 19:================================================>      (89 + 4) / 100][Stage 19:=================================================>     (90 + 4) / 100][Stage 19:==================================================>    (91 + 4) / 100][Stage 19:==================================================>    (92 + 4) / 100][Stage 19:===================================================>   (94 + 4) / 100][Stage 19:====================================================>  (95 + 4) / 100][Stage 19:====================================================>  (96 + 4) / 100][Stage 19:=====================================================> (97 + 3) / 100][Stage 19:=====================================================> (98 + 2) / 100][Stage 19:======================================================>(99 + 1) / 100][Stage 21:>                                                        (0 + 4) / 69][Stage 21:>                                                        (1 + 4) / 69][Stage 21:===>                                                     (4 + 4) / 69][Stage 21:====>                                                    (5 + 4) / 69][Stage 21:====>                                                    (6 + 4) / 69][Stage 21:=====>                                                   (7 + 4) / 69][Stage 21:======>                                                  (8 + 4) / 69][Stage 21:=======>                                                 (9 + 4) / 69][Stage 21:========>                                               (10 + 4) / 69][Stage 21:=========>                                              (12 + 4) / 69][Stage 21:==========>                                             (13 + 4) / 69][Stage 21:===========>                                            (14 + 4) / 69][Stage 21:============>                                           (15 + 4) / 69][Stage 21:============>                                           (16 + 4) / 69][Stage 21:=============>                                          (17 + 4) / 69][Stage 21:==============>                                         (18 + 4) / 69][Stage 21:===============>                                        (19 + 4) / 69][Stage 21:================>                                       (20 + 4) / 69][Stage 21:=================>                                      (21 + 4) / 69][Stage 21:=================>                                      (22 + 4) / 69][Stage 21:==================>                                     (23 + 4) / 69][Stage 21:===================>                                    (24 + 4) / 69][Stage 21:====================>                                   (25 + 4) / 69][Stage 21:=====================>                                  (26 + 4) / 69][Stage 21:=======================>                                (29 + 4) / 69][Stage 21:========================>                               (30 + 4) / 69][861.138s][warning][gc,alloc] Executor task launch worker for task 31.0 in stage 21.0 (TID 371): Retried waiting for GCLocker too often allocating 131074 words
+26/07/22 00:16:59 ERROR Executor: Exception in task 31.0 in stage 21.0 (TID 371)
+java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+26/07/22 00:16:59 ERROR SparkUncaughtExceptionHandler: Uncaught exception in thread Thread[Executor task launch worker for task 31.0 in stage 21.0 (TID 371),5,main]
+java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+26/07/22 00:16:59 WARN TaskSetManager: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+26/07/22 00:16:59 ERROR TaskSetManager: Task 31 in stage 21.0 failed 1 times; aborting job
+26/07/22 00:16:59 ERROR AppendDataExec: Data source write support IcebergBatchWrite(table=cartracker.cartracker_experiments.int_listing_observation_runs, format=PARQUET) is aborting.
+26/07/22 00:16:59 WARN SparkWrite: Skipping cleanup of written files
+26/07/22 00:16:59 WARN TaskSetManager: Lost task 30.0 in stage 21.0 (TID 370) (91453c87886b executor driver): TaskKilled (Stage cancelled: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+Driver stacktrace:)
+26/07/22 00:16:59 ERROR AppendDataExec: Data source write support IcebergBatchWrite(table=cartracker.cartracker_experiments.int_listing_observation_runs, format=PARQUET) aborted.
+26/07/22 00:16:59 WARN TaskSetManager: Lost task 33.0 in stage 21.0 (TID 373) (91453c87886b executor driver): TaskKilled (Stage cancelled: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+Driver stacktrace:)
+26/07/22 00:16:59 WARN TaskSetManager: Lost task 34.0 in stage 21.0 (TID 374) (91453c87886b executor driver): TaskKilled (Stage cancelled: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+Driver stacktrace:)
+26/07/22 00:16:59 WARN TaskSetManager: Lost task 32.0 in stage 21.0 (TID 372) (91453c87886b executor driver): TaskKilled (Stage cancelled: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+Driver stacktrace:)
+26/07/22 00:16:59 ERROR Utils: Aborting task
+org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)
+	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)
+	at scala.Option.foreach(Option.scala:407)
+	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)
+	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)
+	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)
+	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)
+	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)
+	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)
+	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)
+	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:142)
+	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.$anonfun$writeToTable$1(WriteToDataSourceV2Exec.scala:582)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1397)
+	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable(WriteToDataSourceV2Exec.scala:578)
+	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable$(WriteToDataSourceV2Exec.scala:572)
+	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.writeToTable(WriteToDataSourceV2Exec.scala:186)
+	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.run(WriteToDataSourceV2Exec.scala:221)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+[0m00:16:59  5 of 8 ERROR creating sql table model cartracker_experiments.int_listing_observation_runs  [[31mERROR[0m in 131.63s]
+[0m00:16:59  6 of 8 START sql table model cartracker_experiments.int_listing_state_runs ..... [RUN]
+26/07/22 00:16:59 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:16:59 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+[0m00:16:59  6 of 8 ERROR creating sql table model cartracker_experiments.int_listing_state_runs  [[31mERROR[0m in 0.15s]
+[0m00:16:59  7 of 8 START sql table model cartracker_experiments.int_benchmarks ............. [RUN]
+26/07/22 00:16:59 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+26/07/22 00:16:59 WARN SparkSession: Using an existing Spark session; only runtime SQL configurations will take effect.
+ERROR:root:Exception while sending command.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py", line 179, in deco
+    return f(*a, **kw)
+  File "/usr/local/lib/python3.13/site-packages/py4j/protocol.py", line 326, in get_return_value
+    raise Py4JJavaError(
+        "An error occurred while calling {0}{1}{2}.\n".
+        format(target_id, ".", name), value)
+py4j.protocol.Py4JJavaError: <exception str() failed>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/py4j/clientserver.py", line 511, in send_command
+    answer = smart_decode(self.stream.readline()[:-1])
+                          ~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/socket.py", line 723, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+ConnectionResetError: [Errno 104] Connection reset by peer
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py", line 1038, in send_command
+    response = connection.send_command(command)
+  File "/usr/local/lib/python3.13/site-packages/py4j/clientserver.py", line 539, in send_command
+    raise Py4JNetworkError(
+        "Error while sending or receiving", e, proto.ERROR_ON_RECEIVE)
+py4j.protocol.Py4JNetworkError: Error while sending or receiving
+[0m00:17:00  7 of 8 ERROR creating sql table model cartracker_experiments.int_benchmarks .... [[31mERROR[0m in 0.82s]
+[0m00:17:00  8 of 8 SKIP relation cartracker_experiments.int_listing_volatility_features .... [[33mSKIP[0m]
+[0m00:17:00  
+[0m00:17:00  Finished running 4 incremental models, 1 project hook, 4 table models in 0 hours 14 minutes and 6.35 seconds (846.35s).
+ERROR:root:Exception while sending command.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/py4j/clientserver.py", line 516, in send_command
+    raise Py4JNetworkError("Answer from Java side is empty")
+py4j.protocol.Py4JNetworkError: Answer from Java side is empty
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py", line 1038, in send_command
+    response = connection.send_command(command)
+  File "/usr/local/lib/python3.13/site-packages/py4j/clientserver.py", line 539, in send_command
+    raise Py4JNetworkError(
+        "Error while sending or receiving", e, proto.ERROR_ON_RECEIVE)
+py4j.protocol.Py4JNetworkError: Error while sending or receiving
+[0m00:17:00  
+[0m00:17:00  [31mCompleted with 3 errors, 0 partial successes, and 0 warnings:[0m
+[0m00:17:00  
+[0m00:17:00  [31mFailure in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)[0m
+[0m00:17:00    Runtime Error in model int_listing_observation_runs (models/intermediate/int_listing_observation_runs.sql)
+  An error occurred while calling o60.sql.
+  : org.apache.spark.SparkException: Job aborted due to stage failure: Task 31 in stage 21.0 failed 1 times, most recent failure: Lost task 31.0 in stage 21.0 (TID 371) (91453c87886b executor driver): java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+  Driver stacktrace:
+  	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2856)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2792)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2791)
+  	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+  	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+  	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2791)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1247)
+  	at scala.Option.foreach(Option.scala:407)
+  	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1247)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:3060)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2994)
+  	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2983)
+  	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+  	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:989)
+  	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2393)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2(WriteToDataSourceV2Exec.scala:390)
+  	at org.apache.spark.sql.execution.datasources.v2.V2TableWriteExec.writeWithV2$(WriteToDataSourceV2Exec.scala:364)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.writeWithV2(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run(WriteToDataSourceV2Exec.scala:342)
+  	at org.apache.spark.sql.execution.datasources.v2.V2ExistingTableWriteExec.run$(WriteToDataSourceV2Exec.scala:341)
+  	at org.apache.spark.sql.execution.datasources.v2.AppendDataExec.run(WriteToDataSourceV2Exec.scala:230)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:142)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.$anonfun$writeToTable$1(WriteToDataSourceV2Exec.scala:582)
+  	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1397)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable(WriteToDataSourceV2Exec.scala:578)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CreateTableAsSelectBaseExec.writeToTable$(WriteToDataSourceV2Exec.scala:572)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.writeToTable(WriteToDataSourceV2Exec.scala:186)
+  	at org.apache.spark.sql.execution.datasources.v2.AtomicReplaceTableAsSelectExec.run(WriteToDataSourceV2Exec.scala:221)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+  	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+  	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+  	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+  	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+  	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+  	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+  	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+  	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+  	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+  	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+  	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+  	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+  	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+  	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+  	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+  	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+  	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+  	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+  	at py4j.Gateway.invoke(Gateway.java:282)
+  	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+  	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+  	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+  	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+  	at java.base/java.lang.Thread.run(Thread.java:840)
+  Caused by: java.lang.OutOfMemoryError: Java heap space
+  	at java.base/java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  	at java.base/java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  	at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeSorterSpillWriter.getReader(UnsafeSorterSpillWriter.java:159)
+  	at org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:183)
+  	at org.apache.spark.sql.execution.ExternalAppendOnlyUnsafeRowArray.generateIterator(ExternalAppendOnlyUnsafeRowArray.scala:187)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextRow(WindowExec.scala:118)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:148)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:180)
+  	at org.apache.spark.sql.execution.window.WindowExec$$anon$1.next(WindowExec.scala:107)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.sort_addToSorter_0$(Unknown Source)
+  	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage4.processNext(Unknown Source)
+  	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+  	at org.apache.spark.sql.execution.WholeStageCodegenEvaluatorFactory$WholeStageCodegenPartitionEvaluator$$anon$1.hasNext(WholeStageCodegenEvaluatorFactory.scala:43)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1(SortAggregateExec.scala:62)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec.$anonfun$doExecute$1$adapted(SortAggregateExec.scala:59)
+  	at org.apache.spark.sql.execution.aggregate.SortAggregateExec$$Lambda$5814/0x00000010028c66d0.apply(Unknown Source)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsWithIndexInternal$2$adapted(RDD.scala:880)
+  	at org.apache.spark.rdd.RDD$$Lambda$3705/0x0000001002113978.apply(Unknown Source)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:367)
+  	at org.apache.spark.rdd.RDD.iterator(RDD.scala:331)
+  	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+  
+[0m00:17:00  
+[0m00:17:00    compiled code at target/compiled/cartracker/models/intermediate/int_listing_observation_runs.sql
+[0m00:17:00  
+[0m00:17:00  [31mFailure in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)[0m
+[0m00:17:00    Runtime Error in model int_listing_state_runs (models/intermediate/int_listing_state_runs.sql)
+  Runtime Error
+    [TABLE_OR_VIEW_NOT_FOUND] The table or view `cartracker_experiments`.`int_listing_state_fingerprints` cannot be found. Verify the spelling and correctness of the schema and catalog.
+    If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.
+    To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 77 pos 9;
+    'ReplaceTableAsSelect TableSpec(Map(),Some(iceberg),Map(),None,None,None,false), true, false
+    :- ResolvedIdentifier V2SessionCatalog(spark_catalog), cartracker_experiments.int_listing_state_runs
+    +- 'Project ['vin17, 'listing_id, 'parsed_fingerprint, 'listing_state, 'run_started_at, 'run_ended_at, 'artifact_count, cast((('unix_timestamp('date_trunc(HOUR, 'run_ended_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_started_at))) / 3600) as bigint) AS run_duration_hours#537, 'next_state_started_at, cast((('unix_timestamp('date_trunc(HOUR, 'next_state_started_at)) - 'unix_timestamp('date_trunc(HOUR, 'run_ended_at))) / 3600) as bigint) AS hours_until_change#538, isnull('next_state_started_at) AS is_open_run#539]
+       +- 'SubqueryAlias with_lead
+          +- 'Project [*, 'lead('run_started_at) windowspecdefinition('vin17, 'run_started_at ASC NULLS FIRST, 'run_id ASC NULLS FIRST, unspecifiedframe$()) AS next_state_started_at#547]
+             +- 'SubqueryAlias collapsed
+                +- 'Aggregate ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id], ['vin17, 'listing_id, 'parsed_fingerprint, 'run_id, 'min('fetched_at) AS run_started_at#543, 'max('fetched_at) AS run_ended_at#544, count(1) AS artifact_count#545L, 'min('listing_state) AS listing_state#546]
+                   +- 'SubqueryAlias numbered
+                      +- 'Project [*, 'sum('is_new_run) windowspecdefinition('vin17, 'fetched_at ASC NULLS FIRST, 'artifact_id ASC NULLS FIRST, specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS run_id#542]
+                         +- 'SubqueryAlias flagged
+                            +- 'Project [*, CASE WHEN (isnull('prev_fingerprint) OR NOT ('parsed_fingerprint = 'prev_fingerprint)) THEN 1 ELSE 0 END AS is_new_run#541]
+                               +- 'SubqueryAlias ordered
+                                  +- 'Project ['f.vin17, 'f.listing_id, 'f.artifact_id, 'f.fetched_at, 'f.parsed_fingerprint, 'f.listing_state, 'lag('f.parsed_fingerprint) windowspecdefinition('f.vin17, 'f.fetched_at ASC NULLS FIRST, 'f.artifact_id ASC NULLS FIRST, unspecifiedframe$()) AS prev_fingerprint#540]
+                                     +- 'SubqueryAlias f
+                                        +- 'UnresolvedRelation [cartracker_experiments, int_listing_state_fingerprints], [], false
+    
+[0m00:17:00  
+[0m00:17:00    compiled code at target/compiled/cartracker/models/intermediate/int_listing_state_runs.sql
+[0m00:17:00  
+[0m00:17:00  [31mFailure in model int_benchmarks (models/intermediate/int_benchmarks.sql)[0m
+[0m00:17:00    Runtime Error in model int_benchmarks (models/intermediate/int_benchmarks.sql)
+  py4j does not exist in the JVM
+[0m00:17:00  
+[0m00:17:00    compiled code at target/compiled/cartracker/models/intermediate/int_benchmarks.sql
+[0m00:17:00  
+[0m00:17:00  Done. PASS=5 WARN=0 ERROR=3 SKIP=1 NO-OP=0 TOTAL=9
+ERROR:root:Exception while sending command.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/py4j/clientserver.py", line 516, in send_command
+    raise Py4JNetworkError("Answer from Java side is empty")
+py4j.protocol.Py4JNetworkError: Answer from Java side is empty
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/py4j/java_gateway.py", line 1038, in send_command
+    response = connection.send_command(command)
+  File "/usr/local/lib/python3.13/site-packages/py4j/clientserver.py", line 539, in send_command
+    raise Py4JNetworkError(
+        "Error while sending or receiving", e, proto.ERROR_ON_RECEIVE)
+py4j.protocol.Py4JNetworkError: Error while sending or receiving
+
+dbt_success=False phase=oom_during_iceberg_write_or_commit
+first_failed_node=int_listing_observation_runs
+  cartracker-on-run-start-0                    success    0.01s
+  int_latest_observation                       success    48.3s
+  int_listing_observation_fingerprints         success    561.19s
+  int_listing_state_fingerprints               success    63.25s
+  int_price_history                            success    40.43s
+  int_listing_observation_runs                 error      131.63s
+  int_listing_state_runs                       error      0.15s
+  int_benchmarks                               error      0.82s
+  int_listing_volatility_features              skipped    0s
+cgroup memory.peak=6442450944
+cgroup memory.events={'low': 0, 'high': 0, 'max': 2922, 'oom': 0, 'oom_kill': 0, 'oom_group_kill': 0}
+heap peak=None
+Evidence: /evidence/run
+REPLAY_EXIT=1
+OUTER_EXIT=0

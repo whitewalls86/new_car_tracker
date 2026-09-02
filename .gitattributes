@@ -5,3 +5,8 @@
 healthcheck-exemptions.txt text eol=lf
 deploy-followers.txt text eol=lf
 maintenance-running-set.txt text eol=lf
+
+# Archived measurement evidence. Captured driver logs, heap sample streams and
+# harness bundles are only worth keeping if they are byte-exact, so no
+# line-ending conversion in either direction.
+docs/evidence/plan_125_gate_c_2026-07-22/** -text

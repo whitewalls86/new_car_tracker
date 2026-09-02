@@ -1,0 +1,563 @@
+{
+  "command": "describe-dataset",
+  "run_id": "918b4e55",
+  "platform": {
+    "machine": "aarch64",
+    "python": "3.13.14",
+    "system": "Linux"
+  },
+  "container_limits": {
+    "source": "cgroup_v2",
+    "raw": "3221225472",
+    "bytes": 3221225472
+  },
+  "spark_conf": {
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.cartracker": "org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.cartracker.type": "rest",
+    "spark.sql.catalog.cartracker.uri": "http://lakekeeper:8181/catalog",
+    "spark.sql.catalog.cartracker.warehouse": "cartracker_experiments",
+    "spark.sql.catalog.cartracker.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+    "spark.sql.catalog.cartracker.s3.endpoint": "http://minio:9000",
+    "spark.sql.catalog.cartracker.s3.path-style-access": "true",
+    "spark.sql.catalog.cartracker.s3.access-key-id": "<redacted>",
+    "spark.sql.catalog.cartracker.s3.secret-access-key": "<redacted>",
+    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+    "spark.hadoop.fs.s3a.access.key": "<redacted>",
+    "spark.hadoop.fs.s3a.secret.key": "<redacted>",
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+    "spark.sql.defaultCatalog": "cartracker",
+    "spark.sql.session.timeZone": "UTC",
+    "spark.sql.shuffle.partitions": "32",
+    "spark.driver.maxResultSize": "1g",
+    "spark.driver.memory": "2g",
+    "spark.master": "local[4]"
+  },
+  "steps": [
+    {
+      "name": "row_count",
+      "ok": true,
+      "seconds": 15.941,
+      "detail": {
+        "stats": {
+          "rows": 40450715
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "source_distribution",
+      "ok": true,
+      "seconds": 8.472,
+      "detail": {
+        "stats": {
+          "carousel": 32789309,
+          "detail": 6462046,
+          "srp": 1199360
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "artifact_fanout",
+      "ok": true,
+      "seconds": 22.409,
+      "detail": {
+        "stats": {
+          "fanout_p50": 9,
+          "fanout_p95": 9,
+          "fanout_p99": 9,
+          "fanout_max": 112,
+          "fanout_avg": 6.433575737275542,
+          "fanout_min": 1,
+          "artifacts": 6287439
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "observation_key_groups",
+      "ok": true,
+      "seconds": 146.917,
+      "detail": {
+        "stats": {
+          "group_p50": 1,
+          "group_p95": 1,
+          "group_p99": 1,
+          "group_max": 6,
+          "group_avg": 1.0065789534257308,
+          "groups": 40186331,
+          "groups_with_duplicates": 232247
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "artifact_skew_top",
+      "ok": true,
+      "seconds": 11.325,
+      "detail": {
+        "stats": [
+          {
+            "artifact_id": 367375,
+            "n": 112
+          },
+          {
+            "artifact_id": 367373,
+            "n": 112
+          },
+          {
+            "artifact_id": 367380,
+            "n": 112
+          },
+          {
+            "artifact_id": 367372,
+            "n": 112
+          },
+          {
+            "artifact_id": 367382,
+            "n": 112
+          },
+          {
+            "artifact_id": 367379,
+            "n": 112
+          },
+          {
+            "artifact_id": 367371,
+            "n": 112
+          },
+          {
+            "artifact_id": 367377,
+            "n": 112
+          },
+          {
+            "artifact_id": 367376,
+            "n": 112
+          },
+          {
+            "artifact_id": 367383,
+            "n": 112
+          },
+          {
+            "artifact_id": 367378,
+            "n": 112
+          },
+          {
+            "artifact_id": 367370,
+            "n": 112
+          },
+          {
+            "artifact_id": 367381,
+            "n": 112
+          },
+          {
+            "artifact_id": 367374,
+            "n": 112
+          },
+          {
+            "artifact_id": 368303,
+            "n": 112
+          },
+          {
+            "artifact_id": 367738,
+            "n": 111
+          },
+          {
+            "artifact_id": 367739,
+            "n": 111
+          },
+          {
+            "artifact_id": 367735,
+            "n": 111
+          },
+          {
+            "artifact_id": 367733,
+            "n": 111
+          },
+          {
+            "artifact_id": 367741,
+            "n": 111
+          }
+        ]
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "observation_key_skew_top",
+      "ok": true,
+      "seconds": 141.822,
+      "detail": {
+        "stats": [
+          {
+            "artifact_id": 1464,
+            "listing_id": "11b8f5c9-c199-42dd-8363-6d954afba49f",
+            "n": 6
+          },
+          {
+            "artifact_id": 1543,
+            "listing_id": "19019dbb-c082-4849-b20f-8dabc0b5724a",
+            "n": 6
+          },
+          {
+            "artifact_id": 2535,
+            "listing_id": "09ea6ac8-3a3a-4b75-a037-d414ca75ad21",
+            "n": 6
+          },
+          {
+            "artifact_id": 2501,
+            "listing_id": "cd6bf203-399b-4d00-989f-c347386c61da",
+            "n": 6
+          },
+          {
+            "artifact_id": 2156,
+            "listing_id": "0823dafb-921e-413f-a690-f93503521851",
+            "n": 6
+          },
+          {
+            "artifact_id": 2102,
+            "listing_id": "1adf08e8-3262-4780-a082-2c1450adbb7a",
+            "n": 6
+          },
+          {
+            "artifact_id": 1695,
+            "listing_id": "adac8704-d33f-4efe-8263-caed048c1ce0",
+            "n": 6
+          },
+          {
+            "artifact_id": 1432,
+            "listing_id": "21dee9f8-418b-476a-8fca-623d9f3b0b2e",
+            "n": 6
+          },
+          {
+            "artifact_id": 1447,
+            "listing_id": "04c24681-7f61-43a1-95e5-bd97b94d89b6",
+            "n": 6
+          },
+          {
+            "artifact_id": 2196,
+            "listing_id": "2ab9126c-086c-428d-8d16-ddc6334b4f99",
+            "n": 6
+          },
+          {
+            "artifact_id": 2180,
+            "listing_id": "0b8426cb-7047-44e9-b0e4-83266504c292",
+            "n": 6
+          },
+          {
+            "artifact_id": 2226,
+            "listing_id": "305d123d-8fa2-4a6a-9d96-d9babae85b04",
+            "n": 6
+          },
+          {
+            "artifact_id": 2241,
+            "listing_id": "5620a793-edbc-415d-b989-10dff221403b",
+            "n": 6
+          },
+          {
+            "artifact_id": 1283,
+            "listing_id": "306f49ec-18af-42b4-9262-4600c3e11387",
+            "n": 6
+          },
+          {
+            "artifact_id": 1502,
+            "listing_id": "1434d646-8e5f-4657-8ce9-071280e3c189",
+            "n": 6
+          },
+          {
+            "artifact_id": 1599,
+            "listing_id": "311276ac-a37f-4a61-8b85-47717964535a",
+            "n": 6
+          },
+          {
+            "artifact_id": 1411,
+            "listing_id": "0294431e-0616-417d-97c6-9e41a2394e46",
+            "n": 6
+          },
+          {
+            "artifact_id": 2579,
+            "listing_id": "33855632-7d3d-4067-a155-9758a9df469a",
+            "n": 6
+          },
+          {
+            "artifact_id": 1189,
+            "listing_id": "17057ee5-dc64-41b2-a2d6-481c8199f0ed",
+            "n": 6
+          },
+          {
+            "artifact_id": 1880,
+            "listing_id": "393ac559-17a1-4bdd-9719-53bd1587b8b5",
+            "n": 6
+          }
+        ]
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "row_bytes",
+      "ok": true,
+      "seconds": 197.759,
+      "detail": {
+        "stats": {
+          "row_bytes_p50": 235,
+          "row_bytes_p95": 269,
+          "row_bytes_p99": 282,
+          "row_bytes_max": 330,
+          "row_bytes_avg": 231.37094471630476
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "string_fields",
+      "ok": true,
+      "seconds": 558.755,
+      "detail": {
+        "stats": {
+          "listing_id": {
+            "p50": 36,
+            "p95": 36,
+            "p99": 36,
+            "max": 36,
+            "avg": 36.0,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "vin": {
+            "p50": 17,
+            "p95": 17,
+            "p99": 17,
+            "max": 17,
+            "avg": 16.998528459107416,
+            "nulls": 5674923,
+            "null_pct": 14.03
+          },
+          "source": {
+            "p50": 8,
+            "p95": 8,
+            "p99": 8,
+            "max": 8,
+            "avg": 7.532248268046684,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "make": {
+            "p50": 5,
+            "p95": 10,
+            "p99": 10,
+            "max": 13,
+            "avg": 5.533188489052864,
+            "nulls": 24803106,
+            "null_pct": 61.32
+          },
+          "model": {
+            "p50": 6,
+            "p95": 15,
+            "p99": 15,
+            "max": 23,
+            "avg": 7.356615250291594,
+            "nulls": 24803106,
+            "null_pct": 61.32
+          },
+          "trim": {
+            "p50": 7,
+            "p95": 20,
+            "p99": 28,
+            "max": 47,
+            "avg": 9.147265621253627,
+            "nulls": 35133072,
+            "null_pct": 86.85
+          },
+          "listing_state": {
+            "p50": 6,
+            "p95": 6,
+            "p99": 8,
+            "max": 8,
+            "avg": 6.030016725291506,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "canonical_detail_url": {
+            "p50": 71,
+            "p95": 72,
+            "p99": 72,
+            "max": 179,
+            "avg": 71.4255804625456,
+            "nulls": 0,
+            "null_pct": 0.0
+          },
+          "stock_type": {
+            "p50": 3,
+            "p95": 3,
+            "p99": 4,
+            "max": 4,
+            "avg": 3.0434931436628894,
+            "nulls": 34549532,
+            "null_pct": 85.41
+          },
+          "fuel_type": {
+            "p50": 6,
+            "p95": 8,
+            "p99": 8,
+            "max": 29,
+            "avg": 6.837950163490382,
+            "nulls": 35184656,
+            "null_pct": 86.98
+          },
+          "body_style": {
+            "p50": 3,
+            "p95": 3,
+            "p99": 3,
+            "max": 5,
+            "avg": 2.9946675950413906,
+            "nulls": 36334561,
+            "null_pct": 89.82
+          },
+          "dealer_name": {
+            "p50": 20,
+            "p95": 33,
+            "p99": 44,
+            "max": 110,
+            "avg": 20.61426641102635,
+            "nulls": 12994952,
+            "null_pct": 32.13
+          },
+          "dealer_zip": {
+            "p50": 5,
+            "p95": 5,
+            "p99": 5,
+            "max": 5,
+            "avg": 5.0,
+            "nulls": 13582022,
+            "null_pct": 33.58
+          },
+          "dealer_city": {
+            "p50": 9,
+            "p95": 14,
+            "p99": 18,
+            "max": 25,
+            "avg": 8.969178422425648,
+            "nulls": 14823701,
+            "null_pct": 36.65
+          },
+          "dealer_state": {
+            "p50": 2,
+            "p95": 2,
+            "p99": 2,
+            "max": 2,
+            "avg": 2.0,
+            "nulls": 14823701,
+            "null_pct": 36.65
+          },
+          "customer_id": {
+            "p50": 7,
+            "p95": 7,
+            "p99": 7,
+            "max": 7,
+            "avg": 6.150953925427845,
+            "nulls": 13345504,
+            "null_pct": 32.99
+          },
+          "seller_customer_id": {
+            "p50": 36,
+            "p95": 36,
+            "p99": 36,
+            "max": 36,
+            "avg": 30.68487276547492,
+            "nulls": 39251355,
+            "null_pct": 97.04
+          },
+          "seller_zip": {
+            "p50": 5,
+            "p95": 5,
+            "p99": 5,
+            "max": 5,
+            "avg": 5.0,
+            "nulls": 39251355,
+            "null_pct": 97.04
+          },
+          "financing_type": {
+            "p50": 8,
+            "p95": 11,
+            "p99": 11,
+            "max": 11,
+            "avg": 9.450878802027749,
+            "nulls": 39251355,
+            "null_pct": 97.04
+          },
+          "trid": {
+            "p50": 22,
+            "p95": 22,
+            "p99": 22,
+            "max": 22,
+            "avg": 22.0,
+            "nulls": 39251355,
+            "null_pct": 97.04
+          },
+          "isa_context": {
+            "p50": 8,
+            "p95": 8,
+            "p99": 12,
+            "max": 32,
+            "avg": 8.22626400747065,
+            "nulls": 39251355,
+            "null_pct": 97.04
+          },
+          "body": {
+            "p50": 35,
+            "p95": 47,
+            "p99": 55,
+            "max": 87,
+            "avg": 35.51336983039197,
+            "nulls": 7661406,
+            "null_pct": 18.94
+          },
+          "condition": {
+            "p50": 3,
+            "p95": 4,
+            "p99": 9,
+            "max": 9,
+            "avg": 3.12870332217126,
+            "nulls": 7661406,
+            "null_pct": 18.94
+          }
+        }
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    },
+    {
+      "name": "storage",
+      "ok": true,
+      "seconds": 1.556,
+      "detail": {
+        "files": 1030,
+        "total_bytes": 573704049,
+        "bytes_per_row": 14.18,
+        "bytes_per_file": 556994.22
+      },
+      "error_class": null,
+      "error_message": null,
+      "traceback": null
+    }
+  ],
+  "ok": true,
+  "path": "s3a://bronze/silver_normalized/observations",
+  "reads_production": true
+}
