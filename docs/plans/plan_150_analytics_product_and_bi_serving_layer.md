@@ -406,6 +406,68 @@ behavior, credentials, budgets, refresh schedule and rollback.
 Build and document the first decision-oriented experience. Include visible
 freshness, coverage and methodology so the conclusions remain inspectable.
 
+### Stage 4b — Presentation-layer testing, against whatever shape it takes
+
+**Added 2026-09-02, from [Plan 162](plan_162_testing_census_and_restructure.md)
+Stage 8. This plan does not close while the analytical surface it ships is
+untested, and Plan 162 hands it [G18](../TESTING.md#the-gap-list) to make that
+obligation nameable rather than implied.**
+
+Plan 162 is the testing census, and it reached the dashboard and stopped. Its
+reasoning, which this stage inherits: the dashboard's SQL is executed by Layer 2
+and the marts beneath it carry dbt unit tests, but its **Python has no tests and
+cannot be imported by the suite at all** — `streamlit` and `plotly` are declared
+only in `dashboard/requirements.txt`, and production imports are bare
+(`from queries import`) because the Dockerfile runs from inside the service
+directory, while the test suite imports `dashboard.queries`. Closing that needs
+a CI venv, a resolution of the dual import identity, and a render harness.
+
+**Plan 162 declined to build those**, and the reason is this plan: the first two
+are structural changes to a service whose role Stage 0g has not yet defined, and
+the third is a harness for the presentation layer specifically. Building a
+bespoke Streamlit harness before deciding whether Streamlit is the surface would
+be paying for a mechanism the decision may discard. So the work waits here,
+where the shape is known, rather than being deferred into prose — which is the
+failure Plan 84 recorded and Plan 162 exists to stop repeating.
+
+**This stage is not "port the deferred dashboard tests."** Its subject is
+whatever Stage 0g selects, and the obligation is the same in all three
+outcomes:
+
+- **Streamlit is kept** as the operational or exploratory interface — then the
+  venv, the import identity and the harness are built here, against a surface
+  that is now a decision rather than an inheritance.
+- **Streamlit is replaced** — then G18 closes by the subject ceasing to exist,
+  and this stage owes the replacement's equivalent: whatever asserts that the
+  published surface renders the numbers its models produce.
+- **A BI vendor becomes the surface** — then the testable boundary moves to the
+  publication contract, and this stage owes the reconciliation checks
+  [Stage 3](#stage-3--serving-boundary) specifies plus an assertion that the
+  vendor's semantic layer and the dbt models agree on each metric, which is
+  principle 6 made mechanical.
+
+What it must produce in every case:
+
+- the presentation layer's obligation written into
+  [`docs/TESTING.md`](../TESTING.md)'s "enough" floor table, so the row derives
+  rather than being curated;
+- an assertion that fails when the surface drifts from the models behind it —
+  not a coverage percentage, per that document's first rule;
+- G18 closed, by repair or by the subject ceasing to exist, with the plan saying
+  which.
+
+**One modeling question arrives with this stage rather than waiting for it.**
+`dashboard/sql/data_health_block_rate.sql` LEFT JOINs `mart_block_rate` onto an
+anchor of `mart_scrape_volume` so hours with scrape activity and no blocks read
+as zero rather than as gaps, and `mart_block_rate.schema.yml` explicitly
+delegates that join to its consumer. It is therefore the one piece of dashboard
+logic that mart-level unit testing structurally cannot reach, and neither end is
+tested today. **Stage 0c should evaluate it as a candidate for
+[*"served by extending an existing mart"*](#0c-evaluate-the-modeling-gap)** —
+moving the join into the mart puts it where Layer 3 already reaches, and closes
+the gap by modeling rather than by fixture. Recorded here because Plan 162 found
+it; decided in Stage 0c.
+
 ### Stage 5 — Public integration and evidence
 
 Integrate the selected experience into the public surface, publish architecture
@@ -447,7 +509,14 @@ This plan succeeds when:
   visualization mechanics;
 - any ML-backed product beats a declared baseline, has reproducible MLflow and
   dataset provenance, and enters BI through a tested gold output;
-- every publication path is tested, reconcilable, observable and reversible.
+- every publication path is tested, reconcilable, observable and reversible;
+- **the presentation layer this plan ships is itself tested**, to the standard
+  [`docs/TESTING.md`](../TESTING.md) sets, with its obligation stated in that
+  document's "enough" floor table and [G18](../TESTING.md#the-gap-list) closed
+  by repair or by its subject ceasing to exist. A surface that reaches the
+  public untested is not a finished analytical product, and Plan 162 deferred
+  that work to this plan rather than doing it against a shape nobody had chosen
+  yet.
 
 ## Failure and stopping rules
 
@@ -489,6 +558,13 @@ This plan succeeds when:
 - **Plan 69 and Plan 121** establish infrastructure-as-code and staging before
   this plan begins. Plan 150 may use that foundation, but must not silently
   expand their scope.
+- **Plan 162** owns the testing census and stopped at the dashboard on purpose.
+  It handed this plan [G18](../TESTING.md#the-gap-list) — the dashboard's Python
+  has no tests and the suite cannot import it — because closing that means
+  building a harness for a presentation layer whose future Stage 0g decides.
+  [Stage 4b](#stage-4b--presentation-layer-testing-against-whatever-shape-it-takes)
+  is where it lands. Plan 162 kept the half that needed no such decision: the
+  dashboard's SQL and the Layer 2 assertions it was missing.
 - **Plan 149** may track the eventual execution slices, while this document and
   `PLANS.md` remain authoritative.
 
