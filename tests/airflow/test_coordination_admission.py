@@ -17,7 +17,9 @@ DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 # Modules in airflow/dags/ that define no DAG and so declare no admission
 # surface. `notifications` is the shared Telegram failure notifier (Plan 134
 # Stage 1) — it is called *by* notify tasks and never gated by one.
-SUPPORT_MODULES = {"coordination_contract", "notifications", "pools", "sensors"}
+SUPPORT_MODULES = {
+    "coordination_contract", "dag_queries", "notifications", "pools", "sensors",
+}
 
 
 def _load_contract():
@@ -120,10 +122,14 @@ def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
         if isinstance(node, ast.ClassDef) and node.name == "_DeployIntentSensor"
     )
     sensor_source = ast.get_source_segment(source, sensor)
-    assert "deploy_intent" in sensor_source
-    assert "coordination_state" in sensor_source
-    assert "scope ? 'host'" in sensor_source
-    assert "scope ?| %s::text[]" in sensor_source
+    # The phase set is a Python literal in poke() and is asserted here. The
+    # statement it gates is not: Plan 162 Stage 9 moved it into
+    # airflow/sql/deploy_intent_gate.sql, so the table names and the jsonb
+    # operators are asserted against that file below and executed for real by
+    # tests/integration/sql. Asserting "scope ? 'host'" against sensors.py's
+    # *text* was the paraphrase the contract warns about -- it passed forever,
+    # and would have gone on passing had the statement been reworded.
+    assert "DEPLOY_INTENT_GATE_SQL" in sensor_source
     assert '{"requested", "draining", "active", "validating"}' in sensor_source
 
     # Plan 158 moved the write into a module-level helper so it is reachable
@@ -137,18 +143,25 @@ def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
     assert "GATE_OBSERVATION_SQL" in write_source
     assert "_record_observation(" in sensor_source
 
-    # The statement itself moved into airflow/sql/ in Plan 162 Stage 7, so each
-    # half is asserted where its subject now lives: sensors.py must load the
-    # right file, and the file must hold the upsert. Asserting the table name
-    # against sensors.py's text passed until the statement moved and would have
-    # gone on passing if the module had loaded the wrong file.
-    assert "record_gate_observation.sql" in source
-    statement = (
-        Path(__file__).resolve().parents[2]
-        / "airflow" / "sql" / "record_gate_observation.sql"
-    ).read_text(encoding="utf-8")
-    assert "coordination_gate_observations" in statement
-    assert "ON CONFLICT (generation, dag_id, run_id)" in statement
+    # The statements themselves live in airflow/sql/ -- the observation since
+    # Plan 162 Stage 7, the gate since Stage 9 -- and both load through
+    # airflow/dags/dag_queries.py. So each half is asserted where its subject now
+    # lives: sensors.py must name the right constants, and the files must hold
+    # the statements. Asserting a table name against sensors.py's text passed
+    # until the statement moved and would have gone on passing if the module
+    # had loaded the wrong file.
+    assert "from dag_queries import" in source
+    sql_dir = Path(__file__).resolve().parents[2] / "airflow" / "sql"
+
+    upsert = (sql_dir / "record_gate_observation.sql").read_text(encoding="utf-8")
+    assert "coordination_gate_observations" in upsert
+    assert "ON CONFLICT (generation, dag_id, run_id)" in upsert
+
+    gate = (sql_dir / "deploy_intent_gate.sql").read_text(encoding="utf-8")
+    assert "deploy_intent" in gate
+    assert "coordination_state" in gate
+    assert "scope ? 'host'" in gate
+    assert "scope ?| %s::text[]" in gate
 
 
 # ===========================================================================
@@ -205,7 +218,7 @@ def _install_airflow_stubs() -> None:
 def _load_sensors():
     """Import airflow/dags/sensors.py the way the DAGs directory does."""
     _install_airflow_stubs()
-    for name in ("coordination_contract", "sensors"):
+    for name in ("coordination_contract", "dag_queries", "sensors"):
         if name in sys.modules:
             continue
         spec = importlib.util.spec_from_file_location(name, DAGS_DIR / f"{name}.py")
@@ -267,20 +280,21 @@ def gate(mocker):
 
 
 def test_the_gate_read_selects_the_columns_this_row_supplies():
-    """_gate_row's positions are only meaningful if the real SELECT agrees."""
-    source = (DAGS_DIR / "sensors.py").read_text(encoding="utf-8")
-    sensor = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ClassDef) and node.name == "_DeployIntentSensor"
-    )
-    select = next(
-        node.value
-        for node in ast.walk(sensor)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and node.value.lstrip().upper().startswith("SELECT")
-    )
+    """_gate_row's positions are only meaningful if the real SELECT agrees.
+
+    Read from the file rather than scraped out of ``sensors.py`` with ``ast``:
+    Plan 162 Stage 9 moved the statement into ``airflow/sql/``, which is what
+    the scrape was working around. This is the same guarantee against one more
+    copy of the statement, without parsing Python to reach a string.
+
+    Position, not presence, because ``PostgresHook.get_first`` returns a tuple
+    and ``poke`` indexes it. ``tests/integration/sql`` asserts the same order
+    against a real Postgres, from the other end: this checks the text says it,
+    that one checks the engine does it.
+    """
+    select = (
+        REPO_ROOT / "airflow" / "sql" / "deploy_intent_gate.sql"
+    ).read_text(encoding="utf-8")
     positions = [
         select.index(column)
         for column in ("di.intent", "cs.phase", "AS intersects", "cs.generation")
@@ -319,7 +333,7 @@ def test_every_live_affected_run_leaves_the_key_the_drain_looks_up(gate):
     scope = frozenset({"processing"})
     generation = 17
     query = gate_observation_query(scope, generation)
-    affected, drain_generation = query[1][:-1], query[1][-1]
+    affected, drain_generation = query[1]
     live_runs = [(dag_id, f"{dag_id}-run") for dag_id in affected]
 
     gate.row = _gate_row(
@@ -407,7 +421,7 @@ def test_an_unblocked_run_records_nothing(gate):
 def test_the_drain_and_the_sensor_read_the_same_declaration(gate, surface):
     scope = frozenset({surface})
     query = gate_observation_query(scope, 17)
-    drained = set(query[1][:-1]) if query else set()
+    drained = set(query[1][0])
     gated = {
         dag_id
         for dag_id in _load_contract()["ADMISSION_SURFACES"]
