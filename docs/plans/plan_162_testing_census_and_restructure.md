@@ -2,7 +2,10 @@
 
 ## Status
 
-**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8.**
+**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8** — which
+was narrowed on 2026-09-02, before it started: G7 is now the dashboard's
+assertionless Layer 2 suite, and the Streamlit Python it used to mean is G18
+and Plan 150's. [Why](#stage-8-narrowed-and-g7-now-names-a-different-gap).
 The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
@@ -111,11 +114,14 @@ order:
   roughly five lines — every service directory appears in
   `[tool.coverage.run] source` — and Stage 2 built it, at that size plus a
   second assertion for the half the estimate had not counted.
-- **G7 can never be reached by the existing rules.** `dashboard/` is Streamlit,
-  not FastAPI. The route rule imports `<service>.app` and reads its OpenAPI
-  schema; there is no schema to read. The "enough" floor's first clause is
-  structurally inapplicable to the one service with zero test files, so G7 needs
-  a kind of test invented rather than a waiver list drained.
+- **G7 could never be reached by the existing rules, and that is why it was the
+  wrong gap.** `dashboard/` is Streamlit, not FastAPI. The route rule imports
+  `<service>.app` and reads its OpenAPI schema; there is no schema to read. The
+  "enough" floor's first clause is structurally inapplicable to the one service
+  with zero test files. **Rescoped 2026-09-02** — G7 is now the dashboard's
+  Layer 2 suite asserting nothing, which is reachable, cheap and this plan's;
+  the Python that needed a test invented is G18 and belongs to Plan 150. See
+  [Stage 8 narrowed](#stage-8-narrowed-and-g7-now-names-a-different-gap).
 - **G12 may correctly never get a rule.** "No module under `airflow/dags`
   imports `shared`" is *true today* — it is the constraint, not the violation.
   Closing it changes the DAG tree's import structure, which is an architecture
@@ -136,7 +142,7 @@ order:
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
 | **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
 | **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
-| **8** | The services below the floor | G7, G8 | -- |
+| **8** | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
 | **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
@@ -259,6 +265,89 @@ be wrong.** G14 was undercounted at 54, G5 at 10, the scan surface at eight
 packages, and `executemany` was left out because it matched nothing that day.
 The rules that have never been wrong are the derived ones —
 `service_packages()`, `_test_directories()`, `production_sql_files()`.
+
+### Stage 8 narrowed, and G7 now names a different gap
+
+**Rescoped 2026-09-02, before the stage started.** Stage 8 was "the services
+below the floor", G7 and G8 together, and G7 was "`dashboard/`: 7 modules, 0
+test files". Reading the service settled that G7 as written is not this plan's
+work, and that a better gap was sitting underneath it unnamed.
+
+**What the dashboard's Python actually contains.** 483 lines under `pages/`,
+of which roughly 430 are `st.*` and `px.*` presentation calls and roughly 35
+are logic — a filter-clause builder, three division-by-zero guards and two
+granularity maps. Read end to end, it holds no defect: `app.py:29`'s unguarded
+`.iloc[0]` is safe because `mart_freshness.sql` is a bare aggregate that always
+returns one row, and the filter builder's placeholder/parameter pairing is
+correct and locally coupled. What is there is redundancy — a tautological
+`elif`, two different zero-guards for one metric, one granularity map that
+round-trips through an intermediate encoding to reach what the other produces
+directly. None of it is worth a test, and testing the other 430 lines means
+asserting that `st.metric` was called with a particular string, which fails on a
+renamed header and never on a wrong number.
+
+**The gap that was underneath it.** `tests/integration/sql/test_dashboard_queries.py`
+is 25 tests with **zero assertions** — the only Layer 2 suite with none, against
+116 in `test_ops_queries.py` and 65 in `test_processing_queries.py`. Every test
+executes a statement and discards the result. That satisfies Layer 2's first
+clause and not its second: the contract says statements execute *"and return the
+columns the caller expects"*, and nothing here checks a column. Every page
+indexes by name, so a renamed mart column passes green and `KeyError`s in
+production. **The pattern that closes it already exists in the same directory,
+against the same `duckdb_con` fixture** — `test_analytics_snapshot_queries.py`
+asserts `result.description` against a declared column tuple. `dbt_runner` has
+that contract; `dashboard` does not.
+
+It pays a second dividend on the way. Writing down the columns the caller uses
+surfaces the ones it does not: `data_health_block_rate.sql` selects
+`block_rate_pct`, `total_block_events` and `max_attempts_seen`, and
+`data_health.py` reads none of the three — it recomputes the rate in pandas
+after aggregating, correctly, because percentages do not average. Three dead
+columns in production SQL that nothing can currently see.
+
+**So G7 is redefined rather than deferred**, and the Python becomes **G18, owned
+by Plan 150**. Two rows, not one, because they are two gaps with two owners and
+two triggers, and folding either into the other hides one of them. Dropping the
+Python row entirely was the alternative and it is the Plan 84 move exactly:
+`docs/TESTING.md`'s Testing Strategy section was accurate the day it was written
+too. G18 states the blocker in the row — the suite cannot import
+`dashboard.pages.*` at all, because `streamlit` and `plotly` are declared in
+`dashboard/requirements.txt` and nowhere else and production imports are bare —
+so the row records a measurement rather than an intention.
+
+**What this plan is not taking on, stated so it is a decision.** Asserting that
+the dashboard's queries return *correct values* is Layer 3's shape — known
+inputs, known outputs — not Layer 4's, and Stage 8 does not attempt it. Three
+reasons, in order of weight:
+
+1. **The correctness is already asserted where the data is made.** All eight
+   marts the dashboard reads carry dbt unit tests with seeded inputs and
+   expected rows in `dbt/models/marts/unit_tests.yml`, plus `not_null` and
+   `unique` data tests in their `.schema.yml` files.
+2. **Most of the SQL adds nothing to assert.** 24 files, 218 lines, averaging
+   nine. Scanned for `JOIN|CASE|COALESCE|NULLIF|GROUP BY`, 13 add none of them
+   — `SELECT COUNT(*) AS cnt FROM mart_deal_scores` and its kin — 10 add a
+   `GROUP BY` over a tested mart, and one carries real logic.
+3. **The fixture cannot do it.** `duckdb_con` is a read-only connection to
+   whatever `dbt build --target duckdb` produced from CI's seed. There is no
+   seeding, so there are no known inputs. Layer 3's `seed_and_build` has that
+   machinery and runs `--target ci` into **Postgres**, so borrowing it means
+   executing DuckDB-dialect SQL against another engine — `now() - INTERVAL '14
+   days'` and the rest — which is a dialect question this repository already has
+   scar tissue about.
+
+**The one query where that reasoning does not hold is recorded rather than
+built.** `data_health_block_rate.sql` LEFT JOINs `mart_block_rate` onto an
+anchor of `mart_scrape_volume` with `COALESCE(..., 0)`, so hours with scrape
+activity and no blocks read as zero rather than as gaps. `mart_block_rate.schema.yml`'s
+own description says *"Join to mart_scrape_volume on hour to compute block rate
+against observations"* — **the mart deliberately hands that join to its
+consumer**, which is the one place mart-level unit testing structurally cannot
+reach, and neither end of the handoff is tested. The cheap answer is probably
+not a new fixture at all but moving the join into the mart, where Layer 3
+already reaches it. That is a modeling change, it is what Plan 150 Stage 0c
+means by *"served by extending an existing mart"*, and it is noted there rather
+than done here.
 
 ### Stage 12 exists because this plan grew the suite
 
@@ -718,8 +807,13 @@ graded by the instrument it repairs.
 
 Three exceptions, stated here so they are decisions rather than omissions:
 
-- **G7** cannot be asserted by the existing rules and needs its own approach;
-  the criterion is met by whatever that approach is, not by the route rule.
+- **G7 stopped being an exception on 2026-09-02, and the rescoping is why.**
+  As written it could not be asserted by the existing rules and needed an
+  approach invented. Narrowed to the assertionless Layer 2 suite, it is
+  ordinarily mechanisable — a Layer 2 test that executes a statement and asserts
+  nothing about the result is a rule this suite can hold — and Stage 8 owes that
+  rule, not just the 25 assertions. **The part that was genuinely exceptional
+  left with G18**, which is Plan 150's, so this criterion no longer carries it.
 - **G12** may close without a rule at all, because the condition a rule would
   assert is the constraint being removed. If it ships without one, the plan says
   so explicitly rather than leaving a silent gap.
@@ -935,6 +1029,14 @@ the route rule or by the "enough" floor's first clause: the rule imports
 `<service>.app` and reads its OpenAPI schema, and there is no schema to read.
 This was not known when the gap list was written, and it means Stage 8 must
 invent an approach rather than drain a waiver list.
+
+*Read on 2026-09-02 as a conclusion about the wrong subject, and left standing
+because it was the right conclusion about the one it had. Inventing an approach
+is what the Streamlit Python needs, and that is now G18 and Plan 150's; the
+dashboard gap this plan kept — a Layer 2 suite with 25 tests and no assertions
+— needed no invention at all, and the census never looked for it because it was
+counting test files rather than reading one. See [Stage 8
+narrowed](#stage-8-narrowed-and-g7-now-names-a-different-gap).*
 
 **Half the gap list is unenforced.** Six of the twelve gaps are checked by
 nothing at all, which is what success criterion 2 exists to answer — a repair
