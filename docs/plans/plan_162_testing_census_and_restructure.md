@@ -2,7 +2,7 @@
 
 ## Status
 
-**Stages 0–6b are complete. Stage 7 is next.** The census enumerated
+**Stages 0–6b are complete. Stage 6c is next, then Stage 7.** The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
@@ -39,7 +39,7 @@ This document was written as a deliberate stub on 2026-08-30, when
 plan measures against. That blocker is gone: 161's contract landed, was
 asserted, and is archived.
 
-Stages 2 through 10, including 5b, are scoped below and unblocked. Effort is
+Stages 2 through 10, including 5b, 6b and 6c, are scoped below and unblocked. Effort is
 **L**, down from the XL placeholder, on the reasoning in
 [The estimate](#the-estimate) and now confirmed against a measurement rather
 than proposed. [`docs/PLANS.md`](../PLANS.md) owns priority and effort; this
@@ -133,6 +133,7 @@ order:
 | **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
 | **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
+| **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
 | **7** | SQL execution, from both directions. The largest stage | G14, G5 | 56 |
 | **8** | The services below the floor | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
@@ -268,6 +269,67 @@ it measures.
 **The letter is positional, not topical.** 6b has nothing to do with route
 coverage; it is numbered this way for the reason 5b was, and CAR-52 still names
 Stage 8.
+
+### Stage 6c was added by a deploy, not by the suite
+
+**Added 2026-09-01.** Stage 6b was added by a failure this plan predicted. This
+one was added by a failure it did not, found during Plan 138 Stage 2's
+production deploy — and the shape is the reason it belongs here rather than in
+Plan 138.
+
+`POST /deploy/start` with `{"targets":["dashboard"]}` returns **503
+`{"detail":"Database unavailable."}`**. Postgres was healthy throughout. The
+database was never the problem.
+
+`ops/coordination_contract.py` maps `dashboard` and `pgadmin` to `frozenset()`
+— they are the only two services in `SERVICE_CONTRACTS` with **no surfaces**.
+`_set_intent` therefore writes `phase='requested'`, `targets='["dashboard"]'`
+and `scope='[]'`, against a constraint that forbids exactly that pair
+(`db/migrations/V043__coordination_state.sql:27`):
+
+```sql
+CHECK (
+    (phase =  'none' AND kind IS NULL     AND targets =  '[]'::jsonb AND scope =  '[]'::jsonb)
+    OR
+    (phase <> 'none' AND kind IS NOT NULL AND targets <> '[]'::jsonb AND scope <> '[]'::jsonb)
+)
+```
+
+**So two services can never be deployed alone**, and the failure is structural
+rather than intermittent. The workaround is to name a scoped service in the
+same command — `bash scripts/redeploy.sh ops dashboard` — because the union is
+then non-empty. That is a real property of `redeploy.sh`, which takes a service
+list, and it is what unblocked the deploy.
+
+**Three guards were in a position to catch this and none could.** Measured
+2026-09-01:
+
+1. **The contract suite never asserts the value that breaks.**
+   `tests/ops/test_coordination_contract.py` exercises `expand_targets` and the
+   string `scope` does not appear anywhere in the file. It asserts the mapping
+   is *well-formed*, never that its output is *writable*.
+2. **The constraint is in a Flyway migration, and the contract is in Python.**
+   Neither half is wrong on its own; the defect exists only in their
+   composition, and no layer in this repository composes them. This is the same
+   division Stage 3 closed for the health-sensor censuses — two sources that
+   must agree, with nothing asserting that they do.
+3. **The error message actively misdirects.** `_set_intent` catches bare
+   `Exception` and returns `"error"`, which `ops/routers/deploy.py:248` renders
+   as 503 "Database unavailable." The constraint violation never reaches the
+   response or the log, so the symptom points at the one component that was
+   healthy.
+
+**The stage is therefore two things, and the second is not optional.** An
+assertion that every service in `SERVICE_CONTRACTS` yields a `(targets, scope)`
+pair the constraint accepts closes the defect class. Unmasking the exception is
+what stops the *next* unrelated failure in this path costing the same
+diagnosis, and finding 3 is the whole reason a passing deploy script is not
+sufficient evidence here.
+
+**It sits after 6b and before 7 for 6b's own reason** — Stages 7, 8 and 9
+author more new tests than the rest of the plan combined, and this is a guard
+those stages get for free rather than one that has to sweep what they wrote.
+**The letter is positional, not topical**, as it was for 5b and 6b.
 
 ### Stage 5b: what the split is, and why a directory rather than a list
 
