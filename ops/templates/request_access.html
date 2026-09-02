@@ -12,11 +12,11 @@
 
         {% if submitted %}
             <p>Your request has been submitted. You'll receive an email when an admin reviews it.</p>
-            <a href="/">← Back to the project page</a>
+            <a href="/info">← Back to project info</a>
 
         {% elif pending %}
             <p>You already have a <strong>{{ pending.status }}</strong> access request. You'll be notified when it's reviewed.</p>
-            <a href="/">← Back to the project page</a>
+            <a href="/info">← Back to project info</a>
 
         {% else %}
             <p>You don't have access yet. Fill in the form below to request it.</p>

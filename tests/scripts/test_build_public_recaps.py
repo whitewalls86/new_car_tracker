@@ -157,16 +157,9 @@ def test_every_repository_directory_resolves_to_the_same_blob_url(target):
 
 
 def test_a_sibling_recap_resolves_to_the_neighbouring_page_when_published():
-    """The canonical route, not the file.
-
-    Plan 138 Stage 2: the page is served at ``/recaps/<slug>`` and the generated
-    file is *also* reachable under ``/static_ops/``. A relative ``<slug>.html``
-    would resolve differently depending on which of those the reader arrived
-    through; a route-absolute link resolves to the canonical one from both.
-    """
     assert brc.rewrite_href(
         "2026-08-16.md", _live_recap(), {"2026-08-16"}
-    ) == "/recaps/2026-08-16"
+    ) == "2026-08-16.html"
 
 
 def test_a_sibling_recap_falls_back_to_github_when_that_week_is_not_published():
@@ -300,7 +293,11 @@ def test_every_published_recap_produced_exactly_one_page(files):
 
 
 def test_the_index_is_newest_first(files):
-    order = re.findall(r'href="/recaps/(\d{4}-\d{2}-\d{2})"', files["index.html"])
+    order = [
+        line.split('href="')[1].split('.html')[0]
+        for line in files["index.html"].splitlines()
+        if 'class="index-list"' not in line and 'href="' in line and ".html" in line
+    ]
     assert order == sorted(order, reverse=True), f"index is not newest-first: {order}"
     assert len(order) == len(files) - 1
 
@@ -332,18 +329,12 @@ def test_no_generated_page_carries_a_relative_markdown_link(files):
 
     A blob URL legitimately ends in ``.md``; what must not survive is a
     *relative* one, which is the form that 404s on the public site.
-
-    Since Stage 2 the only non-absolute hrefs the projection emits are canonical
-    recap routes, so the assertion is that shape rather than a ``.html``
-    filename. A relative ``.md`` fails it either way, which is the point.
     """
     for name, text in files.items():
         for href in re.findall(r'href="([^"]*)"', text):
             if href.startswith(("http://", "https://", "#")):
                 continue
-            assert re.fullmatch(r"/recaps/\d{4}-\d{2}-\d{2}", href), (
-                f"{name} kept a link that is neither absolute nor a recap route: {href}"
-            )
+            assert href.endswith(".html"), f"{name} kept a relative link: {href}"
 
 
 # ---------------------------------------------------------------------------

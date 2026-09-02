@@ -22,7 +22,6 @@ from .routers.coordination import router as coordination_router
 from .routers.deploy import router as deploy_router
 from .routers.info import router as info_router
 from .routers.maintenance import router as maintenance_router
-from .routers.public import router as public_router
 from .routers.scrape import router as scrape_router
 from .routers.snapshots import router as snapshots_router
 from .routers.users import public_router as users_public_router
@@ -58,7 +57,6 @@ app.mount(
     name="static_ops",
 )
 app.include_router(info_router)
-app.include_router(public_router)
 app.include_router(auth_router)
 app.include_router(deploy_router)
 app.include_router(scrape_router)
@@ -87,10 +85,7 @@ async def observer_readonly(request: Request, call_next) -> Response:
     return await call_next(request)
 
 
-# ``/`` belonged to this redirect until Plan 138 Stage 2, when it became the
-# public landing page (``ops.routers.info``). Caddy never routed ``/`` here
-# before that stage -- the catch-all sent it to Streamlit -- so nothing external
-# was relying on the old behaviour. ``/admin`` keeps it.
+@app.get("/")
 @app.get("/admin")
 def root():
     return RedirectResponse(url="/admin/searches/")

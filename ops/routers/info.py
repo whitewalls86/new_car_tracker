@@ -1,16 +1,11 @@
 """
-The public landing page. No authentication required; Caddy routes both paths
-below to ops without forward_auth.
-
-Plan 138 Stage 2 moved the page from ``/info`` to ``/``. ``/info`` is kept as a
-permanent redirect rather than retired, because it is the URL printed on a
-resume, a LinkedIn profile and a GitHub profile -- copies this repository cannot
-edit. It has to keep resolving for as long as those do.
+Public /info route — renders the CarTracker portfolio landing page.
+No authentication required; Caddy routes /info without forward_auth.
 """
 import os
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ops.public_stats import public_stats_cache
@@ -34,18 +29,7 @@ def _fmt_stat(value: int | float) -> str:
 templates.env.filters["fmt_stat"] = _fmt_stat
 
 
-@router.get("/info")
-def info_redirect() -> RedirectResponse:
-    """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
-
-    308 rather than 301: it preserves the method, and unlike 302 it tells a
-    crawler to move the indexed URL rather than to keep asking. The landing page
-    also carries a canonical link to ``/``, so the two agree.
-    """
-    return RedirectResponse(url="/", status_code=308)
-
-
-@router.get("/", response_class=HTMLResponse)
+@router.get("/info", response_class=HTMLResponse)
 def info_page(request: Request):
     snapshot = public_stats_cache.get()
 
