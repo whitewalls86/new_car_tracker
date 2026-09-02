@@ -1,3 +1,50 @@
+# ── Public response policy (Plan 138 Stage 3c) ───────────────────────────────
+# Imported by every public handle block below and by none of the others. The
+# plan is explicit that this must not be applied blindly: Grafana, Airflow,
+# Streamlit, MinIO and the OAuth flow all serve markup this policy would break,
+# and none of them are this stage's surface.
+#
+# The CSP is `default-src 'none'` with only what the two public documents
+# actually load added back. Stage 3c is what made that reachable -- before it
+# the landing page pulled a stylesheet from cdn.jsdelivr.net and eleven icons
+# from cdn.simpleicons.org, and its CSS and JavaScript were inline.
+#
+#   script-src 'self'   info.js, and nothing else. The JSON-LD block in the
+#                       landing page is a data block: a <script> whose type is
+#                       not a JavaScript MIME type never executes, so script-src
+#                       does not govern it and it needs no allowance.
+#   style-src           info.css and pico.min.css, plus one hash. The recap
+#                       pages carry their stylesheet inline, by decision, and
+#                       scripts/build_public_recaps.py holds it in a single
+#                       constant -- so it is admitted by the hash of that exact
+#                       text rather than by 'unsafe-inline', which would admit
+#                       any style at all including one arriving through a
+#                       recap's Markdown. tests/test_caddy_public_routes.py
+#                       recomputes the hash from the generator and fails if the
+#                       two drift.
+#   img-src 'self' data:  the favicon, the OG image, the dbt mark, the eight
+#                       vendored icons -- and Pico's own form controls, which it
+#                       draws with fourteen data: URIs.
+#   connect-src 'self'  the one fetch on the page, for the roadmap projection.
+#   form-action 'none'  neither public document contains a <form>.
+(public_response_policy) {
+    encode zstd gzip
+
+    header {
+        Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'sha256-NYgc6JAZ3/pqPJjyqRy35krA6jlCbyvjp/gGoMN9r7I='; img-src 'self' data:; connect-src 'self'"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    }
+}
+
+# The public documents are cheap to regenerate and are the thing a deploy is
+# usually changing, so they revalidate on every view. `no-cache` stores the
+# response and asks before reusing it; it does not mean "do not store".
+(public_document_cache) {
+    header Cache-Control "no-cache"
+}
+
 https://cartracker.info {
 
     # ── Public routes (no auth required) ─────────────────────────────────────
@@ -17,6 +64,8 @@ https://cartracker.info {
     # the coupling is deliberate, and tests/test_caddy_public_routes.py asserts
     # it rather than leaving it to whoever reads this block next.
     handle / {
+        import public_response_policy
+        import public_document_cache
         reverse_proxy ops:8060
     }
 
@@ -24,6 +73,8 @@ https://cartracker.info {
     # on a resume, a LinkedIn profile and a GitHub profile — copies this
     # repository cannot edit — so it keeps resolving for as long as those do.
     handle /info {
+        import public_response_policy
+        import public_document_cache
         reverse_proxy ops:8060
     }
 
@@ -32,18 +83,40 @@ https://cartracker.info {
     # a Google sign-in page in front of public content.
     @recaps path /recaps /recaps/*
     handle @recaps {
+        import public_response_policy
+        import public_document_cache
         reverse_proxy ops:8060
     }
 
     handle /robots.txt {
+        import public_response_policy
+        import public_document_cache
         reverse_proxy ops:8060
     }
 
     handle /sitemap.xml {
+        import public_response_policy
+        import public_document_cache
         reverse_proxy ops:8060
     }
 
+    # Two cache policies, told apart by whether the URL names its own
+    # content. ops/static_assets.py appends ?v=<hash of the file's bytes> to
+    # every asset the landing page loads, so those URLs change whenever the
+    # file does and can be kept for a year. Everything else here -- the OG
+    # image, and the generated artifacts Stage 7 publishes with `git pull` --
+    # keeps a stable URL, so it gets a short life instead. Getting this
+    # backwards would freeze a published recap in every returning browser
+    # for a year, which is the failure this split exists to avoid.
     handle /static_ops/* {
+        import public_response_policy
+
+        @fingerprinted query v=*
+        header @fingerprinted Cache-Control "public, max-age=31536000, immutable"
+
+        @unversioned not query v=*
+        header @unversioned Cache-Control "public, max-age=300"
+
         reverse_proxy ops:8060
     }
 
