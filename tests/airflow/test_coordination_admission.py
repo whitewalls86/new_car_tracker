@@ -134,10 +134,21 @@ def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
         if isinstance(node, ast.FunctionDef) and node.name == "_record_observation"
     )
     write_source = ast.get_source_segment(source, observation)
-    assert "coordination_gate_observations" in source
-    assert "ON CONFLICT (generation, dag_id, run_id)" in source
     assert "GATE_OBSERVATION_SQL" in write_source
     assert "_record_observation(" in sensor_source
+
+    # The statement itself moved into airflow/sql/ in Plan 162 Stage 7, so each
+    # half is asserted where its subject now lives: sensors.py must load the
+    # right file, and the file must hold the upsert. Asserting the table name
+    # against sensors.py's text passed until the statement moved and would have
+    # gone on passing if the module had loaded the wrong file.
+    assert "record_gate_observation.sql" in source
+    statement = (
+        Path(__file__).resolve().parents[2]
+        / "airflow" / "sql" / "record_gate_observation.sql"
+    ).read_text(encoding="utf-8")
+    assert "coordination_gate_observations" in statement
+    assert "ON CONFLICT (generation, dag_id, run_id)" in statement
 
 
 # ===========================================================================

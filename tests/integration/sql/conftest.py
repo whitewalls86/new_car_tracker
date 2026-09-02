@@ -6,6 +6,7 @@ The DuckDB connection reads the analytics.duckdb file produced by
 `dbt build --target duckdb` earlier in the same CI run.
 """
 import os
+from pathlib import Path
 
 import pytest
 
@@ -14,8 +15,24 @@ DUCKDB_PATH = os.environ.get("DUCKDB_PATH")
 
 @pytest.fixture(scope="session")
 def duckdb_con():
-    if not DUCKDB_PATH:
-        pytest.skip("DUCKDB_PATH not set — skipping DuckDB smoke tests")
+    """The DuckDB file a real ``dbt build --target duckdb`` produced.
+
+    Absence is a skip locally and a failure in CI (``REQUIRE_DUCKDB``), the
+    same arrangement ``airflow_metadata`` below uses and for the same reason.
+    55 of this suite's tests take this fixture -- every dashboard query and
+    both analytics snapshots -- so a ``DUCKDB_PATH`` that quietly went missing,
+    or a dbt build that produced no file, would skip a quarter of Layer 2 and
+    leave the step green. That is the blind spot this plan exists to close,
+    reappearing in the instrument itself.
+    """
+    if not DUCKDB_PATH or not Path(DUCKDB_PATH).exists():
+        reason = (
+            f"no DuckDB file to read (DUCKDB_PATH={DUCKDB_PATH!r}) -- run "
+            "`dbt build --target duckdb` and point DUCKDB_PATH at its output"
+        )
+        if os.environ.get("REQUIRE_DUCKDB"):
+            pytest.fail(reason)
+        pytest.skip(reason)
     import duckdb
     return duckdb.connect(DUCKDB_PATH, read_only=True)
 
@@ -58,3 +75,30 @@ def airflow_metadata(cur):
             pytest.fail(reason)
         pytest.skip(reason)
     return cur
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Fail the Layer 2 run if anything skipped, when CI says nothing may.
+
+    ``REQUIRE_DUCKDB`` and ``REQUIRE_AIRFLOW_SCHEMA`` each close one fixture's
+    skip. This closes the class: the next fixture someone adds will default to
+    skipping when its dependency is absent, because that is the courteous thing
+    to do locally, and it will silently subtract from the CI run the day its
+    dependency breaks. A suite whose job is executing production SQL against a
+    real engine has nothing to say when it does not run.
+    """
+    if not os.environ.get("REQUIRE_LAYER_2_EXECUTION"):
+        return
+    skipped = terminalreporter.stats.get("skipped", [])
+    if not skipped:
+        return
+    reasons = sorted({str(report.longrepr[2]) for report in skipped})
+    terminalreporter.section("Layer 2 execution required", red=True)
+    terminalreporter.write_line(
+        f"{len(skipped)} test(s) skipped while REQUIRE_LAYER_2_EXECUTION is set. "
+        "A skipped Layer 2 test executes no SQL, so this run proves nothing "
+        "about the statements it names:"
+    )
+    for reason in reasons:
+        terminalreporter.write_line(f"  {reason}")
+    terminalreporter._session.exitstatus = 1

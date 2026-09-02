@@ -17,8 +17,10 @@ from scraper.processors.cf_session import (
     make_cf_session,
 )
 from scraper.queries import (
+    ENQUEUE_DETAIL_ARTIFACT,
     GET_BLOCKED_COOLDOWN_ATTEMPTS,
     INSERT_BLOCKED_COOLDOWN_EVENT,
+    INSERT_DETAIL_ARTIFACT_EVENT,
     UPSERT_BLOCKED_COOLDOWN,
 )
 from shared.challenge import html_title as _html_title
@@ -182,23 +184,12 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
 
             with db_cursor(error_context="scrape_detail_fetch: insert artifacts_queue") as cur:
                 cur.execute(
-                    """
-                    INSERT INTO ops.artifacts_queue
-                        (minio_path, artifact_type, listing_id, run_id, fetched_at, status)
-                    VALUES (%s, 'detail_page', %s, %s, %s, 'pending')
-                    RETURNING artifact_id
-                    """,
+                    ENQUEUE_DETAIL_ARTIFACT,
                     (minio_path, str(listing_id), run_id or None, fetched_at),
                 )
                 queue_artifact_id = cur.fetchone()[0]
                 cur.execute(
-                    """
-                    INSERT INTO staging.artifacts_queue_events (
-                        artifact_id, status, minio_path, artifact_type,
-                        fetched_at, listing_id, run_id
-                    )
-                    VALUES (%s, 'pending', %s, 'detail_page', %s, %s, %s)
-                    """,
+                    INSERT_DETAIL_ARTIFACT_EVENT,
                     (queue_artifact_id, minio_path, fetched_at,
                      str(listing_id) if listing_id else None, run_id or None),
                 )

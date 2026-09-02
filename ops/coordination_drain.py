@@ -9,6 +9,7 @@ import requests
 from airflow.dags.coordination_contract import ADMISSION_SURFACES, DRAIN_TASKS
 from ops.coordination_contract import SERVICE_CONTRACTS
 from ops.mutation_contract import DRAIN_SOURCES, required_drain_sources
+from ops.queries import SELECT_RUNNING_DETAIL_CLAIMS
 from shared.db import db_cursor
 from shared.job_counter import job_snapshot
 
@@ -90,9 +91,7 @@ def _processing_artifacts() -> dict[str, Any]:
 # resolve at all -- `_database_count` turns that into `unknown`, and unknown
 # fails closed, so the drain hung instead of reporting an error. The query
 # builders are module-level so tests/integration/sql can execute the real SQL.
-RUNNING_DETAIL_CLAIMS_SQL = """SELECT COUNT(*), MIN(claimed_at)
-     FROM ops.detail_scrape_claims
-    WHERE status = 'running'"""
+RUNNING_DETAIL_CLAIMS_SQL = SELECT_RUNNING_DETAIL_CLAIMS
 
 
 def _running_detail_claims() -> dict[str, Any]:

@@ -850,71 +850,63 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 # ---------------------------------------------------------------------------
 # Rule 5 -- every .sql file is executed by a Layer 2 test.
 # ---------------------------------------------------------------------------
-LAYER_2_WAIVERS = tuple(
-    Waiver(subject, gap="G14", owner=162)
-    for subject in (
-        "airflow/sql/delete_stale_emails.sql",
-        "archiver/sql/get_queue_cleanup_candidates.sql",
-        "archiver/sql/lake_snapshot_selectors/active_to_unlisted.sql",
-        "archiver/sql/lake_snapshot_selectors/benchmark_dense_make_model.sql",
-        "archiver/sql/lake_snapshot_selectors/benchmark_sparse_make_model.sql",
-        "archiver/sql/lake_snapshot_selectors/carousel_only_or_low_priority.sql",
-        "archiver/sql/lake_snapshot_selectors/cooldown_events.sql",
-        "archiver/sql/lake_snapshot_selectors/detail_beats_srp.sql",
-        "archiver/sql/lake_snapshot_selectors/fresh_recent_listing.sql",
-        "archiver/sql/lake_snapshot_selectors/invalid_or_null_vin.sql",
-        "archiver/sql/lake_snapshot_selectors/no_price_history.sql",
-        "archiver/sql/lake_snapshot_selectors/price_changed_30d_only.sql",
-        "archiver/sql/lake_snapshot_selectors/price_changed_7d.sql",
-        # price_drop and stale_listing were exposed on 2026-09-01, when Stage 5
-        # tightened the match above to a word boundary. Both had been credited
-        # by a test *method* name that happened to contain the stem; neither
-        # .sql file is executed by anything.
-        "archiver/sql/lake_snapshot_selectors/price_drop.sql",
-        "archiver/sql/lake_snapshot_selectors/price_increase.sql",
-        "archiver/sql/lake_snapshot_selectors/relisted_vin.sql",
-        "archiver/sql/lake_snapshot_selectors/srp_fallback.sql",
-        "archiver/sql/lake_snapshot_selectors/stable_state_run.sql",
-        "archiver/sql/lake_snapshot_selectors/stale_listing.sql",
-        "archiver/sql/lake_snapshot_selectors/state_change_run.sql",
-        "dashboard/sql/data_health_batch_outcomes.sql",
-        "dashboard/sql/data_health_block_rate.sql",
-        "dashboard/sql/data_health_cooldown_cohorts.sql",
-        "dashboard/sql/data_health_inventory_coverage.sql",
-        "dashboard/sql/data_health_price_freshness.sql",
-        "dashboard/sql/data_health_scrape_volume.sql",
-        "ops/sql/evict_delisted_cooldowns.sql",
-        "ops/sql/expire_orphan_detail_claims.sql",
-        "ops/sql/insert_artifact_event.sql",
-        "ops/sql/insert_blocked_cooldown_cleared_event.sql",
-        "ops/sql/mark_artifact_status.sql",
-        "ops/sql/select_live_cooldown_listings.sql",
-        "ops/sql/select_pending_cleared_listings.sql",
-        "ops/sql/select_stuck_processing_artifacts.sql",
-        "processing/sql/batch_lookup_vin_to_listing.sql",
-        "processing/sql/claim_artifacts.sql",
-        "processing/sql/clear_blocked_cooldown.sql",
-        "processing/sql/delete_price_observation.sql",
-        "processing/sql/delete_price_observation_by_vin.sql",
-        "processing/sql/get_active_search_configs.sql",
-        "processing/sql/get_tracked_models.sql",
-        "processing/sql/insert_artifact_event.sql",
-        "processing/sql/insert_blocked_cooldown_cleared_event.sql",
-        "processing/sql/insert_detail_claim_event.sql",
-        "processing/sql/insert_price_observation_event.sql",
-        "processing/sql/insert_tracked_model_event.sql",
-        "processing/sql/insert_vin_to_listing_event.sql",
-        "processing/sql/lookup_vin_collision.sql",
-        "processing/sql/mark_artifact_status.sql",
-        "processing/sql/release_detail_claims.sql",
-        "processing/sql/upsert_price_observation.sql",
-        "processing/sql/upsert_tracked_model.sql",
-        "processing/sql/upsert_vin_to_listing.sql",
-        "scraper/sql/get_blocked_cooldown_attempts.sql",
-        "scraper/sql/insert_blocked_cooldown_event.sql",
-        "scraper/sql/upsert_blocked_cooldown.sql",
+# Empty since Plan 162 Stage 7 (CAR-51). Every production .sql file is
+# executed by a Layer 2 test that imports the constant production imports.
+#
+# The last entry came off by deletion rather than by a test, which is allowed
+# only because the statement that absorbed it can be named -- G16's rule, and
+# the first case to exercise it. processing/sql/get_active_search_configs.sql
+# read `params -> 'makes'` and `params -> 'models'` out of search_configs jsonb
+# for carousel make/model filtering. That filtering still happens, in
+# detail_writer._get_tracked_models() under a section header that still says
+# "Carousel search_config filtering", but it reads ops.tracked_models joined to
+# enabled search_configs instead -- a normalised (search_key, make, model)
+# grain rather than paired jsonb arrays. Same question, same consumer, same
+# `enabled = true` gate, different source. The pre-normalisation version had
+# been dead since Plan 93 shipped it: no constant loaded it and `git log -S`
+# found only the waiver naming it.
+LAYER_2_WAIVERS: tuple[Waiver, ...] = ()
+
+_SQL_SUITE_ROW = re.compile(r"^\| `(tests/integration/[^`]+)` \| ", re.M)
+
+
+@lru_cache(maxsize=None)
+def sql_executing_suites() -> frozenset[str]:
+    """The suites the contract declares as executing production SQL.
+
+    Read from ``docs/TESTING.md``'s Layer 2 section rather than listed here,
+    for the reason every other derivation in this file gives: a list in the
+    checker is a list nobody reviews. Adding a suite is an edit to the document
+    that has to say *why* the suite executes production SQL, in the row itself.
+
+    **This started as ``tests/integration/sql/`` alone and that was too narrow.**
+    18 of the ``.sql`` files this rule reported as uncovered -- every
+    ``archiver/sql/lake_snapshot_selectors/`` file -- are executed in CI against
+    real Parquet in MinIO by ``tests/integration/archiver/``, which the rule
+    could not see. That is a blind spot in the ruler, not a gap in the work,
+    and it is the sharpest argument against location as a proxy for coverage:
+    the tests were stronger than this check's own reading and it called them
+    absent.
+
+    **It is deliberately not a glob.** Measured 2026-09-01, reading all of
+    ``tests/integration/`` would have credited 35 of 46 files on a name match
+    alone, including matches from suites that mention a statement without
+    executing it. The check reads a filename stem out of a test's *text*; it
+    cannot tell execution from mention, so what it reads is a decision.
+    """
+    section = _read(CONTRACT).split("### Layer 2 — SQL smoke tests")[1]
+    section = section.split("### Layer 3")[0]
+    suites = {row.rstrip("/") for row in _SQL_SUITE_ROW.findall(section)}
+    assert suites, (
+        f"{CONTRACT}'s Layer 2 section no longer declares which suites execute "
+        f"production SQL. See 'Executes production SQL from these suites.'"
     )
-)
+    missing = sorted(s for s in suites if not (REPO_ROOT / s).is_dir())
+    assert not missing, (
+        f"{CONTRACT} declares suites that do not exist: {missing}"
+    )
+    return frozenset(suites)
+
 
 # Flyway owns db/migrations/ and dbt owns its models; both are named exemptions
 # in the contract. tests/ holds fixture seeds, which are not production SQL.
@@ -984,9 +976,13 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
     """
     layer_2 = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in sorted((TESTS_DIR / "integration" / "sql").rglob("*.py"))
+        for suite in sql_executing_suites()
+        for path in sorted((REPO_ROOT / suite).rglob("*.py"))
     )
-    assert layer_2.strip(), "tests/integration/sql/ holds no Python at all"
+    assert layer_2.strip(), (
+        f"the suites {CONTRACT} declares as executing production SQL hold no "
+        f"Python at all: {sorted(sql_executing_suites())}"
+    )
     untouched = {
         relative
         for relative in production_sql_files()
@@ -999,6 +995,522 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
         "migrations and dbt's models are the two exemptions; a statement no "
         "layer ever runs against a real engine is the search_path incident "
         "waiting to happen again.",
+    )
+
+
+# The surface the two SQL rules below read. **Not** :func:`service_packages`,
+# which answers a different question.
+#
+# Stage 7 wrote both rules against ``service_packages()`` and shipped a hole:
+# ``airflow/`` and ``scripts/`` hold neither an ``__init__.py`` nor, therefore,
+# any rule -- and they held 26 SQL sites, 22 of them in Plan 125's Iceberg and
+# Spark scripts, which Gates C and D productionize. "Is this a service" and "is
+# this production Python" coincided for the eight packages and stopped
+# coinciding exactly at the boundary that mattered.
+#
+# **The fix is not an ``__init__.py``.** ``service_packages()`` drives seven
+# rules -- the layer-home mapping, the hidden-route check, route coverage
+# (which imports ``<service>.app``), the "enough" table's rows and the coverage
+# ``source`` list. Making ``scripts`` a package would demand an "enough" row
+# for something that is not a service and send the route rule looking for
+# ``scripts.app``. The contract already says as much in
+# ``test_every_service_directory_is_in_the_coverage_source``: scripts and
+# airflow/dags "cannot be demanded by the same derivation -- neither is a
+# package".
+#
+# So this is a second derivation, and it is derived rather than listed for the
+# same reason as the first: ``scripts/oneoff/`` is excluded because Stage 5b
+# declared it spent in the contract's own bucket table, not because a list here
+# says so. A new bucket is covered by editing that table.
+def production_python_roots() -> tuple[Path, ...]:
+    """Every directory holding production Python, for the SQL rules only."""
+    roots = [REPO_ROOT / package for package in sorted(service_packages())]
+    roots.append(REPO_ROOT / "airflow" / "dags")
+    roots += [
+        REPO_ROOT / bucket
+        for bucket, measured in sorted(script_buckets().items())
+        if measured
+    ]
+    return tuple(root for root in roots if root.is_dir())
+
+
+def _spent_script_buckets() -> tuple[str, ...]:
+    """The buckets the contract declares spent, as posix prefixes."""
+    return tuple(
+        f"{bucket}/" for bucket, measured in sorted(script_buckets().items())
+        if not measured
+    )
+
+
+def production_python_files() -> list[Path]:
+    """Every ``.py`` file under :func:`production_python_roots`, spent excluded."""
+    seen: dict[str, Path] = {}
+    spent = _spent_script_buckets()
+    for root in production_python_roots():
+        for path in sorted(root.rglob("*.py")):
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            if "__pycache__" in path.parts or relative.startswith(spent):
+                continue
+            seen[relative] = path
+    return [seen[key] for key in sorted(seen)]
+
+
+# ---------------------------------------------------------------------------
+# Rule 5e -- no .sql comment contains a parameter placeholder.
+# ---------------------------------------------------------------------------
+_PLACEHOLDER_IN_COMMENT = re.compile(r"^\s*--.*(%s|%\([a-z_]+\)s)", re.M)
+
+
+def test_no_sql_comment_contains_a_parameter_placeholder():
+    """A failure mode this plan created, found by CI on 2026-09-01.
+
+    psycopg2 counts placeholders across the **whole statement string**, comments
+    included. So a comment written to explain a parameter adds one, and the
+    caller then passes too few.
+
+    Both instances were written the same day, by the same well-meant impulse.
+    ``ops/sql/set_deploy_intent.sql`` explained its ``interval '<placeholder>
+    minutes'`` construct by quoting it, which made the statement expect four
+    parameters where ``deploy.py`` passes three -- so ``/deploy/start`` raised,
+    the router caught it, and returned 503. Seven Layer 4 tests failed on that
+    alone, in a code path the extraction was not supposed to touch.
+    ``ops/sql/insert_blocked_cooldown_events_batch.sql`` did the same to
+    ``execute_values``, which refuses any statement carrying two placeholders
+    and had exactly one job.
+
+    **The named form is the one that will get someone later.**
+    ``processing/sql/claim_artifacts.sql`` had ``%(limit)s`` in its first
+    comment line and worked fine, because a named placeholder resolves from the
+    same dict however many times it appears. It is a live trap that happens not
+    to have sprung: rename the parameter and the comment raises ``KeyError``
+    from a line that is not code. All three are fixed and this rule keeps them
+    fixed.
+
+    Worth stating plainly, because it is the argument for the whole exercise
+    rather than a footnote to it: **this defect could only be found by
+    executing.** Every static rule in this file passed on all three files. The
+    statements were correctly extracted, correctly imported and correctly
+    named, and two of them were broken.
+    """
+    found = {
+        f"{relative}:{text[:match.start()].count(chr(10)) + 1}"
+        for relative in production_sql_files()
+        for text in [(REPO_ROOT / relative).read_text(encoding="utf-8")]
+        for match in _PLACEHOLDER_IN_COMMENT.finditer(text)
+    }
+    assert not found, (
+        "these .sql comments contain a parameter placeholder, which psycopg2 "
+        "counts as part of the statement -- the caller will pass too few "
+        "parameters, or a rename will raise KeyError from a comment:\n  "
+        + "\n  ".join(sorted(found))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5d -- no statement is filed twice.
+# ---------------------------------------------------------------------------
+# One pair, and it is a decision rather than an oversight. `cancel` refuses
+# anything past 'draining' and the deploy facade releases unconditionally --
+# two policies that agree today, enforced in the Python around them rather than
+# in the statements, which is why the statements match. Consolidating would
+# couple two rules that are allowed to diverge.
+DUPLICATE_SQL_WAIVERS: tuple[Waiver, ...] = (
+    Waiver(
+        "ops/sql/cancel_coordination_state.sql == "
+        "ops/sql/release_deploy_coordination.sql",
+        gap="G17",
+        owner=162,
+    ),
+)
+
+
+def _sql_body(relative: str) -> str:
+    """A ``.sql`` file's statement, with comments and whitespace normalised."""
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    body = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    )
+    return re.sub(r"\s+", " ", body).strip().rstrip(";")
+
+
+def test_no_two_production_sql_files_hold_the_same_statement():
+    """A statement filed twice is two things to edit and one to forget.
+
+    Found on 2026-09-01, while writing Layer 2 tests for the last of G14:
+    ``mark_artifact_status``, ``insert_artifact_event`` and
+    ``insert_blocked_cooldown_cleared_event`` each existed **byte-identically**
+    under both ``ops/sql/`` and ``processing/sql/``. Both services issue them
+    against the same tables, so the schema already coupled the two -- the copies
+    decoupled nothing and only made a second place to edit, with nothing to
+    notice when one moved. They are now one file each under ``shared/sql/``,
+    re-exported by both services' ``queries.py`` so no call site changed.
+
+    **The weak reading made this worse than it looks.** Rule 5 credits a
+    ``.sql`` file when a Layer 2 module names its *stem*, and these pairs shared
+    one -- so a test of ``processing``'s copy silently credited ``ops``'s. Three
+    files were reported covered by a test that never executed them, which is
+    the same defect as the paraphrase, arriving through the checker instead of
+    the test.
+
+    This rule is cheap and general: it compares every production statement to
+    every other, so the next duplicate is a failure rather than a discovery.
+    """
+    bodies: dict[str, list[str]] = {}
+    for relative in production_sql_files():
+        bodies.setdefault(_sql_body(relative), []).append(relative)
+    found = {
+        " == ".join(sorted(group))
+        for group in bodies.values()
+        if len(group) > 1
+    }
+    _assert_exactly(
+        found,
+        DUPLICATE_SQL_WAIVERS,
+        "these production .sql files hold the same statement, so one of them "
+        "will be edited and the other will not:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5b -- no production module holds SQL at its .execute() call site.
+# ---------------------------------------------------------------------------
+# The 66 sites in the eight service packages were seeded and drained on
+# 2026-09-01. These 22 are what widening the scan surface to production
+# Python exposed the same day -- all under scripts/, and 16 of them in Plan
+# 125's Iceberg and Spark tooling, which Gates C and D productionize. They
+# were never fixed and never waived; they were out of frame.
+INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G5", owner=162)
+    for subject in (
+        "scripts/audit_adaptive_refresh_features.py:123",
+        "scripts/audit_adaptive_refresh_features.py:147",
+        "scripts/audit_adaptive_refresh_features.py:155",
+        "scripts/audit_adaptive_refresh_features.py:163",
+        "scripts/audit_adaptive_refresh_features.py:173",
+        "scripts/compare_gate_a_parity.py:223",
+        "scripts/compare_gate_b_parity.py:595",
+        "scripts/estimate_dictionary_savings.py:164",
+        "scripts/export_volatility_features_to_iceberg.py:123",
+        "scripts/export_volatility_features_to_iceberg.py:134",
+        "scripts/export_volatility_features_to_iceberg.py:155",
+        "scripts/preflight_local_lakehouse_snapshot.py:301",
+        "scripts/run_dbt_spark.py:158",
+        "scripts/spike_iceberg_lakehouse.py:133",
+        "scripts/verify_dialect_datediff.py:128",
+    )
+)
+
+# Every name in this stack that takes a SQL string, whether or not it is used
+# here today. Scoping the set to what the repository currently calls is the
+# mistake this plan keeps finding in its own instruments: the census undercounted
+# G14 and it undercounted G5, both because the check was fitted to the code in
+# front of it. ``executemany`` matches nothing on 2026-09-01 and is here anyway,
+# because the cost of a name that never fires is zero and the cost of a missing
+# one is a gap nothing reports. ``sql`` covers ``spark.sql(...)``, which is not
+# called yet either -- see the docstring below on what does and does not survive
+# PySpark.
+_SQL_CALL_NAMES = frozenset({
+    # DB-API and psycopg2
+    "execute", "executemany", "executescript", "execute_batch", "execute_values",
+    "mogrify", "copy_expert",
+    # DuckDB and Spark
+    "sql", "query", "from_query",
+    # pandas and SQLAlchemy
+    "read_sql", "read_sql_query", "read_sql_table", "text",
+})
+
+# The verb is what makes a generous name set safe. ``df.query("price > 100")``
+# and ``resp.text`` reach the walk below and are rejected on content, so adding
+# a name costs nothing while omitting one costs silence. It is also the part
+# that is dialect-independent: SELECT and INSERT read the same in Spark SQL as
+# in Postgres.
+_SQL_VERB = re.compile(
+    r"\s*(?:--[^\n]*\n\s*)*"
+    r"\b(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|DROP|ALTER|TRUNCATE|COPY|CALL|"
+    r"GRANT|REVOKE|VACUUM|ANALYZE|EXPLAIN|MERGE|UPSERT|REFRESH|REINDEX|"
+    r"INSTALL|LOAD|SET|ATTACH|DETACH|PRAGMA|BEGIN|COMMIT|ROLLBACK)\b",
+    re.I,
+)
+
+# Connection setup, not a query. ``INSTALL httpfs`` / ``LOAD httpfs`` /
+# ``SET s3_url_style=?`` configure a session; they name no table and no column,
+# so there is no schema for them to drift from -- which is the whole hazard the
+# rule exists to catch. Extracting them into .sql files for a Layer 2 test to
+# import would be ceremony, not coverage. Measured on 2026-09-01 this exempts
+# exactly the seven sites in ``shared/duckdb_s3.py`` and nothing else; in
+# particular no production module runs ``SET search_path`` through a cursor,
+# which would be a schema statement wearing this shape and is not exempt.
+_SESSION_SETUP_VERBS = frozenset({"INSTALL", "LOAD", "SET", "ATTACH", "DETACH", "PRAGMA"})
+
+# DDL, which Plan 161 question 4 exempts by name: "DDL and one-shot
+# maintenance, which Flyway and ``scripts/`` own". That exemption was written
+# when nothing scanned ``scripts/`` and became load-bearing on 2026-09-01 when
+# something did -- ``CREATE NAMESPACE IF NOT EXISTS`` and ``DROP TABLE IF
+# EXISTS`` against a scratch Iceberg namespace are exactly the shape it
+# describes.
+#
+# It is narrower than it looks. A ``.sql`` file earns its keep because a test
+# can execute the statement production runs; this DDL creates and tears down
+# the very namespace its script is about, so there is no production schema for
+# it to drift from -- the same argument as session setup above.
+# **Flyway's DDL is not covered by this.** ``db/migrations/`` is exempt one
+# level up, in ``_SQL_EXEMPT_ROOTS``, and Flyway applies and checksums it.
+_DDL_VERBS = frozenset({"CREATE", "DROP", "ALTER", "TRUNCATE"})
+
+_EXEMPT_VERBS = _SESSION_SETUP_VERBS | _DDL_VERBS
+
+
+def _leading_sql_literal(node: ast.AST) -> str | None:
+    """The literal text at the head of *node*, through the shapes that hide one.
+
+    A rule that only reads a bare ``ast.Constant`` makes concatenation the
+    escape hatch: ``"SELECT ..." + where`` and ``f"SELECT ... {col}"`` are the
+    two ways inline SQL is actually written once it needs a variable, and they
+    are the ones worth catching most.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _leading_sql_literal(node.left)
+    if isinstance(node, ast.JoinedStr) and node.values:
+        return _leading_sql_literal(node.values[0])
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr in {"format", "dedent", "strip", "lstrip", "join"}:
+            return _leading_sql_literal(node.func.value)
+    return None
+
+
+def _inline_sql_sites(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers where a SQL-taking call is handed a literal statement.
+
+    **Every argument is read, not the first.** ``execute_values(cur, sql, rows)``
+    puts its statement second, and a first-argument rule is blind to it by
+    construction -- which is not hypothetical: it is
+    ``ops/routers/maintenance.py:152``, a literal INSERT into
+    ``staging.blocked_cooldown_events`` that the census never named because the
+    gap list describes the shape as "``.execute(`` with a literal first
+    argument".
+    """
+    tree = ast.parse(source, filename=filename)
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            name = node.func.id
+        else:
+            continue
+        if name not in _SQL_CALL_NAMES:
+            continue
+        arguments = list(node.args) + [keyword.value for keyword in node.keywords]
+        for argument in arguments:
+            text = _leading_sql_literal(argument)
+            if text is None:
+                continue
+            match = _SQL_VERB.match(text)
+            if match and match.group(1).upper() not in _EXEMPT_VERBS:
+                found.add(node.lineno)
+                break
+    return found
+
+
+def test_the_inline_sql_rule_sees_the_shapes_that_hide_a_statement():
+    """The rule below, tested on the shapes it exists to catch.
+
+    A structural check nothing exercises reports a clean repository whether or
+    not it still matches anything, which is the failure this whole file exists
+    to prevent -- so the detector is separated from the sweep and canaried here.
+    """
+    caught = _inline_sql_sites(
+        'cur.execute("SELECT 1")\n'                              # 1  bare literal
+        'cur.execute("SELECT * FROM t WHERE a = " + a)\n'        # 2  concatenated
+        'cur.execute(f"SELECT {col} FROM t")\n'                  # 3  f-string
+        'execute_values(cur, "INSERT INTO t VALUES %s", rows)\n'  # 4  second argument
+        'pd.read_sql(sql="SELECT 1", con=c)\n'                   # 5  keyword argument
+        'spark.sql("MERGE INTO t USING s ON t.id = s.id")\n'     # 6  Spark, no caller yet
+    )
+    assert caught == {1, 2, 3, 4, 5, 6}, (
+        f"the inline-SQL rule no longer sees every shape: caught {sorted(caught)}"
+    )
+
+    clean = _inline_sql_sites(
+        'cur.execute(CLAIM_ARTIFACTS, (limit,))\n'      # a loaded constant is the fix
+        'df.query("price > 100")\n'                     # not SQL: no leading verb
+        'con.execute("INSTALL httpfs")\n'               # session setup, exempt
+        'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
+    )
+    assert not clean, (
+        f"the inline-SQL rule fires on calls that are already correct: {sorted(clean)}"
+    )
+
+
+def test_no_production_module_holds_sql_at_its_execute_call_site():
+    """G5, which the census recorded in prose and nothing has ever checked.
+
+    Inline SQL is not merely untidy. It is what *manufactures* the paraphrase
+    the contract calls worse than no test: a statement written at its call site
+    cannot be imported, so the only way to give it a test is to retype it, and
+    a retyped statement passes forever while the original rots. Moving SQL into
+    a ``.sql`` file is not the goal -- it is what makes the retyping
+    unnecessary, and it is why this rule and
+    :func:`test_every_production_sql_file_is_touched_by_a_layer_2_test` are one
+    stage rather than two.
+
+    **What this does not survive is PySpark, and the residue is three named
+    things rather than an open question.** ``spark.sql("SELECT ...")`` is caught
+    already -- ``sql`` is in the name set and the verb guard does not care about
+    dialect. What is not caught: SQL *fragments* (``df.selectExpr("price >
+    msrp")``, ``F.expr(...)``, ``df.filter("year > 2020")``) start with no verb,
+    and the guard that makes a generous name set safe is exactly what makes it
+    blind to them; the DataFrame API is not text at all, so it can drift from a
+    schema with nothing textual to see; and a ``.sql`` file only earns its
+    keep if some engine executes it, which for Spark means the Lakekeeper and
+    PySpark services ``tests/integration/lakehouse`` is
+    :data:`DORMANT_SUITES`-declared against until Plan 125 Gate C returns them.
+    Static reading stops at the first of those three. The other two are caught
+    by executing them in CI or not at all.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in production_python_files()
+        for line in _inline_sql_sites(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        INLINE_SQL_WAIVERS,
+        "these production modules hold SQL at the call site, where no test can "
+        "import it and only a paraphrase can cover it:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5c -- no production module keeps a SQL statement in a Python literal.
+# ---------------------------------------------------------------------------
+SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G15", owner=162)
+    for subject in (
+        "archiver/processors/delete_packed_source_html.py:304",
+        "archiver/processors/lake_snapshot_cohort.py:109",
+        "archiver/processors/lake_snapshot_cohort.py:156",
+        "archiver/processors/lake_snapshot_cohort.py:354",
+        "archiver/processors/lake_snapshot_cohort.py:502",
+        "archiver/processors/lake_snapshot_cohort.py:535",
+        "archiver/processors/lake_snapshot_cohort.py:560",
+        "archiver/processors/lake_snapshot_cohort.py:594",
+        "archiver/processors/lake_snapshot_cohort.py:627",
+        "archiver/processors/lake_snapshot_export.py:130",
+        "archiver/processors/lake_snapshot_selectors.py:129",
+        "archiver/processors/lake_source_audit.py:113",
+        "archiver/processors/pack_bronze_html.py:440",
+        "ops/routers/maintenance.py:36",
+        "processing/writers/silver_writer.py:38",
+        "scripts/audit_adaptive_refresh_features.py:128",
+        "scripts/audit_adaptive_refresh_features.py:135",
+        "scripts/estimate_dictionary_savings.py:206",
+        "shared/deploy_intent.py:25",
+    )
+)
+
+
+def _sql_literal_bindings(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers where a SQL statement is bound to a Python name.
+
+    Rule 5b catches SQL *at* an ``.execute()`` call site, where it cannot be
+    imported at all. This catches the shape one step back: assigned to a name
+    first, then executed. That statement **is** importable, so the paraphrase
+    hazard is gone -- which is exactly why it is easy to miss, and why it
+    needs its own rule rather than a wider version of 5b's.
+
+    A ``return`` is included because a function that hands back a statement is
+    the same binding with a different keyword, and scoping this to the
+    assignments that happen to exist today is the mistake this plan has now
+    made twice in its own instruments.
+    """
+    tree = ast.parse(source, filename=filename)
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            candidates = [node.value]
+        elif isinstance(node, ast.Return):
+            candidates = [node.value]
+        else:
+            continue
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            text = _leading_sql_literal(candidate)
+            if text is None:
+                continue
+            match = _SQL_VERB.match(text)
+            if match and match.group(1).upper() not in _EXEMPT_VERBS:
+                found.add(node.lineno)
+    return found
+
+
+def test_the_sql_literal_rule_sees_a_statement_bound_to_a_name():
+    """The rule below, canaried on the shapes it exists to catch."""
+    caught = _sql_literal_bindings(
+        'SQL = "SELECT 1"\n'                                  # 1  module constant
+        'def f():\n'
+        '    sql = "SELECT * FROM t WHERE a = %s"\n'          # 3  function local
+        '    return sql\n'
+        'def g(where):\n'
+        '    return "SELECT * FROM t WHERE " + where\n'       # 6  returned, concatenated
+        'TEMPLATE: str = f"SELECT {cols} FROM t"\n'           # 7  annotated f-string
+    )
+    assert caught == {1, 3, 6, 7}, (
+        f"the SQL-literal rule no longer sees every shape: caught {sorted(caught)}"
+    )
+
+    clean = _sql_literal_bindings(
+        'CLAIM_ARTIFACTS = _q("claim_artifacts")\n'   # loaded from a .sql file: the fix
+        'name = "select_user_role"\n'                 # a filename, not a statement
+        'mode = "SETTINGS"\n'                         # not a SQL verb, despite the prefix
+        'PRAGMA_SQL = "PRAGMA threads=4"\n'           # session setup, exempt
+    )
+    assert not clean, (
+        f"the SQL-literal rule fires on bindings that are already correct: "
+        f"{sorted(clean)}"
+    )
+
+
+def test_no_production_module_keeps_a_sql_statement_in_a_python_literal():
+    """G15, the gap that closing G5 revealed.
+
+    Stage 7 extracted six of these by hand -- three module-level constants in
+    ``ops/routers/coordination.py``, three function-local ``sql = \"\"\"...\"\"\"``
+    variables in ``ops/routers/deploy.py`` -- and only because a human happened
+    to read the files while doing something else. **Neither instrument could
+    see them.** Rule 5b does not fire, because the literal is not at the call
+    site. Rule 5 does not fire, because there is no ``.sql`` file to be
+    uncovered. They satisfied the letter of both while sitting outside both,
+    and the sweep that found them was not repeatable.
+
+    The measured cost of that blind spot was 21 more, in modules nobody had
+    looked at: six in ``ops/routers/admin.py`` alone, a router Stage 7 never
+    touched because every one of its statements is assigned before it is
+    executed.
+
+    **What this rule is not.** It is not a claim that a statement in a Python
+    string is untestable -- it is importable, so a test can execute the real
+    text, which is the whole point of the other two rules. It is a claim that
+    this repository decided its SQL lives in ``.sql`` files, and a statement
+    that does not is invisible to the census that counts them. Rule 5's
+    denominator is ``production_sql_files()``; anything held in Python is
+    outside it and can never be reported as uncovered.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in production_python_files()
+        for line in _sql_literal_bindings(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        SQL_LITERAL_WAIVERS,
+        "these production modules keep a SQL statement in a Python literal, so "
+        "it is in no .sql file and the Layer 2 census cannot count it:",
     )
 
 
@@ -1166,11 +1678,36 @@ _FILE_LOG_HANDLERS = frozenset({
 
 
 def _source_files() -> list[Path]:
-    """Every Python file in the repository, minus the directories that are not it."""
+    """Every Python file in the repository, minus the ones that are not it.
+
+    Enumerated through git rather than by walking the tree, because a walk
+    cannot see ``.gitignore`` and the working tree holds files the repository
+    does not own. ``graphify-out/`` is the instance that taught us: a local
+    scratch directory whose generated ``.py`` files carry a BOM, so the walk
+    handed one to ``ast.parse`` and every developer who had run that tool got a
+    ``SyntaxError`` on a file no commit contains, while CI -- checking out
+    fresh -- stayed green. That is the inverse of the defect this rule exists
+    to catch, and the same reason: a check whose subject depends on the machine
+    running it.
+
+    ``--cached --others --exclude-standard`` is the tracked files plus the
+    untracked ones git would not ignore, so a new file is checked before it is
+    added and ignored scratch never is. ``_NOT_SOURCE`` still applies on top,
+    for the directories that are tracked but are not this repository's source.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z",
+         "--", "*.py"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout
     return sorted(
-        path
-        for path in REPO_ROOT.rglob("*.py")
-        if not _NOT_SOURCE & set(path.relative_to(REPO_ROOT).parts)
+        REPO_ROOT / name
+        for name in listed.split("\0")
+        if name and not _NOT_SOURCE & set(Path(name).parts)
     )
 
 
@@ -1569,6 +2106,9 @@ ALL_WAIVERS = (
     + MOCKER_WAIVERS
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
+    + DUPLICATE_SQL_WAIVERS
+    + INLINE_SQL_WAIVERS
+    + SQL_LITERAL_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -1668,6 +2208,9 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("mocker", MOCKER_WAIVERS),
         ("route coverage", ROUTE_WAIVERS),
         ("Layer 2 SQL", LAYER_2_WAIVERS),
+        ("duplicate SQL", DUPLICATE_SQL_WAIVERS),
+        ("inline SQL", INLINE_SQL_WAIVERS),
+        ("SQL literal", SQL_LITERAL_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )

@@ -2,7 +2,8 @@
 
 ## Status
 
-**Stages 0–6b are complete. Stage 6c is next, then Stage 7.** The census enumerated
+**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8.**
+The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
@@ -134,13 +135,19 @@ order:
 | **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
 | **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
-| **7** | SQL execution, from both directions. The largest stage | G14, G5 | 56 |
+| **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
 | **8** | The services below the floor | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
+| **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
+| **12** | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | -- |
 
 **4 + 50 + 12 + 56 = 122.** The stages account for the whole waiver list; no
-entry is left without a stage that deletes it.
+entry is left without a stage that deletes it. Stage 7 later raised its own
+column from 56 to 66 + 23 across two new rules — see [Stage 7 grew two
+gaps](#stage-7-grew-two-gaps-while-closing-one), and note that a stage
+discovering more than it was scoped for is the instrument working, not the
+arithmetic failing.
 
 ### Why this order
 
@@ -209,6 +216,173 @@ selector that reads the new prefix is Stage 10.
 and invalidates two issues already filed against the old numbers — CAR-50 names
 Stage 6 and CAR-52 names Stage 8 in their titles. A letter costs nothing and
 breaks nothing.
+
+### Stage 7 grew two gaps while closing one
+
+**Added 2026-09-01, mid-stage.** Stage 7 was scoped at 56 Layer 2 waivers and
+"G5's ten modules". Both numbers were wrong, and both were wrong the same way
+the census was wrong about G14: **the measure was fitted to the code in front
+of it.**
+
+G5 measured 66 sites in 15 modules, not 10. The gap list's own stated measure —
+"`.execute(` with a literal first argument" — cannot see
+`execute_values(cur, sql, rows)`, which carries its statement second, and
+`ops/routers/maintenance.py:152` is a literal `INSERT` sitting exactly there.
+Two of the named ten did not belong: `shared/db.py`'s only match is inside
+`db_cursor`'s docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL` /
+`LOAD` / `SET` session setup, which name no schema and so cannot drift from
+one. Closed the same day; `INLINE_SQL_WAIVERS` is `()`.
+
+**G15 is what closing G5 revealed.** A statement bound to a name and executed
+from there is invisible to both instruments at once: Rule 5b does not fire
+because it is not at the call site, and Rule 5's denominator cannot count it
+because there is no `.sql` file. Stage 7 extracted six of these by hand and
+only because someone happened to read the files; the measured cost of that
+blind spot was 23 more in 11 modules, six of them in `ops/routers/admin.py`, a
+router the stage never touched precisely because every one of its statements is
+assigned before it is executed.
+
+**The scan surface was the third instance of the same error.** Both new rules
+scan `service_packages()`, which is the right predicate for "what is a service"
+and the wrong one for "what is production Python". `airflow/` and `scripts/`
+hold neither an `__init__.py` nor, therefore, any rule — and they hold 26 more
+sites, 22 of them in Plan 125's Iceberg and Spark scripts, which Gates C and D
+productionize. The repair is a second derivation reading Stage 5b's declared
+bucket table, **not** an `__init__.py`: `service_packages()` drives seven rules,
+and making `scripts` a package would demand an "enough" row for something that
+is not a service and send the route rule looking for `scripts.app`.
+
+The lesson is the one this plan keeps relearning about its own instruments, and
+it is worth stating as a design rule rather than a third anecdote: **a
+denominator that is listed, or scoped to what exists when it is written, will
+be wrong.** G14 was undercounted at 54, G5 at 10, the scan surface at eight
+packages, and `executemany` was left out because it matched nothing that day.
+The rules that have never been wrong are the derived ones —
+`service_packages()`, `_test_directories()`, `production_sql_files()`.
+
+### Stage 12 exists because this plan grew the suite
+
+**Added 2026-09-01, at the maintainer's suggestion, during Stage 7.** Plan 162
+has spent nine stages adding tests -- Stage 1 put 73 orphaned ones into CI,
+Stage 6 added Layer 4 for `container_health`, and Stage 7 alone took Layer 2
+from 129 tests to 237. Nothing has yet looked at what that growth duplicated.
+
+Measured on 2026-09-01, before the stage starts:
+
+| | |
+|---|---|
+| Tests collected | 3,988 |
+| Shared fixtures serving them | 11 |
+| Ad-hoc `INSERT` statements inside test modules | 96 |
+| Module-local seed helpers | 55 |
+| Distinct read-back `SELECT`s written in tests | 161 |
+| …of those, written more than once | **43** |
+| Total retypings of those 43 | **145** |
+
+**The duplication is by name, not merely by shape.** `_insert_artifact` is
+defined separately in `tests/integration/ops/test_maintenance.py`,
+`tests/integration/sql/test_ops_views.py` and
+`tests/integration/sql/test_processing_queries.py`; `_insert_detail_claim` in
+two files; `_seed` in three archiver modules; `_make_tar_zst` in three script
+modules.
+
+**And the assertions duplicate worse than the seeds.**
+`SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid`
+is written out **17 times**, across `tests/integration/processing/` and
+`tests/integration/sql/test_ops_views.py`;
+`SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid`
+nine times; `SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid` six.
+
+**These must not become `.sql` files.** A read-back assertion is the test's own
+half of the work, not a statement production issues, and `shared/sql/` feeds
+`production_sql_files()` -- filing one there would demand a Layer 2 test *for
+an assertion*, which is circular, and would inflate the production census with
+statements no service runs. The repair is a shared *test* helper, which is why
+this is its own stage and not a continuation of Stage 7.
+
+**Why this is the same defect as G17 and not a tidiness exercise.** A seed
+`INSERT` written by hand inside a test is a statement that has to agree with
+the schema, and there are 96 of them with no single definition. A column rename
+means finding all 96, and nothing notices when 95 are found -- the surviving
+one keeps passing against whatever it seeds. `tests/` is exempt from the Layer 2
+census by design, and correctly so, because fixture seeds are not production
+SQL. That exemption is what makes this invisible: the rules this plan built all
+stop at the tests' own door.
+
+**Two things the stage must not do**, stated now so they are decisions rather
+than discoveries. It must not consolidate a fixture whose two callers want
+different data -- a shared seed that grows parameters until it can serve
+everyone is harder to read than the two helpers it replaced, and a test whose
+setup lives three files away is worse at explaining its own failure. And it
+must not touch `tests/scripts/oneoff/`, which Stage 5b declared spent: those
+helpers duplicate each other freely and should, because the plans that own them
+have archived.
+
+**The instrument this stage needs does not exist yet**, which is why it is
+scoped after Stage 11 rather than before it. "Two helpers do the same thing" is
+not a textual property -- `_seed` and `_insert_queue_row` may be identical in
+effect and share no token -- so unlike G5, G15 and G17 there is no cheap
+derived check waiting to be written. The stage should say plainly whether it
+found one or whether it leaves prose behind, per success criterion 2.
+
+### Stage 11 answers a question Plan 161 did not ask
+
+**Added 2026-09-01.** [Plan 161](plan_161_testing_contract.md) asked what a
+*service* owes before it ships and keyed the answer to a Python package. The
+dbt project is not one: `dbt/` is a Dockerfile, SQL and YAML, `dbt_runner` —
+the service that invokes dbt — has the "enough" row, and the 22 models it
+builds have none. `test_every_service_directory_has_a_row_in_the_enough_table`
+asserts the table equals `service_packages()` in both directions, so **adding a
+`dbt` row today fails as a phantom.** The obligation is not unmet; it is
+inexpressible.
+
+What that costs, measured: **17 of 22 models have a dbt unit test and five do
+not**, and no rule requires one. `tests/dbt/` asserts every model carries a
+cadence tag, so the only obligation this repository mechanically enforces on a
+model is a *scheduling* one. A new mart with no test ships green.
+
+**Two things make this urgent rather than tidy.** The first is that
+`_SQL_EXEMPT_ROOTS` exempts `dbt/` from the Layer 2 census by design — correct,
+because Layer 3 is dbt's instrument — so a `.sql` file whose logic moves into a
+mart leaves a counted surface for an uncounted one, and **the count drops for
+something that is not a repair.** That is the same failure as Stage 5's
+substring bug: the list shrinking for free. The second is that
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md) absorbed Plan 118 and moves
+the analytics layer onto Spark/Iceberg, so that migration is not hypothetical —
+it is the plan of record.
+
+Stage 11 therefore owns three things:
+
+1. **What the dbt project owes**, and a mechanism that can hold it — the
+   "enough" table's derivation admits a non-package surface, or a second table
+   does.
+2. **G16: a `.sql` file may only leave `production_sql_files()` by naming the
+   dbt model that absorbed it.** The denominator may shrink; it may not shrink
+   silently.
+3. **The execution recorder, scoped here and built later.** Recording *what
+   text executed against which engine* is the only mechanism that closes the
+   remaining class at once: it kills the paraphrase, the weak name-match
+   reading, and a statement whose test executes it against an engine production
+   no longer uses. Two hard parts are already known — `.format()` templates
+   record rendered but are stored as templates, and the suites run in separate
+   CI jobs so aggregation needs an artifact and a gate job.
+
+**The recorder splits along a seam worth respecting.** *Capture* is
+engine-local, cheap, and worth doing while DuckDB is still authoritative,
+because a baseline taken after [Plan 125 Gate D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
+is not a baseline. The *cross-engine assertion* — "this ran on the engine
+production uses for it" — needs two live engines to design honestly and belongs
+at that gate. Building both against one live engine and one hypothetical would
+fit the design to what exists today, which is the error recorded two sections
+above.
+
+**One exposure number here is conditional and should not be quoted flat.** 26
+`.sql` files are covered only by a DuckDB-bound test — every `dashboard/sql/*`
+plus both `dbt_runner/sql/*` snapshots. Whether they move engines at all is
+decided by Plan 125 Gate D2: under "serving extracts from Iceberg" they do,
+under "DuckDB as a non-authoritative Iceberg reader/cache" — which that plan
+currently calls the lower-risk first cut — they do not, and `duckdb_con`
+remains the correct fixture.
 
 ### Stage 6b was added by the failure this plan predicted
 
@@ -326,10 +500,40 @@ what stops the *next* unrelated failure in this path costing the same
 diagnosis, and finding 3 is the whole reason a passing deploy script is not
 sufficient evidence here.
 
-**It sits after 6b and before 7 for 6b's own reason** — Stages 7, 8 and 9
-author more new tests than the rest of the plan combined, and this is a guard
-those stages get for free rather than one that has to sweep what they wrote.
-**The letter is positional, not topical**, as it was for 5b and 6b.
+**It sits after 6b for 6b's own reason** — Stages 8 and 9 author more new
+tests than the rest of the plan combined, and this is a guard those stages get
+for free rather than one that has to sweep what they wrote. **The letter is
+positional, not topical**, as it was for 5b and 6b.
+
+*Written on 2026-09-01 as "after 6b and before 7", by a deploy that did not
+know Stage 7 was in flight on another branch. Stage 7 completed the same day,
+so 6c gets 8 and 9 rather than 7, 8 and 9 — the argument is unchanged and the
+count is not.*
+
+#### Finding 3 was corroborated the same day, on the same endpoint
+
+**Added 2026-09-01 while merging Stage 7.** Stage 7 broke `POST /deploy/start`
+too, independently and for an unrelated reason: it moved
+`set_deploy_intent.sql` into a file and wrote an explanatory comment that
+quoted the statement's own placeholder, and **psycopg2 counts placeholders
+across the whole string, comments included**. The statement then expected four
+parameters where `deploy.py` passes three.
+
+**The symptom was identical — 503 `Database unavailable` — and for exactly the
+reason finding 3 gives.** `_set_intent` catches bare `Exception`, so a
+`psycopg2` parameter error and a `CHECK` violation are indistinguishable at the
+response, in the log, and to the operator. Two unrelated defects, one day
+apart, wearing the same misleading face.
+
+That is the strongest evidence this stage has for its second half, and it
+arrived from outside it. **The assertion half would not have caught Stage 7's
+defect** — the contract's `(targets, scope)` pair was fine — but **the
+unmasking half would have named it immediately**, instead of it being found by
+seven Layer 4 failures in CI and diagnosed from a log. A reader comparing the
+two should not conclude they share a cause: [Stage 7's
+evidence](#evidence--stage-7-sql-execution-from-both-directions-car-51-2026-09-01)
+records the placeholder defect and Rule 5e, which is what stops that one
+recurring; this stage owns the masking that made both of them expensive.
 
 ### Stage 5b: what the split is, and why a directory rather than a list
 
@@ -2215,3 +2419,213 @@ one naming a missing gap entry or an archived owner.
 - **The 3.15 upgrade was not scheduled here.** PEP 686 will retire this class,
   but that is a version bump with its own consequences and it is not Plan 162's
   to make.
+
+
+### Evidence — Stage 7, SQL execution from both directions (CAR-51), 2026-09-01
+
+**G14 is closed and `LAYER_2_WAIVERS` is `()`.** With it, the whole of the
+original waiver list: the plan's own arithmetic was 4 + 50 + 12 + 56 = 122, and
+G14's 56 was the last column standing. Every waiver that remains is one this
+stage found.
+
+| Ledger | Start | End |
+|---|---|---|
+| `LAYER_2_WAIVERS` (G14) | 56 | **0** |
+| `INLINE_SQL_WAIVERS` (G5) | rule did not exist | 15 |
+| `SQL_LITERAL_WAIVERS` (G15) | gap did not exist | 19 |
+| `DUPLICATE_SQL_WAIVERS` (G17) | gap did not exist | 1, waived with a reason |
+| production `.sql` files | 76 | 141 |
+| production `.py` scanned for SQL | ~100, across 8 packages | 156 |
+| Layer 2 tests | 129 | **242, all executed in CI** |
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+#### The finding that matters most: two production defects only execution found
+
+CI's first run failed two jobs, and both traced to one cause. **psycopg2 counts
+parameter placeholders across the whole statement string, comments included**,
+so a comment written to *explain* a parameter adds one.
+
+`ops/sql/set_deploy_intent.sql` explained its `interval` construct by quoting
+the placeholder. That made the statement expect four parameters where
+`ops/routers/deploy.py` passes three, so `/deploy/start` raised, the router
+caught it, and returned **503** — seven Layer 4 tests in
+`tests/integration/ops/test_deploy_intent.py` failed on that alone, in a code
+path this stage was not supposed to touch.
+`ops/sql/insert_blocked_cooldown_events_batch.sql` did the same to
+`execute_values`, which refuses outright any statement carrying two
+placeholders.
+
+A third was a live trap that had not sprung. `processing/sql/claim_artifacts.sql`
+carried a *named* placeholder in its first comment line and worked, because a
+named placeholder resolves from the same dict however many times it appears.
+Rename the parameter and it raises `KeyError` from a line that is not code.
+
+**Every static rule in `test_testing_contract.py` passed on all three files.**
+The statements were correctly extracted, correctly imported, correctly named,
+and byte-faithful to what they replaced — verified mechanically, on normalised
+whitespace, against the literals in `HEAD`. Two of them were broken. The suite
+was green locally before the push and green locally after. This is the
+argument for the stage, stated by the stage: **a statement that no layer
+executes is not covered by anything, however carefully it was read.** Rule 5e
+now fails on a placeholder inside a `.sql` comment, canaried in both
+directions.
+
+#### Three gaps this stage opened
+
+**G5's stated measure was blind by construction.** The gap list said
+"`.execute(` with a literal first argument"; `execute_values(cur, sql, rows)`
+carries its statement second, and `ops/routers/maintenance.py:152` was a
+literal `INSERT` sitting exactly there, in a module G5 never named. Measured
+properly it was 66 sites in 15 modules, not 10 — and two of the named ten did
+not belong: `shared/db.py`'s only match is inside `db_cursor`'s own docstring,
+and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup,
+which name no schema and so cannot drift from one.
+
+**G15 is what closing G5 revealed.** A statement bound to a name and executed
+from there is invisible to both instruments at once: Rule 5b does not fire
+because it is not at a call site, and Rule 5's denominator cannot count it
+because there is no `.sql` file. Six were extracted by hand and only because
+someone happened to read the files; the measured cost of that blind spot was 23
+more in 11 modules, six of them in `ops/routers/admin.py`, a router this stage
+would never have touched because every one of its statements is assigned before
+it is executed.
+
+**G17 was found by writing the tests.** `mark_artifact_status`,
+`insert_artifact_event` and `insert_blocked_cooldown_cleared_event` existed
+**byte-identically** under both `ops/sql/` and `processing/sql/`. Worse, Rule 5
+credits a file when Layer 2 names its *stem* — and each pair shared one, so a
+test of `processing`'s copy silently credited `ops`'s. Three files would have
+been reported covered by a test that never executed them: the paraphrase
+defect, arriving through the checker rather than through a test. They are one
+file each under `shared/sql/` now, re-exported so no call site changed, and
+G17 compares every production statement to every other so the next copy is a
+failure rather than a discovery.
+
+#### A merge that would have broken deploys silently
+
+`ops/routers/deploy.py` selects `(kind, phase, generation, requested_by)` and
+reads the result **positionally** — `row[1]` is phase. `coordination.py` selects
+the same four columns as `(phase, generation, kind, requested_by)`. Merging the
+two, which is what a tidy-up does when it sees duplicate SQL, puts `generation`
+at `row[1]` and compares a number to `'none'`: every deploy would report itself
+locked and nothing would fail. They are kept apart, each file saying why, and
+`test_the_two_four_column_reads_are_not_interchangeable` asserts both orders
+against the live server.
+
+#### The scan surface was the third instance of one mistake
+
+Both new rules were written against `service_packages()`, which answers "is
+this a service" and not "is this production Python". The two coincided for the
+eight top-level packages and stopped coinciding exactly where it mattered:
+`airflow/` and `scripts/` hold no `__init__.py`, so they held no rule — and 26
+SQL sites, 22 of them in Plan 125's Iceberg and Spark tooling, which Gates C
+and D productionize.
+
+**The fix is deliberately not an `__init__.py`.** `service_packages()` drives
+seven rules — the layer-home mapping, the hidden-route check, route coverage
+which imports `<service>.app`, the "enough" table's rows in both directions,
+and the coverage `source` list. Making `scripts` a package would demand an
+"enough" row for something that is not a service and send the route rule
+looking for `scripts.app`. The contract already said so in
+`test_every_service_directory_is_in_the_coverage_source`. So
+`production_python_files()` is a second derivation, reading Stage 5b's declared
+bucket table, and `scripts/oneoff/` is excluded because that table declares it
+spent.
+
+The lesson generalises past this stage and is worth stating once rather than a
+fourth time: **a denominator that is listed, or scoped to what exists when it
+is written, will be wrong.** G14 was undercounted at 54, G5 at 10, the scan
+surface at eight packages, and `executemany` was left out of the name set
+because it matched nothing that day. The rules that have never been wrong are
+the derived ones.
+
+#### 18 files were never uncovered, and the ruler was the problem
+
+Every `archiver/sql/lake_snapshot_selectors/` file is executed in CI against
+real Parquet in MinIO by `tests/integration/archiver/`, whose
+`test_all_selectors_run_without_error` asserts the entire registry runs clean.
+The rule read only `tests/integration/sql/` and reported them absent — tests
+stronger than the check's own weak reading, called nothing at all.
+
+The suites it reads are now declared in `docs/TESTING.md` and derived here,
+matching `DORMANT_SUITES` and `script_buckets()`. **Deliberately not a glob:**
+measured on 2026-09-01, reading all of `tests/integration/` would have credited
+35 of the then-46 files on a name match alone, several from suites that mention
+a statement without running it.
+
+`cooldown_events.sql` needed a real repair rather than the widening. Five
+selectors share it through `sql_template`, so no test contained the token even
+though all five execute it — and it was the file Stage 5 caught being credited
+to an unrelated *table name* under the old substring reading. The indirection
+is asserted now instead: every selector `.sql` file is some runnable selector's
+template, and none names a template with no file.
+
+#### One file left the census, under G16's rule
+
+`processing/sql/get_active_search_configs.sql` read `params -> 'makes'` and
+`params -> 'models'` out of `search_configs` jsonb "for carousel make/model
+filtering", in its own words. That filtering still happens — `detail_writer.py`
+has a section header that still reads *Carousel search_config filtering* — but
+it reads `ops.tracked_models` joined to enabled configs, a normalised
+`(search_key, make, model)` grain, cached where the old one was not. Same
+question, same consumer, same `enabled = true` gate, different source. The
+superseded file had been dead since Plan 93 shipped it: no constant loaded it,
+and `git log -S` finds only the contract test that waived it.
+
+This is G16's first case, and recording *which* of the two ways a file may
+leave `production_sql_files()` this was is the entire point of that rule. A
+denominator may shrink; it may not shrink silently, and "nothing references it"
+is not on its own a reason — the reason is that something else does the work
+and can be pointed at.
+
+#### A guard the instrument itself needed
+
+`duckdb_con` skipped when `DUCKDB_PATH` was absent, and **55 Layer 2 tests take
+it** — every dashboard query and both analytics snapshots. A path that quietly
+went missing, or a dbt build that produced no file, would have skipped a
+quarter of the suite and left the step green. The pattern for fixing it was one
+fixture away: `airflow_metadata` has failed rather than skipped under
+`REQUIRE_AIRFLOW_SCHEMA` since Stage 3.
+
+`REQUIRE_DUCKDB` closes that fixture and `REQUIRE_LAYER_2_EXECUTION` closes the
+class — any skip in the suite fails the run. Both were verified in both
+directions before shipping, which is the only way a guard is worth having: with
+the flag set, 25 skipped tests exit 1 and name their reason; without it, the
+same run exits 0 and stays a local convenience.
+
+**CI's final run is what makes the 242 meaningful.** `242 passed` with
+`REQUIRE_LAYER_2_EXECUTION=1`, `REQUIRE_DUCKDB=1` and `REQUIRE_AIRFLOW_SCHEMA=1`
+all set — zero skips under that guard is proof of execution rather than of
+collection.
+
+#### What was deliberately not done
+
+- **15 G5 sites remain**, all in Plan 112 and Plan 125 audit and parity scripts.
+  Extracting them creates `scripts/sql/*.sql` files that immediately owe a
+  Layer 2 test, and several run against Spark and Iceberg — engines the Layer 2
+  job has none of. That would grow a list this plan only lets shrink, so they
+  stay waived until there is somewhere for their tests to run.
+- **`cancel_coordination_state.sql` and `release_deploy_coordination.sql` are
+  textually identical and stay two files.** They are two policies that agree
+  today — cancel refuses anything past `draining`, the deploy facade releases
+  unconditionally — and both rules live in the Python around the statements.
+  Consolidating would couple two policies allowed to diverge. This is the
+  weakest of the three "kept apart on purpose" decisions and is recorded as a
+  waiver rather than a comment, because a waiver is checked.
+- **The engine-binding check was scoped and not built.** Which engine a `.sql`
+  file targets is only worth asserting once
+  [Plan 125 Gate D2](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
+  has chosen a serving pattern: under "DuckDB as a non-authoritative Iceberg
+  cache" it is a no-op for all 26 affected files. It sits in Stage 11 with the
+  execution recorder.
+
+#### Cost
+
+Estimate 2 points, actual 1. The stage was the plan's largest by file count —
+18 commits, 118 files, +3,300/−650 — and cost less than its estimate because
+almost all of it was mechanical once the rules existed. **Building the checker
+first is what made it cheap**, and it is the reusable lesson: the rule found
+`maintenance.py:152`, `admin.py`'s six, and the byte-identical trio, none of
+which a reading pass had found in three prior stages of looking at these files.

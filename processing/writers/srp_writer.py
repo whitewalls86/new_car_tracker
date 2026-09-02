@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from processing.events import emit_price_updated, emit_vin_mapped
 from processing.queries import (
     BATCH_LOOKUP_VIN_TO_LISTING,
+    DELETE_PRICE_OBSERVATIONS_FOR_MISSING_LISTINGS,
     INSERT_PRICE_OBSERVATION_EVENT,
     INSERT_TRACKED_MODEL_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
@@ -75,13 +76,7 @@ def write_srp_observations(
         # listing_id — same relisting-collision guard as the detail write path.
         if vin_to_expected_listing:
             cur.execute(
-                """
-                DELETE FROM ops.price_observations
-                WHERE vin = ANY(%s)
-                  AND listing_id NOT IN (
-                      SELECT unnest(%s::uuid[])
-                  )
-                """,
+                DELETE_PRICE_OBSERVATIONS_FOR_MISSING_LISTINGS,
                 (
                     list(vin_to_expected_listing.keys()),
                     list(vin_to_expected_listing.values()),

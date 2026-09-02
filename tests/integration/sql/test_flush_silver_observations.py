@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+from archiver.processors.flush_silver_observations import _DB_COLUMNS
+from archiver.queries import (
+    DELETE_SILVER_OBSERVATIONS_UP_TO_ID,
+    SELECT_MAX_SILVER_OBSERVATION_ID,
+    SELECT_SILVER_OBSERVATIONS_UP_TO_ID,
+)
+
 pytestmark = pytest.mark.integration
 
 _NOW = datetime(2026, 4, 21, 12, 0, 0, tzinfo=timezone.utc)
@@ -147,3 +154,66 @@ class TestDeleteUpToMax:
             "DELETE FROM staging.silver_observations WHERE id <= %s", (id2,)
         )
         assert cur.rowcount == 2
+
+
+# ===========================================================================
+# Statements imported from archiver.queries — Plan 162 Stage 7
+# ===========================================================================
+
+class TestExtractedSilverFlushStatements:
+    """The three statements of the flush, as the flush itself holds them.
+
+    Everything above retypes SQL that resembles what the processor runs. Until
+    Plan 162 Stage 7 there was no alternative: the statements were written at
+    their ``cur.execute()`` call sites, so no test could import them, and a
+    retyped statement passes forever while the original rots. These execute
+    ``archiver.queries``' constants — the same objects
+    ``flush_silver_observations`` executes.
+
+    Postgres (``cur``), not DuckDB: the flush reads and deletes
+    ``staging.silver_observations`` over psycopg2, and only the Parquet write
+    in between touches MinIO — that half is pyarrow, not SQL.
+    """
+
+    def _select_rows(self) -> str:
+        """The projection statement, filled from production's own column list."""
+        return SELECT_SILVER_OBSERVATIONS_UP_TO_ID.format(
+            columns=", ".join(_DB_COLUMNS)
+        )
+
+    def test_select_max_id_on_an_empty_table(self, cur):
+        cur.execute(SELECT_MAX_SILVER_OBSERVATION_ID)
+        assert cur.fetchone()["max"] is None
+
+    def test_select_max_id_sees_an_inserted_row(self, cur):
+        row_id = _insert_observation(cur)
+        cur.execute(SELECT_MAX_SILVER_OBSERVATION_ID)
+        assert cur.fetchone()["max"] == row_id
+
+    def test_every_column_the_processor_projects_exists(self, cur):
+        """_DB_COLUMNS against the real table — the drift this rule exists for.
+
+        A column dropped or renamed by a migration fails here, in the exact
+        projection the flush issues, rather than in production.
+        """
+        row_id = _insert_observation(cur)
+        cur.execute(self._select_rows(), (row_id,))
+        row = cur.fetchone()
+        assert row is not None
+        assert set(_DB_COLUMNS) <= set(row)
+
+    def test_select_rows_honours_the_snapshot_boundary(self, cur):
+        id1 = _insert_observation(cur)
+        id2 = _insert_observation(cur)
+        cur.execute(self._select_rows(), (id1,))
+        returned = {r["id"] for r in cur.fetchall()}
+        assert id1 in returned
+        assert id2 not in returned
+
+    def test_delete_up_to_id_removes_only_the_flushed_rows(self, cur):
+        id1 = _insert_observation(cur)
+        id2 = _insert_observation(cur)
+        cur.execute(DELETE_SILVER_OBSERVATIONS_UP_TO_ID, (id1,))
+        assert cur.rowcount == 1
+        cur.execute(SELECT_MAX_SILVER_OBSERVATION_ID)
+        assert cur.fetchone()["max"] == id2

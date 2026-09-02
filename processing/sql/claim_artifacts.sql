@@ -1,4 +1,4 @@
--- Claim up to %(limit)s pending/retry artifacts from ops.artifacts_queue.
+-- Claim a bounded batch of pending/retry artifacts from ops.artifacts_queue.
 -- Uses FOR UPDATE SKIP LOCKED so concurrent callers never double-claim.
 -- Optional artifact_type filter injected by queries.py when present.
 UPDATE ops.artifacts_queue

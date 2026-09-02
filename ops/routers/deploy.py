@@ -9,6 +9,15 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, HTTPException
 
 from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES, expand_targets
+from ops.queries import (
+    ACQUIRE_COORDINATION_LOCK,
+    CLEAR_DEPLOY_INTENT,
+    RELEASE_DEPLOY_COORDINATION,
+    REQUEST_DEPLOY_COORDINATION,
+    SELECT_COORDINATION_STATE_FOR_DEPLOY,
+    SELECT_DEPLOY_INTENT_STATUS,
+    SET_DEPLOY_INTENT,
+)
 from ops.routers.coordination import log_transition, record_transition_event
 from shared.db import db_cursor
 
@@ -24,36 +33,9 @@ LEGACY_DEPLOY_SCOPE = tuple(sorted(SURFACES - {"host"}))
 def _intent_status() -> Dict[str, Any]:
     """Return current deploy intent state plus in-flight counts."""
 
-    sql = """
-        WITH pending_artifacts AS (
-            SELECT
-                COUNT(*) AS number_running,
-                MIN(created_at) AS min_started_at
-            FROM ops.artifacts_queue
-            WHERE status IN ('pending', 'processing')
-        ), running_detail_claims AS (
-            SELECT
-                COUNT(*) AS number_running,
-                MIN(claimed_at) AS min_started_at
-            FROM ops.detail_scrape_claims
-            WHERE status = 'running'
-        )
-        SELECT
-            di.intent,
-            di.requested_at,
-            di.requested_by,
-            pa.number_running + rdc.number_running AS number_running,
-            LEAST(pa.min_started_at, rdc.min_started_at) AS min_started_at,
-            di.pause_long_jobs
-        FROM deploy_intent di
-        LEFT JOIN pending_artifacts pa ON 1=1
-        LEFT JOIN running_detail_claims rdc ON 1=1
-        WHERE di.id = 1
-    """
-
     try:
         with db_cursor(error_context="Intent-Status") as cur:
-            cur.execute(sql)
+            cur.execute(SELECT_DEPLOY_INTENT_STATUS)
             row = cur.fetchone()
 
         if row:
@@ -103,44 +85,24 @@ def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | N
         except ValueError:
             return "invalid"
 
-    sql = """UPDATE deploy_intent
-                   SET
-                        intent = 'pending',
-                        requested_at = now(),
-                        requested_by = %s,
-                        pause_long_jobs = %s
-                   WHERE id = 1
-                     AND (intent = 'none'
-                          OR requested_at < now() - interval '%s minutes')
-                   RETURNING intent;"""
     params = (caller, pause_long_jobs, STALE_LOCK_MINUTES)
 
     try:
         with db_cursor(error_context="Set-Intent") as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT kind, phase, generation, requested_by
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_FOR_DEPLOY)
             coordination_row = cur.fetchone()
             if coordination_row is None:
                 return "error"
             if coordination_row[1] != "none":
                 logger.warning("Deploy intent conflicts with active coordination.")
                 return "locked"
-            cur.execute(sql, params)
+            cur.execute(SET_DEPLOY_INTENT, params)
             if cur.fetchone() is not None:
                 # Compatibility rollout: legacy sensors keep reading
                 # deploy_intent while new consumers move to this record.
                 cur.execute(
-                    """UPDATE coordination_state
-                          SET kind = 'deploy', phase = 'requested',
-                              generation = generation + 1,
-                              targets = %s::jsonb, scope = %s::jsonb,
-                              requested_by = %s, reason = 'Legacy deploy facade',
-                              requested_at = now(), updated_at = now()
-                        WHERE id = 1
-                    RETURNING generation""",
+                    REQUEST_DEPLOY_COORDINATION,
                     (
                         json.dumps(sorted(expanded_targets)),
                         json.dumps(sorted(scope)),
@@ -181,40 +143,22 @@ def _intent_release() -> bool:
     evidence until Stage 3 exposes the guarded native complete operation.
     Other coordination kinds can never be released through this facade.
     """
-    sql = """UPDATE deploy_intent
-                   SET
-                       intent = 'none',
-                       requested_at = NULL,
-                       requested_by = NULL
-                   WHERE id = 1
-                   RETURNING intent;"""
     try:
         with db_cursor(error_context="Intent-Release") as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute(
-                """SELECT kind, phase, generation, requested_by
-                     FROM coordination_state WHERE id = 1"""
-            )
+            cur.execute(ACQUIRE_COORDINATION_LOCK, (COORDINATION_LOCK_ID,))
+            cur.execute(SELECT_COORDINATION_STATE_FOR_DEPLOY)
             row = cur.fetchone()
             if row is None:
                 return False
             if row[1] != "none" and row[0] != "deploy":
                 return False
-            cur.execute(sql)
+            cur.execute(CLEAR_DEPLOY_INTENT)
             if cur.fetchone() is None:
                 return False
             if row[0] == "deploy":
                 prior_phase = row[1]
                 actor = row[3]
-                cur.execute(
-                    """UPDATE coordination_state
-                          SET kind = NULL, phase = 'none',
-                              generation = generation + 1,
-                              targets = '[]'::jsonb, scope = '[]'::jsonb,
-                              completed_at = now(), updated_at = now()
-                        WHERE id = 1
-                    RETURNING generation"""
-                )
+                cur.execute(RELEASE_DEPLOY_COORDINATION)
                 changed = cur.fetchone()
                 if changed is None:
                     return False

@@ -10,7 +10,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 
-from processing.queries import INSERT_ARTIFACT_EVENT
+from processing.queries import CLAIM_ARTIFACT, INSERT_ARTIFACT_EVENT
 from processing.routers.batch import _process_artifact
 from shared.db import db_cursor
 from shared.job_counter import active_job
@@ -30,17 +30,7 @@ def process_single_artifact(artifact_id: int) -> Dict[str, Any]:
     with active_job():
         # Fetch the artifact row
         with db_cursor(error_context="artifact: fetch", dict_cursor=True) as cur:
-            cur.execute(
-                """
-                UPDATE ops.artifacts_queue
-                SET status = 'processing'
-                WHERE artifact_id = %(artifact_id)s
-                  AND status IN ('pending', 'retry', 'skip')
-                RETURNING artifact_id, minio_path, artifact_type,
-                          listing_id, run_id, fetched_at
-                """,
-                {"artifact_id": artifact_id},
-            )
+            cur.execute(CLAIM_ARTIFACT, {"artifact_id": artifact_id})
             row = cur.fetchone()
 
         if not row:
