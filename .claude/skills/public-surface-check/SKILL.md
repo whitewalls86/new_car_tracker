@@ -5,15 +5,24 @@ description: Check a staged change to this repository's two public surfaces — 
 
 # Checking the public surfaces
 
-Plan 138 owns exactly two public surfaces:
+**The contract this skill enforces is [`docs/PUBLIC_SURFACE.md`](../../../docs/PUBLIC_SURFACE.md).**
+It is the authority for every rule below; this file is the procedure for
+applying them to a staged diff. Where the two disagree, the contract wins and
+this file is wrong.
+
+The contract names five public surfaces. **This gate covers the two authored
+ones:**
 
 | File | What it is |
 |---|---|
 | `README.md` | The repository front door. Public the moment it merges |
 | `ops/templates/info.html` | The landing page at `https://cartracker.info/`. Public when the ops container is **deployed**, which lags `master` |
 
-Nothing else is in scope. Not `docs/`, not the overviews, not the published
-articles — those are Stage 1f's problem and they have their own reckoning.
+Nothing else is in scope here. Not `docs/`, not the overviews, not the published
+articles. The three generated surfaces are governed by their sources and their
+`--check`; the `docs/PLANS.md` slice cell is covered by the `plans` skill, which
+knows it is publishing. That split is recorded as the contract's **P4** rather
+than silently widened.
 
 ## Read the diff, not the files
 
@@ -40,13 +49,10 @@ repository only when the diff makes or changes a *claim*.
 
 ## What counts as a claim
 
-A sentence that would be false if the repository changed. Three kinds, and the
-third is the one that has actually bitten:
-
-1. **A mechanism** — what a service does, what writes where, what owns a
-   schedule.
-2. **A name** — a container, DAG, view, table, or environment variable.
-3. **A quantity** — any count, ratio, duration, or size.
+A sentence that would be false if the repository changed, in three kinds — a
+**mechanism**, a **name**, or a **quantity**. The definitions are the contract's
+[What a claim is](../../../docs/PUBLIC_SURFACE.md#what-a-claim-is); the third is
+the one that has actually bitten.
 
 ## The two questions
 
@@ -58,31 +64,15 @@ tests" against 3,661, "eleven Docker containers" against more than two dozen.
 **Not one of those was a disagreement between the two surfaces** — each was a
 surface that had drifted from the code.
 
-Where the truth lives, for the claims that recur:
+Where the truth lives for the claims that recur is the contract's
+[Where the truth lives](../../../docs/PUBLIC_SURFACE.md#where-the-truth-lives)
+table — DAGs, dbt models, migrations, the expected-service set, alert rules, the
+live solver, the scrape backoff. Read it there rather than from memory.
 
-| Claim about | Check |
-|---|---|
-| Airflow DAGs, and what is scheduled | `airflow/dags/`, and the `schedule=` argument in the source |
-| dbt models | `dbt/models/` |
-| Flyway migrations | `db/migrations/` |
-| Long-running services | `container_health.expected.EXPECTED_SERVICES`, which `tests/test_observability_config.py` derives |
-| Alert rules | `grafana/provisioning/alerting/rules.yml` |
-| The live solver | Compose — the live container is `trawl`; `flaresolverr` is retained and vestigial |
-| Scrape backoff | The `ops.ops_detail_scrape_queue` view |
-| Mechanism, generally | `docs/ARCHITECTURAL_OVERVIEW.md`, reconciled by Gate 0b |
-
-**Two rules on quantities**, both of them lessons this plan paid for:
-
-- **Round it.** The truth contract's §3 bars exact repository counts on a public
-  surface: "more than a dozen DAGs", "20+ dbt models". An exact count is a
-  promise to update it, and nobody keeps that promise.
-- **Name the set.** A number is wrong if it counts the wrong thing, however
-  correct the arithmetic. Gate 0 published "28 services without a profile gate"
-  — true, and the wrong set, because it excluded `trawl` and `redis-trawl`, the
-  live scrape path. Stage 1f said inodes "fell by roughly two thirds" from a
-  whole-volume reading of a mechanism that removed 99.99% of the inodes it was
-  pointed at, **and the first correction repeated the mistake.** If you cannot
-  say what a number is a fraction *of*, that is the finding.
+**The two rules on quantities are the contract's**, and both are lessons this
+plan paid for: **round it**, and **name the set**. A number is wrong if it counts
+the wrong thing, however correct the arithmetic. If you cannot say what a number
+is a fraction *of*, that is the finding.
 
 ### 2. Does the other surface still agree?
 
@@ -96,13 +86,10 @@ allowed to say things differently, at different lengths, to different readers.
 They owe each other agreement on substance. Reporting a wording difference as a
 defect is the failure mode here; it trains the reader to ignore you.
 
-A reader of both should be able to answer Gate 1's four questions without
-reconciling anything:
-
-- What runs in production?
-- What is experimental?
-- Where does history live?
-- What requires authentication?
+A reader of both should be able to answer the contract's
+[four questions](../../../docs/PUBLIC_SURFACE.md#the-four-questions) — what runs
+in production, what is experimental, where history lives, and what requires
+authentication — without reconciling anything.
 
 ## Report, then stamp
 

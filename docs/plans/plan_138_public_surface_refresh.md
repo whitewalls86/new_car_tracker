@@ -184,106 +184,23 @@ bare domain sees a login screen before seeing what the project is.
 
 ## Public truth contract
 
-Both surfaces must distinguish three kinds of facts.
+**Moved 2026-09-02 to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), by
+Stage 8.** The §1–5 numbering is preserved there, so every reference below to
+"the truth contract's §3" or "§5" resolves against the contract. It is not
+restated here: this plan is a change and will archive, and a rule kept in two
+places is a rule that drifts.
 
-### 1. Production today
-
-- Airflow orchestrates scraping, processing, archival, maintenance, and analytics.
-- Postgres owns current operational state and short-lived event buffers.
-- MinIO holds replayable bronze HTML and permanent Parquet history.
-- dbt and DuckDB currently build and serve the analytical marts used by `/info`,
-  metrics, and Streamlit.
-- Caddy, oauth2-proxy, and the ops authorization check protect application routes.
-
-### 2. Proven but not production-serving
-
-- Production-shaped CI lake snapshots.
-- Iceberg tables registered through Lakekeeper and exercised through Spark.
-- dbt-Spark parity work and MLflow experiment provenance.
-- Adaptive-refresh feature and backtesting foundations.
-
-These belong under a heading such as "Platform evolution," never in language that
-implies the public dashboard already reads Iceberg.
-
-### 3. Volatile operational numbers
-
-Active listings, observations, throughput, tracked pairs, and analytical freshness
-come from the public stats snapshot. They must not also be hard-coded in hero or
-service-card prose. Repository inventory may use rounded statements such as
-"more than a dozen DAGs," "20+ dbt models," and "3,000+ tests," with an explicit
-"verified on" date where precision adds value. (The example read "2,500+ tests"
-until Gate 0 re-measured the suite at 3,661 on 2026-08-31.)
-
-Avoid the phrases "without manual intervention," "every failure alerts," and
-"every service exposes `/ready`." The narrower, true claim is that long-running
-worker services participate in deploy draining, while functional liveness remains
-a separately measured concern.
-
-### 4. Recent and planned work
-
-The public feed is a projection of the roadmap, not a second roadmap:
-
-- "Planned next" comes from the ordered rows in `docs/PLANS.md`'s **Default
-  build order** table. Publish only the first four executable rows.
-- "Recently completed" comes from the newest-first table in
-  [`docs/planning/completed_plans.md`](../planning/completed_plans.md). Publish
-  only the first four rows. **This is a different file from the build order.**
-  Plan 146 removed `docs/PLANS.md`'s duplicate Completed table; what remains
-  under that heading is a pointer, and a generator that parses it finds no rows.
-- Titles, short public summaries, priority, effort, state, and source links may
-  be shown. Internal hostnames, incident payloads, approval records, production
-  object keys, and other operational detail must not be copied into the feed.
-- A plan is not presented as complete until its completion row exists. A merged
-  implementation with an outstanding production gate remains "verification" or
-  "closeout," not "completed."
-
-The plan document remains the detailed source. The landing page is a small,
-current window into it.
-
-### 5. The weekly recaps
-
-The recaps are a fourth kind of fact, and the one with the least editorial
-control: they are written weekly by the `plan-week` skill against git history,
-not authored as public copy.
-
-- They are already public. Stage 1d's roadmap links resolve to
-  `github.com/whitewalls86/new_car_tracker`, so this plan already assumes the
-  repository is publicly readable, and `docs/recaps/` is in it. Publishing them
-  on the site changes their **prominence and framing**, not their disclosure
-  status. The review below is an editorial gate, not a leak gate.
-- They are a record of a week, not evergreen prose. A recap is correct as of its
-  date and is never revised to match a later truth. Every published recap must
-  carry its week and a statement that it is a point-in-time record, so §1's
-  production/experimental split is not contradicted by a six-month-old page.
-- They may name what the truth contract's §3 narrows. The word `trawl` appears
-  eleven times across four recap files — `2026-07-12.md` (2), `2026-07-19.md`
-  (5), `2026-08-23.md` (1) and `2026-08-30.md` (3), which is the complete set —
-  and the scrape path is exactly what the non-goals bar from *authored* public
-  copy. Stage 1e decides the policy; it does not get to be decided silently by a
-  generator.
-
----
+The five sections are §1 Production today, §2 Proven but not production-serving,
+§3 Volatile operational numbers, §4 Recent and planned work, and §5 The weekly
+recaps.
 
 ## Target route and access contract
 
-| Route | Access | Target behavior |
-|---|---|---|
-| `/` | Public | Canonical portfolio landing page, HTTP 200 |
-| `/info` | Public | Permanent redirect to `/` |
-| `/recaps` | Public | Generated recap index, newest first, HTTP 200 |
-| `/recaps/YYYY-MM-DD` | Public | One generated recap page, HTTP 200 |
-| `/static_ops/*` | Public | Versioned local assets with long-lived caching |
-| `/robots.txt` | Public | Allows the public root and references the sitemap |
-| `/sitemap.xml` | Public | Contains only canonical public URLs |
-| `/request-access*` | Google-authenticated | Existing request workflow; CTA explains the sign-in step |
-| `/dashboard*` | `viewer`+ | Existing Streamlit application |
-| `/admin*` | `observer`+ with current mutation rules | Unchanged |
-| infrastructure tools | Existing role requirements | Unchanged |
-
-Caddy should match the exact public root before the final authenticated catch-all.
-It may internally rewrite `/` to the ops `/info` handler during the transition,
-but the browser-visible canonical URL must remain `/`. The `/info` redirect must
-not loop through the internal rewrite.
+**Moved 2026-09-02 to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), by
+Stage 8**, where it is stated against the tree as it now is: the public root is
+an exact match on `/`, and Streamlit no longer owns the origin root. The
+"internal rewrite during the transition" language this section carried described
+a transition that Stage 2 completed.
 
 ---
 
