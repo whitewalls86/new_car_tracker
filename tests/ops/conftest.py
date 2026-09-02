@@ -38,4 +38,6 @@ def mock_set_intent(mocker):
 
 @pytest.fixture
 def mock_intent_release(mocker):
-    return mocker.patch("ops.routers.deploy._intent_release", return_value=True)
+    return mocker.patch(
+        "ops.routers.deploy._intent_release", return_value=IntentResult("ok")
+    )

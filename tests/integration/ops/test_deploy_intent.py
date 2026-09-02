@@ -137,6 +137,35 @@ def test_deploy_complete_when_no_intent_set(api_client):
     assert response.status_code == 200
 
 
+@pytest.mark.integration
+def test_a_release_refused_by_another_coordination_kind_says_who_holds_it(
+    api_client, verify_cur
+):
+    """The refusal reads off the real row, not a fabricated tuple.
+
+    `_intent_release` indexes `SELECT_COORDINATION_STATE_FOR_DEPLOY`'s columns
+    by position to name the holder. A unit test builds that tuple itself, so it
+    would pass just as happily if the statement's column order changed under it
+    and the message started naming a phase as a kind.
+
+    Until Plan 162 Stage 6c this answered 503 "Database unavailable" -- for a
+    facade correctly declining to release a host window. Plan 171 owns the rest
+    of that vocabulary.
+    """
+    verify_cur.execute(
+        "UPDATE coordination_state SET kind='host_maintenance', phase='active', "
+        """targets='["host"]'::jsonb, scope='["database"]'::jsonb WHERE id=1"""
+    )
+
+    response = api_client.post("/deploy/complete")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "host_maintenance" in detail
+    assert "active" in detail
+    assert "Database unavailable" not in detail
+
+
 # ---------------------------------------------------------------------------
 # pause_long_jobs (Plan 131 Stage 5 D3b, migration V042)
 #

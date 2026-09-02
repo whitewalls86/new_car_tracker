@@ -88,21 +88,21 @@ def test_intent_status_no_row(mock_cursor_context):
 
 def test_intent_release_connection_error(mock_db_connection_error, mock_logger_error):
     result = deploy._intent_release()
-    assert result is False
+    assert result == ("unavailable", None)
     error_msg = mock_logger_error.call_args[0][0]
     assert "Intent-Release: Unable to connect to Postgres database." in error_msg
 
 
 def test_intent_release_db_error(mock_db_database_error, mock_logger_error):
     result = deploy._intent_release()
-    assert result is False
+    assert result == ("error", "Other Error")
     error_msg = mock_logger_error.call_args[0][0]
     assert "Intent-Release: encountered DB error." in error_msg
 
 
 def test_intent_release_execution_error(mock_db_sql_error, mock_logger_error):
     result = deploy._intent_release()
-    assert result is False
+    assert result == ("error", "Bad SQL")
     assert "Intent-Release: SQL execution failed." in mock_logger_error.call_args[0][0]
 
 
@@ -115,7 +115,7 @@ def test_intent_release_success(mock_cursor_context):
     ]
     result = deploy._intent_release()
 
-    assert result is True
+    assert result == ("ok", None)
     assert "generation, requested_by" in cursor.execute.call_args_list[1].args[0]
 
 
@@ -127,7 +127,7 @@ def test_legacy_release_can_finish_facade_deploy_after_validation(mock_cursor_co
         (8,),
     ]
 
-    assert deploy._intent_release() is True
+    assert deploy._intent_release() == ("ok", None)
     coordination_update = cursor.execute.call_args_list[-2].args[0]
     assert "generation = generation + 1" in coordination_update
     assert cursor.execute.call_args_list[-1].args[1] == (
@@ -140,6 +140,12 @@ def test_legacy_release_can_finish_facade_deploy_after_validation(mock_cursor_co
 
 
 def test_legacy_release_cannot_clear_other_coordination_kind(mock_cursor_context):
+    """Refusing here is the facade working, so it is 'locked' and not 'error'.
+
+    This is the outcome the bare `bool` mislabelled worst: a deliberate policy
+    refusal rendered as 503 "Database unavailable", which is both the wrong
+    component and the wrong kind of answer.
+    """
     conn, cursor = mock_cursor_context
     cursor.fetchone.return_value = (
         "service_maintenance",
@@ -148,7 +154,10 @@ def test_legacy_release_cannot_clear_other_coordination_kind(mock_cursor_context
         "test",
     )
 
-    assert deploy._intent_release() is False
+    status, detail = deploy._intent_release()
+
+    assert status == "locked"
+    assert "service_maintenance" in detail and "validating" in detail
     assert not any("UPDATE deploy_intent" in call.args[0] for call in cursor.execute.call_args_list)
 
 
@@ -157,7 +166,7 @@ def test_intent_release_no_return(mock_cursor_context):
     cursor.fetchone.side_effect = [(None, "none", 0, None), None]
     result = deploy._intent_release()
 
-    assert result is False
+    assert result == ("error", "deploy_intent has no row id=1")
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +444,41 @@ def test_set_deploy_complete(mock_client, mock_intent_release):
     mock_intent_release.assert_called_once()
 
 
-def test_set_deploy_complete_db_error(mock_client, mock_intent_release):
-    mock_intent_release.return_value = False
+def test_a_refused_release_is_a_409_naming_who_holds_the_record(
+    mock_client, mock_intent_release
+):
+    """The other half of the same incident, on the way out.
+
+    `redeploy.sh` calls `/deploy/complete` from its exit trap with `|| echo`,
+    so this response is the operator's only account of a fleet left paused.
+    A host window holding the record is not a database being unavailable.
+    """
+    mock_intent_release.return_value = deploy.IntentResult(
+        "locked", "host_maintenance coordination holds the record in phase 'active'"
+    )
+
+    response = mock_client.post("/deploy/complete")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "host_maintenance" in detail
+    assert "Database unavailable" not in detail
+
+
+def test_a_failed_release_names_the_cause_instead_of_blaming_the_database(
+    mock_client, mock_intent_release
+):
+    mock_intent_release.return_value = deploy.IntentResult(
+        "error", 'relation "deploy_intent" does not exist'
+    )
+
+    response = mock_client.post("/deploy/complete")
+
+    assert response.status_code == 500
+    assert "deploy_intent" in response.json()["detail"]
+
+
+def test_set_deploy_complete_unreachable_database(mock_client, mock_intent_release):
+    mock_intent_release.return_value = deploy.IntentResult("unavailable")
     response = mock_client.post("/deploy/complete")
     assert response.status_code == 503

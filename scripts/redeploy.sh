@@ -287,8 +287,13 @@ _on_exit() {
     elif [ "$exit_code" -eq 0 ] || [ "$MUTATED" -eq 0 ]; then
         intent_state="released"
         echo "Signalling deploy complete..."
-        curl -sf -X POST "$OPS_URL/deploy/complete" \
-            || echo "Warning: failed to signal /deploy/complete"
+        if ! _post_ops /deploy/complete; then
+            intent_state="NOT RELEASED"
+            echo "Warning: deploy intent was NOT released. Coordination stays" >&2
+            echo "  non-idle and every gated DAG stays parked until it is." >&2
+            echo "  Release by hand once the cause above is dealt with:" >&2
+            echo "    curl -X POST ${OPS_URL}/deploy/complete" >&2
+        fi
     else
         intent_state="HELD"
         echo

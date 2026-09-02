@@ -162,13 +162,19 @@ def _set_intent(
     return IntentResult("ok")
 
 
-def _intent_release() -> bool:
+def _intent_release() -> IntentResult:
     """Release only a legacy-facade deploy, from any lifecycle phase.
 
     ``redeploy.sh`` now drives drain, authorization and validation through the
     coordination API. Its existing health gate is the compatibility release
     evidence until Stage 3 exposes the guarded native complete operation.
     Other coordination kinds can never be released through this facade.
+
+    Returns the same statuses ``_set_intent`` does, minus 'invalid'. It returned
+    a bare ``bool`` until Plan 162 Stage 6c, collapsing five outcomes into
+    ``False`` -- and one of the five is not a failure at all: refusing to
+    release another kind's coordination is this facade working, and 'locked'
+    is the word the request path already uses for it.
     """
     try:
         with db_cursor(error_context="Intent-Release") as cur:
@@ -176,19 +182,26 @@ def _intent_release() -> bool:
             cur.execute(SELECT_COORDINATION_STATE_FOR_DEPLOY)
             row = cur.fetchone()
             if row is None:
-                return False
+                return IntentResult("error", "coordination_state has no row id=1")
             if row[1] != "none" and row[0] != "deploy":
-                return False
+                logger.warning("Legacy release refused: %s coordination is active.", row[0])
+                return IntentResult(
+                    "locked",
+                    f"{row[0]} coordination holds the record in phase '{row[1]}'",
+                )
             cur.execute(CLEAR_DEPLOY_INTENT)
             if cur.fetchone() is None:
-                return False
+                return IntentResult("error", "deploy_intent has no row id=1")
             if row[0] == "deploy":
                 prior_phase = row[1]
                 actor = row[3]
                 cur.execute(RELEASE_DEPLOY_COORDINATION)
                 changed = cur.fetchone()
                 if changed is None:
-                    return False
+                    return IntentResult(
+                        "error",
+                        "coordination_state changed while the release was being written",
+                    )
                 generation = changed[0]
                 record_transition_event(
                     cur,
@@ -205,9 +218,11 @@ def _intent_release() -> bool:
                 phase="none",
                 kind="deploy",
             )
-        return True
-    except Exception:
-        return False
+        return IntentResult("ok")
+    except Exception as exc:
+        if isinstance(exc, UNREACHABLE_ERRORS):
+            return IntentResult("unavailable")
+        return IntentResult("error", db_failure_cause(exc))
 
 
 @router.get("/deploy/status")
@@ -250,9 +265,23 @@ def start_deploy_intent(payload: dict = Body(default={})) -> bool:
 
 @router.post("/deploy/complete")
 def complete_deployment() -> bool:
-    """Releases the intent lock on the DB."""
+    """Releases the intent lock on the DB.
+
+    A failure here is the quiet one. ``redeploy.sh`` calls this from its exit
+    trap, so a deploy that succeeded and then failed to release still exits 0
+    and sends no alert, leaving every gated DAG parked. Whatever this returns is
+    the operator's only account of that, which is why it is no longer one word.
+    """
     result = _intent_release()
-    if result:
-        return result
-    else:
+    if result.status == "ok":
+        return True
+    elif result.status == "locked":
+        raise HTTPException(
+            status_code=409, detail=f"Deploy intent cannot be released: {result.detail}"
+        )
+    elif result.status == "unavailable":
         raise HTTPException(status_code=503, detail="Database unavailable.")
+    else:
+        raise HTTPException(
+            status_code=500, detail=f"Deploy intent could not be released: {result.detail}"
+        )
