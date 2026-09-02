@@ -1646,6 +1646,15 @@ URL list so the sitemap cannot drift from what was actually rendered.
 
 ### The catch-all is what serves the dashboard, and this stage is what moves it
 
+> **Corrected 2026-09-02: this section is right about the mechanism and wrong
+> about the consequence.** It concludes that the exposure is `/_stcore/*` and
+> that an exact-match root is enough to preserve the coupling. It is not. The
+> 2026-09-02 deploy used an exact `/`, kept `/_stcore/*` on the catch-all, and
+> `/dashboard` broke anyway — because `/` is also where Streamlit's client-side
+> router *falls back*, so the app needs the root address itself, not just its
+> machinery. See the Stage 2 evidence below. The requirement in item 9 is
+> necessary and not sufficient.
+
 **Read this before editing the Caddyfile.** Item 1 above is not a small change,
 because the `/dashboard*` block is not what makes the dashboard work.
 
@@ -1686,6 +1695,145 @@ content rather than a Google sign-in page; **and an authenticated `viewer`
 session loads the dashboard with its websocket connected and no failed
 `/_stcore/*` request** — verified by loading the page, not by a status code on
 `/dashboard`.
+
+#### Stage 2 evidence — 2026-09-02 (CAR-62): built, deployed, reverted
+
+**Gate 2 is not met.** The slice was built (PR #338), merged, deployed to
+production, and reverted the same night (PR #340) because `/dashboard` stopped
+reaching the Streamlit app. Production is back at `fc3a0e9`'s behaviour, verified
+byte-identical, and the dashboard is confirmed working again.
+
+**Everything except the dashboard passed, live.**
+
+| Gate 2 check | Result |
+|---|---|
+| `/` returns 200 to a fresh unauthenticated session | Met — `200 text/html` |
+| `/info` redirects once to `/` | Met — `308`, `num_redirects=1` |
+| Recap index and one recap page, 200, no OAuth | Met — both `200 text/html` |
+| robots and sitemap return real content | Met — `text/plain`, `application/xml`; 22 `<loc>`, no duplicates, nothing protected |
+| `/dashboard` enters OAuth | Met — and **worthless**, see below |
+| An authenticated `viewer` loads the dashboard | **Failed** |
+
+**The plan's analysis of the coupling was wrong, and this is the finding.**
+
+This stage's own warning predicted one failure mode: widen the root matcher to
+`/*` and Streamlit loses `/_stcore/*` while `/dashboard` still returns 200.
+Stage 5's coupling assertion was written into this slice to catch exactly that,
+it does catch it — verified by mutating the Caddyfile three ways — and it was
+**blind to what actually happened.**
+
+The root matcher was an exact `/`. The adapted route table confirmed `/_stcore/*`
+still resolved to `dashboard:8501`. `/dashboard` broke anyway.
+
+| Measured | How |
+|---|---|
+| Streamlit serves one SPA shell for every path; routing is entirely client-side | `/dashboard` and `/` returned byte-identical bodies from `dashboard:8501` — same `etag`, both 11,141 bytes |
+| `/dashboard` errored "page not found" and landed on `/` | reported from the browser. `/` is the ops landing page after this stage, so Streamlit's fallback address no longer belongs to it |
+| `/dashboard/` failed too, differently — "it just takes longer to fail" | rules out the simple explanation that Streamlit reads the last path segment as a page name |
+| A Streamlit session did execute | `docker logs cartracker-dashboard` at 00:38:26 shows `use_container_width` deprecation warnings, which only fire when the script runs and renders widgets |
+
+So the real dependency is broader than "`/_stcore/*` must reach Streamlit": **`/`
+itself had to be the Streamlit app**, because that is where its client router
+falls back. `/dashboard` was never a route Streamlit recognised — it worked only
+because the fallback landed back on Streamlit through the catch-all.
+
+**The mechanism, found 2026-09-02 after the revert.** Two hypotheses were formed
+during the incident and both were disproved within minutes; the answer came from
+two requests that were available the whole time and that nobody made.
+
+Streamlit answers **every unrecognised path with its SPA shell**, and that shell
+references its own assets **relatively** — `./static/js/index….js`. Measured
+against production:
+
+| Request | Response |
+|---|---|
+| `/static/js/index….js` | `application/javascript`, 451,569 bytes — the real bundle |
+| `/dashboard/static/js/index….js` | `text/html`, **11,141 bytes — the shell again** |
+
+That single asymmetry produces both observed failures:
+
+- **`/dashboard/`** — the document base is `/dashboard/`, so the relative asset
+  resolves under the prefix, Streamlit returns HTML, and the browser refuses to
+  execute HTML as a module script. The app never boots. This is the "it just
+  takes longer to fail" case: a page waiting on assets that all return HTML.
+- **`/dashboard`** — the document base is `/`, so the asset resolves to
+  `/static/js/…` and loads through the catch-all. The app *does* boot, which is
+  why the container logged a real script run. Then the client router does not
+  recognise `/dashboard` as a page and navigates to what it believes is the app
+  root, `/`.
+
+The second one worked before this stage **only because `/` was also Streamlit**.
+`/dashboard` was never a route Streamlit recognised. Taking `/` away did not
+break the dashboard's routing; it removed the accident that was hiding it.
+
+**What Stage 2 needed, and now has: build-order step 3b.** Streamlit is given
+`--server.baseUrlPath=dashboard`, so it owns `/dashboard/*` and stops treating
+the origin root as its own. `dashboard/Dockerfile` plus the Compose healthcheck
+path, held by `tests/test_dashboard_base_path.py`.
+
+Verified against a locally built image before any deploy — the step that was
+missing the first time:
+
+| Probe | Before 3b | After 3b |
+|---|---|---|
+| `/dashboard/static/js/index….js` | `text/html`, 11,141 | **`application/javascript`, 527,226** |
+| `/static/js/index….js` | `application/javascript` | **404** |
+| `/dashboard/_stcore/stream` | 404 | **200** |
+| `/_stcore/stream` | 200 | **404** |
+| `/dashboard/_stcore/health` | 404 | **200** |
+| `/_stcore/health` | 200 | **404** — so the healthcheck must move, and does |
+| `/dashboard` | shell, then a client-side bounce to `/` | **307 → `/dashboard/`**, Streamlit's own redirect |
+
+The middle two rows are the ones that matter for this stage: **Streamlit no
+longer claims the origin root**, so the catch-all stops being load-bearing and
+Stage 2 can take `/` without taking anything from the dashboard. The coupling
+this stage was trying to preserve deliberately is simply gone.
+
+**Subdomain routing was considered here and deferred.** Moving the dashboard to
+its own host ([Plan 165](plan_165_service_subdomain_routing.md)) would delete the
+base-path setting again, so 3b is knowingly throwaway work. It was still the
+right trade: Plan 165's own Stage 0 puts the dashboard *last* among hosts and
+answers an open OAuth question first, which is two slices before Stage 2 could
+move. Recorded so the question is not re-opened.
+
+**Two defects in this slice's own run sheet, both caught in flight.**
+
+The pre-flight gate validated the wrong file and passed. `./Caddyfile` is a
+*single-file* bind mount, so it pins the inode resolved at container start and
+`git pull` replaces the file rather than editing it; `docker compose exec caddy
+caddy validate` therefore ran against the old, unlinked copy and returned `Valid
+configuration`. Measured after the pull: host `6c83ad73…`, container `1fcd5674…`.
+This is `redeploy.sh` decision 4 — a trap this repository had already hit twice
+on 2026-08-20 and written down — reproduced by a gate invented without reading
+it. The route-table read-back is what exposed it, by printing the pre-Stage-2
+table. The corrected gate validates in a throwaway container.
+
+`scripts/redeploy.sh` is tracked `100644` and is not executable; the run sheet
+said `./scripts/redeploy.sh` and got `Permission denied`, rc 126. The house
+form is `bash scripts/redeploy.sh`.
+
+**What survives the revert, and is worth keeping.**
+
+- **The deploy order was right and was validated under load.** Caddy first, then
+  ops: `/info` returned 200 throughout the mixed window, so the URL printed on a
+  resume never broke. `/recaps` 404'd during the window exactly as predicted.
+- **`redeploy.sh --restart` handles the inode trap correctly**, and said so:
+  *"OK caddy:/etc/caddy/Caddyfile — inode 543380 matches the file on disk."*
+- **The generated recap artifacts and the canonicalisation work are sound.** The
+  sitemap named 22 URLs with no duplicates and no protected path, and the static
+  duplicate carried `rel=canonical` to `/recaps/2026-08-30`.
+- **The social preview was caught before it shipped.** `public-surface-check`
+  found that the `og:image` pointed at `dbt-bit-standalone.png` — the dbt vendor
+  logo — under alt text calling it a model graph.
+
+**The green-light list was ordered wrongly, and the ordering hid the failure.**
+The dashboard check sat last behind seven checks that all passed. Six green ticks
+accumulated toward a conclusion none of them supported. The run sheet now puts it
+first, with "if this fails, stop; nothing below it matters".
+
+**Cost so far: estimate 3, actual 4** — three on the build, one on the deploy and
+revert. The slice is re-landable with `git revert 2b2808b`; it should not be
+until the base-path change is in front of it.
 
 ## Stage 3 — Accessibility and static-asset performance
 
@@ -2324,7 +2472,22 @@ has to resolve. Doing it after would mean writing that route twice. It also has
 to land before step 6, because Stage 3c puts CSS and JavaScript into
 `static_ops/` and the mount's seam depends on those staying on the image side.
 
+**3b. Give Streamlit a base path — NEW, and it blocks step 4. BUILT 2026-09-02,
+not yet deployed.** Added after Stage 2 was deployed and reverted.
+`dashboard/Dockerfile` ran Streamlit with no `--server.baseUrlPath`, so Streamlit
+owned the origin root: it served its machinery from there, answered every
+unrecognised path with a shell that links assets relatively, *and* fell back
+there when its client router did not recognise a path. Moving `/` to the landing
+page took that fallback away and `/dashboard` stopped working while every other
+Gate 2 check passed. `--server.baseUrlPath=dashboard` plus the Compose
+healthcheck path confines Streamlit to `/dashboard/*` and retires the catch-all
+dependency; `tests/test_dashboard_base_path.py` holds it. Verified against a
+locally built image — see the Stage 2 evidence for the probe table. **Deploy this
+and confirm the dashboard in a browser before step 4 goes near production
+again.**
+
 **4. Stage 2 — the public root, the `/info` redirect, and the recap routes.**
+**Attempted 2026-09-02 and reverted; blocked on 3b.**
 The unlock: it makes `/` the front door, and it gives 1e's 20 pages a URL. It
 also carries this plan's riskiest change. **Write Stage 5's Streamlit-coupling
 assertion as part of this stage, not after it** — Gate 2 as written cannot see

@@ -12,8 +12,9 @@ economics, and observability designed around failure — not just the happy path
 [![CI](https://github.com/whitewalls86/new_car_tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/whitewalls86/new_car_tracker/actions/workflows/ci.yml)
 
 **Live site:** <https://cartracker.info> — public project page with live
-pipeline statistics. The dashboard and admin surfaces sit behind Google OAuth2
-plus DB-backed role authorization. Request access at
+pipeline statistics, and <https://cartracker.info/recaps> for the weekly
+write-ups generated from `docs/recaps/`. The dashboard and admin surfaces sit
+behind Google OAuth2 plus DB-backed role authorization. Request access at
 <https://cartracker.info/request-access>.
 
 ---
