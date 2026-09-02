@@ -2723,6 +2723,48 @@ collection.
   cache" it is a no-op for all 26 affected files. It sits in Stage 11 with the
   execution recorder.
 
+#### The deploy, and the failure it was watched for
+
+Deployed to production 2026-09-01. The risk this change carried was never the
+SQL — every statement was verified byte-faithful on normalised whitespace and
+242 Layer 2 tests execute them in CI — but that `load_query` reads at **import
+time**. A service started against an image built before `shared/sql/` existed
+does not degrade; it fails to start. `shared/compression.py` importing
+`shared.queries` at module scope put `scraper` in that class too.
+
+Five services were rebuilt and recreated in two commands, `ops` last, because
+`redeploy.sh` requests and releases deploy coordination through the *running*
+ops container and this stage rewrote every statement on that path. Deploying it
+alongside the others would have run the release path on new code with six
+services already mutated. Both commands exited 0; all five reached `healthy`
+(four in 7s, `ops` in 5s), and neither printed the "kept the same container"
+note that would have meant no new image was applied.
+
+The import-time failure did not occur, and that was checked in the containers
+rather than in the tree: `shared/sql/` holds 7 files inside each of the five,
+`import shared.queries` succeeds in each, and a log scan for
+`ModuleNotFoundError`, `FileNotFoundError`, `query_loader`, `queries.py` and
+`Traceback` across all five returned nothing.
+
+Two services the deploy runbook named were deliberately not passed to
+`redeploy.sh`. `snapshot-worker` and `april-processor` are `profiles:`-gated
+`docker compose run --rm` targets; naming a profile-gated service on the CLI
+enables its profile, so `docker compose up -d --no-deps` would have started
+them as long-lived containers. Both share an image tag with a service that was
+rebuilt — `cartracker-archiver` and `cartracker-processing` — so their next
+invocation loads the new files without being named.
+
+Airflow needed no rebuild, as the stage assumed: `./airflow/sql` is a
+*directory* bind mount, so `git pull` made `record_gate_observation.sql` visible
+to the dag-processor at once, and `airflow dags list-import-errors` returned no
+rows.
+
+Coordination released cleanly — generation 59, `phase: none`, deploy intent
+`none`. **`/deploy/start` returned no 503**, which is the negative result
+Stage 6c predicts rather than a contradiction of it: every service in this
+deploy maps to at least one surface, and `dashboard` and `pgadmin` — the only
+two that do not — were not in the set.
+
 #### Cost
 
 Estimate 2 points, actual 1. The stage was the plan's largest by file count —

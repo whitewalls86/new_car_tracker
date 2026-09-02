@@ -11,6 +11,8 @@ import uuid
 
 import pytest
 
+from ops.coordination_contract import SERVICE_CONTRACTS, expand_targets
+
 
 @pytest.fixture(autouse=True)
 def reset_deploy_intent(verify_cur):
@@ -135,6 +137,35 @@ def test_deploy_complete_when_no_intent_set(api_client):
     assert response.status_code == 200
 
 
+@pytest.mark.integration
+def test_a_release_refused_by_another_coordination_kind_says_who_holds_it(
+    api_client, verify_cur
+):
+    """The refusal reads off the real row, not a fabricated tuple.
+
+    `_intent_release` indexes `SELECT_COORDINATION_STATE_FOR_DEPLOY`'s columns
+    by position to name the holder. A unit test builds that tuple itself, so it
+    would pass just as happily if the statement's column order changed under it
+    and the message started naming a phase as a kind.
+
+    Until Plan 162 Stage 6c this answered 503 "Database unavailable" -- for a
+    facade correctly declining to release a host window. Plan 171 owns the rest
+    of that vocabulary.
+    """
+    verify_cur.execute(
+        "UPDATE coordination_state SET kind='host_maintenance', phase='active', "
+        """targets='["host"]'::jsonb, scope='["database"]'::jsonb WHERE id=1"""
+    )
+
+    response = api_client.post("/deploy/complete")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "host_maintenance" in detail
+    assert "active" in detail
+    assert "Database unavailable" not in detail
+
+
 # ---------------------------------------------------------------------------
 # pause_long_jobs (Plan 131 Stage 5 D3b, migration V042)
 #
@@ -218,3 +249,81 @@ def test_deploy_status_reflects_running_count(api_client, verify_cur):
         assert response.json()["number_running"] >= 1
     finally:
         verify_cur.execute("DELETE FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,))
+
+
+# ---------------------------------------------------------------------------
+# Every service contract produces a row the database accepts (Plan 162 Stage 6c)
+#
+# `ops/coordination_contract.py` decides the (targets, scope) pair; the CHECK
+# constraint added by V043 decides whether that pair can be stored. Both were
+# authored by Plan 142 and nothing composed them, so `dashboard` and `pgadmin`
+# -- the two services that map to no surfaces, deliberately and with a recorded
+# reason -- could never be deployed alone. It surfaced on a production deploy on
+# 2026-09-01 as 503 "Database unavailable" against a Postgres that was healthy
+# throughout.
+#
+# This has to run against a real, migrated database. A Python restatement of the
+# constraint would be a second source to keep in step with the first, which is
+# the shape of the defect rather than a test for it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("service", sorted(SERVICE_CONTRACTS))
+def test_every_service_contract_yields_an_intent_row_the_database_accepts(
+    service, api_client, verify_cur
+):
+    """One lone deploy per registered service, written for real.
+
+    Parametrised over the contract itself, so a service added with a pair the
+    constraint refuses fails here under its own name rather than on the deploy
+    that first needs it.
+    """
+    response = api_client.post("/deploy/start", json={"targets": [service]})
+
+    assert response.status_code == 200, (
+        f"a lone deploy of {service} was refused: {response.json()}"
+    )
+
+    verify_cur.execute(
+        "SELECT kind, phase, targets, scope FROM coordination_state WHERE id=1"
+    )
+    row = verify_cur.fetchone()
+    expected_targets, expected_scope = expand_targets({service})
+    assert row["kind"] == "deploy"
+    assert row["phase"] == "requested"
+    assert set(row["targets"]) == set(expected_targets)
+    assert set(row["scope"]) == set(expected_scope)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "service", sorted(s for s, c in SERVICE_CONTRACTS.items() if not c.surfaces)
+)
+def test_a_deploy_that_pauses_no_surface_is_stored_and_drains(
+    service, api_client, verify_cur
+):
+    """Storing the row is half the claim; the readers are the other half.
+
+    V050 stopped requiring a non-empty scope on the argument that an empty one
+    is truthful -- this coordination pauses nothing -- and that the drain agrees.
+    This runs the request through to authorization to show it does, rather than
+    leaving the argument in the migration's comment.
+    """
+    assert api_client.post(
+        "/deploy/start", json={"targets": [service]}
+    ).status_code == 200
+
+    verify_cur.execute("SELECT scope FROM coordination_state WHERE id=1")
+    assert verify_cur.fetchone()["scope"] == []
+
+    assert api_client.post("/coordination/begin-drain").status_code == 200
+
+    drain = api_client.get("/coordination/drain-status").json()
+    assert drain["drained"] is True, drain
+    assert drain["blockers"] == []
+
+    assert api_client.post("/coordination/authorize").status_code == 200
+
+    verify_cur.execute("SELECT phase FROM coordination_state WHERE id=1")
+    assert verify_cur.fetchone()["phase"] == "active"

@@ -29,7 +29,7 @@ from ops.queries import (
     SELECT_RELEASE_EVIDENCE,
 )
 from scripts.host_maintenance import HOST_VALIDATION_GATES
-from shared.db import db_cursor
+from shared.db import UNREACHABLE_ERRORS, db_cursor, db_failure_cause
 from shared.job_counter import job_snapshot
 
 router = APIRouter(prefix="/coordination")
@@ -206,8 +206,14 @@ def _status() -> dict[str, Any]:
     return {key: _iso(value) for key, value in dict(row).items()}
 
 
-def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
-    """Create one immutable scoped request while the coordination row is idle."""
+def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | str | None]:
+    """Create one immutable scoped request while the coordination row is idle.
+
+    'error' carries the cause as its second element, the way ``_complete`` and
+    ``_submit_host_evidence`` already do, and is distinct from 'unavailable' --
+    Postgres refusing a write is not Postgres being unreachable. Plan 162
+    Stage 6c.
+    """
     if payload.kind not in KINDS:
         return "invalid", None
 
@@ -233,7 +239,7 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
             cur.execute(SELECT_COORDINATION_STATE_KIND)
             row = cur.fetchone()
             if row is None:
-                return "error", None
+                return "error", "coordination_state has no row id=1"
             if row[0] != "none":
                 log_refusal(
                     operation="request",
@@ -259,7 +265,7 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
             )
             changed = cur.fetchone()
             if changed is None:
-                return "error", None
+                return "error", "coordination_state was not idle when the request was written"
             generation = changed[0]
             record_transition_event(
                 cur,
@@ -269,8 +275,12 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
                 kind=payload.kind,
                 actor=payload.requested_by,
             )
-    except Exception:
-        return "error", None
+    except Exception as exc:
+        # db_cursor logged this with its traceback; all that is left is telling
+        # an unreachable database apart from one that refused the row.
+        if isinstance(exc, UNREACHABLE_ERRORS):
+            return "unavailable", None
+        return "error", db_failure_cause(exc)
 
     log_transition(
         generation=generation,
@@ -538,13 +548,17 @@ def local_drain_status() -> dict[str, Any]:
 @router.post("/request")
 def request_coordination(payload: CoordinationRequest) -> dict[str, Any]:
     result, requested = _request(payload)
-    if result == "ok" and requested is not None:
+    if result == "ok" and isinstance(requested, dict):
         return requested
     if result == "conflict":
         raise HTTPException(status_code=409, detail="Coordination is already active.")
     if result == "invalid":
         raise HTTPException(status_code=422, detail="Invalid coordination scope.")
-    raise HTTPException(status_code=503, detail="Database unavailable.")
+    if result == "unavailable":
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    raise HTTPException(
+        status_code=500, detail=f"Coordination request could not be recorded: {requested}"
+    )
 
 
 @router.post("/begin-drain")

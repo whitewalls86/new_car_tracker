@@ -4,7 +4,7 @@ Deploy coordination API endpoints.
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, NamedTuple
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -19,7 +19,7 @@ from ops.queries import (
     SET_DEPLOY_INTENT,
 )
 from ops.routers.coordination import log_transition, record_transition_event
-from shared.db import db_cursor
+from shared.db import UNREACHABLE_ERRORS, db_cursor, db_failure_cause
 
 logger = logging.getLogger("pipeline_ops")
 router = APIRouter()
@@ -28,6 +28,22 @@ STALE_LOCK_MINUTES = 30
 COORDINATION_LOCK_ID = 142
 LEGACY_DEPLOY_TARGETS = tuple(sorted(SERVICE_CONTRACTS))
 LEGACY_DEPLOY_SCOPE = tuple(sorted(SURFACES - {"host"}))
+
+
+class IntentResult(NamedTuple):
+    """What the intent write did, and -- when it failed -- what stopped it.
+
+    ``detail`` is set only for ``error``, the status that means *the database
+    answered and refused*. It exists because the alternative was a caller with
+    nothing to say: before Plan 162 Stage 6c every failure here returned the
+    bare string ``"error"`` and the route rendered it as 503 "Database
+    unavailable", so a CHECK violation and an unreachable Postgres were
+    indistinguishable in the response, in the log and to the operator. Two
+    unrelated defects wore that face one day apart.
+    """
+
+    status: str
+    detail: str | None = None
 
 
 def _intent_status() -> Dict[str, Any]:
@@ -67,8 +83,13 @@ def _no_intent() -> Dict[str, Any]:
     }
 
 
-def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | None = None) -> str:
-    """Atomically try to set intent. Returns 'ok', 'locked', or 'error'.
+def _set_intent(
+    caller: str, pause_long_jobs: bool = True, targets: set[str] | None = None
+) -> IntentResult:
+    """Atomically try to set intent.
+
+    Returns 'ok', 'locked', 'invalid', 'unavailable' (Postgres could not be
+    reached) or 'error' (Postgres refused the write, and ``detail`` names why).
 
     *pause_long_jobs* asks Plan 131's pack and prune jobs to stop at their next
     safe boundary (see ``shared.deploy_intent``). It defaults to true because
@@ -83,7 +104,7 @@ def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | N
         try:
             expanded_targets, scope = expand_targets(targets)
         except ValueError:
-            return "invalid"
+            return IntentResult("invalid")
 
     params = (caller, pause_long_jobs, STALE_LOCK_MINUTES)
 
@@ -93,10 +114,10 @@ def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | N
             cur.execute(SELECT_COORDINATION_STATE_FOR_DEPLOY)
             coordination_row = cur.fetchone()
             if coordination_row is None:
-                return "error"
+                return IntentResult("error", "coordination_state has no row id=1")
             if coordination_row[1] != "none":
                 logger.warning("Deploy intent conflicts with active coordination.")
-                return "locked"
+                return IntentResult("locked")
             cur.execute(SET_DEPLOY_INTENT, params)
             if cur.fetchone() is not None:
                 # Compatibility rollout: legacy sensors keep reading
@@ -111,7 +132,9 @@ def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | N
                 )
                 changed = cur.fetchone()
                 if changed is None:
-                    return "error"
+                    return IntentResult(
+                        "error", "coordination_state was not idle when the request was written"
+                    )
                 generation = changed[0]
                 record_transition_event(
                     cur,
@@ -123,25 +146,35 @@ def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | N
                 )
             else:
                 logger.warning("Intent failed to set — already locked.")
-                return "locked"
-    except Exception:
-        return "error"
+                return IntentResult("locked")
+    except Exception as exc:
+        # db_cursor has already logged this with its traceback. All that is
+        # left is telling the two apart for the caller.
+        if isinstance(exc, UNREACHABLE_ERRORS):
+            return IntentResult("unavailable")
+        return IntentResult("error", db_failure_cause(exc))
     log_transition(
         generation=generation,
         prior_phase="none",
         phase="requested",
         kind="deploy",
     )
-    return "ok"
+    return IntentResult("ok")
 
 
-def _intent_release() -> bool:
+def _intent_release() -> IntentResult:
     """Release only a legacy-facade deploy, from any lifecycle phase.
 
     ``redeploy.sh`` now drives drain, authorization and validation through the
     coordination API. Its existing health gate is the compatibility release
     evidence until Stage 3 exposes the guarded native complete operation.
     Other coordination kinds can never be released through this facade.
+
+    Returns the same statuses ``_set_intent`` does, minus 'invalid'. It returned
+    a bare ``bool`` until Plan 162 Stage 6c, collapsing five outcomes into
+    ``False`` -- and one of the five is not a failure at all: refusing to
+    release another kind's coordination is this facade working, and 'locked'
+    is the word the request path already uses for it.
     """
     try:
         with db_cursor(error_context="Intent-Release") as cur:
@@ -149,19 +182,26 @@ def _intent_release() -> bool:
             cur.execute(SELECT_COORDINATION_STATE_FOR_DEPLOY)
             row = cur.fetchone()
             if row is None:
-                return False
+                return IntentResult("error", "coordination_state has no row id=1")
             if row[1] != "none" and row[0] != "deploy":
-                return False
+                logger.warning("Legacy release refused: %s coordination is active.", row[0])
+                return IntentResult(
+                    "locked",
+                    f"{row[0]} coordination holds the record in phase '{row[1]}'",
+                )
             cur.execute(CLEAR_DEPLOY_INTENT)
             if cur.fetchone() is None:
-                return False
+                return IntentResult("error", "deploy_intent has no row id=1")
             if row[0] == "deploy":
                 prior_phase = row[1]
                 actor = row[3]
                 cur.execute(RELEASE_DEPLOY_COORDINATION)
                 changed = cur.fetchone()
                 if changed is None:
-                    return False
+                    return IntentResult(
+                        "error",
+                        "coordination_state changed while the release was being written",
+                    )
                 generation = changed[0]
                 record_transition_event(
                     cur,
@@ -178,9 +218,11 @@ def _intent_release() -> bool:
                 phase="none",
                 kind="deploy",
             )
-        return True
-    except Exception:
-        return False
+        return IntentResult("ok")
+    except Exception as exc:
+        if isinstance(exc, UNREACHABLE_ERRORS):
+            return IntentResult("unavailable")
+        return IntentResult("error", db_failure_cause(exc))
 
 
 @router.get("/deploy/status")
@@ -207,21 +249,39 @@ def start_deploy_intent(payload: dict = Body(default={})) -> bool:
         raise HTTPException(status_code=422, detail="Invalid deploy targets.")
     targets = None if raw_targets is None else set(raw_targets)
     result = _set_intent("Deploy Declared", pause_long_jobs, targets)
-    if result == "ok":
+    if result.status == "ok":
         return True
-    elif result == "locked":
+    elif result.status == "locked":
         raise HTTPException(status_code=409, detail="Deploy intent already set.")
-    elif result == "invalid":
+    elif result.status == "invalid":
         raise HTTPException(status_code=422, detail="Invalid deploy targets.")
-    else:
+    elif result.status == "unavailable":
         raise HTTPException(status_code=503, detail="Database unavailable.")
+    else:
+        raise HTTPException(
+            status_code=500, detail=f"Deploy intent could not be recorded: {result.detail}"
+        )
 
 
 @router.post("/deploy/complete")
 def complete_deployment() -> bool:
-    """Releases the intent lock on the DB."""
+    """Releases the intent lock on the DB.
+
+    A failure here is the quiet one. ``redeploy.sh`` calls this from its exit
+    trap, so a deploy that succeeded and then failed to release still exits 0
+    and sends no alert, leaving every gated DAG parked. Whatever this returns is
+    the operator's only account of that, which is why it is no longer one word.
+    """
     result = _intent_release()
-    if result:
-        return result
-    else:
+    if result.status == "ok":
+        return True
+    elif result.status == "locked":
+        raise HTTPException(
+            status_code=409, detail=f"Deploy intent cannot be released: {result.detail}"
+        )
+    elif result.status == "unavailable":
         raise HTTPException(status_code=503, detail="Database unavailable.")
+    else:
+        raise HTTPException(
+            status_code=500, detail=f"Deploy intent could not be released: {result.detail}"
+        )

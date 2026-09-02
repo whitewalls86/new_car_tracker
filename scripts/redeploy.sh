@@ -134,6 +134,20 @@
 #    relationship is asserted in tests/test_deploy_script.py, so tightening a
 #    DAG schedule or slowing the sensor fails CI rather than manufacturing a
 #    deploy failure.
+#
+# ---------------------------------------------------------------------------
+# Plan 162 Stage 6c — the eighth decision, added 2026-09-02 after a deploy
+# failed without saying why.
+#
+# 8. A failing POST to the ops API prints what the API said. `curl -sf`
+#    discards the response body on an error status, so under `set -e` a 4xx or
+#    5xx reached the operator as a bare exit 22 and a Telegram alert naming a
+#    phase and nothing else. On 2026-09-01 `redeploy.sh dashboard` failed
+#    exactly that way: the cause was a CHECK constraint the deploy intent row
+#    could not satisfy, and every word of that was in the body being thrown
+#    away. The ops API is fixed to name the cause (Plan 162 Stage 6c); this is
+#    the half that lets the operator read it. Same family as decision 7 — a
+#    failure that costs the wait and the diagnosis is two failures.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -160,6 +174,28 @@ UNVERIFIED=0       # single-file mounts --restart could not check (no stat in im
 SERVICES=""
 COORDINATION_REQUESTED=0
 declare -A BEFORE_ID   # service -> container id, sampled before `up -d`
+
+# Decision 8. POST to the ops API and, on failure, print what it said. The
+# status line and the body come out of one request, so a refusal is reported
+# with its cause attached rather than as an exit code.
+_post_ops() {
+    local path="$1" response status body
+    shift
+    if ! response="$(curl -sS -w '\n%{http_code}' -X POST "$OPS_URL$path" "$@")"; then
+        echo "ERROR: POST ${path} could not reach ${OPS_URL}." >&2
+        return 1
+    fi
+    status="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    case "$status" in
+        2??) return 0 ;;
+    esac
+    echo "ERROR: POST ${path} returned HTTP ${status}." >&2
+    if [ -n "$body" ]; then
+        echo "  ${body}" >&2
+    fi
+    return 1
+}
 
 # Decision 7. Everything the operator needed at 06:15 on 2026-08-30 and had to
 # assemble by hand: which sources are holding the drain, and their counts.
@@ -204,11 +240,10 @@ _prepare_coordination() {
     payload="$(python3 -c \
         'import json,sys; print(json.dumps({"targets": sys.argv[1:]}))' "$@")"
     echo "Requesting deploy coordination for: $SERVICES"
-    curl -sf -X POST "$OPS_URL/deploy/start" \
-        -H 'Content-Type: application/json' -d "$payload" >/dev/null
+    _post_ops /deploy/start -H 'Content-Type: application/json' -d "$payload"
     COORDINATION_REQUESTED=1
     echo "Beginning scoped coordination drain (waiting up to ${DRAIN_TIMEOUT}s)..."
-    curl -sf -X POST "$OPS_URL/coordination/begin-drain" >/dev/null
+    _post_ops /coordination/begin-drain
     while :; do
         status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
             "$OPS_URL/coordination/authorize")"
@@ -240,7 +275,7 @@ _prepare_coordination() {
 _begin_validation() {
     PHASE="begin-validation"
     echo "Recording successful deploy health checks; beginning validation..."
-    curl -sf -X POST "$OPS_URL/coordination/begin-validation" >/dev/null
+    _post_ops /coordination/begin-validation
 }
 
 _on_exit() {
@@ -252,8 +287,13 @@ _on_exit() {
     elif [ "$exit_code" -eq 0 ] || [ "$MUTATED" -eq 0 ]; then
         intent_state="released"
         echo "Signalling deploy complete..."
-        curl -sf -X POST "$OPS_URL/deploy/complete" \
-            || echo "Warning: failed to signal /deploy/complete"
+        if ! _post_ops /deploy/complete; then
+            intent_state="NOT RELEASED"
+            echo "Warning: deploy intent was NOT released. Coordination stays" >&2
+            echo "  non-idle and every gated DAG stays parked until it is." >&2
+            echo "  Release by hand once the cause above is dealt with:" >&2
+            echo "    curl -X POST ${OPS_URL}/deploy/complete" >&2
+        fi
     else
         intent_state="HELD"
         echo
