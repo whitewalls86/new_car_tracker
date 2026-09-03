@@ -5,3 +5,9 @@
 healthcheck-exemptions.txt text eol=lf
 deploy-followers.txt text eol=lf
 maintenance-running-set.txt text eol=lf
+
+# Plan 138 Stage 3c. Vendored third-party assets, committed at a stated upstream
+# version. Normalising their line endings would leave the checked-in bytes
+# differing from what the version in vendor/NOTICE.md actually published, which
+# is the one thing "vendored at 2.1.1" is meant to guarantee.
+ops/static_ops/vendor/** -text

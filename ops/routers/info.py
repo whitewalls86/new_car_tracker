@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ops.public_stats import public_stats_cache
+from ops.static_assets import asset_url
 
 router = APIRouter()
 
@@ -32,6 +33,10 @@ def _fmt_stat(value: int | float) -> str:
 
 
 templates.env.filters["fmt_stat"] = _fmt_stat
+
+# Stage 3c. Every asset the page loads goes through this, so the one-year
+# immutable cache on /static_ops/* cannot outlive a deploy that changed one.
+templates.env.globals["asset_url"] = asset_url
 
 
 @router.get("/info")
