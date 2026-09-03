@@ -86,7 +86,6 @@ the row, and record it *only* there.
 | Plan | Lands | Gate — what removes this row |
 |---|---|---|
 | [142](plans/plan_142_planned_host_maintenance.md) | **2026-09-30** | Another maintenance window run through the checked-in procedure. Stage 4's first reviewed window ran 2026-08-31 and completed, and it still surfaced two defects — `mounts_expected` could never pass, leaving `validating` with no exit; `restore-apt-automation` left security updates switched off. Both are fixed and deployed. One window proves the procedure executes, not that it is durable |
-| [129](plans/plan_129_zstd_dictionary_compression.md) | **2026-09-01** *(review date set by Plan 146; the gate has no scheduled run)* | Dictionary v1 is live and the Stage 4 backfill is running. Row leaves when the backfill reports zero remaining level-3 objects and no metric deviation. Reversible throughout — no data is discarded and every artifact stays independently decompressable |
 | [160](plans/plan_160_promtail_contract_checker_reliability.md) | **2026-09-13** | Two weeks' observation for any further indication of checker flakiness, starting from the merge of [PR #294](https://github.com/whitewalls86/new_car_tracker/pull/294) (merged 2026-08-30). Row leaves when no `promtail-config` run in the window has produced a false "Promtail dropped it", and the inconclusive verdict has either stayed absent or appeared rarely enough to read as the residual race rather than an unfixed one. Local before/after was 12 failures in 20 runs → 0 failures and 1 inconclusive; the first CI run after the fix replayed clean with no retries. A run that fails and names the same line on all three attempts is a real contract regression, not this gate |
 | [146](plans/plan_146_planning_system.md) | **2026-09-14** | `docs/recaps/` holds a file for every complete week from 2026-08-17 to 2026-09-13 with no gap — four weeks recapped on the habit, not backfilled — and the `plans` skill has performed at least one archive on a plan other than 146, leaving `PLANS.md`, the archive and its stated row count in agreement. A missing week means the catch-up rule failed, and the gap shows on the filesystem |
 | [149](plans/plan_149_linear_execution_layer.md) | **2026-09-15** | Stage 0 bootstrapped 2026-08-24 — workspace, team `CAR`, seven-state workflow and eight Cycle 1 issues are recorded as Stage 0 evidence. Row leaves when the Cycle measures table holds real post-cycle reads for all three cycles and the Stage 3 keep/change/remove decision is written into the plan document. Rollback is disconnecting the GitHub integration; Linear never owns repository state |
@@ -176,7 +175,7 @@ work that never happened.
 
 ## Completed
 
-[**completed_plans.md**](planning/completed_plans.md) — 118 rows, newest first, one row
+[**completed_plans.md**](planning/completed_plans.md) — 119 rows, newest first, one row
 per plan. It is the only record of what is finished; this file keeps no copy.
 Dates reconstructed by Plan 146 Stage 1 are labelled *observed*, *corroborated*
 or *inferred* so a guess is never mistaken for a record.
