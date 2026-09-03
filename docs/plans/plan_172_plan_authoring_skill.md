@@ -624,8 +624,8 @@ reading A, H, B, C … are what say so at a glance.
 | 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `done` | CAR-70 |
 | 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `done` | CAR-70 |
 | 3 | [**B**](#stage-b) | the `plan-draft` skill | `done` | CAR-70 |
-| 4 | [**C**](#stage-c) | the `plan-start` skill | `next` | — |
-| 5 | [**D**](#stage-d) | the assertion and the waiver list | `—` | — |
+| 4 | [**C**](#stage-c) | the `plan-start` skill | `done` | CAR-70 |
+| 5 | [**D**](#stage-d) | the assertion and the waiver list | `next` | — |
 | 6 | [**E**](#stage-e) | `close-out` split in two | `—` | — |
 | 7 | [**F**](#stage-f) | the `note-evidence` skill | `—` | — |
 | 8 | [**G**](#stage-g) | the after-numbers | `—` | — |
@@ -695,22 +695,33 @@ priority and effort to `plans` and chooses none of them, and it asks for
 estimates rather than deriving them — `ticket-now` already records why an
 estimate derived from a plan's effort label is wrong.
 
-**Chunking is asked, not assumed.** `1` point means "under half a day," and this
-plan's own measurement found stages from 3 to 2,190 lines — a plan can hold
-several stages that do not reach that floor. `CAR-70` is the case in evidence:
-filed for Stage A alone, it was hand-expanded onto the same issue three more
-times in one day rather than minting H, B and C their own, because each was
-minutes of work. Once stages, exits and estimates are agreed, `plan-start` asks
-with the Questions interface how they chunk into issues, offering genuine
-shapes rather than a policy name:
+**Chunking is derived from a question, not assumed as a policy.** `1` point
+means "under half a day," and this plan's own measurement found stages from 3
+to 2,190 lines — a plan can hold several stages that do not reach that floor.
+`CAR-70` is the case in evidence: filed for Stage A alone, it was hand-expanded
+onto the same issue three more times in one day rather than minting H, B and C
+their own, because each was minutes of work.
 
-- **one issue per stage** — every stage gets its own issue, chained `blockedBy`
-  in the order table's order. Right when stages are independently sized, a day
-  or more each.
-- **one issue for the whole plan** — every stage becomes a `## Stage X` section
-  inside a single issue, with no chain. The shape `CAR-70` reached by hand.
-- anything else, as free text — a custom split named directly in the interview,
-  such as bundling the small early stages and splitting out one large one.
+The grouping this plan settled on is not a shape chosen from a menu — it is
+computed from one fact already gathered per stage: **does verifying this
+stage's exit require its code actually running in production, or does it
+verify locally, before a PR ever opens?** All code reaches the VM the same
+way — merged to `master`, pulled, deployed — so every stage merges regardless;
+the question is only whether *proving the exit* needs that last, separately
+gated deploy step.
+
+- **A stage whose exit needs production gets its own issue.** Its PR is the
+  natural proof artifact for that issue, and bundling it with a locally-proven
+  neighbor would let the issue read "done" on the neighbor's proof alone.
+- **A run of consecutive stages that all verify locally bundles into one
+  issue**, each as its own `## Stage X` section, no internal `blockedBy`
+  chain. A plan whose stages are entirely local — this one, so far — collapses
+  to a single issue, the shape `CAR-70` reached by hand before this rule
+  existed to name it.
+
+`plan-start` presents the computed grouping as a proposal via the Questions
+interface and asks the user to confirm it or name an adjustment, rather than
+posing chunking as an open question with no default.
 
 **Exit:**
 1. It adds `## Design` and `## Stages` to an existing document, and edits nothing
@@ -719,12 +730,15 @@ shapes rather than a policy name:
    to `plans` while any lacks one.
 3. Stage letters are allocated in order of conception, never as a suffix of
    another stage.
-4. It asks the chunking question above via the Questions interface before
-   creating anything, and creates issues to match the answer: one-per-stage
-   issues each carry their one stage's `Exit` and are `blockedBy` their
-   predecessor; a bundled issue carries every stage it covers as its own
-   `## Stage X` section and holds no internal `blockedBy` chain. `save_issue`
-   takes `blockedBy` directly, so a chain needs no GraphQL.
+4. It asks, per stage, whether that stage's exit needs production to verify;
+   derives the grouping from the answers (one issue per deploy-requiring
+   stage, one issue per bundled run of locally-verified stages); confirms the
+   computed grouping via the Questions interface before creating anything; and
+   creates issues to match it exactly. A single-stage issue carries that
+   stage's `Exit` verbatim and is `blockedBy` its predecessor issue; a bundled
+   issue carries every covered stage as its own `## Stage X` section and holds
+   no internal `blockedBy` chain. `save_issue` takes `blockedBy` directly, so a
+   chain needs no GraphQL.
 5. Exactly one issue is unblocked at creation — whichever one contains the
    order table's `next` stage.
 6. Every issue is created with no cycle, so `fill-cycle` remains the only thing
@@ -964,3 +978,64 @@ Validated in the same disposable clone as Stage H, never committed:
 - **Build-order path:** writes nothing by construction — the skill's
   build-order branch names `plan-start` and stops, so there is no artifact for
   this path to produce or to check.
+
+### Stage C
+
+Added `.claude/skills/plan-start/SKILL.md`: the interview (design, rejected
+alternatives, lettered stages each with an exit, the order table, estimates,
+and — per stage — whether its exit needs production to verify), the resulting
+grouping confirmed via the Questions interface rather than posed as an open
+menu, and the write phase — `## Design`/`## Stages` into the plan document,
+the build-order row via `plans` (operation 1 from a backlog trigger, operation
+6 from a fresh draft), the Linear project if none exists, and the issue set
+the grouping produced.
+
+**The grouping rule replaced an earlier, weaker design mid-flight.** The first
+pass asked the user to pick a chunking shape from a short menu — one issue per
+stage, one for the whole plan, or free text. Raised against it directly: the
+real boundary is not a shape to pick but a fact already gathered per stage —
+does proving that stage's exit need its code running in production, not merely
+merged, since every stage merges to `master` regardless and only some then
+need the separately gated deploy step. A deploy-requiring stage gets its own
+issue, its own PR the natural proof; a consecutive run of locally-verified
+stages bundles into one. This document and `plan-start` were both rewritten to
+that rule before Stage C was committed.
+
+**That rule was checked against this plan's own real stage list before
+committing**, not just against synthetic data: all eight of Plan 172's stages
+verify locally — a written contract, a skill's prose, a document round-trip
+through a disposable clone — and none has ever needed the VM. Applying the
+rule therefore collapses the whole plan to one issue, which is exactly the
+shape `CAR-70` reached by hand across four separate expansions before this
+rule existed to name it. The rule reproduces the plan's own observed history
+rather than merely being consistent with it.
+
+Validated in two parts, both before committing:
+
+- **Document and index mechanics**, in the same disposable clone as the earlier
+  stages, never committed: both entry points exercised end to end. A
+  fresh-draft plan (no row anywhere) got `## Design`/`## Stages` appended, then
+  `plans` operation 6 spliced it into the published build-order window — 35
+  passed after the expected single preflight failure, roadmap check stale then
+  clean after regeneration. A backlog-entry plan (row already in the backlog
+  table) got the same document write, then `plans` operation 1 moved its row
+  into the build order with the same result. The already-started refusal
+  (Phase 1: a document already carrying `## Stages` stops the skill) was
+  confirmed directly against the backlog-entry test document once its own
+  `## Stages` existed.
+- **Linear issue-creation mechanics**, live against the real workspace rather
+  than a clone, since issue creation has no disposable-clone equivalent: the
+  Questions interface was exercised for real against two synthetic test
+  stages, confirming a one-per-stage grouping. `CAR-71` and `CAR-72` were
+  created under the existing `Plan 172` project (confirming the
+  reuse-if-exists path), each assigned to the user, `Backlog` status, no
+  cycle, `CAR-72` `blockedBy` `CAR-71` and confirmed from both sides
+  (`CAR-71`'s relations show `blocks: [CAR-72]`). Both were canceled
+  immediately after verification and carry no further meaning. This
+  mechanical layer — issue shape, assignee, status, the `blockedBy` write —
+  is unaffected by which grouping rule chose to create them, so it was not
+  re-run after the rule changed.
+
+This same dry run surfaced that `assignee` had been left to Linear's default
+and landed inconsistently; both `plan-start` and `ticket-now` now pass
+`assignee: "me"` explicitly on every issue they create.
