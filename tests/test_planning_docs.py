@@ -411,6 +411,32 @@ NO_DOCUMENT_LIVE_PLANS = frozenset({88})
 # convention.
 _CONTRACT_PLAN = 172
 
+# Plan 172 Stage G. ``docs/PLAN_DOCUMENT.md`` says of the waiver list: "The
+# list only shrinks." The three tests below each enforce that a *particular*
+# entry is legitimate -- present, not stale, not postdating the contract --
+# and none of them enforces that sentence, because every check is per-entry: a
+# list that grows by one legitimate-looking pre-contract waiver passes all
+# three cleanly. These two ceilings are the sentence, asserted on the count.
+#
+# Recorded 2026-09-03, the day Stage G took them. **Lower them as plans are
+# fixed; never raise one.** Raising a ceiling is the bypass this exists to
+# catch -- a waiver added instead of the section being written.
+#
+# Growth in either list is a bypass rather than new debt, for a different
+# reason per list:
+#
+# * ``WHAT_THIS_PLAN_IS_FOR_WAIVERS`` can only grow if a pre-172 plan re-enters
+#   a live table from the archive or the superseded table. The contract's
+#   Adoption section already says a live plan acquires the applicable public
+#   section, so that section is what such a plan owes -- not an entry here.
+# * ``THE_CHECKS_WAIVERS`` can only grow when a plan enters closeout owing
+#   ``## The checks``. Since Stage E that section is 'close-out''s to write on
+#   exactly that transition, so a new entry means the skill was bypassed. This
+#   is the ceiling that gets tested first: all five entries are pre-172 plans
+#   still live, and more will reach closeout.
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 38
+MAX_THE_CHECKS_WAIVERS = 5
+
 
 @dataclass(frozen=True)
 class SectionWaiver:
@@ -426,11 +452,14 @@ class SectionWaiver:
     since: date = _SECTION_MEASURED
 
 
-# 44 live plans, of which: 4 already carry '## What this plan is for' (172
-# was written under the contract; 162/134/138 were backfilled landing this
-# stage, because the published build-order window required it); 1, Plan 88,
-# has no document at all and is named in NO_DOCUMENT_LIVE_PLANS instead of
-# here; the remaining 39 are waived below. 4 + 1 + 39 = 44. Plans 117 and 163
+# 43 live plans, of which: 4 already carry '## What this plan is for'
+# (162/134/138 were backfilled landing Stage D, because the published
+# build-order window required it; 164 was backfilled when Plan 172 archived and
+# promoted it into that window, which is also what paid the ceiling above down
+# from 39); 1, Plan 88, has no document at all and is named in
+# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 38 are waived below.
+# 4 + 1 + 38 = 43. Plan 172 itself is no longer counted here -- it archived
+# 2026-09-03 and left the live tables. Plans 117 and 163
 # are the two whose shape does not fit stages at all (an umbrella and a
 # register); the contract's own Design section names a waiver as the right
 # instrument for that too, not a permanent plan kind.
@@ -442,8 +471,8 @@ WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
     SectionWaiver(149), SectionWaiver(150), SectionWaiver(151), SectionWaiver(152),
     SectionWaiver(154), SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
-    SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(164),
-    SectionWaiver(165), SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
+    SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
+    SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
     SectionWaiver(169), SectionWaiver(170), SectionWaiver(171),
 )
 
@@ -472,7 +501,7 @@ class TestPlanDocumentContract:
     presence: a plan reaching either window without its section, or over
     cap, is a failure, full stop, because publishing the gap is worse than
     not publishing. Every other live plan holds against the presence rule
-    only, behind a named, dated waiver, because 39 of the 44 predate the
+    only, behind a named, dated waiver, because 38 of the 43 predate the
     contract and rewriting all of them on Stage D's one day would be exactly
     the kind of backfill ``plan_172_plan_authoring_skill.md``'s Adoption
     section rules out. A waiver cannot cover a plan numbered
@@ -597,7 +626,7 @@ class TestPlanDocumentContract:
         the section passes both directions of the check above cleanly. A
         plan numbered ``_CONTRACT_PLAN`` or higher was drafted under the
         contract -- 'plan-draft' already writes this section -- so it may
-        never be grandfathered here, unlike the 39 that predate it.
+        never be grandfathered here, unlike the 38 that predate it.
         """
         for waivers, label in (
             (WHAT_THIS_PLAN_IS_FOR_WAIVERS, "WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
@@ -610,6 +639,38 @@ class TestPlanDocumentContract:
                 f"is missing the section because it was never written, not "
                 f"because it predates the rule -- fix the document, don't "
                 f"waive it."
+            )
+
+    def test_neither_waiver_list_has_grown(self):
+        """Plan 172 Stage G: the half of "the list only shrinks" that no
+        per-entry check can see.
+
+        The three tests above ask whether a given entry is *legitimate*. A
+        waiver naming a live, pre-contract plan that genuinely lacks the
+        section is legitimate by all three, so the escape valve can be widened
+        one honest-looking entry at a time without any of them objecting. The
+        count is the only place that shows up.
+
+        This is deliberately a ratchet and not a measurement. The alternative
+        Stage G considered was reading the two counts again after thirty days
+        and recording whether they moved -- which passes trivially in the case
+        where nothing happened at all, and notices a bypass a month after the
+        commit that made it. A ceiling fails in CI on the commit itself.
+
+        Lower ``MAX_*`` as plans are fixed. Raising one to make this pass is
+        the exact move it exists to refuse.
+        """
+        for waivers, ceiling, label, ceiling_label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS,
+             "WHAT_THIS_PLAN_IS_FOR_WAIVERS", "MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, MAX_THE_CHECKS_WAIVERS,
+             "THE_CHECKS_WAIVERS", "MAX_THE_CHECKS_WAIVERS"),
+        ):
+            assert len(waivers) <= ceiling, (
+                f"{label} holds {len(waivers)} entries, over its ceiling of "
+                f"{ceiling}. docs/PLAN_DOCUMENT.md says the waiver list only "
+                f"shrinks. Write the section the new entry is waiving; do not "
+                f"raise {ceiling_label}."
             )
 
     def test_every_live_plan_without_a_document_is_named(self):

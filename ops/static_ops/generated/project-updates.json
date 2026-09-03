@@ -23,27 +23,35 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
-      "plan": "172",
-      "title": "The plan document contract",
-      "order": 3,
-      "priority": 80,
-      "effort": "M",
-      "state": "planned",
-      "summary": "Stage E — split stage-close out of close-out: the per-issue ## Record entry, cost comment, public-surface question, order table's State cell, and Linear Done",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
-    },
-    {
       "plan": "138",
       "title": "Public surface refresh",
-      "order": 4,
+      "order": 3,
       "priority": 84,
       "effort": "L",
       "state": "planned",
       "summary": "Stage 9 — publish what a plan is for: the planned projection reads ## What this plan is for, with this cell as the fallback it stops being",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
+    },
+    {
+      "plan": "164",
+      "title": "Cycle-close ritual",
+      "order": 4,
+      "priority": 70,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Stage 0 — write the close order down, then Stage 3's git-ref and worktree hygiene; both are independent of Linear and buildable now",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
     }
   ],
   "completed": [
+    {
+      "plan": "172",
+      "title": "The plan document contract",
+      "date": "2026-09-03",
+      "state": "completed",
+      "summary": "Plans had grown into documents answering four questions at once, with no rule for what belonged where or when evidence was written down. They now follow a contract: a plan gains one section as it advances, and automated checks refuse to publish work that skipped one.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
+    },
     {
       "plan": "129",
       "title": "Trained dictionary compression for raw HTML",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "Made test coverage visible on every change instead of measured and thrown away, and fixed a test database that did not match the shape of the real one.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_139_test_suite_maintenance.md"
-    },
-    {
-      "plan": "147",
-      "title": "Scrape state ownership",
-      "date": "2026-08-30",
-      "state": "completed",
-      "summary": "Split one timestamp into two: when a listing was last fetched, and when it was last understood. A backlog in one stage no longer causes the same pages to be fetched over and over.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_147_scrape_state_ownership.md"
     }
   ]
 }

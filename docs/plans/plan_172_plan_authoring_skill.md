@@ -164,7 +164,7 @@ answer why it was worth building, so the earlier answers stay.
 | `## What this plan is for` | draft | *what is this, to a stranger* | `plan-draft` | none |
 | `## The case` | draft | **Should I build this?** | `plan-draft` | skim |
 | `## Design`, `## Stages` | start | **What am I building today?** | `plan-start` | **all of it** |
-| `## The checks` | landing in closeout | **What do I need to check, and when?** | `stage-close` | some |
+| `## The checks` | landing in closeout | **What do I need to check, and when?** | `close-out` | some |
 | `## Record` | as stages close | **What did I build, how, what did it take?** | `note-evidence`, `stage-close` | per entry |
 | `## Public summary` | archive | *what did it do, to a stranger* | `close-out` | one sentence |
 
@@ -504,9 +504,9 @@ work than this plan claims.
 | Skill | Moment | Writes | Never |
 |---|---|---|---|
 | **`plan-draft`** *(new)* | an idea, mid-work | the plan number and filename; the document's first two sections; asks where it lands; hands a **backlog** row to `plans` | stages, a design, a row it wrote itself, a ticket, `plan-start` |
-| **`plan-start`** *(new)* | the plan becomes work | the interview; design, lettered stages each with an exit, the order table; a **build-order** row via `plans`; the Linear project and **one issue per stage, chained `blockedBy` in the order table's order** | a row it wrote itself, a priority, a position, an estimate, a cycle assignment |
+| **`plan-start`** *(new)* | the plan becomes work | the interview; design, lettered stages each with an exit, the order table; a **build-order** row via `plans`; the Linear project and **the issue set the deploy question derives — one issue per deploy-requiring stage, one per bundled run of locally-verified stages, each `blockedBy` its predecessor issue in order-table order** | a row it wrote itself, a priority, a position, an estimate, a cycle assignment |
 | **`note-evidence`** *(new)* | during the work | one `## Record` entry | Linear, `PLANS.md`, a status marker |
-| **`stage-close`** *(new)* | one issue done | a `## Record` entry, the cost comment, the order table's `State` cell, Linear `Done` | move a `PLANS.md` row |
+| **`stage-close`** *(new)* | one stage done | a `## Record` entry, the cost comment, the order table's `State` cell, and Linear `Done` once every stage that issue carries is `done` | move a `PLANS.md` row |
 | **`close-out`** *(narrowed)* | the **plan** stops being work | the gate, the row move via `plans`, the archive, `## Public summary` | close a stage |
 
 **`plan-start` is the mirror of `close-out`, and naming it that way is what fixes
@@ -524,20 +524,43 @@ told to derive. That objection does not survive the interview. An issue written
 by `plan-start` carries an exit that was argued sixty seconds earlier, which is
 the only moment in a plan's life when that field is trustworthy.
 
-**Every stage gets an issue, chained.** `plan-start` creates one issue per stage
-and sets each one's `blockedBy` to its predecessor in the order table, so the
-board carries the plan's whole shape and its sequence. Three things follow:
+**Every stage reaches the board, and the grouping is computed rather than
+chosen.** `plan-start` writes a plan's whole issue set at once, and how many
+issues that is falls out of the per-stage question [Stage C](#stage-c)
+describes: does proving this stage's exit need its code running in production, or
+does it verify locally? A deploy-requiring stage gets its own issue; a run of
+consecutive locally-verified stages bundles into one issue carrying each covered
+stage as its own `## Stage X` section. Each issue is `blockedBy` its predecessor
+**issue** in order-table order. Three things follow:
 
-- **The board becomes a true projection.** Plan 149's rule is that Linear
-  projects repository planning. A projection of an eight-stage plan that shows
-  one issue does not project it; it hides the shape and leaves the sequence in a
-  document the board cannot see.
+- **The board projects the plan's shape at the grain a PR can prove.** Plan
+  149's rule is that Linear projects repository planning, and an issue is only a
+  projection if something can close it on its own evidence. That cuts both ways.
+  Bundling a deploy-requiring stage with a locally-proven neighbour would let the
+  issue read `done` on the neighbour's proof alone; splitting a run of
+  locally-verified stages that will land in one PR mints issues that can only
+  ever close together, which is bookkeeping rather than projection. The
+  stage-level shape is not lost either way — it lives in the order table and in
+  the covered stages' own sections inside the issue, where the two can be checked
+  against each other. This plan is the case in evidence: all eight of its stages
+  verify locally, so the rule collapses it to a single issue, which is the shape
+  `CAR-70` reached by hand across four separate expansions before the rule
+  existed to name it. It runs on two — `CAR-70` for A, H, B, C and D, `CAR-73`
+  for E, F and G — only because `CAR-70` had already closed when the remaining
+  stages were filed, which is a fact about when the tickets were written rather
+  than a second grouping.
 - **The chain and the order table are the same fact, checkable against each
-  other.** Exactly one issue per plan is unblocked at any time, and it is the
-  stage the order table calls `next`.
-- **Nothing has to create the next issue.** Closing one stage unblocks the next
-  through a relation Linear already holds, so `stage-close` stays a closing skill
-  and never grows an opening half.
+  other.** Exactly one issue per plan is unblocked at any time, and it is the one
+  containing the stage the order table calls `next`.
+- **Nothing has to create the next issue.** Closing the last stage an issue
+  carries unblocks the next issue through a relation Linear already holds, so
+  `stage-close` stays a closing skill and never grows an opening half.
+
+**A bundled issue is why closing a stage and closing an issue are separate
+acts.** `stage-close` always writes the closing stage's `## Record` entry and its
+order-table `State` cell; the issue moves to `Done` only once every stage it
+carries is `done`. [Stage E](#stage-e) states that rule, and a one-stage issue is
+the same rule with a covered set of one.
 
 **This does not touch Plan 149's cycle budget.** The issues are created in
 `Backlog` status with no cycle — the case `ticket-now` already documents — and
@@ -546,7 +569,8 @@ work and committing to work stay separate, which is the same separation as
 drafting and starting one level down.
 
 **The staleness objection does not survive examination.** Plan 138 went from 7
-stages to 22, which looks like an argument against writing 8 tickets up front.
+stages to 22, which looks like an argument against writing a plan's whole issue
+set up front.
 But that growth is the defect this plan removes: stages accreted because nothing
 forced them to be thought through, and the interview is what forces it. A stage
 that genuinely changes afterwards is `canceled`, on the board and in the order
@@ -625,9 +649,9 @@ reading A, H, B, C … are what say so at a glance.
 | 3 | [**B**](#stage-b) | the `plan-draft` skill | `done` | CAR-70 |
 | 4 | [**C**](#stage-c) | the `plan-start` skill | `done` | CAR-70 |
 | 5 | [**D**](#stage-d) | the assertion and the waiver list | `done` | CAR-70 |
-| 6 | [**E**](#stage-e) | `close-out` split in two | `next` | — |
-| 7 | [**F**](#stage-f) | the `note-evidence` skill | `—` | — |
-| 8 | [**G**](#stage-g) | the after-numbers | `—` | — |
+| 6 | [**E**](#stage-e) | `close-out` split in two | `done` | CAR-73 |
+| 7 | [**F**](#stage-f) | the `note-evidence` skill | `done` | CAR-73 |
+| 8 | [**G**](#stage-g) | the waiver-list ratchet | `done` | CAR-73 |
 
 Stages B and D are what [Plan 138](plan_138_public_surface_refresh.md) Stage 9
 waits on; the rest may follow at any pace.
@@ -806,15 +830,55 @@ the contract's shape, before it is lost or has to be re-run.
 
 ### Stage G
 
-**Re-measure.** Re-run [the measurement](#the-measurement) the same way, over a
-window of comparable length, and record the result in `## Record`. The
-before-numbers are in this document: 35 slice-only rewrites in 79 comparable
-commits, 4% of stages with an exit, evidence at four heading depths, 43 of 44
-live plans without a public section.
+**Assert that the waiver list only shrinks.**
+[`docs/PLAN_DOCUMENT.md`](../PLAN_DOCUMENT.md) says of the waiver list that it
+only shrinks, and after Stage D nothing enforced that sentence. Stage D's three
+waiver tests each ask whether a *particular* entry is legitimate — the plan is
+live, the plan still lacks the section, the plan predates the contract — and a
+new entry naming a live pre-172 plan that genuinely lacks its section satisfies
+all three. The escape valve could therefore be widened one honest-looking entry
+at a time with the suite green. Stage G closes that with a ceiling per list,
+recorded at the count Stage G found and lowered as plans are fixed.
 
-**Exit:** the after-numbers are taken and recorded, including the ones that did
-not move.
+**This replaced a re-measurement, and the reason is worth keeping.** Stage G was
+written as *re-run [the measurement](#the-measurement) over a window of
+comparable length*. Three things killed that:
 
+1. **Three of the four before-numbers do not replay**, established by attempting
+   it — see this stage's `## Record` entry. The published-section count replays,
+   because it is a literal string match with no judgement in it; the section
+   count, the evidence-depth histogram and the churn corpus do not, and nothing
+   written down says what they counted.
+2. **Two of the three measure adoption, and adoption is structurally frozen.**
+   [Out of scope](#out-of-scope) rules out backfilling `## Design` and
+   `## Stages` into the live plans, and the archive is never rewritten, so the
+   denominators are almost entirely pre-contract by design. Those numbers move
+   when plans are *written through* `plan-draft` and `plan-start`, not when time
+   passes — a 60-day window in which no new plan was drafted returns the
+   before-number and would read as "the contract changed nothing."
+3. **A 30-day re-read is the wrong instrument for something assertable.** The
+   version of this stage that read the two counts again after thirty days passes
+   trivially when nothing happened, and notices a bypass a month after the
+   commit that made it. A ceiling fails in CI on that commit.
+
+**The churn number leaves this plan rather than moving inside it.** It is
+[Plan 138](plan_138_public_surface_refresh.md) Stage 9's, which owns both the
+figure and its method, and Plan 138 Stage 9 is that plan's current slice. This
+plan claimed a re-measure of it and no longer does — see
+[success criteria](#success-criteria). For the record, the recorded recipe does
+not replay either: `git log --first-parent --since=2026-07-04 --until=2026-09-02
+-- docs/PLANS.md` returns **97** commits against the 79 recorded and the 96 this
+document previously reported, no window in the plausible range yields 79, and
+today's generator raises on 52 of the 97 because the build-order table has lost
+a column since — so a generator-based definition cannot reach across the window
+at all.
+
+**Exit:** growth in either waiver list fails the suite, on the commit that adds
+the entry rather than on a later review; each ceiling is recorded with its date
+and the reason growth in that list is a bypass rather than new debt; the
+assertion is verified by mutation, including the demonstration that Stage D's
+three per-entry tests pass against the same growth; and what the ratchet cannot
+catch is stated rather than implied.
 ## Files
 
 | Path | Change |
@@ -827,6 +891,7 @@ not move.
 | `.claude/skills/stage-close/SKILL.md` | New — Stage E |
 | `.claude/skills/close-out/SKILL.md` | Narrowed to plan-level, Stage E |
 | `.claude/skills/note-evidence/SKILL.md` | New — Stage F |
+| `tests/test_planning_docs.py` | Stage G — the two waiver-list ceilings |
 | `docs/plans/plan_*.md` | `## What this plan is for`, as each waiver is retired |
 | `docs/PUBLIC_SURFACE.md` | §4 points at the contract for the two public sections |
 
@@ -862,8 +927,12 @@ not move.
    skills, and neither can perform the other's write.
 5. Both published windows are asserted rather than reviewed, and the waiver list
    is shorter than 43.
-6. **Stage G's numbers are taken.** A plan about documents that churn which never
-   re-measures its own churn is the failure mode this document exists to avoid.
+6. **The waiver list cannot grow.** `docs/PLAN_DOCUMENT.md` says it only
+   shrinks; a per-entry check cannot see the count, so the sentence is asserted
+   on the count itself. The churn re-measure this criterion used to demand
+   belongs to [Plan 138](plan_138_public_surface_refresh.md) Stage 9, which owns
+   that figure and its method — this plan supplies the section that stage reads
+   and stops claiming its number.
 
 ## Intersections
 
@@ -909,6 +978,13 @@ Supplies the waiver-list pattern this plan adopts wholesale: a named list that
 must shrink, currently empty, with every remaining entry traceable to the stage
 that opened it. Plan 162 is also one of the two documents whose 187 stage
 references argued against a lettering sweep.
+
+## Public summary
+
+**The plan document contract** — Plans had grown into documents answering four
+questions at once, with no rule for what belonged where or when evidence was
+written down. They now follow a contract: a plan gains one section as it
+advances, and automated checks refuse to publish work that skipped one.
 
 ## Record
 
@@ -1131,3 +1207,267 @@ three copies of it could have let the two published windows enforce different
 caps the first time that number moved. The default, the message and the
 docstring now all resolve from the constant; no `320` literal remains in the
 file, and the over-cap mutation was re-run against the change.
+
+### Stage E
+
+Split `close-out` in two along the grain line the contract already draws.
+`.claude/skills/stage-close/SKILL.md` is new (343 lines) and takes the
+per-stage half: the `## Record` entry, the cost comment, the public-surface
+question, the order table's `State` cell, and Linear `Done`. `close-out`
+narrowed from 318 to 294 lines, keeping only the plan-level transition —
+`## The checks`, the gate reading, the row move via `plans`, the archive
+description, `## Public summary`, `## Superseded` — and names `stage-close`
+for a stage.
+
+**`close-out` no longer proposes "nothing".** Its own text used to call that
+the common case and say it "should be proposed without apology"; under the
+split, an event that moves no row is a stage closing and belongs to the other
+skill, so the option is gone and the menu says so. The one thing that stayed
+behind is the slice-pointer update: that cell is published copy and therefore a
+`PLANS.md` edit, so it is `close-out`'s even though the plan has not moved
+table.
+
+**Neither skill can perform the other's write, stated as refusals rather than
+omissions.** `stage-close` may not touch `docs/PLANS.md` at all — not a row,
+not a slice cell, not through `plans` — and may not write `## The checks`,
+`## Public summary` or `## Superseded`, because each implies a state change a
+stage landing does not make. `close-out` writes nothing to Linear at all and
+may not write a `## Record` entry or an order-table cell; it reads issue
+statuses only, as an archive preflight. That preflight is new: a plan with a
+stage still `—`, `next` or `blocked` stops rather than archiving over open
+work, since a `## Public summary` written over live stages publishes a claim
+the plan has not met.
+
+**The multi-stage rule is why the split had to run in this direction.** Closing
+a stage always writes its `## Record` entry and its order-table `State` cell;
+the issue moves to `Done` only once every stage it carries is `done`. A
+one-stage issue is that rule with a covered set of one, and `stage-close` says
+explicitly that it must not be coded as a separate branch — the moment the two
+cases get separate handling, the bundled case becomes the one nobody exercises.
+Establishing the covered set from the issue's `## Exit` sections *and* the order
+table's `Issue` column together is a gather step, because either alone can be
+stale.
+
+**The `## Design` section was stale in four places and disagreed with what
+Stage C shipped.** Stage C replaced one-issue-per-stage with the grouping rule —
+issues chunk by whether proving a stage's exit needs production — and this
+document's own record says the document "and `plan-start` were both rewritten to
+that rule", but the rewrite missed:
+
+1. `### One skill per transition`'s `plan-start` row, still promising "one issue
+   per stage, chained `blockedBy` in the order table's order".
+2. The `Every stage gets an issue, chained` block, whose central argument was
+   that "a projection of an eight-stage plan that shows one issue does not
+   project it" — which is exactly the shape CAR-70 and CAR-73 have, and which
+   Stage E's whole design rests on. Rewritten to the grouping rule, with the
+   projection argument restated at the grain a PR can actually prove, and with
+   the stage-versus-issue closing rule named and pointed at Stage E.
+3. The same table's `stage-close` row, whose `Moment` read "one issue done" when
+   the grain is a stage, and whose `Writes` promised Linear `Done`
+   unconditionally.
+4. The ratchet table at the top of `## Design`, which attributed `## The checks`
+   to `stage-close` while `docs/PLAN_DOCUMENT.md` — the contract, and
+   authoritative — attributes it to `close-out`. Corrected to the contract,
+   which is also what the two skills as written now do: entering closeout is a
+   row move, so the section that transition owes cannot belong to the skill that
+   may not move a row.
+
+A fifth was phrasing rather than rule: the staleness-objection paragraph argued
+against "writing 8 tickets up front", a count that only makes sense under
+one-issue-per-stage. It now says a plan's whole issue set.
+
+Verified: `tests/test_planning_docs.py` 43 passed, the full non-integration
+suite 3531 passed, `build_public_roadmap.py --check` up to date — the same three
+baselines this branch started from, since Stage E adds no assertion and skills
+are prose no test reads.
+
+`Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.`
+
+**Five stale cross-references were left by this split, and all five were fixed
+before the PR opened.** They were first recorded here as deliberately *not*
+edited, on the reasoning that touching another live plan's agreed gate text is a
+design change dressed as a docs fix. Raised directly against that: a pointer
+saying which skill performs a step is not the gate's substance, and leaving five
+documents naming a skill that no longer does the thing is the drift this plan
+exists to remove. So the pointers moved and the gates did not:
+
+- [Plan 138](plan_138_public_surface_refresh.md) Gate 1h — the gate text now
+  says "the skill that closes a unit of work" rather than naming one, and its
+  two supporting arguments (Phase 1 has the material already; gathers and
+  proposes, never writes) hold verbatim for `stage-close`. Its Files table row
+  moved to `stage-close/SKILL.md`. **What was not touched is the history**: the
+  `Built 2026-09-01, PR #335, a4166ee` line stands, with a dated note beneath it
+  that the step moved on 2026-09-03 and why. The move is a *widening* — the
+  question now rides every stage close instead of only the closeouts that moved
+  a row, which were the minority.
+- [Plan 164](plan_164_cycle_close_ritual.md)'s ritual table split one row into
+  two, since closing finished issues and closing out a plan are now separate
+  owners.
+- [Plan 149](plan_149_linear_execution_layer.md)'s manual-transition note named
+  `close-out` as a skill assuming hand-run status changes; `close-out` no longer
+  touches Linear at all.
+- `public-surface-check`'s never-do list said a plan document belongs to `plans`
+  and `close-out`; it now names all five writers and their grains.
+- [Plan 168](plan_168_generated_knowledge_substrate.md)'s skill count read 8 and
+  is now 12 — already wrong before this stage, since Stages B and C added two,
+  so it is this plan's own accumulated drift rather than a neighbour's.
+
+Audited by grepping every `close-out` reference in `docs/` and `.claude/`
+afterwards: the eight that remain are each either still true (`close-out` does
+still own `## Public summary` and the `plans` seam) or deliberately historical
+past-tense record of what was built in PR #335.
+
+**Plan 172's own slice cell in `docs/PLANS.md` still reads Stage E**, which this
+entry marks `done`. That cell is published copy, so repointing it is `plans`
+operation 5 with its own approval and its own regeneration — not something Stage
+E does on its way past. It is the same defect PR #352's first finding caught,
+and naming it is the honest version of leaving it.
+
+### Stage F
+
+Added `.claude/skills/note-evidence/SKILL.md` (173 lines): one measurement,
+appended to `## Record` while the stage is still open, with the recipe that
+would reproduce it. It is the smallest of the five plan skills on purpose — a
+skill meant to be run mid-task cannot afford a ritual, so its single approval
+stop is the exact entry text on screen and nothing else.
+
+**The one design question was how a mid-stage entry reconciles with "one `###`
+entry per closed stage".** A stage that takes three measurements before it
+closes would, on the obvious reading, end up with four `###` entries and break
+the record's one-per-stage depth. So the entry is keyed on the stage rather than
+on the act of writing: if the stage has no entry, `note-evidence` creates it; if
+it already has one, the measurement is appended inside it as a paragraph, never
+a second heading and never a deeper one. `stage-close` then completes that entry
+rather than competing with it.
+
+**What the skill refuses is the failure this plan was raised against.** It may
+not record a number without the recipe that produced it, may not invent,
+estimate or round toward the conclusion the stage wants, and may not suppress a
+flat, failed or inconclusive result. Stage G is the worked example cited in the
+skill itself: its before-number was recorded without the rule that produced it,
+and the recorded recipe now returns 96 commits against the 79 it claims — a
+number whose method was not written down, which is why recovering the definition
+is Stage G's first work rather than its last.
+
+It writes no Linear, no `docs/PLANS.md`, no order-table cell and no status
+marker, and recording the reading a check was waiting on is explicitly not the
+same act as the gate closing — that stays `close-out`'s proposal and the user's
+decision.
+
+Verified against the same three baselines as Stage E, unchanged: 43, 3531, and a
+clean roadmap check.
+
+`Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.`
+
+**Cost was not recorded and CAR-73 was left open, and both are the rule rather
+than an omission.** CAR-73 carries E, F and G; G is not attempted here, so by
+the rule Stage E just shipped the issue stays open and its cost comment waits
+for its last covered stage. Stage G's `State` is `next`: recovering the baseline
+definition is workable now, and only its exit waits on a window of comparable
+length to have elapsed.
+
+### Stage G
+
+Added `test_neither_waiver_list_has_grown` to `tests/test_planning_docs.py`,
+with `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 39` and `MAX_THE_CHECKS_WAIVERS = 5`
+recorded 2026-09-03. Suite 43 → 44.
+
+**The gap it closes was invisible to Stage D's own tests, and that is
+demonstrated rather than argued.** Adding one more waiver naming Plan 167 — a
+live, pre-172 plan that genuinely lacks `## What this plan is for`, so a
+legitimate entry by every existing rule — leaves all three of Stage D's
+per-entry waiver tests passing and all nine contract tests green except the new
+one. Each of those three asks whether a given entry is justified; none can see
+the list getting longer. Verified in both directions: growing
+`WHAT_THIS_PLAN_IS_FOR_WAIVERS` to 40 and `THE_CHECKS_WAIVERS` to 6 each failed
+only the new test, and both were reverted.
+
+**What the ratchet cannot catch, stated rather than implied.** Raising a `MAX_*`
+constant instead of writing the section passes — confirmed by mutation, setting
+the ceiling to 45 and watching the test go green. That is inherent to every
+ratchet: its defence is the comment above the constants and the diff being
+visible in review, not the assertion. `docs/TESTING.md` asks for exactly this
+distinction between what is mechanised and what is only specified, so it is
+recorded here instead of leaving the ceiling looking stronger than it is.
+
+**The ratchet was paid down within hours, by this plan's own closeout.**
+Archiving Plan 172 promoted Plan 164 from build-order row 5 into the published
+top four, and Plan 164 was waived. The strict published-window test and
+`test_no_waiver_covers_a_published_plan` both refused that, so the closeout had
+to write Plan 164's `## What this plan is for`, drop its waiver, and lower
+`MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` from 39 to **38**. That is the ceiling
+working in the direction it was built for — a score paid down by fixing a
+document, not a floor — and it is the first evidence that the two Stage D tests
+and this one compose: without them Plan 164 would have been published carrying
+no public sentence and nothing would have said so.
+
+`Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.`
+
+#### The re-measurement this stage was, and why it is not that
+
+Stage G was written as *re-run the measurement over a window of comparable
+length*. The attempt is the evidence for replacing it, so it is recorded rather
+than discarded.
+
+**Three of the four before-numbers do not replay.** Measured against `7cb7f0e`,
+the 2026-09-02 tree, which carries the 98 plan documents the measurement
+section names:
+
+| Before-number | Recorded | Re-measured | Verdict |
+|---|---|---|---|
+| live plans carrying a public section | 43 of 44 lacked it | 1 of 98 documents carried it on 09-02, 4 today | **replays** |
+| work-unit sections, and how many state an exit | 291 across 57 documents, 14 with an exit | 372 across 57 (loose) or 357 across 54 (identifier-bearing); 13 with an exit on 09-02, 17 today | **does not** |
+| evidence-shaped headings by depth | `##` 25, `###` 77, `####` 41, `#####` 4 (147) | 14 / 56 / 17 / 0 (87) | **does not** |
+| `PLANS.md` churn | 79 comparable commits, 59 changing published copy (75%), 35 slice-only | 97 in the corpus; of the 45 that parse, 34 changed published copy (76%) | **does not** |
+
+The section count is the instructive failure. **57 documents replays exactly**
+under a loose filter — any heading opening with `Stage`, `Gate`, `Phase`,
+`Track`, `Step` or `Wave` — but that filter counts 372 sections, not 291.
+Requiring an identifier after the word gives 357 and drops the document count to
+54, breaking the 57 that had just matched. The two readings cannot both be the
+recorded one, and neither produces 291. The exit numerator nearly replays (13
+against 14); its denominator does not.
+
+**The churn number's recipe does not replay in three independent ways.** The
+recorded `git log --first-parent --since=2026-07-04 --until=2026-09-02 --
+docs/PLANS.md` returns **97**, against the 79 recorded and the 96 this document
+itself reported the day before. Sweeping `--since` from 2026-07-01 to 2026-07-14
+gives 99 down to 94 — no window in the plausible range approaches 79, so
+"comparable" is a content filter and not a date range. The principled candidate
+filters do not partition it either: 95 of the 97 touch a table row, 2 are
+narrative-only, none has an empty diff. And **today's generator raises on 52 of
+the 97**, because the build-order table held 10 columns then and holds 9 now, so
+a generator-based definition physically cannot reach across the window. This
+document's previous guess — that the 08-31 and 09-01 spikes are Plan 146's
+restructure — is also wrong; those days are Plan 138 and Plan 162 stage work.
+
+One thing survives: on the 45 commits that do parse, **34 changed published copy
+— 76%**, against the recorded 75%. The ratio replays; the denominators do not.
+
+**No filter was fitted to recover a recorded number.** Reverse-engineering a
+rule until it emits 79 or 291 would manufacture the definition rather than find
+it, which is the failure this plan was raised against. The numbers are recorded
+as unrecoverable instead.
+
+**And two of the three would have measured the wrong variable anyway.** The
+section count and the evidence histogram are adoption numbers, and adoption here
+is structurally frozen, not slow: [out of scope](#out-of-scope) rules out
+backfilling `## Design` and `## Stages` into the live plans and the archive is
+never rewritten, so both denominators stay almost entirely pre-contract by
+design. They move when plans are *written through* `plan-draft` and
+`plan-start` — and none has been. The highest plan number is still 172; the 173
+that Stage B's dry run proposed lived in a disposable clone and was never
+committed. A 60-day window in which no plan was drafted returns the
+before-number, which would read as the contract having changed nothing.
+
+The published-section count, the one number that does replay, moved 1 → 4 and
+needs no window at all: it is Stage D's waiver ratchet working, which is what
+Stage G now asserts directly instead of re-reading.
+
+Verified: `tests/test_planning_docs.py` 44 passed, the full non-integration
+suite 3532 passed, `build_public_roadmap.py --check` up to date, `ruff` clean —
+after merging `origin/master` at `28ffccd`, which moved Plan 138's slice to
+Stage 9 and touched none of this plan's files.

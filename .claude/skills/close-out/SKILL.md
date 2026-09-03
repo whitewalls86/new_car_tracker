@@ -1,28 +1,47 @@
 ---
 name: close-out
-description: "Close a finished Cartracker Linear issue — gather its evidence, record what it actually cost against its estimate, write the plan document's evidence section and, when the plan archives, its public summary, and move the plan's row in docs/PLANS.md if and only if the plan itself changed state. Use when the user says an issue or slice is done, finished, shipped, or ready to close. This skill gathers and proposes first and writes nothing until the user approves: it never decides that a gate has closed, and it never moves a row on the strength of a summary it wrote itself."
+description: "Close out a Cartracker plan — the plan-level transition, not a stage. Read the gate, propose the row move through the plans skill, and write the sections that state change owes: ## The checks when a plan enters closeout, the archive description and ## Public summary when it archives, ## Superseded when it is replaced. Use when the user says a plan is deployed and waiting on evidence, that its gate has closed, that it should be archived, or that something has superseded it. This skill gathers and proposes first and writes nothing until the user approves: it never decides that a gate has closed, never moves a row on the strength of a summary it wrote itself, and never closes a stage — that is stage-close, named here and never run from here."
 ---
 
-# Closing out a finished slice
+# Closing out a plan
 
-Three records describe one finished piece of work, and they are finished at
-different moments:
+This skill operates at the grain of a **plan**. A stage finishing is a different
+event with a different skill, and conflating them is the main way work here gets
+recorded wrong.
 
-| Record | Says | Finished when |
+| Grain | Skill | Writes |
 |---|---|---|
-| the Linear issue | this slice is done | its `Exit` checks pass |
-| the plan document | what the work proved | its evidence is written |
-| `docs/PLANS.md` | where the plan now sits | a **gate** closes — often much later |
+| one **stage** finished | `stage-close` | its `## Record` entry, the order table's `State` cell, the cost comment, `Done` when the issue's last stage closes |
+| the **plan** stops being work, or changes state | **this skill** | `## The checks`, the archive description, `## Public summary`, `## Superseded`, and the row move via `plans` |
 
-Most closeouts touch the first two and leave the third alone. Plan 149 is
-explicit: a finished slice reaching `Done` *"does not by itself close, archive
-or move a plan in `PLANS.md`."* Treating every closed ticket as a plan
-transition is the main way this skill could do damage.
+**If nothing about the plan's state has changed, this is not the right skill.**
+A finished stage on a plan that continues is `stage-close` — it writes the
+evidence and the order-table cell and stops, and no row moves. Plan 149 is
+explicit that a finished slice reaching `Done` *"does not by itself close,
+archive or move a plan in `PLANS.md`."* This skill used to carry that case as
+its own most common outcome, proposing "nothing" for `PLANS.md`; that case is no
+longer its job. Say so and name `stage-close`.
+
+The one exception is a plan that continues but whose published **slice pointer**
+is now wrong. That is a `PLANS.md` edit and therefore this skill's, even though
+the plan has not moved table — see phase 2.
+
+## The rules this skill encodes, and where they are stated
+
+`docs/PLAN_DOCUMENT.md` is the contract; this skill does not restate it. Read it
+for the section ratchet and its fixed order, for the fact that
+`## Public summary` is inserted immediately before `## Record` so the record
+stays last, for the 320-character cap on both public sections, and for the
+superseded exit — a superseded plan gets `## Superseded` and never `## Record` or
+`## Public summary`, because it was replaced rather than delivered.
+
+If this skill and that document disagree, that document is right and this file
+is the bug.
 
 ## Why this skill stops in the middle
 
-Plan 146 Stage 6 separates summarising from transitioning, and the `plans`
-skill states the reason:
+Plan 146 Stage 6 separates summarising from transitioning, and the `plans` skill
+states the reason:
 
 > a thing that summarises work and moves rows can move a row because its own
 > summary said so, and the record then confirms itself.
@@ -43,93 +62,97 @@ the conclusion looked.
 
 Read, write nothing:
 
-1. **The Linear issue** — its `Exit` checklist, `Blocked by`, `Evidence
-   destination`, `estimate`, `startedAt`, `completedAt`, current status.
-2. **Its canonical plan document** — the stage the issue names, and what that
-   stage says it owes.
-3. **The commits** — plan-attributed via the `commit-plan-attribution`
-   convention, so the plan number resolves them from the message alone.
-4. **The gate**, if the plan has a row in `PLANS.md` — the exact words of the
-   `Gate`, `Blocked by` or `Trigger` cell.
-5. **The evidence the gate names** — a soak result, a metric, a migration, a
-   test run. Read it if it is readable from here; say plainly if it is not.
+1. **The plan's row in `docs/PLANS.md`** — which table it is in, and the exact
+   words of its `Gate`, `Blocked by` or `Trigger` cell, and of its
+   `Next executable slice` cell.
+2. **The plan document's order table** — every stage and its `State`. This is
+   the preflight for the whole skill: see below.
+3. **The evidence the gate names** — a soak result, a metric, a migration, a
+   deploy, a test run. Read it if it is readable from here; say plainly if it is
+   not.
+4. **`## Record`** — the entries `stage-close` and `note-evidence` already
+   wrote. That is the material a `## Public summary` is drawn from, and this
+   skill reads it rather than re-deriving it from commits.
+5. **The plan's Linear issues** — their statuses only. A plan cannot archive
+   with work still open; this skill does not change any of them.
+
+### The order-table preflight
+
+A plan does not archive while a stage is unfinished, and the order table is
+where that is visible:
+
+- **Every stage `done` or `canceled`** → an archive transition is coherent.
+- **Any stage still `—`, `next` or `blocked`** → stop and say which. A plan with
+  live stages is not finished, and a `## Public summary` written over open
+  stages publishes a claim the plan has not met.
+- **A stage that is `done` but whose issue is still open** → the issue carries
+  other stages that have not closed. That is `stage-close`'s business, not a
+  reason for this skill to reach into Linear.
+
+A **build order → closeout** transition is the one case where open stages are
+expected: the code has landed and something is being watched. Say which stages
+the checks belong to.
 
 ## Phase 2 — Propose, then stop
 
 Present, in this order:
 
-1. **What the issue claimed to do**, and whether each `Exit` check is met,
-   unmet, or unverifiable from here. Never mark a check met because the
-   surrounding work looks finished.
-2. **Cost.** The estimate, the actual, and the delta — see below.
-3. **Whether the work moved a public surface** — one question, answered from
-   what you have just read. See below. Its answer becomes a line in the edit
-   below it, so ask it before you write that text.
-4. **The plan document edit**, as the exact text you propose to add and where.
-5. **The `PLANS.md` consequence**, chosen from:
-   - **nothing** — the slice is done, the plan continues, and the row's
-     **Next executable slice** cell still names something true. *This is the
-     common case and should be proposed without apology.*
-   - **the slice pointer moves, the plan does not** — the row stays where it
-     is and its slice cell now names the wrong next step. Propose the exact
-     replacement text. **This is not a lesser version of "nothing"**: that cell
-     is published copy on the landing page, so it is `plans` operation 5 and it
-     goes through that skill like any other `PLANS.md` edit.
+1. **The gate, in its own words**, and your reading of whether the evidence
+   satisfies it — as a reading, never as a conclusion. See below.
+2. **The `PLANS.md` consequence**, chosen from:
+   - **the slice pointer moves, the plan does not** — the row stays where it is
+     and its slice cell now names the wrong next step. Propose the exact
+     replacement text. That cell is published copy on the landing page, so it is
+     `plans` operation 5 and it goes through that skill like any other
+     `PLANS.md` edit.
    - **build order → closeout** — deployed, evidence pending. Needs a `Lands`
-     date and a gate, and neither is yours to invent.
+     date and a gate, and neither is yours to invent. Propose `## The checks`
+     alongside it — see below.
    - **closeout → archive** — the gate closed. Needs the archive description
      **and the plan's public summary** — see below. Propose both together.
-   - **anything → superseded** — needs what superseded it.
-6. **What you could not verify**, named explicitly.
+   - **anything → superseded** — needs what superseded it. Propose
+     `## Superseded`: the date, a link to the plan or plans that replaced it,
+     and why.
+
+   **"Nothing" is not on this list.** If that is the answer, the event was a
+   stage closing and `stage-close` is the skill; say so and stop.
+3. **The plan document edit**, as the exact text you propose to add and where —
+   `## The checks`, `## Public summary`, or `## Superseded`, at the position the
+   contract's ratchet gives it.
+4. **What you could not verify**, named explicitly.
 
 Then **stop**. Do not write. Do not call another skill.
 
-### Did this work move a public surface?
+### Deciding a gate has closed is not yours
 
-Ask it as a step, every time:
+The `plans` skill is unambiguous: *"You also do not decide the gate has closed.
+The user says it has."*
 
-> Did this work change a **mechanism**, a **name**, or a **quantity** that
-> `README.md` or `ops/templates/info.html` states?
+Phase 2 may say "the gate reads X, and commit `abc123` appears to satisfy it
+because Y." It may not say "the gate is met, moving the row." The difference is
+whether the user can reject your reading on its evidence — which requires the
+evidence on screen and the row still unmoved.
 
-That is the `public-surface-check` taxonomy read from the other end. That skill
-checks a surface someone edited against the repository; this asks whether the
-repository has just moved out from under a surface nobody edited. **The commit
-gate cannot see that case at all** — `public_surface_gate.py` fires on
-`README.md` or `ops/templates/info.html` appearing in `git diff --cached
---name-only`, so a slice that adds migrations, adds containers or replaces a
-solver and edits no prose never reaches it. Every defect Plan 138's Gate 0
-found was that case: a surface standing still while the tree moved underneath
-it.
+### `## The checks`, written when the plan enters closeout
 
-**It must be cheap, and it will usually end in "no".** Answer it from the
-commits and evidence phase 1 has already gathered. Do not open either surface
-unless the answer is yes — a step that stops every closeout to deliberate will
-be skipped within a month, and then it holds nothing.
+A plan in closeout has deployed and is waiting on evidence. The row carries a
+`Lands` date and a one-sentence gate; the document carries the rest, because a
+gate sentence in an index holding thirty other rows cannot say what was deployed
+or where the reading goes.
 
-Three outcomes, and **all three are recorded**:
+Per check, name four things:
 
-- **No** — one line in the evidence section, in the shape `Public surfaces: no
-  mechanism, name or quantity either surface states was changed by this work.`
-  Write it even though it is uneventful. That line is the only thing that
-  distinguishes a closeout where the question was asked and answered from one
-  where it was skipped.
-- **Yes, and small** — propose the correction as exact replacement text in the
-  approval stop this phase already makes, and land it with the closeout. It
-  stages a surface, so `public_surface_gate.py` fires and
-  `public-surface-check` reads the diff in the normal way. The two compose;
-  neither replaces the other.
-- **Yes, and larger than this closeout** — a ticket, via `ticket-now`, naming
-  the surface and the claim that is now wrong. A closeout is a bad place to
-  rewrite a section of the front door.
+- **what was deployed, and when** — the concrete change, with its date;
+- **what is being watched** — the metric, dashboard, log, table or query, by
+  name, so the next reader takes the same reading rather than a similar one;
+- **when the answer is due** — the same date the row's `Lands` cell holds;
+- **which `## Record` entry receives the result** — so the reading has a
+  destination before it is taken. `note-evidence` is what writes it there when
+  the answer lands.
 
-**Propose; never write.** The approval stop covers this exactly as it covers
-everything else in phase 2.
-
-This is a step, not a hook, and saying so is part of using it honestly. Nothing
-forces a closeout to happen, so unlike the commit gate it is a check you can
-still miss by never closing out. It is worth doing anyway because it rides a
-ritual that already exists, and because the alternative is auditing accumulated
-drift after it has been published.
+The row's `Gate` cell is the one-line summary of this section, and the index
+stays where the *date* lives so nothing has to scan documents to find what is
+due.
 
 ### The public summary, written once, when the plan archives
 
@@ -153,7 +176,8 @@ description is the record; the public summary is what a stranger reads on
 `cartracker.info`.
 
 The section goes in the plan document, in the same shape as an archive cell so
-the same parser reads it:
+the same parser reads it, and **immediately before `## Record`** so the record
+remains the last section:
 
 ```markdown
 ## Public summary
@@ -172,147 +196,99 @@ Three rules, and the first is the one that gets broken:
 - **Say what changed for the system, not what the work touched.** "Deleted
   1,172 legacy objects across six relations" is the archive's sentence;
   "reclaimed 20 GB of duplicated storage" is this one.
-- **Under 320 characters.** The generator fails the build over that rather than
-  publishing a paragraph, and the fix is shorter copy, not a wider cap.
+- **Within the cap `docs/PLAN_DOCUMENT.md` sets**, which
+  `build_public_roadmap.MAX_SUMMARY_CHARS` holds as a number. The generator
+  fails the build over it rather than publishing a paragraph, and the fix is
+  shorter copy, not a wider cap.
 
-A plan whose work has no public meaning — an internal register, a
-documentation reshuffle — should say so and get no section. The generator
-falls back to extraction and names the plan in its output, which is Gate 1d's
-worklist rather than an error.
+A plan whose work has no public meaning — an internal register, a documentation
+reshuffle — should say so and get no section. The generator falls back to
+extraction and names the plan in its output, which is Gate 1d's worklist rather
+than an error.
+
+**`## What this plan is for` is not rewritten here.** It is present tense and
+describes planned work; a plan reaching the archive leaves the planned window
+rather than needing its earlier claim edited. The contract freezes it against
+work progressing, and archiving is the last thing that could be mistaken for a
+reason to touch it.
 
 Nothing here changes `completed_plans.md`. That file is Plan 146's and gains no
 column; a plan's own document is the plan's to write in.
-
-### Deciding a gate has closed is not yours
-
-The `plans` skill is unambiguous: *"You also do not decide the gate has closed.
-The user says it has."*
-
-Phase 2 may say "the gate reads X, and commit `abc123` appears to satisfy it
-because Y." It may not say "the gate is met, moving the row." The difference is
-whether the user can reject your reading on its evidence — which requires the
-evidence on screen and the row still unmoved.
-
-## Cost, and why elapsed time is not it
-
-Record the **original estimate untouched** and the actual alongside it. Never
-overwrite `estimate` with the actual: the delta between them is the only thing
-that ever improves sizing, and overwriting destroys it.
-
-**Actual cannot be derived, and you must not try.** Linear's `startedAt` and
-`completedAt` give elapsed calendar time, which is not effort — a 1-point issue
-that sits in `In Review` over a weekend shows three days and cost an hour.
-Feeding elapsed time into a calibration table produces numbers that look
-rigorous and mean nothing.
-
-So: **ask.** Offer elapsed time and the commit span as context, on the same
-Fibonacci scale the estimate used (`1` under half a day, `2` about a day, `3`
-two to three days, `5` most of a week). If the user does not give a number,
-record that it was not measured rather than guessing one.
-
-Write it as a comment on the issue, never into the description body the
-`ticket-now` and `fill-cycle` skills own:
-
-```markdown
-**Closeout** YYYY-MM-DD
-estimate N → actual M (±D)
-cause: one line, only when the delta is worth a reason
-evidence: plan_NNN_*.md §Stage N
-```
-
-A delta of zero is still worth writing. A run of accurate estimates is the
-evidence that the scale works.
 
 ## Phase 3 — Write, in this order
 
 Only after approval, and only what was approved.
 
-1. **The plan document's evidence section.** Add to the section the issue's
-   `Evidence destination` names. Additive — you are recording what happened,
-   not revising what the plan intended. Do not rewrite the plan's problem
-   statement, stages, or design because the work turned out differently; a plan
-   that needs redesigning is a separate conversation.
-   **If phase 2 proposed closeout → archive**, add the approved
-   `## Public summary` section in the same edit, then regenerate the public
-   projection with `python scripts/build_public_roadmap.py` and commit its
-   output — CI's `--check` fails on a stale artifact.
-2. **The public surface correction**, if the surface question ended in "yes,
-   and small" and the user approved the exact text. Write that text and nothing
-   else — a closeout is not the moment to tidy the rest of the file. The commit
-   then stages a surface, so `public_surface_gate.py` blocks it until
-   `public-surface-check` has read the diff and stamped it. Run that skill; do
-   not bypass the hook.
-3. **`docs/PLANS.md`, via the `plans` skill** — for a transition *or* a
+1. **The plan document section** — `## The checks`, `## Public summary`, or
+   `## Superseded`, at the ratchet's position for it. Additive: do not rewrite
+   the plan's problem statement, design, stages or record because the work
+   turned out differently. A plan that needs redesigning is a separate
+   conversation.
+2. **`docs/PLANS.md`, via the `plans` skill** — for a transition *or* a
    slice-pointer update, whichever phase 2 proposed and the user approved. Pass
    the approved values through and tell that skill they were approved in the
    open session, with their source. **Never edit `PLANS.md` directly from
    here**, and that includes a one-cell pointer edit: `plans` is where this
    repository keeps the fact that the build order's top four rows are published
-   through `ops/static_ops/generated/project-updates.json`, along with the regeneration
-   step and the check that proves it. An edit made from here reaches none of
-   that.
-4. **Linear** — set the issue to `Done`, post the closeout comment. Leave the
-   estimate alone.
+   through `ops/static_ops/generated/project-updates.json`, along with the
+   regeneration step and the check that proves it. An edit made from here
+   reaches none of that.
+3. **Regenerate the public projection** with
+   `python scripts/build_public_roadmap.py` and commit its output, if the edit
+   touched a published window — CI's `--check` fails on a stale artifact. Let
+   `plans` run its own after-every-operation checks; do not duplicate them
+   ahead of it.
 
-If any step fails, stop and report. Do not carry on to the next: a plan
-document recording evidence for a row that never moved is a contradiction the
-next reader has to untangle.
-
-## Which status, and when not to use Done
-
-- **`Done`** — the `Exit` checks are met.
-- **`Soaking`** — implementation is complete but a time or evidence gate is
-  running. The issue names the gate and its end time. This is not a closeout;
-  do the cost comment and stop.
-- **`Canceled`** — the slice was rejected, superseded, or made unnecessary.
-  Plan 149: the reason belongs in the canonical plan when it changes that
-  plan's design. Cost is still worth recording if work was done.
-
-An issue whose `Exit` checks are not all met is not `Done` because the user is
-finished with it. Say which checks are outstanding and let them decide.
+If any step fails, stop and report. Do not carry on to the next: a plan document
+carrying a public summary for a row that never moved is a contradiction the next
+reader has to untangle.
 
 ## The workspace
 
+This skill **writes nothing to Linear.** It reads issue statuses as part of the
+archive preflight and stops there. Setting an issue to `Done` and recording its
+cost belong to `stage-close`, at the grain where the evidence for them exists.
+
 - Team **Cartracker**, `ee63b26b-de49-4fa5-8617-bbaed7c1227d`.
-- Estimation is **Fibonacci**, enabled 2026-08-25. Points are live, so an
-  unestimated closed issue silently undercounts its cycle.
 - Statuses: `Backlog`, `Ready`, `In Progress`, `In Review`, `Soaking`, `Done`,
   `Canceled`. `Duplicate` is reserved — never set it.
-- Cycle 1 (2026-08-25 → 08-31) is six days and contains work completed before
-  it opened. Its totals are not a clean baseline; say so if a closeout report
-  compares against it.
 
 ## After writing
 
 Report:
 
-- the issue, its final status, and the cost line recorded;
+- the plan, the transition, and the row before and after;
+- which section was added to the plan document, and where in the ratchet;
 - every file changed, and the diff's line count;
-- whether `PLANS.md` moved, and if not, why not;
+- whether the public projection was regenerated, and whether `--check` is clean;
 - which values were supplied by the user and which were approved from your
   proposal, naming the source of each;
-- anything left outstanding — an unverified `Exit` check, an unmeasured actual,
-  a gate still open.
+- that no Linear issue was changed, and that no stage was closed from here;
+- anything left outstanding — a gate still open, evidence that was not readable
+  from here, a stage whose state contradicts the transition.
 
 ## What this skill must never do
 
 - **write anything before the approval stop.**
 - **decide that a gate has closed.** Propose a reading; the user decides.
+- **close a stage.** Not its `## Record` entry, not its order-table `State`
+  cell, not its cost comment, not its issue's status. That is `stage-close`,
+  which this skill names and never runs.
+- **write to Linear at all.**
 - **move a `PLANS.md` row directly.** That is the `plans` skill's job, with
   values the user approved.
-- **mark an `Exit` check met because the work looks finished**, or close an
-  issue with outstanding checks without naming them.
-- **overwrite `estimate` with the actual**, or derive an actual from elapsed
-  calendar time.
-- **rewrite a plan's design** because the work diverged from it.
-- **silently edit a public surface.** A correction to `README.md` or
-  `ops/templates/info.html` is proposed as exact text and approved like
-  everything else here. One appearing in a closeout's diff without having been
-  on screen is the failure the surface question exists to prevent — and
-  skipping the question, or answering it and recording nothing, is the same
-  failure one step earlier.
-- **write a `## Public summary` the user has not approved.** It is public copy
-  on a public page, and it is the one thing here a reader outside this project
-  will ever see.
-- **close more than one issue per invocation.** Each has its own evidence and
-  its own stop.
+- **propose "nothing" as a `PLANS.md` consequence.** If nothing moves, this is
+  the wrong skill for the event.
+- **archive a plan with a stage still `—`, `next` or `blocked`** without naming
+  it and stopping.
+- **rewrite a plan's design or its `## Record`** because the work diverged from
+  the plan.
+- **edit `## What this plan is for`.** The contract freezes it against work
+  progressing, and a state change is work progressing.
+- **write a `## Public summary` the user has not approved.** It is public copy on
+  a public page, and it is the one thing here a reader outside this project will
+  ever see.
+- **give a superseded plan a `## Record` or a `## Public summary`.** It was
+  replaced, not delivered; it gets `## Superseded` and the ratchet stops there.
+- **close out more than one plan per invocation.** Each has its own gate and its
+  own stop.

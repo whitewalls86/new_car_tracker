@@ -167,8 +167,12 @@ bounded:
   to adopt this contract.
 
 Known live violations sit in one named, dated waiver list owned by a plan. The
-assertion rejects a new violation, a stale waiver, or a waiver whose owner has
-archived. The list only shrinks. A plan whose work does not fit stages receives a
+assertion rejects a new violation, a stale waiver, a waiver whose owner has
+archived, and — since Plan 172 Stage G — any growth in the list's own count,
+against a ceiling recorded per list. **The list only shrinks**, and that is
+asserted on the count rather than left to each entry looking defensible: a new
+waiver naming a live plan that genuinely lacks the section satisfies every
+per-entry check there is. A plan whose work does not fit stages receives a
 waiver rather than a permanent plan kind; Plans 117 and 163 are the baseline
 cases.
 

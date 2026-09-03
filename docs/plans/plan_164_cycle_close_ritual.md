@@ -1,5 +1,12 @@
 # Plan 164: The Cycle-Close Ritual
 
+## What this plan is for
+
+Three steps of the routine that closes a work cycle — recording how the cycle
+actually went, rolling unfinished work forward, and tidying the branches left
+behind — have no owner today, and each is only ever correct at the close. This
+plan gives all three a home.
+
 ## Status
 
 Written 2026-08-31, out of Cycle 1's close. Three steps of a ritual that
@@ -17,7 +24,8 @@ specified. Most of it has skills. Some of it does not.
 
 | Cycle-close step | Owner today |
 |---|---|
-| Close finished issues, write their evidence | `close-out` |
+| Close finished issues, write their evidence | `stage-close` |
+| Close out a plan that has finished | `close-out` |
 | Move rows in `PLANS.md` and the archive | `plans` |
 | Write the weekly recap | `plan-week` |
 | Seed the next cycle | `fill-cycle` |
