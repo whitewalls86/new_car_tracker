@@ -143,7 +143,7 @@ order:
 | **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
 | **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
-| **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
+| **6c** | **Every service contract produces an intent row the database accepts. Complete — CAR-66, 2026-09-02** | -- | 0 |
 | **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
 | **8** | **`scraper`'s floor, and the Layer 2 suite that asserts nothing. Complete — CAR-52, 2026-09-02** | G7, G8 | -- |
 | **9** | **`airflow/dags` and the `.sql` convention. Complete — CAR-53, 2026-09-02** | G12 | -- |
@@ -3052,6 +3052,12 @@ composes its URL where the detail path receives one. Both were decided before
 any test was written, and both changed what got built.
 
 ### Evidence — Stage 9, the DAG tree's `.sql` convention (CAR-53), 2026-09-02
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Neither surface describes where SQL lives or what the
+drain reads, no DAG was added — `dag_queries.py` builds none, which the dagbag
+census confirms — and both still say "More than 3,000 tests run in CI", which
+3,523 satisfies.
 
 **Two of G12's three claims were already stale when the stage opened**, and
 finding that out changed the work. The gap row said `airflow/dags/` "has no
