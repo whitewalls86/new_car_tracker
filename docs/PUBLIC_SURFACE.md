@@ -205,6 +205,7 @@ other agreement on substance.
 | `/info` | Public | 308 to `/` |
 | `/recaps` | Public | Generated recap index, newest first, HTTP 200 |
 | `/recaps/YYYY-MM-DD` | Public | One generated recap page, HTTP 200 |
+| `/writings` | Public | The author's published articles, one card each, linking out. HTTP 200. **Specified 2026-09-03, not yet built** — Plan 138 Stage 1g |
 | `/static_ops/*` | Public | Versioned local assets with long-lived caching |
 | `/robots.txt` | Public | Allows the public root and references the sitemap |
 | `/sitemap.xml` | Public | Contains only canonical public URLs |
@@ -244,12 +245,13 @@ entry, and no inbound link — in that order.
 | Destination | For | Shape | Linked from |
 |---|---|---|---|
 | `/` | The explanation of the system, for someone who arrived with no context | page | README, external links |
-| `/recaps` | The long-form account of what happened, week by week | page (index) | **nothing** — [P2](#the-gap-list) |
+| `/recaps` | The long-form account of what happened, week by week | page (index) | **nothing** — [P2](#the-gap-list); Plan 138 Stage 1g gives it a door from `/` |
 | `/recaps/YYYY-MM-DD` | One week's record | page | its index |
 | The live stats block | What the system is doing right now | section of `/` | **nothing; it has no anchor id** — [P3](#the-gap-list) |
 | `/dashboard` | The application a granted role grants | page, `viewer`+ | **nothing** — [P1](#the-gap-list) |
 | `/request-access` | The way to ask for a role | page, Google-authenticated | `/` hero and footer |
-| The published articles | The author's own account, in their own register | external, third-party | nothing yet — Plan 138 Stage 1g |
+| `/writings` | The author's own account of the work, in their own register | page (cards, linking out) | **not yet built** — Plan 138 Stage 1g gives it a door from `/` |
+| The published articles | One article, on the third-party platform that hosts it | external, third-party | `/writings`, and the newest from `/` — Plan 138 Stage 1g |
 
 **Outbound links are visibly outbound**, and an item that scrolls rather than
 navigates is not presented as though it navigates. A list that flattens an
@@ -261,14 +263,20 @@ lie of omission.
 | # | Question | Settled by |
 |---|---|---|
 | ~~D1~~ | ~~Does `/recaps` survive as its own destination, or become a section of `/`?~~ **Answered 2026-09-02: it survives, and gains weight.** Plan 138 Stage 3d decided `/recaps` leads with the newest published week rendered in full, with its week stated at the top and `rel=canonical` pointing at that week's own page. A destination you land on and read is not a candidate for folding into `/` | Plan 138 Stage 3d |
-| D2 | Is long-form writing one place or two? Stage 1g currently puts articles inline on `/` and reaches recaps through their index — a local call never checked against a whole-surface picture | Plan 138 Stage 3d and 1g together |
+| ~~D2~~ | ~~Is long-form writing one place or two?~~ **Answered 2026-09-03: two, and neither is inline on `/`.** `/recaps` is the account of what happened; `/writings` is the author's own articles. `/` carries one "more depth" section holding a door to each plus the newest article as a card, so the reader still has a single place to look. The withdrawn answer — articles inline, reusing the recap index's row — failed for two reasons recorded in Plan 138: 3d gave `/recaps` real weight, so pairing a page against four inline links was not two destinations; and the row reuse was never shared code, since `.index-list` lives in the recap generator's own stylesheet, which `/` cannot load | Plan 138 Stage 1g |
 | D3 | What earns a destination slot at all? Without a rule, the next generated artifact repeats the route-then-sitemap-then-no-link sequence | Plan 138 Stage 3d |
 | D4 | Does a public navigation element exist, and on which surfaces? A nav shared with the recap pages changes what `scripts/build_public_recaps.py` emits | deferred behind D1–D3 |
 
-**D2 and D3 are recorded here rather than answered.** Answering them by omission
-is what produced the gap list below. D1 was answered on 2026-09-02, two days
-after this contract first recorded it, which is the mechanism working: the
-question was written down where the stage that owns it would see it.
+**D3 is recorded here rather than answered.** Answering it by omission is what
+produced the gap list below. D1 was answered on 2026-09-02 and D2 on
+2026-09-03, within a day and two days of this contract first recording them,
+which is the mechanism working: the questions were written down where the
+stage that owns them would see them.
+
+**D2's answer adds a destination, which is a data point D3 still has to
+generalise.** `/writings` earned a slot on the argument that it is a
+destination a reader lands on and reads, the same test D1 applied to
+`/recaps`. That is a precedent, not yet the rule D3 asks for.
 
 ---
 
@@ -301,14 +309,14 @@ fixed elsewhere. An entry is deleted when it is repaired, not marked closed.
 | P2 | **`/recaps` has a canonical route, a sitemap entry, and no inbound link.** The landing page's only recap mention resolves to GitHub | Plan 138 Stage 3d / D1 |
 | P3 | **The live stats section carries no anchor id**, so nothing can link to it — including the roadmap section directly above it | Plan 138 Stage 4 |
 | P4 | **The commit gate covers two of five public surfaces.** `public_surface_gate.py` fires on `README.md` and `ops/templates/info.html`; the generated artifacts and the `docs/PLANS.md` slice cell are outside it. The slice cell is covered instead by the `plans` skill, which knows it is publishing; the generated artifacts are covered by their sources and their `--check` | Plan 138 |
-| P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/` | Plan 138 Stage 1g |
+| P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/writings` | Plan 138 Stage 1g |
 
 ---
 
 ## What this contract does not decide
 
-- **Which destinations exist.** D2–D4 above are open, and Plan 138's Stages 3d
-  and 1g settle them.
+- **Which destinations exist.** D3 and D4 above are open. D1 and D2 are
+  answered, both by Plan 138's Stages 3d and 1g.
 - **The navigation element's design.** A nav is a projection of the destination
   inventory; it is deliberately deferred until the inventory is closed.
 - **Whether the published articles are maintained.** Plan 138 Stage 1f decided
