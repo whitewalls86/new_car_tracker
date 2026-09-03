@@ -2,10 +2,13 @@
 
 ## Status
 
-**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8** — which
-was narrowed on 2026-09-02, before it started: G7 is now the dashboard's
-assertionless Layer 2 suite, and the Streamlit Python it used to mean is G18
-and Plan 150's. [Why](#stage-8-narrowed-and-g7-now-names-a-different-gap).
+**Stages 0–9 are complete. Stage 10 is next.** Stage 8 was narrowed on
+2026-09-02, before it started: G7 became the dashboard's assertionless Layer 2
+suite, and the Streamlit Python it used to mean is G18 and Plan 150's.
+[Why](#stage-8-narrowed-and-g7-now-names-a-different-gap). Stage 9 closed G12
+and, on the way, replaced the two SQL rules Stage 7 built with one keyed on the
+statement rather than on its container —
+[why](#rules-5b-and-5c-became-one-rule-and-that-reverses-a-stage-7-decision).
 The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
@@ -140,10 +143,10 @@ order:
 | **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
 | **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
-| **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
+| **6c** | **Every service contract produces an intent row the database accepts. Complete — CAR-66, 2026-09-02** | -- | 0 |
 | **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
-| **8** | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | -- |
-| **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
+| **8** | **`scraper`'s floor, and the Layer 2 suite that asserts nothing. Complete — CAR-52, 2026-09-02** | G7, G8 | -- |
+| **9** | **`airflow/dags` and the `.sql` convention. Complete — CAR-53, 2026-09-02** | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
 | **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
 | **12** | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | -- |
@@ -1559,6 +1562,21 @@ target waiting: its remaining `Install dependencies` is 18s and its `dbt build`
   answer was recorded above. The numbers it produced are in this section; the
   script is in the history at `e3b4c82` if a later stage wants to re-run it.
 
+
+**Stage 6c's closeout rode in on this PR.** `f6a7077` was already on the branch
+when Stage 8 started — the same pattern as Stage 7 on PR #344 — so #347 also
+carried `docs/PLANS.md` and `ops/static_ops/generated/project-updates.json`,
+the generated roadmap the landing page renders. Neither is Stage 8's work and
+neither is in `public-surface-check`'s scope, which covers the two authored
+surfaces only. It is recorded because a published surface moved inside a PR
+reviewed as a testing change, and that is the shape worth noticing rather than
+the content, which was 6c's and correct.
+
+**One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
+checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
+invoked as `bash scripts/redeploy.sh`. Not this stage's to fix, and recorded
+because the next person to deploy will hit it.
+
 #### Cost, and one regression worth recording
 
 The stage cost one red CI run, and it was self-inflicted in a way the suite
@@ -2950,7 +2968,7 @@ convention is not enough on its own: a mutation anchored on a gap row is
 anchored on the thing the plan is trying to delete. Three anchors were moved to
 live gaps and the full run is now **24 mutations, all caught**.
 
-#### Two production changes, one of them not yet deployed
+#### Two production changes, and the deploy that carried them
 
 `scraper/app.py` imported `from db import close_pool, get_pool`, which resolved
 only because the Dockerfile ran `cp scraper/db.py db.py` — so the module existed
@@ -2960,6 +2978,420 @@ failed outright outside the conftest that put `scraper/` on `sys.path`. That is
 papered over rather than absent. Both removed; the app imports `scraper.db` like
 every other module in its package.
 
-**This needs a scraper image rebuild**, and the deploy is the one gate this
-stage has not passed. The evidence above is CI's; production still runs the
-image with the `cp` layer.
+**This needed a scraper image rebuild**, which the section below records.
+
+#### Deployed 2026-09-02, and confirmed
+
+Merged as `ff690e0`; the VM pulled it and `scripts/redeploy.sh scraper` rebuilt
+the image. Coordination drain confirmed in 1s, container recreated, healthy
+after 5s.
+
+**What the container loaded, asked of the container rather than the checkout.**
+A `git pull` is not a deploy and a healthy container is not evidence the new
+code is running, so all four were read out of the running process:
+
+| Check | Result |
+|---|---|
+| `/app/db.py`, the `cp` layer | gone — `No such file or directory` |
+| `app.py:15` | `from scraper.db import close_pool, get_pool` |
+| `app.get_pool.__module__` | `scraper.db` |
+| bare `db` in `sys.modules` | `False` |
+
+**The pacing seam was checked in production, because it is the change that
+fails silently.** In the running container `BASE_URL` is
+`https://www.cars.com/shopping/results/`, `SCRAPER_RESULTS_BASE_URL` is unset,
+and **`PACING_APPLIES` is `True`** — so `_pace()` calls `time.sleep` exactly as
+the code it replaced did. That is the whole risk of keying pacing to the origin,
+answered against production rather than argued.
+
+**The detail path is confirmed.** In the 25 minutes after the deploy: 400 rows
+in `ops.artifacts_queue`, 3,780 rows in `staging.artifacts_queue_events`, and a
+newest MinIO object at 18:45:20 — against a last pre-deploy artifact of
+18:15:47.
+
+**The SRP path is confirmed, two rotation slots later.** `search_configs`
+rotates on a **four-hour** cycle at `:30`, so the `*/30` DAG mostly
+short-circuits on `advance_rotation` returning `configs=[]` — its runs take
+10–19s when nothing is due. The two slots that were due ran under the new code:
+**21:30 UTC for 521s producing 45 objects**, and **01:30 for 463s producing
+26**. The three newest parse to 24, 24 and 8 listings at pages 22/26, 16/26 and
+26/26, no challenge pages — a complete paginated walk to the last page.
+
+**The pacing is visible in the artifacts themselves**, which is better evidence
+than the config read this section opened with. Those three objects are stamped
+`01:36:57`, `01:37:15` and `01:37:32` — **18 and 17 seconds apart**, inside
+`human_delay`'s 13–35s band. The gaps between stored objects *are* the sleeps,
+so `_pace()` is demonstrably still sleeping against cars.com. Keying pacing to
+the origin was the change with the silent failure mode, and this is that
+question answered from production rather than argued.
+
+**`ops.artifacts_queue` cannot evidence the SRP path at all**, which is worth
+recording because it misleads on first reading: the table holds **zero**
+`results_page` rows *all time*, since they are consumed and deleted downstream.
+Only MinIO object timestamps answer the question.
+
+#### Cost
+
+Estimate 2 points, actual **1**. `In Progress` ran 16:34 to 18:20 UTC on
+2026-09-02 — 1h45m, ending at the merge — across 22 files.
+
+**The first draft of this line said the stage "ran well past" its estimate, and
+that was wrong in a way worth keeping.** It reasoned from how many things turned
+up rather than from what they cost: the mutation-harness repair, the production
+import fix, two `scrape_results` seams and a capture pulled from production
+MinIO all sound like overrun and were minutes each — two lines, fifteen lines,
+three SSH round-trips. Scope surprise is not effort, and this plan has spent
+nine stages arguing that an unmeasured claim is worth less than a measured one
+whichever direction it points. [Stage 7](#evidence--stage-7-sql-execution-from-both-directions-car-51-2026-09-01)
+is the calibration: estimate 2, actual 1, and it was the plan's largest stage by
+file count at 132 files gaining tests.
+
+What genuinely cost time was not the building but the *reading* — settling that
+G8 was a mocked-write defect rather than a file count, and that the SRP path
+composes its URL where the detail path receives one. Both were decided before
+any test was written, and both changed what got built.
+
+### Evidence — Stage 9, the DAG tree's `.sql` convention (CAR-53), 2026-09-02
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Neither surface describes where SQL lives or what the
+drain reads, no DAG was added — `dag_queries.py` builds none, which the dagbag
+census confirms — and both still say "More than 3,000 tests run in CI", which
+3,523 satisfies.
+
+**Two of G12's three claims were already stale when the stage opened**, and
+finding that out changed the work. The gap row said `airflow/dags/` "has no
+`.sql` convention and cannot reach one" and that this "is what forces the
+single legitimate `ast` reader, `_sensor_constant()`". Measured:
+
+- `airflow/sql/` has existed since Stage 7, holds two files, and is bind-mounted
+  to `/opt/airflow/sql` beside `/opt/airflow/dags` in `x-airflow-common`. Both
+  consumers already loaded from it.
+- **`_sensor_constant()` does not exist.** Stage 7 deleted it when it moved
+  `GATE_OBSERVATION_SQL` into `airflow/sql/record_gate_observation.sql`;
+  `test_ops_queries.py` reads the file and says so in a comment. So the
+  stage's second exit criterion was met by a sibling stage and needed
+  recording, not repair.
+
+This is the fourth time in this plan that a measure was fitted to the code in
+front of it, and the first time the *gap row itself* was the thing out of date.
+A row that names a function is falsifiable and this one had gone false, which
+is the argument for measures over prose stated from the other side.
+
+#### What actually remained was one statement, invisible to three instruments
+
+`sensors.py`'s admission `SELECT`, inline at `hook.get_first(...)`. It escaped
+every rule at once:
+
+- **G5 could not see it.** `production_python_roots()` has included
+  `airflow/dags` since Stage 7, but `_SQL_CALL_NAMES` held DB-API, DuckDB,
+  Spark, pandas and SQLAlchemy names and no Airflow ones. A `PostgresHook`
+  method is not a cursor.
+- **G14 could not count it.** It was in no `.sql` file.
+- **The only thing asserting on it was a paraphrase.**
+  `test_coordination_admission.py` asserted `"scope ? 'host'" in sensor_source`
+  — a substring match against Python text obtained with `ast`. Nothing executed
+  it against Postgres.
+
+The repair: the statement moved to `airflow/sql/deploy_intent_gate.sql`, loaded
+by a new `airflow/dags/dag_queries.py`; six Airflow names joined
+`_SQL_CALL_NAMES`; and Layer 2 gained five tests that execute it.
+
+#### The exemption is from the loader clause, not the file rule
+
+G12 closes as a decision, and the decision is narrow. `shared/query_loader.py`
+is two lines, and reaching it means mounting `shared/` into an image that is
+`apache/airflow:3.2.0` plus four providers. That would put `minio`,
+`duckdb_s3`, `iceberg_catalog` and `packfile` on the DAG tree's import path
+with boto3, duckdb and pyiceberg absent — an import resolving in the main venv
+and failing **at DAG-parse time in production**. The same dependency isolation
+already forces a separate Airflow venv in CI. What is exempted is the shared
+import; what is not exempted is inline SQL, which now fails like anywhere else.
+
+#### The name had to be `dag_queries`, and the suite proved it
+
+Written first as `airflow/dags/queries.py`, mirroring every service. It passed
+`tests/airflow/` in isolation and failed 46 tests in the full run:
+
+```
+ImportError: cannot import name 'DEPLOY_INTENT_GATE_SQL' from 'queries'
+             (.../scraper/queries.py)
+```
+
+Airflow puts `dags/` on `sys.path` directly, so a module there competes in the
+**top-level** namespace — and bare `queries` is already taken by
+`scraper/queries.py`, imported flat because its Dockerfile does `WORKDIR /app;
+COPY scraper/ .`. That is [G18](../TESTING.md#the-gap-list)'s dual import
+identity reached from a third direction, after Stage 8 found it in
+`scraper/app.py`'s `from db import`. It would not have appeared in production,
+where only `dags/` is on the path — which is exactly what makes it worth a
+prefix: the collision is silent where it is wrong and loud only by luck of
+suite ordering.
+
+#### Both guards were mutation-tested rather than assumed
+
+Goal: an inline statement or a reordered select list must fail *loudly*.
+
+| Mutation | Result |
+|---|---|
+| `hook.get_first("SELECT count(*) FROM listings")` added to `orphan_checker.py` | `test_no_production_module_holds_sql_at_its_execute_call_site` fails, naming `airflow/dags/orphan_checker.py:66` |
+| A new `.sql` file with no Layer 2 test | `test_every_production_sql_file_is_touched_by_a_layer_2_test` fails, naming the file — observed for real, before the test was written |
+| `SELECT di.intent, cs.phase,` → `SELECT cs.phase, di.intent,` | 47 unit failures plus the Layer 2 column-order test |
+
+The third is the one that matters. `poke()` reads `row[0]`..`row[3]` because
+`PostgresHook.get_first` returns a tuple, so **column order is production
+behaviour**: swapping the first two makes `row[0] != "none"` test `phase`,
+which admits DAG runs during a deploy. That is a corrupted run rather than an
+error, and it is now asserted from both ends — the text order in
+`tests/airflow/`, the engine's order in `tests/integration/sql/`.
+
+#### The Layer 2 tests were run against a real Postgres, and three failed first
+
+Executed locally against `postgres:16` with all 50 Flyway migrations applied,
+because the alternative was reasoning about the statement. Three of the five
+new tests failed on first run:
+
+```
+psycopg2.errors.CheckViolation: new row for relation "coordination_state"
+violates check constraint "coordination_state_check"
+```
+
+V043's table constraint, as amended by V050, ties the columns together: a phase
+other than `none` requires a non-null `kind` and a non-empty `targets`. Setting
+`phase` and `scope` alone is rejected. A fixture that seeded rows the real table
+would refuse proves nothing about the real table — which is Layer 2's whole
+argument, arriving as a failure in the stage that was writing Layer 2 tests.
+
+One of the five is worth naming: **V050's own safety argument was untested
+until now.** Its comment says an empty scope is safe because "in
+`airflow/dags/sensors.py` `cs.scope ?| %s::text[]` is false against an empty
+array, so no DAG blocks on it". That is a claim about this statement, and
+nothing executed it — the migration's stated reasoning rested on a reading of a
+Python string. `test_an_empty_scope_intersects_nothing` now asserts it against
+the engine.
+
+#### What Stage 9 did not do
+
+No compose change and no container recreation, so nothing here needs a deploy:
+`airflow/sql/` and `airflow/dags/` are directory bind mounts, and a `git pull`
+makes both the new `.sql` file and `dag_queries.py` visible to the scheduler
+with no image rebuild. The plan flagged this as the one slice that changes
+production import structure; it changed the DAG tree's imports and deliberately
+left the image alone.
+
+`_record_observation`'s docstring still explains its module-level SQL constant
+in terms that Stage 7 superseded. True but stale, and out of scope here.
+
+#### Rules 5b and 5c became one rule, and that reverses a Stage 7 decision
+
+**Added 2026-09-02, at the maintainer's challenge, after Stage 9's first fix
+was the wrong shape.** Stage 9 originally closed its half of the SQL rule by
+adding six Airflow method names — `get_first`, `get_records`, `get_pandas_df`,
+`get_df`, `get_first_or_none`, `SQLExecuteQueryOperator` — to
+`_SQL_CALL_NAMES`. The maintainer's objection was one sentence: *"Lists are
+inherently an issue. Lists go stale. A new tech or new way to call these things
+means silent drift."*
+
+That is [the first rule of this contract](../TESTING.md#the-first-rule) turned
+on the instrument: *a test you can silence by appending to a list reproduces
+the defect it was written to catch.* Stage 7 had already written the general
+form — *"a denominator that is listed, or scoped to what exists when it is
+written, will be wrong"* — and applied it to the **scan surface**,
+`production_python_files()`, which is why `airflow/dags` was in scope at all.
+It did not apply it to the **detector**. So the surface was derived and the
+trigger was an inventory, and the fourth instance of this plan's recurring
+mistake was sitting inside the rule written to catch the third.
+
+**Three sites proved it was not theoretical**, found by asking what the literal
+*is* rather than where it sits:
+
+| Site | Shape | Why both rules missed it |
+|---|---|---|
+| `ops/coordination_drain.py:77` | inline arg to `_database_count(...)` | a **project-local helper** — no inventory of database libraries can contain your own function names, at any list length |
+| `scripts/compare_gate_b_parity.py:510` | dict value in `TIE_QUERIES` | not a call site (5b) and not an assignment (5c) — a third shape |
+| `scripts/compare_gate_b_parity.py:527` | dict value in `TIE_QUERIES` | as above |
+
+The first is production code that gates deploys.
+
+**So 5b and 5c collapse into 5f: no production module holds a SQL statement.**
+Keyed on the statement's own grammar — a SQL verb followed by a clause keyword
+— and never on its container. The set of ways to *invoke* SQL in Python is open
+and grows with every library and every helper anyone writes; the set of ways to
+write a string literal is closed. Only the closed one can be asserted without
+going stale.
+
+**"Not in Python" is exactly "in a `.sql` file", which is why one rule replaces
+two.** There is nowhere else for a statement to live, and paired with Rule 5 —
+every `.sql` file is executed by a Layer 2 test — the loop closes with no
+judgement in it: a statement cannot be in Python, so it is in a file, and the
+file is executed in CI.
+
+#### The detour worth recording: an exemption that decided nothing
+
+The first draft of 5f kept the contract's *"structurally generated statements"*
+exemption and tried to make it mechanical, narrowing it to "a dynamic
+identifier, which SQL cannot parameterise". The maintainer asked the question
+that killed it: **what decides that programmatically?** Nothing does —
+`f"SELECT * FROM {x}"` and `f"SELECT * FROM t WHERE a = {x}"` are the same AST
+shape, and only meaning separates them. An exemption that needs a human to
+adjudicate is a waiver list with extra steps.
+
+The resolution is that the rule needs no exemption at all. It fires on
+everything; a genuinely forced case takes a **waiver**, dated and owned, which
+is the contract's existing and only sanctioned escape hatch and which it
+already calls *"a decision, not a convenience."* Judgement moves to the
+exception, where it is visible, and the default becomes failure rather than
+silence.
+
+Testing that reasoning against the two sites actually claiming the exemption
+found they never qualified. `task_instance_query()` and
+`gate_observation_query()` interpolate **placeholder counts**, never
+identifiers, and both have static equivalents — verified against `postgres:16`:
+
+| dynamic | static | result |
+|---|---|---|
+| `JOIN (VALUES (%s,%s), …) AS drained(dag_id, task_id)` | `JOIN unnest(%s::text[], %s::text[]) AS drained(dag_id, task_id)` | identical rows |
+| `state IN (%s, %s, %s)` | `state = ANY(%s)` | same true, same false |
+
+The rewrite also **deletes** a special case rather than adding one: both
+builders return `None` on an empty scope because `(VALUES )` is a
+`SyntaxError`, while `unnest(ARRAY[]::text[])` is legal and returns zero rows,
+so the `if query is None` branch at every call site exists only to serve the
+dynamic form. They are waived here rather than rewritten — that is drain logic
+gating production deploys, and it does not belong in the same commit as a
+contract change — but they are waived as **ordinary debt with a proven fix**,
+not as a blessed category.
+
+#### Not reinventing a wheel, and the check is recorded
+
+Asked whether this exists in the wild. The **detector** does, and converged
+independently: `flake8-sql` treats a string as SQL if it holds "select from",
+"insert into values", "update set" or "delete from" *in order* — verb plus
+clause, the same grammar this arrived at by measurement. The **rule** does not.
+`flake8-sql` (Q440–Q449) and `sql_str_lint` both *style* the SQL they find,
+taking "SQL lives in Python" as the premise. Ruff's `S608` is an injection
+check: run against the statement Stage 9 moved out of `sensors.py` — correctly
+parameterised, no interpolation — it passes clean, and only fires once the same
+query is rewritten as an f-string. Semgrep could express 5f but ships no such
+registry rule.
+
+It stays in pytest rather than moving to Semgrep because the contract's
+machinery — `Waiver`, the gap list, `_assert_exactly`, the mutation harness —
+already lives there, and a second tool would need a second waiver mechanism
+outside all of it. `S608` is worth enabling separately as a maintained backstop
+for the interpolation half: 55 sites today, 31 outside `scripts/oneoff/`, so it
+wants its own slice.
+
+#### What the change cost, and what was verified
+
+`_SQL_CALL_NAMES` is deleted, not lengthened. Both waiver ledgers are kept
+separate — they record which gap each site came from, that attribution is
+history, and the mutation harness anchors on `Waiver(subject, gap="G5",
+owner=162)` as literal source text. G5 and G15 stay in the gap list as
+**superseded** rows rather than being deleted, for the same anchoring reason;
+Stage 8 found 17 of 24 mutations had silently stopped running when their anchor
+gap closed, and that failure is not worth repeating three days later.
+
+Ledger totals moved 15 + 19 = 34 to 16 + 23 = 39: three genuinely new sites,
+and two more because line numbers now anchor on the literal rather than on the
+call, which shifted a handful by one. One waiver is a false positive kept
+honestly rather than engineered around —
+`scripts/verify_container_health_docker_contract.py:335` is argparse help text
+reading "refresh the committed corpus from the live API", which is `REFRESH` …
+`FROM` in English. Rewording production text to satisfy a linter is worse than
+a dated waiver saying why.
+
+Verified: 3,523 unit tests pass, ruff clean, **all 24 contract mutations still
+caught**, and the four shapes 5b and 5c could not see between them are caught
+by 5f — including `newdb.run_statement("UPDATE t SET a = 1")`, a library that
+does not exist and never needed to be listed.
+
+#### The two builders were rewritten, not waived
+
+**The waiver written two sections above was removed the same day.** Recording
+that a statement is debt is not the same as clearing it, and this plan's job is
+to bring the repository up to the standard rather than to inventory its
+distance from it.
+
+Three statements left `ops/coordination_drain.py` and became files:
+
+| Was | Now | Shape |
+|---|---|---|
+| inline at `_database_count(...)` | `ops/sql/select_processing_artifacts_backlog.sql` | plain literal, never structural |
+| `task_instance_query()` f-string | `ops/sql/select_airflow_task_instances.sql` | `(VALUES …)` → `unnest(…::text[], …::text[])`, `IN (…)` → `= ANY(…)` |
+| `gate_observation_query()` f-string | `ops/sql/select_airflow_gate_observations.sql` | `(VALUES …)` → `unnest(…::text[])` |
+
+Both query functions survive as `(sql, params)` returners so no call site
+changed shape, but they now build **parameters only** and the SQL beside them
+is a constant. `task_instance_params()` and `gate_observation_params()` are
+split out so the parameter arithmetic is testable without the statement.
+
+**Equivalence was proven, not asserted.** Old and new were executed
+side-by-side against `postgres:16` with Flyway's 50 migrations applied, over
+every admission scope, and the results are identical everywhere:
+
+```
+scope                  task_instances   gate_obs
+airflow_control                     1          1
+analytics                           9          6
+archive                            13          8
+database                            1          1
+detail_fetch                       10          3
+listing_fetch                       2          1
+processing                          4          2
+<ALL>                              25         15
+<EMPTY>                             0          0
+```
+
+The non-zero counts matter as much as the equality: an all-zero table would
+have made "equivalent" vacuous.
+
+**The `<EMPTY>` row is the special case the rewrite deleted.** `(VALUES )` with
+no rows is a syntax error, which is why both builders returned `None` on an
+empty scope and both call sites translated that back into `_known(source, 0)`
+by hand. `unnest` of an empty array is legal and yields no rows, so the engine
+answers zero directly. Two branches in production and two more in tests are
+gone, and `tests/integration/sql` now asserts the empty scope against Postgres
+rather than against a Python `if`.
+
+#### Four things the rewrite broke, each worth naming
+
+None was a surprise, and each is a test that was doing its job.
+
+1. **Rule 5e fired on a comment.** The new `.sql` file explained the change by
+   quoting the placeholder syntax it replaced — and psycopg2 counts
+   placeholders inside comments as part of the statement, so a comment naming
+   one makes the caller pass too few parameters. The comment now says so
+   instead of demonstrating it.
+2. **A unit test asserted `"retry" not in sql`.** True of the old inline
+   statement; false of the file, whose comment explains that pending and retry
+   rows are backlog. Fixed by stripping comments before the substring check,
+   which is what the assertion meant in the first place — a rule about the
+   *statement* should not be decidable by its prose.
+3. **`params[-1]` and `params[:-1]` stopped meaning what they meant.** Four
+   tests indexed the flat parameter tuple positionally. Parameters are now
+   `(dag_ids, generation)` and `(dag_ids, task_ids, states)`, so they unpack by
+   name.
+4. **`sensors.py` gained an import the by-path loader did not know about.**
+   `_load_sensors()` execs `coordination_contract` and `sensors` by path with
+   Airflow stubbed; `dag_queries` had to join that list.
+
+#### The Layer 2 census demanded the new files, immediately
+
+Adding three `.sql` files failed
+`test_every_production_sql_file_is_touched_by_a_layer_2_test` before a single
+test was written for them — the loop closing on itself in the same commit that
+widened it. Two needed the suite to name the constants rather than call the
+builders, which is the stronger reading anyway: naming
+`SELECT_AIRFLOW_TASK_INSTANCES` proves the file is executed, while calling
+`task_instance_query(...)[0]` proves only that *something* was.
+
+Six of the drain's Layer 2 tests skip locally because they need the real
+`airflow.task_instance` and `airflow.dag_run` from `airflow db migrate`; CI
+sets `REQUIRE_AIRFLOW_SCHEMA=1`, so there a missing schema is a failure rather
+than a skip. The equivalence run above stood those two tables up directly,
+which is what made the comparison possible outside CI.
+
+**Ledger effect: three waivers deleted, none added.** `INLINE_SQL_WAIVERS` is
+16 → 15 and `SQL_LITERAL_WAIVERS` 23 → 21. Verified: 3,523 unit tests pass,
+ruff clean, all 24 contract mutations still caught.

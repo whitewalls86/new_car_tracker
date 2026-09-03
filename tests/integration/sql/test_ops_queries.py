@@ -503,17 +503,35 @@ class TestCoordinationDrainQueries:
         row = cur.fetchone()
         assert row is not None and row["count"] >= 0
 
+    def test_processing_artifacts_backlog_resolves(self, cur):
+        cur.execute(coordination_drain.SELECT_PROCESSING_ARTIFACTS_BACKLOG)
+        row = cur.fetchone()
+        assert row is not None and row["count"] >= 0
+
     def test_airflow_task_instance_query_resolves(self, cur, airflow_metadata):
-        query = coordination_drain.task_instance_query(DEPLOY_SCOPE)
-        assert query is not None, "the deploy scope must drain some task instances"
-        cur.execute(*query)
+        cur.execute(*coordination_drain.task_instance_query(DEPLOY_SCOPE))
         assert cur.fetchone() is not None
 
     def test_gate_observation_query_resolves(self, cur, airflow_metadata):
-        query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)
-        assert query is not None, "the deploy scope must cover some admission DAGs"
-        cur.execute(*query)
+        cur.execute(*coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1))
         assert cur.fetchone() is not None
+
+    def test_an_empty_scope_counts_zero_rather_than_being_special_cased(
+        self, cur, airflow_metadata
+    ):
+        """Plan 162 Stage 9 deleted the branch that used to answer this.
+
+        Both statements were f-strings building a VALUES list, and a VALUES
+        list with no rows is a syntax error -- so the builders returned None on
+        an empty scope and every call site had to translate that back into
+        zero. The array form is legal when empty, so the engine answers
+        directly and there is no branch to get wrong.
+        """
+        cur.execute(*coordination_drain.task_instance_query(frozenset()))
+        assert cur.fetchone()["count"] == 0
+
+        cur.execute(*coordination_drain.gate_observation_query(frozenset(), 1))
+        assert cur.fetchone()["count"] == 0
 
     # --- Plan 158: the seam. The two statements above and below never met.
     # --- `coordination_gate_observations` was empty for every generation that
@@ -526,7 +544,7 @@ class TestCoordinationDrainQueries:
     ):
         generation = 158
         query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, generation)
-        affected = query[1][:-1]
+        affected = query[1][0]
         runs = [(dag_id, f"{dag_id}-{uuid.uuid4().hex[:8]}") for dag_id in affected]
         for dag_id, run_id in runs:
             _insert_dag_run(cur, dag_id, run_id)
@@ -543,7 +561,7 @@ class TestCoordinationDrainQueries:
     def test_an_observation_does_not_satisfy_the_next_generation(
         self, cur, airflow_metadata
     ):
-        dag_id = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[1][0]
+        dag_id = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[1][0][0]
         run_id = f"{dag_id}-{uuid.uuid4().hex[:8]}"
         _insert_dag_run(cur, dag_id, run_id)
         cur.execute(GATE_OBSERVATION_SQL, (158, dag_id, run_id))
@@ -578,8 +596,9 @@ class TestCoordinationDrainQueries:
         sql = " ".join(
             [
                 coordination_drain.RUNNING_DETAIL_CLAIMS_SQL,
-                coordination_drain.task_instance_query(DEPLOY_SCOPE)[0],
-                coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[0],
+                coordination_drain.SELECT_PROCESSING_ARTIFACTS_BACKLOG,
+                coordination_drain.SELECT_AIRFLOW_TASK_INSTANCES,
+                coordination_drain.SELECT_AIRFLOW_GATE_OBSERVATIONS,
             ]
         )
         for table in (

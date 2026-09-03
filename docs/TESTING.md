@@ -297,10 +297,11 @@ it is how the evidence-aggregation logic is testable at all. What the rule
 forbids is that being the **only** thing that ever happens to a statement.
 
 The repair is already in the tree and is the pattern to copy: the drain's
-statements were lifted to module scope — `RUNNING_DETAIL_CLAIMS_SQL`,
-`task_instance_query()`, `gate_observation_query()` — precisely so
-`tests/integration/sql/test_ops_queries.py` can import and execute the real
-thing.
+statements all live in `ops/sql/` and are executed by
+`tests/integration/sql/test_ops_queries.py`. Two of them were module-level
+*builders* until 2026-09-02 — `task_instance_query()` and
+`gate_observation_query()` — which was the second-best option under the
+preference order above, and Plan 162 Stage 9 moved them up to the first.
 
 **A paraphrase of production SQL in a test file is worse than no test.** A
 paraphrase passes forever; it is a copy that cannot notice the original
@@ -316,29 +317,37 @@ one of three ways, in this order of preference:
 
 #### `ast` should be rare, and each use names a defect elsewhere
 
-`_sensor_constant()` in `test_ops_queries.py` reads `GATE_OBSERVATION_SQL` out
-of `airflow/dags/sensors.py` this way. It is correct, and it is worth being
-precise about *why* it was necessary, because the reason is not "some
-statements can't be imported" as a fact of life.
+**As of Plan 162 Stage 9 no test reads a SQL statement out of source, and the
+history of the two that did is the argument for the rule.**
 
-`sensors.py` imports `airflow.providers.postgres.hooks.postgres` and
-`airflow.sdk.bases.sensor` **at module scope**, and the SQL-smoke suite runs in
-the main venv, which has no Airflow. So `import sensors` raises before reaching
-the constant. Nothing about the *statement* resists import — a module around it
-does.
+`_sensor_constant()` in `test_ops_queries.py` used to read
+`GATE_OBSERVATION_SQL` out of `airflow/dags/sensors.py` this way, and
+`test_coordination_admission.py` scraped the admission `SELECT` out of
+`_DeployIntentSensor` to check its column order. Both were correct given where
+the statements lived, and both stopped being necessary the moment the
+statements moved into `airflow/sql/` — Stage 7 for the first, Stage 9 for the
+second. Neither was a fact of life about statements that resist import.
 
-The underlying cause is narrower still: **`airflow/dags/` has no `.sql`
-convention and cannot reach one.** No module under it imports `shared` at all,
-so `shared.query_loader` — the thing every other service uses — is not
-available there, and the DAG tree is the only part of the repository where
-option 1 is structurally impossible. That is [G12](#the-gap-list).
+The stated cause was always a module, not a statement. `sensors.py` imports
+`airflow.providers.postgres.hooks.postgres` and `airflow.sdk.bases.sensor` **at
+module scope**, and the SQL-smoke suite runs in the main venv, which has no
+Airflow, so `import sensors` raised before reaching the constant. A `.sql` file
+has no imports, which is why option 1 outranks option 2.
+
+That the second reader survived two stages past its cause is the part worth
+keeping. It asserted `"scope ? 'host'" in sensor_source` — a substring match
+against Python text, which passes forever and cannot notice a reworded
+statement. **An `ast` reader is a paraphrase with extra steps**, and it ages
+into one silently.
 
 So the answer to "should `ast` be used more widely" is **no, and a growing
 count of `ast` readers is a signal to act on, not a pattern to spread.** Each
 one marks a statement that ought to live in a file and does not. Where it is
 genuinely the only option, the reader carries a comment naming the import that
-forced it, so the next person can tell a constraint from an accident —
-`_sensor_constant()`'s docstring already does.
+forced it, so the next person can tell a constraint from an accident. The
+remaining `ast` in `tests/airflow/` reads *code shape* — which DAG declares
+which sensor, what keywords a factory passes — which is a different question
+and the right tool for it.
 
 The mechanically checkable half of this rule is one direction only: **every
 `.sql` file and every module-level statement is executed by Layer 2.** The
@@ -438,21 +447,57 @@ and `tests/integration/sql/` executes what they expose.
 
 Two exemptions, and no others:
 
-- **Structurally generated statements.** Where the shape depends on the
-  arguments — `task_instance_query()`'s `VALUES` list is `(%s, %s)` repeated
-  per admitted task — a file cannot hold it. The builder is then a **module-level
-  function returning `(sql, params)`**, so Layer 2 can call it and execute the
-  result. That is the standard the drain now meets.
+- **Structurally generated statements**, where the *text* genuinely depends on
+  the arguments — a dynamic identifier, which SQL cannot parameterise. The
+  builder is then a **module-level function returning `(sql, params)`**, so
+  Layer 2 can call it and execute the result.
+
+  **This exemption currently has no members, and the two it used to name never
+  qualified.** `task_instance_query()` and `gate_observation_query()` built
+  `(VALUES …)` and `IN (…)` lists sized to their arguments, which is *value*
+  variability, not structural — only the number of placeholders changed, never
+  an identifier. `unnest(…::text[])` and `= ANY(…)` take those values as arrays
+  and the text stops varying at all; both rewrites were verified equivalent
+  against `postgres:16` on every admission scope before landing. The rewrite
+  also removed a special case rather than adding one: `(VALUES )` with no rows
+  is a syntax error, so both builders returned `None` on an empty scope and
+  every call site translated that back into zero, while the array form answers
+  zero from the engine.
+
+  So the bar is high and the burden is on the statement: *which identifier*
+  cannot be a parameter? "The shape depends on the arguments" was too loose,
+  and it survived two stages as the stated reason two ordinary statements sat
+  outside the file convention.
 - **DDL and one-shot maintenance** inside a migration or a script that runs
   once. Flyway owns `db/migrations/`.
 
 An `f`-string interpolating a value into SQL is neither exemption; it is a bug.
 
-**`airflow/dags/` is the one tree where this rule cannot currently be
-followed** — no module under it imports `shared`, so `query_loader` is not
-reachable and there is no `.sql` directory to put a statement in. That is a
-gap ([G12](#the-gap-list)), not a third exemption, and it is what forces the
-tree's only `ast` reader.
+**`airflow/dags/` follows the file rule through its own loader.** The two
+exemptions above are from *"is a `.sql` file"*; this is a decided exemption
+from a different clause — *"loaded by `shared.query_loader`"* — and it is the
+only one. Statements live in `airflow/sql/`, are loaded once at import
+by `airflow/dags/dag_queries.py`, and are executed by
+`tests/integration/sql/test_airflow_dag_queries.py`. Everything the rule is
+*for* holds: one copy of each statement, in a file, executed against a real
+engine by a test that imports no Airflow.
+
+What is exempted is the shared import, and the reason is that reaching it costs
+more than it buys. `shared/query_loader.py` is two lines, but the DAG tree has
+no `shared` on its path: the Airflow image is `apache/airflow:3.2.0` plus four
+providers, and compose mounts only `dags/` and `sql/` into it. Mounting
+`shared/` would put `minio`, `duckdb_s3`, `iceberg_catalog` and `packfile` —
+which need boto3, duckdb and pyiceberg — on the DAG tree's import path with
+none of them installed, so an import that resolves in the main venv would fail
+**at DAG-parse time in production**. That isolation is the same one forcing a
+separate Airflow venv in CI. Two duplicated lines is the cheaper side.
+
+The exemption is narrow and deliberately so: it licenses a local `load_query`,
+not local SQL. Inline SQL in a DAG fails
+`test_no_production_module_holds_a_sql_statement` like anywhere
+else — `airflow/dags` is in `production_python_roots()`, and Stage 9 added the
+Airflow hook and operator names to the scanned call set so the rule can
+actually see the tree. This closed [G12](#the-gap-list).
 
 ### Endpoint coverage: what a service owes before it ships
 
@@ -548,7 +593,7 @@ invisible rather than counted.
 
 | Rule | Why it is not asserted | Owner |
 |---|---|---|
-| Every module-level SQL statement in a production module is executed by a Layer 2 test | ~~Inline SQL at an `.execute()` call site is the opposite direction and is measured by nothing~~ — **mechanised 2026-09-01 by Plan 162 Stage 7.** [G5](#the-gap-list) is asserted by `test_no_production_module_holds_sql_at_its_execute_call_site`. Both it and [G15](#the-gap-list) read `production_python_files()` — a second derivation, deliberately **not** `service_packages()`, which answers "is this a service" rather than "is this production Python" and stops at the package boundary. It admits `airflow/dags` and the `scripts/` buckets the contract declares measured, and excludes the ones it declares spent, so a new bucket is covered by editing that table rather than this file. What stays unasserted is Spark: a SQL *fragment* (`selectExpr`, `expr`, a string `filter`) leads with no verb, and the DataFrame API is not text at all, so neither is visible to a static read | Plan 162 |
+| Every module-level SQL statement in a production module is executed by a Layer 2 test | ~~Inline SQL at an `.execute()` call site is the opposite direction and is measured by nothing~~ — **mechanised 2026-09-01 by Plan 162 Stage 7.** [G5](#the-gap-list) and [G15](#the-gap-list) are asserted together by `test_no_production_module_holds_a_sql_statement`, which since 2026-09-02 is **one rule keyed on the statement rather than two keyed on its container**. It reads `production_python_files()` — a second derivation, deliberately **not** `service_packages()`, which answers "is this a service" rather than "is this production Python" and stops at the package boundary. It admits `airflow/dags` and the `scripts/` buckets the contract declares measured, and excludes the ones it declares spent, so a new bucket is covered by editing that table rather than this file. What stays unasserted is Spark: a SQL *fragment* (`selectExpr`, `expr`, a string `filter`) leads with no verb, and the DataFrame API is not text at all, so neither is visible to a static read | Plan 162 |
 | A run that succeeds has done the work its success implies | **The rule this whole document is about, stated once instead of rediscovered.** A paraphrased test passes forever. A skipped test executes nothing. A `dbt build --target spark` that writes to `spark_catalog` instead of Iceberg **exits 0 having written nothing** — `scripts/run_dbt_spark.py` documents that trap and answers it with `--verify-table`, which is a convention someone must remember, not a mechanism. Three instances, one class, and only the second is mechanised: `REQUIRE_LAYER_2_EXECUTION` fails a Layer 2 run that skipped. There is no general form, because "did this actually do the thing" is specific to each thing | Plan 162, and [Plan 125](plans/plan_125_duckdb_to_iceberg_migration.md) for the Spark instance |
 
 Until 2026-08-31 this rule was not in this section. It was a clause inside the
@@ -626,12 +671,12 @@ stay the place the history lives.
 
 | # | Violation | Measure | Owner |
 |---|---|---|---|
-| G5 | **Inline SQL at a SQL-taking call site.** 66 sites in 15 modules across the eight service packages, seeded and drained 2026-09-01. **Reopened at 22 the same day** when the scan surface was widened from `service_packages()` to production Python: `airflow/` and `scripts/` are not packages and so had no rule at all, and 16 of the 22 are in Plan 125's Iceberg and Spark tooling, which Gates C and D productionize. Measured by the rule below. The census said ten modules and named two that do not belong: `shared/db.py`'s only match is the usage example in `db_cursor`'s docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup, which name no schema to drift from. Eight modules it never named do belong, including `ops/routers/maintenance.py:152` — a literal `INSERT` passed to `execute_values` as its *second* argument, which the measure below was originally written to miss | A SQL verb leading any argument of `execute`, `executemany`, `execute_values`, `execute_batch`, `copy_expert`, `mogrify`, `sql`, `query`, `read_sql`, `text` and their kin — asserted by `test_no_production_module_holds_sql_at_its_execute_call_site` | Plan 162 |
-| G15 | **23 SQL statements in 11 production modules are kept in a Python literal**, bound to a name and executed from there — 8 in `archiver/processors/lake_snapshot_cohort.py` and 6 in `ops/routers/admin.py`, a router Stage 7 never touched because every one of its statements is assigned before it is executed. Found by closing G5: a literal at a call site cannot be imported, so G5 fires; a literal bound to a name **is** importable, so G5 does not — and it is in no `.sql` file, so G14's denominator cannot count it either. It satisfies the letter of both instruments while sitting outside both | A SQL verb leading the value of an assignment or a `return` in a service package — asserted by `test_no_production_module_keeps_a_sql_statement_in_a_python_literal` | Plan 162 |
+| G5 | **Inline SQL at a SQL-taking call site.** 66 sites in 15 modules across the eight service packages, seeded and drained 2026-09-01. **Reopened at 22 the same day** when the scan surface was widened from `service_packages()` to production Python: `airflow/` and `scripts/` are not packages and so had no rule at all, and 16 of the 22 are in Plan 125's Iceberg and Spark tooling, which Gates C and D productionize. Measured by the rule below. The census said ten modules and named two that do not belong: `shared/db.py`'s only match is the usage example in `db_cursor`'s docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup, which name no schema to drift from. Eight modules it never named do belong, including `ops/routers/maintenance.py:152` — a literal `INSERT` passed to `execute_values` as its *second* argument, which the measure below was originally written to miss | ~~A SQL verb leading any argument of `execute`, `executemany`, `execute_values` and their kin~~ — **superseded 2026-09-02 by Plan 162 Stage 9.** That measure was an inventory of database-client method names, and a rule reading one is escapable by calling anything the list has not heard of: `ops/coordination_drain.py:77` hands a production SELECT to `_database_count(...)`, a helper defined in the same file, and no list length would ever have found it. Now asserted by `test_no_production_module_holds_a_sql_statement`, which asks only whether the literal **is** a statement — a SQL verb followed by a clause keyword — and never where it sits. This row is kept rather than deleted because live waivers name it | Plan 162 |
+| G15 | **23 SQL statements in 11 production modules are kept in a Python literal**, bound to a name and executed from there — 8 in `archiver/processors/lake_snapshot_cohort.py` and 6 in `ops/routers/admin.py`, a router Stage 7 never touched because every one of its statements is assigned before it is executed. Found by closing G5: a literal at a call site cannot be imported, so G5 fires; a literal bound to a name **is** importable, so G5 does not — and it is in no `.sql` file, so G14's denominator cannot count it either. It satisfies the letter of both instruments while sitting outside both | ~~A SQL verb leading the value of an assignment or a `return`~~ — **superseded 2026-09-02 by Plan 162 Stage 9**, and for the same reason as G5's: assignment-or-return is itself an enumeration, of shapes rather than of names. `scripts/compare_gate_b_parity.py` holds two statements as **dict values** in `TIE_QUERIES`, which is neither, so both rules were blind to it at once. Now asserted by `test_no_production_module_holds_a_sql_statement` | Plan 162 |
 | G16 | **The dbt project owes nothing this document can state.** Questions 5 and 6 of [Plan 161](plans/plan_161_testing_contract.md) asked what a *service* owes, and the mechanism is keyed to a Python package: the "enough" table's rows must equal `service_packages()` in both directions, so a `dbt` row fails as a phantom. `dbt_runner` — the service that *invokes* dbt — has a row; the 22 models it builds have none. **17 of 22 have a dbt unit test and five do not**, and the only obligation enforced on a model is that it carries a cadence tag, which is a scheduling rule. Because `dbt/` is a named exemption from the rule above, logic moving out of a `.sql` file and into a mart leaves a counted surface for an uncounted one, and the count drops for something that is not a repair | Not yet asserted. Plan 162 Stage 11 owes both the mechanism and G16's own rule: a `.sql` file may leave `production_sql_files()` only by naming the model that absorbed it | Plan 162 |
 | G17 | **One statement filed twice.** `mark_artifact_status`, `insert_artifact_event` and `insert_blocked_cooldown_cleared_event` each existed byte-identically under both `ops/sql/` and `processing/sql/`. Both services issue them against the same tables, so the schema already coupled the two — the copies decoupled nothing and only made a second place to edit. Worse, the rule above credits a file when Layer 2 names its **stem**, and the pairs shared one, so a test of `processing`'s copy silently credited `ops`'s: three files reported covered by a test that never executed them. Consolidated into `shared/sql/` on 2026-09-01 and re-exported by both services' `queries.py`, so no call site changed | Every production statement compared against every other, normalised for comments and whitespace — asserted by `test_no_two_production_sql_files_hold_the_same_statement`. One waived pair, `cancel_coordination_state` and `release_deploy_coordination`, which are two policies that agree rather than one statement | Plan 162 |
 | G18 | **`dashboard/`: 7 modules, 0 test files, and the suite cannot reach them.** Not under-tested — *unreachable*: `streamlit` and `plotly` are declared in `dashboard/requirements.txt` and nowhere else, and production imports are bare (`from queries import`, `from db import`) because the Dockerfile does `WORKDIR /app; COPY dashboard/ .`, while Layer 2 imports `dashboard.queries`. `import dashboard.pages.deals` raises `ModuleNotFoundError` today. That is the whole of the 9% reading — only `queries.py` is importable, ~30 of 309 statements. Closing it means a CI venv, a resolution of the dual import identity, and a render harness, in that order; the first two are structural changes to a service whose role is undecided. **Of the 483 lines under `pages/`, ~430 are `st.*`/`px.*` presentation and ~35 are logic** | — | Plan 150 |
-| G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
+| G12 | ~~**`airflow/dags/` has no `.sql` convention and cannot reach one.**~~ — **closed 2026-09-02 by Plan 162 Stage 9.** The tree reaches the convention through its own `airflow/dags/dag_queries.py`, a decided exemption from the `shared.query_loader` clause and not from the file rule — see [where SQL lives](#where-sql-lives) for why mounting `shared/` into the Airflow image costs more than the two lines it saves. Two of the row's three claims were already stale when the stage opened: `airflow/sql/` had existed since Stage 7, and `_sensor_constant()` had been deleted by it. What actually remained was **one statement** — the admission `SELECT` inline at `sensors.py`'s `hook.get_first`, invisible to all three instruments at once: G5 did not scan Airflow hook methods, G14 counts only `.sql` files, and the only thing asserting on it was an `ast` substring match | `grep -rn 'from shared' airflow/dags/` still returns nothing, and that is now the intended state. What is asserted instead: the statement is in `airflow/sql/deploy_intent_gate.sql`, executed by `tests/integration/sql/test_airflow_dag_queries.py` including its column *order*, which `poke()` indexes positionally; and a new inline statement in a DAG fails `test_no_production_module_holds_a_sql_statement`. Stage 9 first closed this by adding six Airflow method names to `_SQL_CALL_NAMES`, then deleted that list outright — lengthening an inventory is not a fix for an inventory | Plan 162 |
 | G14 | ~~**56 of 76 production `.sql` files are named by no Layer 2 test.**~~ — **closed 2026-09-01 by Plan 162 Stage 7**, `LAYER_2_WAIVERS` is `()`. Was All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 19 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 names it **as a whole word**. Was 54 until 2026-09-01, when Stage 5 found the match was a bare substring and three files were being credited by identifiers that merely contained their stem. Stage 7 drained it: 132 files gained a test importing the constant production imports, 18 lake-snapshot selectors were already executed by `tests/integration/archiver/` and needed the reading widened rather than new tests, and one file was deleted under [G16](#the-gap-list)'s rule because the statement that absorbed it could be named | Plan 162 |
 
 ---

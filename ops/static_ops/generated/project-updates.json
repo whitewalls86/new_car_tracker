@@ -9,7 +9,7 @@
       "priority": 75,
       "effort": "L",
       "state": "planned",
-      "summary": "Stage 8 (CAR-52) — the Layer 2 suite that asserts nothing: tests/integration/sql/test_dashboard_queries.py is 25 tests and 0 assertions, so a renamed mart column passes green and KeyErrors in production",
+      "summary": "Stage 10 — suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_162_testing_census_and_restructure.md"
     },
     {

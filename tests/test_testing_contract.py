@@ -1297,41 +1297,31 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G5", owner=162)
     for subject in (
         "scripts/audit_adaptive_refresh_features.py:123",
-        "scripts/audit_adaptive_refresh_features.py:147",
+        "scripts/audit_adaptive_refresh_features.py:148",
         "scripts/audit_adaptive_refresh_features.py:155",
-        "scripts/audit_adaptive_refresh_features.py:163",
-        "scripts/audit_adaptive_refresh_features.py:173",
+        "scripts/audit_adaptive_refresh_features.py:164",
+        "scripts/audit_adaptive_refresh_features.py:174",
         "scripts/compare_gate_a_parity.py:223",
         "scripts/compare_gate_b_parity.py:595",
-        "scripts/estimate_dictionary_savings.py:164",
-        "scripts/export_volatility_features_to_iceberg.py:123",
+        "scripts/estimate_dictionary_savings.py:165",
+        "scripts/export_volatility_features_to_iceberg.py:124",
         "scripts/export_volatility_features_to_iceberg.py:134",
-        "scripts/export_volatility_features_to_iceberg.py:155",
-        "scripts/preflight_local_lakehouse_snapshot.py:301",
+        "scripts/export_volatility_features_to_iceberg.py:156",
+        "scripts/preflight_local_lakehouse_snapshot.py:302",
         "scripts/run_dbt_spark.py:158",
-        "scripts/spike_iceberg_lakehouse.py:133",
-        "scripts/verify_dialect_datediff.py:128",
+        "scripts/spike_iceberg_lakehouse.py:134",
+        "scripts/verify_container_health_docker_contract.py:335",
     )
 )
 
-# Every name in this stack that takes a SQL string, whether or not it is used
-# here today. Scoping the set to what the repository currently calls is the
-# mistake this plan keeps finding in its own instruments: the census undercounted
-# G14 and it undercounted G5, both because the check was fitted to the code in
-# front of it. ``executemany`` matches nothing on 2026-09-01 and is here anyway,
-# because the cost of a name that never fires is zero and the cost of a missing
-# one is a gap nothing reports. ``sql`` covers ``spark.sql(...)``, which is not
-# called yet either -- see the docstring below on what does and does not survive
-# PySpark.
-_SQL_CALL_NAMES = frozenset({
-    # DB-API and psycopg2
-    "execute", "executemany", "executescript", "execute_batch", "execute_values",
-    "mogrify", "copy_expert",
-    # DuckDB and Spark
-    "sql", "query", "from_query",
-    # pandas and SQLAlchemy
-    "read_sql", "read_sql_query", "read_sql_table", "text",
-})
+# ``_SQL_CALL_NAMES`` lived here until Plan 162 Stage 9 (2026-09-02) and is
+# deliberately not replaced. It was an inventory of database-client method
+# names -- execute, executemany, spark.sql, read_sql and their kin -- and the
+# rule that read it could be escaped by calling anything the list had not
+# heard of, including a helper defined three lines up in the same file.
+# Rule 5f below asks what the literal *is* instead, so there is no list to
+# keep current. See its comment block for the three sites that proved the
+# difference.
 
 # The verb is what makes a generous name set safe. ``df.query("price > 100")``
 # and ``resp.text`` reach the walk below and are rejected on content, so adding
@@ -1374,131 +1364,6 @@ _DDL_VERBS = frozenset({"CREATE", "DROP", "ALTER", "TRUNCATE"})
 _EXEMPT_VERBS = _SESSION_SETUP_VERBS | _DDL_VERBS
 
 
-def _leading_sql_literal(node: ast.AST) -> str | None:
-    """The literal text at the head of *node*, through the shapes that hide one.
-
-    A rule that only reads a bare ``ast.Constant`` makes concatenation the
-    escape hatch: ``"SELECT ..." + where`` and ``f"SELECT ... {col}"`` are the
-    two ways inline SQL is actually written once it needs a variable, and they
-    are the ones worth catching most.
-    """
-    if isinstance(node, ast.Constant):
-        return node.value if isinstance(node.value, str) else None
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _leading_sql_literal(node.left)
-    if isinstance(node, ast.JoinedStr) and node.values:
-        return _leading_sql_literal(node.values[0])
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        if node.func.attr in {"format", "dedent", "strip", "lstrip", "join"}:
-            return _leading_sql_literal(node.func.value)
-    return None
-
-
-def _inline_sql_sites(source: str, filename: str = "<canary>") -> set[int]:
-    """Line numbers where a SQL-taking call is handed a literal statement.
-
-    **Every argument is read, not the first.** ``execute_values(cur, sql, rows)``
-    puts its statement second, and a first-argument rule is blind to it by
-    construction -- which is not hypothetical: it is
-    ``ops/routers/maintenance.py:152``, a literal INSERT into
-    ``staging.blocked_cooldown_events`` that the census never named because the
-    gap list describes the shape as "``.execute(`` with a literal first
-    argument".
-    """
-    tree = ast.parse(source, filename=filename)
-    found = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if isinstance(node.func, ast.Attribute):
-            name = node.func.attr
-        elif isinstance(node.func, ast.Name):
-            name = node.func.id
-        else:
-            continue
-        if name not in _SQL_CALL_NAMES:
-            continue
-        arguments = list(node.args) + [keyword.value for keyword in node.keywords]
-        for argument in arguments:
-            text = _leading_sql_literal(argument)
-            if text is None:
-                continue
-            match = _SQL_VERB.match(text)
-            if match and match.group(1).upper() not in _EXEMPT_VERBS:
-                found.add(node.lineno)
-                break
-    return found
-
-
-def test_the_inline_sql_rule_sees_the_shapes_that_hide_a_statement():
-    """The rule below, tested on the shapes it exists to catch.
-
-    A structural check nothing exercises reports a clean repository whether or
-    not it still matches anything, which is the failure this whole file exists
-    to prevent -- so the detector is separated from the sweep and canaried here.
-    """
-    caught = _inline_sql_sites(
-        'cur.execute("SELECT 1")\n'                              # 1  bare literal
-        'cur.execute("SELECT * FROM t WHERE a = " + a)\n'        # 2  concatenated
-        'cur.execute(f"SELECT {col} FROM t")\n'                  # 3  f-string
-        'execute_values(cur, "INSERT INTO t VALUES %s", rows)\n'  # 4  second argument
-        'pd.read_sql(sql="SELECT 1", con=c)\n'                   # 5  keyword argument
-        'spark.sql("MERGE INTO t USING s ON t.id = s.id")\n'     # 6  Spark, no caller yet
-    )
-    assert caught == {1, 2, 3, 4, 5, 6}, (
-        f"the inline-SQL rule no longer sees every shape: caught {sorted(caught)}"
-    )
-
-    clean = _inline_sql_sites(
-        'cur.execute(CLAIM_ARTIFACTS, (limit,))\n'      # a loaded constant is the fix
-        'df.query("price > 100")\n'                     # not SQL: no leading verb
-        'con.execute("INSTALL httpfs")\n'               # session setup, exempt
-        'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
-    )
-    assert not clean, (
-        f"the inline-SQL rule fires on calls that are already correct: {sorted(clean)}"
-    )
-
-
-def test_no_production_module_holds_sql_at_its_execute_call_site():
-    """G5, which the census recorded in prose and nothing has ever checked.
-
-    Inline SQL is not merely untidy. It is what *manufactures* the paraphrase
-    the contract calls worse than no test: a statement written at its call site
-    cannot be imported, so the only way to give it a test is to retype it, and
-    a retyped statement passes forever while the original rots. Moving SQL into
-    a ``.sql`` file is not the goal -- it is what makes the retyping
-    unnecessary, and it is why this rule and
-    :func:`test_every_production_sql_file_is_touched_by_a_layer_2_test` are one
-    stage rather than two.
-
-    **What this does not survive is PySpark, and the residue is three named
-    things rather than an open question.** ``spark.sql("SELECT ...")`` is caught
-    already -- ``sql`` is in the name set and the verb guard does not care about
-    dialect. What is not caught: SQL *fragments* (``df.selectExpr("price >
-    msrp")``, ``F.expr(...)``, ``df.filter("year > 2020")``) start with no verb,
-    and the guard that makes a generous name set safe is exactly what makes it
-    blind to them; the DataFrame API is not text at all, so it can drift from a
-    schema with nothing textual to see; and a ``.sql`` file only earns its
-    keep if some engine executes it, which for Spark means the Lakekeeper and
-    PySpark services ``tests/integration/lakehouse`` is
-    :data:`DORMANT_SUITES`-declared against until Plan 125 Gate C returns them.
-    Static reading stops at the first of those three. The other two are caught
-    by executing them in CI or not at all.
-    """
-    found = {
-        f"{_relative(path)}:{line}"
-        for path in production_python_files()
-        for line in _inline_sql_sites(path.read_text(encoding="utf-8"), str(path))
-    }
-    _assert_exactly(
-        found,
-        INLINE_SQL_WAIVERS,
-        "these production modules hold SQL at the call site, where no test can "
-        "import it and only a paraphrase can cover it:",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Rule 5c -- no production module keeps a SQL statement in a Python literal.
 # ---------------------------------------------------------------------------
@@ -1507,124 +1372,231 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
     for subject in (
         "archiver/processors/delete_packed_source_html.py:304",
         "archiver/processors/lake_snapshot_cohort.py:109",
-        "archiver/processors/lake_snapshot_cohort.py:156",
+        "archiver/processors/lake_snapshot_cohort.py:157",
         "archiver/processors/lake_snapshot_cohort.py:354",
         "archiver/processors/lake_snapshot_cohort.py:502",
-        "archiver/processors/lake_snapshot_cohort.py:535",
-        "archiver/processors/lake_snapshot_cohort.py:560",
-        "archiver/processors/lake_snapshot_cohort.py:594",
-        "archiver/processors/lake_snapshot_cohort.py:627",
-        "archiver/processors/lake_snapshot_export.py:130",
+        "archiver/processors/lake_snapshot_cohort.py:536",
+        "archiver/processors/lake_snapshot_cohort.py:561",
+        "archiver/processors/lake_snapshot_cohort.py:595",
+        "archiver/processors/lake_snapshot_cohort.py:628",
+        "archiver/processors/lake_snapshot_export.py:131",
         "archiver/processors/lake_snapshot_selectors.py:129",
-        "archiver/processors/lake_source_audit.py:113",
+        "archiver/processors/lake_source_audit.py:114",
         "archiver/processors/pack_bronze_html.py:440",
         "ops/routers/maintenance.py:36",
         "processing/writers/silver_writer.py:38",
         "scripts/audit_adaptive_refresh_features.py:128",
-        "scripts/audit_adaptive_refresh_features.py:135",
+        "scripts/audit_adaptive_refresh_features.py:136",
+        "scripts/compare_gate_b_parity.py:510",
+        "scripts/compare_gate_b_parity.py:527",
         "scripts/estimate_dictionary_savings.py:206",
         "shared/deploy_intent.py:25",
     )
 )
 
 
-def _sql_literal_bindings(source: str, filename: str = "<canary>") -> set[int]:
-    """Line numbers where a SQL statement is bound to a Python name.
+# ---------------------------------------------------------------------------
+# Rule 5f -- no production module holds a SQL statement at all.
+#
+# **This is Rules 5b and 5c, unified, and the unification is the point.** Both
+# were keyed on the *shape* holding the statement -- 5b on a call site, 5c on
+# an assignment or a return -- and a rule keyed on shape is an enumeration
+# wearing a different coat. Stage 7 wrote the lesson down ("a denominator that
+# is listed, or scoped to what exists when it is written, will be wrong") and
+# then built 5b on ``_SQL_CALL_NAMES``, an inventory of client libraries.
+#
+# Three sites proved it, found 2026-09-02 by asking the question this rule asks
+# instead:
+#
+# * ``ops/coordination_drain.py`` passes a production SELECT to
+#   ``_database_count(...)`` -- a *project-local helper*. No inventory of
+#   database libraries can ever contain your own function names, so 5b could
+#   not have found this at any list length.
+# * ``scripts/compare_gate_b_parity.py`` holds two statements as **dict values**
+#   in ``TIE_QUERIES``. Not a call site and not an assignment: a third shape
+#   neither rule had.
+#
+# So this asks only what the literal *is*, never where it sits. The set of ways
+# to invoke SQL in Python is open and grows with every library and every helper
+# somebody writes; the set of ways to write a string literal is closed. Keying
+# on the closed one is the only version that cannot go stale.
+#
+# **And "not in Python" is exactly "in a .sql file", which is why one rule
+# replaces two.** There is nowhere else for a statement to live. Paired with
+# Rule 5 -- every .sql file is executed by a Layer 2 test -- the loop closes
+# with no judgement in it: a statement cannot be in Python, so it is in a file,
+# and the file is executed in CI.
+#
+# The detection heuristic is not novel and deliberately so. ``flake8-sql``
+# independently arrived at the same one -- a string is SQL if it holds
+# "select from", "insert into values", "update set" or "delete from" *in
+# order*. What no linter ships is this rule: ``flake8-sql`` and ``sql_str_lint``
+# style the SQL they find, and ruff's S608 flags only *interpolated* SQL, so it
+# passes clean on the correctly-parameterised literal Stage 9 moved out of
+# ``sensors.py``. Measured 2026-09-02.
+# ---------------------------------------------------------------------------
 
-    Rule 5b catches SQL *at* an ``.execute()`` call site, where it cannot be
-    imported at all. This catches the shape one step back: assigned to a name
-    first, then executed. That statement **is** importable, so the paraphrase
-    hazard is gone -- which is exactly why it is easy to miss, and why it
-    needs its own rule rather than a wider version of 5b's.
+# A clause keyword, required after the verb. This is SQL grammar, not an
+# inventory: new database libraries appear every year, new SQL clauses do not.
+# It is what separates a statement from the word -- `{"select": [...]}` in
+# `dbt_build.py` and `hourly_analytics_refresh.py` is a dag_run.conf key, and a
+# verb-only test reports 99 sites of which 62 are that. With the clause
+# required it reports 34, and one of those is argparse help text.
+_SQL_CLAUSE = re.compile(
+    r"\b(FROM|INTO|SET|VALUES|WHERE|TABLE|VIEW|INDEX|SCHEMA|JOIN|USING)\b", re.I
+)
 
-    A ``return`` is included because a function that hands back a statement is
-    the same binding with a different keyword, and scoping this to the
-    assignments that happen to exist today is the mistake this plan has now
-    made twice in its own instruments.
+
+def _is_sql_statement(text: str) -> bool:
+    """Is *text* a SQL statement, judged only on its own content?"""
+    match = _SQL_VERB.match(text)
+    if not match or match.group(1).upper() in _EXEMPT_VERBS:
+        return False
+    rest = text[match.end():]
+    return bool(rest.strip()) and bool(_SQL_CLAUSE.search(rest))
+
+
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    """Every docstring node, which is documentation and not a statement.
+
+    ``shared/db.py``'s ``db_cursor`` docstring carries a usage example with a
+    real SELECT in it. Excluding it is exact rather than heuristic -- a
+    docstring is the first statement of a module, class or function and nothing
+    else is -- so this is not a judgement call smuggled into the rule.
     """
-    tree = ast.parse(source, filename=filename)
     found = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            candidates = [node.value]
-        elif isinstance(node, ast.Return):
-            candidates = [node.value]
-        else:
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            text = _leading_sql_literal(candidate)
-            if text is None:
-                continue
-            match = _SQL_VERB.match(text)
-            if match and match.group(1).upper() not in _EXEMPT_VERBS:
-                found.add(node.lineno)
+        body = getattr(node, "body", None)
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+           and isinstance(body[0].value.value, str):
+            found.add(id(body[0].value))
     return found
 
 
-def test_the_sql_literal_rule_sees_a_statement_bound_to_a_name():
-    """The rule below, canaried on the shapes it exists to catch."""
-    caught = _sql_literal_bindings(
-        'SQL = "SELECT 1"\n'                                  # 1  module constant
-        'def f():\n'
-        '    sql = "SELECT * FROM t WHERE a = %s"\n'          # 3  function local
-        '    return sql\n'
-        'def g(where):\n'
-        '    return "SELECT * FROM t WHERE " + where\n'       # 6  returned, concatenated
-        'TEMPLATE: str = f"SELECT {cols} FROM t"\n'           # 7  annotated f-string
+def _statement_text(node: ast.AST) -> str | None:
+    """The full literal text of *node*, with interpolations reduced to markers.
+
+    **The whole text, not the leading literal**, and the difference is a real
+    hole rather than a refinement. Rule 5b's reader returned only the head;
+    ``f"SELECT {col} FROM t"`` has ``"SELECT "`` at its head, so a head-only
+    reader sees a verb with nothing after it and, under the clause grammar
+    above, judges it not a statement. 5b got away with that because it tested
+    the verb alone and let the callee's name carry the rest of the decision.
+    With the name gone, the grammar has to see the clause -- so every segment
+    is joined and each interpolation becomes a ``?`` marker, which keeps the
+    f-string shape caught. It is both the most common way inline SQL is
+    written and the most dangerous.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            value.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+            else " ? "
+            for value in node.values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return (_statement_text(node.left) or "") + (_statement_text(node.right) or " ? ")
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr in {"format", "dedent", "strip", "lstrip"}:
+            return _statement_text(node.func.value)
+    return None
+
+
+def _sql_statements_in_python(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers holding a SQL statement, wherever in the module it sits.
+
+    Deduplication is by line rather than by node because the shapes nest: a
+    ``BinOp`` and the ``Constant`` at its head report the same line, as does a
+    ``JoinedStr`` and its first segment.
+    """
+    tree = ast.parse(source, filename=filename)
+    docstrings = _docstring_ids(tree)
+    found = set()
+    for node in ast.walk(tree):
+        if id(node) in docstrings:
+            continue
+        text = _statement_text(node)
+        if text is not None and _is_sql_statement(text):
+            found.add(node.lineno)
+    return found
+
+
+def test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement():
+    """The detector, canaried on the shapes it exists to catch.
+
+    The last four are the ones Rules 5b and 5c could not see between them, and
+    they are here so that a future narrowing of this rule fails loudly rather
+    than quietly restoring the blind spot.
+    """
+    caught = _sql_statements_in_python(
+        'cur.execute("SELECT a FROM t")\n'                        # 1  call site
+        'sql = "INSERT INTO t VALUES (%s)"\n'                     # 2  assignment
+        'def f():\n    return "UPDATE t SET a = 1"\n'             # 3  return
+        'cur.execute("SELECT a FROM t WHERE b = " + b)\n'         # 4  concatenated
+        'cur.execute(f"SELECT {col} FROM t")\n'                   # 5  f-string
+        'QUERIES = {"tie": "SELECT DISTINCT vin FROM events"}\n'  # 6  dict value
+        '_count("x", "SELECT COUNT(*) FROM t")\n'                 # 7  local helper
+        'def g():\n    return ("SELECT a FROM t", params)\n'      # 8  tuple return
+        'CHOICES = ["DELETE FROM t WHERE id = %s"]\n'             # 9  list element
     )
-    assert caught == {1, 3, 6, 7}, (
-        f"the SQL-literal rule no longer sees every shape: caught {sorted(caught)}"
+    assert caught == {1, 2, 4, 5, 6, 7, 8, 10, 11}, (
+        f"the SQL-in-Python rule no longer sees every shape: {sorted(caught)}"
     )
 
-    clean = _sql_literal_bindings(
-        'CLAIM_ARTIFACTS = _q("claim_artifacts")\n'   # loaded from a .sql file: the fix
-        'name = "select_user_role"\n'                 # a filename, not a statement
-        'mode = "SETTINGS"\n'                         # not a SQL verb, despite the prefix
-        'PRAGMA_SQL = "PRAGMA threads=4"\n'           # session setup, exempt
+    clean = _sql_statements_in_python(
+        'cur.execute(CLAIM_ARTIFACTS, (limit,))\n'   # a loaded constant is the fix
+        'df.query("price > 100")\n'                  # not SQL: no leading verb
+        'conf = {"select": ["model"]}\n'             # the word, not a statement
+        'con.execute("INSTALL httpfs")\n'            # session setup, exempt
+        'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
+        'def h():\n    """Example: SELECT a FROM t."""\n    return 1\n'  # docstring
     )
     assert not clean, (
-        f"the SQL-literal rule fires on bindings that are already correct: "
-        f"{sorted(clean)}"
+        f"the SQL-in-Python rule fires on code that is already correct: {sorted(clean)}"
     )
 
 
-def test_no_production_module_keeps_a_sql_statement_in_a_python_literal():
-    """G15, the gap that closing G5 revealed.
+def test_no_production_module_holds_a_sql_statement():
+    """Rules 5b and 5c as one, keyed on the statement instead of its container.
 
-    Stage 7 extracted six of these by hand -- three module-level constants in
-    ``ops/routers/coordination.py``, three function-local ``sql = \"\"\"...\"\"\"``
-    variables in ``ops/routers/deploy.py`` -- and only because a human happened
-    to read the files while doing something else. **Neither instrument could
-    see them.** Rule 5b does not fire, because the literal is not at the call
-    site. Rule 5 does not fire, because there is no ``.sql`` file to be
-    uncovered. They satisfied the letter of both while sitting outside both,
-    and the sweep that found them was not repeatable.
+    **What this buys over the two it replaces** is that it cannot be escaped by
+    inventing a new place to put a string. Both predecessors could: 5b by
+    calling a function it had never heard of, 5c by putting the statement
+    anywhere that is not an assignment or a return. Three production sites were
+    doing exactly that when this rule was written, and none of them was
+    reachable by lengthening a list.
 
-    The measured cost of that blind spot was 21 more, in modules nobody had
-    looked at: six in ``ops/routers/admin.py`` alone, a router Stage 7 never
-    touched because every one of its statements is assigned before it is
-    executed.
+    **The waiver ledgers are kept separate on purpose.** They record which gap
+    each site came from -- G5 for a call site, G15 for a binding -- and that
+    attribution is history worth keeping even though one rule now reads both.
+    Merging them would also break the mutation harness, which anchors on
+    ``Waiver(subject, gap="G5", owner=162)`` as literal source text.
 
-    **What this rule is not.** It is not a claim that a statement in a Python
-    string is untestable -- it is importable, so a test can execute the real
-    text, which is the whole point of the other two rules. It is a claim that
-    this repository decided its SQL lives in ``.sql`` files, and a statement
-    that does not is invisible to the census that counts them. Rule 5's
-    denominator is ``production_sql_files()``; anything held in Python is
-    outside it and can never be reported as uncovered.
+    **What this does not survive is PySpark**, unchanged from Rule 5b and still
+    three named things rather than an open question: SQL *fragments*
+    (``df.selectExpr("price > msrp")``, ``F.expr(...)``) start with no verb and
+    the grammar guard is blind to them by construction; the DataFrame API is
+    not text at all, so it can drift from a schema with nothing textual to see;
+    and a ``.sql`` file only earns its keep if some engine executes it, which
+    for Spark means the services ``tests/integration/lakehouse`` is
+    :data:`DORMANT_SUITES`-declared against until Plan 125 Gate C returns them.
+    Static reading stops at the first of those three; the other two are caught
+    by executing them in CI or not at all.
     """
     found = {
         f"{_relative(path)}:{line}"
         for path in production_python_files()
-        for line in _sql_literal_bindings(path.read_text(encoding="utf-8"), str(path))
+        for line in _sql_statements_in_python(path.read_text(encoding="utf-8"), str(path))
     }
     _assert_exactly(
         found,
-        SQL_LITERAL_WAIVERS,
-        "these production modules keep a SQL statement in a Python literal, so "
-        "it is in no .sql file and the Layer 2 census cannot count it:",
+        INLINE_SQL_WAIVERS + SQL_LITERAL_WAIVERS,
+        "these production modules hold a SQL statement in Python, so it is in "
+        "no .sql file and the Layer 2 census cannot count it:",
     )
 
 

@@ -1,10 +1,11 @@
 """
 Layer 2 — SQL smoke tests for the statements the DAG tree owns.
 
-``airflow/dags/`` may not import ``shared`` (G12), so its modules read their
-own ``.sql`` files by path rather than through ``shared.query_loader``. These
-tests read the same files the same way and execute them against Postgres with
-Flyway's migrations applied.
+``airflow/dags/`` does not import ``shared`` -- a decided exemption, not a gap,
+since Plan 162 Stage 9 -- so the tree loads its statements through its own
+``airflow/dags/dag_queries.py``, which reads the same ``airflow/sql/`` directory
+every other service's ``queries.py`` mirrors. These tests read those files the
+same way and execute them against Postgres with Flyway's migrations applied.
 
 **Loading the file rather than importing the DAG module is deliberate.** The
 airflow modules need ``apache-airflow``, which lives in its own CI venv because
@@ -62,3 +63,102 @@ class TestStaleEmailCleanup:
         # clearing a notification address this test did not write.
         cur.execute(_sql("delete_stale_emails"))
         assert cur.rowcount == 0
+
+
+class TestDeployIntentGate:
+    """Plan 162 Stage 9 pulled this out of ``sensors.py``'s ``poke()``.
+
+    It was the DAG tree's one inline statement and the last thing forcing an
+    ``ast`` read of production source: ``test_coordination_admission.py``
+    asserted ``"scope ? 'host'" in sensor_source``, which is a substring match
+    against Python text and passes forever once written. Nothing executed it.
+
+    Both singleton rows exist from Flyway's migrations and the ``cur`` fixture
+    rolls back, so these write to them directly rather than seeding.
+    """
+
+    SURFACES = ["analytics", "processing"]
+
+    def _poke(self, cur, surfaces=None):
+        cur.execute(_sql("deploy_intent_gate"), (surfaces or self.SURFACES,))
+        return cur.fetchone()
+
+    @staticmethod
+    def _coordinate(cur, phase, scope, generation=0):
+        """Put coordination_state into a phase, respecting its own CHECK.
+
+        V043's table constraint, as amended by V050, ties the columns together:
+        a phase other than 'none' requires a non-null ``kind`` and a non-empty
+        ``targets``. Setting ``phase`` and ``scope`` alone raises
+        CheckViolation -- which is the reason to write these through Postgres
+        rather than to reason about the statement. A fixture that seeded rows
+        the real table would reject proves nothing about the real table.
+        """
+        cur.execute(
+            "UPDATE coordination_state "
+            "   SET phase = %s, scope = %s::jsonb, generation = %s, "
+            "       kind = %s, targets = %s::jsonb "
+            " WHERE id = 1",
+            (
+                phase,
+                scope,
+                generation,
+                None if phase == "none" else "deploy",
+                "[]" if phase == "none" else '["ops"]',
+            ),
+        )
+
+    def test_the_gate_returns_its_four_columns_in_the_order_poke_indexes(self, cur):
+        """The one assertion that would have caught a silent misread.
+
+        ``_DeployIntentSensor.poke`` reads ``row[0]``..``row[3]`` because
+        ``PostgresHook.get_first`` hands back a tuple, so the select list's
+        *order* is production behaviour: swap the first two and
+        ``row[0] != "none"`` starts testing ``phase``, which admits DAG runs
+        during a deploy and fails as a corrupted run rather than as an error.
+        Names alone would not catch it -- the order is the contract.
+        """
+        self._poke(cur)
+        assert [column.name for column in cur.description] == [
+            "intent",
+            "phase",
+            "intersects",
+            "generation",
+        ]
+
+    def test_a_host_scoped_deploy_intersects_every_dag(self, cur):
+        # 'host' is the whole-fleet scope: no DAG declares it as a surface, so
+        # the `?` arm is the only thing that can admit it.
+        self._coordinate(cur, "draining", '["host"]', generation=77)
+        row = self._poke(cur)
+        assert row["intersects"] is True
+        assert row["phase"] == "draining"
+        assert row["generation"] == 77
+
+    def test_an_overlapping_scope_intersects_and_a_disjoint_one_does_not(self, cur):
+        self._coordinate(cur, "active", '["processing", "archive"]')
+        assert self._poke(cur)["intersects"] is True
+
+        self._coordinate(cur, "active", '["listing_fetch"]')
+        assert self._poke(cur)["intersects"] is False
+
+    def test_an_empty_scope_intersects_nothing(self, cur):
+        """V050's invariant, asserted against the engine rather than restated.
+
+        V050 allows a non-'none' record to name no surface, and its own comment
+        says why that is safe: "in airflow/dags/sensors.py `cs.scope ?| %s::
+        text[]` is false against an empty array, so no DAG blocks on it". That
+        sentence is a claim about *this* statement, and until now nothing
+        executed it -- the migration's stated safety argument rested on a read
+        of a Python string.
+        """
+        self._coordinate(cur, "requested", "[]")
+        assert self._poke(cur)["intersects"] is False
+
+    def test_deploy_intent_is_read_independently_of_coordination(self, cur):
+        """The two holds are independent, which is why one row carries both."""
+        cur.execute("UPDATE deploy_intent SET intent = %s WHERE id = 1", ("pause",))
+        self._coordinate(cur, "none", "[]")
+        row = self._poke(cur)
+        assert row["intent"] == "pause"
+        assert row["intersects"] is False
