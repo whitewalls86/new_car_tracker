@@ -2,10 +2,10 @@
 
 ## Status
 
-**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8** — which
-was narrowed on 2026-09-02, before it started: G7 is now the dashboard's
-assertionless Layer 2 suite, and the Streamlit Python it used to mean is G18
-and Plan 150's. [Why](#stage-8-narrowed-and-g7-now-names-a-different-gap).
+**Stages 0–8 are complete. Stage 9 is next.** Stage 8 was narrowed on
+2026-09-02, before it started: G7 became the dashboard's assertionless Layer 2
+suite, and the Streamlit Python it used to mean is G18 and Plan 150's.
+[Why](#stage-8-narrowed-and-g7-now-names-a-different-gap).
 The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
@@ -142,7 +142,7 @@ order:
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
 | **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
 | **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
-| **8** | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | -- |
+| **8** | **`scraper`'s floor, and the Layer 2 suite that asserts nothing. Complete — CAR-52, 2026-09-02** | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
 | **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
@@ -1559,6 +1559,21 @@ target waiting: its remaining `Install dependencies` is 18s and its `dbt build`
   answer was recorded above. The numbers it produced are in this section; the
   script is in the history at `e3b4c82` if a later stage wants to re-run it.
 
+
+**Stage 6c's closeout rode in on this PR.** `f6a7077` was already on the branch
+when Stage 8 started — the same pattern as Stage 7 on PR #344 — so #347 also
+carried `docs/PLANS.md` and `ops/static_ops/generated/project-updates.json`,
+the generated roadmap the landing page renders. Neither is Stage 8's work and
+neither is in `public-surface-check`'s scope, which covers the two authored
+surfaces only. It is recorded because a published surface moved inside a PR
+reviewed as a testing change, and that is the shape worth noticing rather than
+the content, which was 6c's and correct.
+
+**One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
+checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
+invoked as `bash scripts/redeploy.sh`. Not this stage's to fix, and recorded
+because the next person to deploy will hit it.
+
 #### Cost, and one regression worth recording
 
 The stage cost one red CI run, and it was self-inflicted in a way the suite
@@ -2950,7 +2965,7 @@ convention is not enough on its own: a mutation anchored on a gap row is
 anchored on the thing the plan is trying to delete. Three anchors were moved to
 live gaps and the full run is now **24 mutations, all caught**.
 
-#### Two production changes, one of them not yet deployed
+#### Two production changes, and the deploy that carried them
 
 `scraper/app.py` imported `from db import close_pool, get_pool`, which resolved
 only because the Dockerfile ran `cp scraper/db.py db.py` — so the module existed
@@ -2962,7 +2977,7 @@ every other module in its package.
 
 **This needed a scraper image rebuild**, which the section below records.
 
-#### Deployed 2026-09-02, and half of it is confirmed
+#### Deployed 2026-09-02, and confirmed
 
 Merged as `ff690e0`; the VM pulled it and `scripts/redeploy.sh scraper` rebuilt
 the image. Coordination drain confirmed in 1s, container recreated, healthy
@@ -2991,14 +3006,21 @@ in `ops.artifacts_queue`, 3,780 rows in `staging.artifacts_queue_events`, and a
 newest MinIO object at 18:45:20 — against a last pre-deploy artifact of
 18:15:47.
 
-**The SRP path is not, and the reason is scheduling rather than a fault.**
-`search_configs` rotates on a **four-hour** cycle at `:30` — `last_queued_at`
-steps 21:30, 01:30, 05:30, 09:30, 13:30, 17:30 — so the `*/30` DAG mostly
-short-circuits on `advance_rotation` returning `configs=[]`. Its runs finish in
-10–19s when nothing is due and took 11m41s at 17:30 when something was. The
-newest `results_page` object in MinIO is **17:41:30, forty minutes before the
-deploy**, and the next slot is 21:30 UTC. `scrape_results` therefore has not
-executed under the new code, and this section will not claim it has.
+**The SRP path is confirmed, two rotation slots later.** `search_configs`
+rotates on a **four-hour** cycle at `:30`, so the `*/30` DAG mostly
+short-circuits on `advance_rotation` returning `configs=[]` — its runs take
+10–19s when nothing is due. The two slots that were due ran under the new code:
+**21:30 UTC for 521s producing 45 objects**, and **01:30 for 463s producing
+26**. The three newest parse to 24, 24 and 8 listings at pages 22/26, 16/26 and
+26/26, no challenge pages — a complete paginated walk to the last page.
+
+**The pacing is visible in the artifacts themselves**, which is better evidence
+than the config read this section opened with. Those three objects are stamped
+`01:36:57`, `01:37:15` and `01:37:32` — **18 and 17 seconds apart**, inside
+`human_delay`'s 13–35s band. The gaps between stored objects *are* the sleeps,
+so `_pace()` is demonstrably still sleeping against cars.com. Keying pacing to
+the origin was the change with the silent failure mode, and this is that
+question answered from production rather than argued.
 
 **`ops.artifacts_queue` cannot evidence the SRP path at all**, which is worth
 recording because it misleads on first reading: the table holds **zero**
@@ -3025,8 +3047,3 @@ What genuinely cost time was not the building but the *reading* — settling tha
 G8 was a mocked-write defect rather than a file count, and that the SRP path
 composes its URL where the detail path receives one. Both were decided before
 any test was written, and both changed what got built.
-
-**One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
-checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
-invoked as `bash scripts/redeploy.sh`. Not this stage's to fix, and recorded
-because the next person to deploy will hit it.
