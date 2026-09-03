@@ -24,12 +24,12 @@
     },
     {
       "plan": "172",
-      "title": "The plan-authoring skill",
+      "title": "The plan document contract",
       "order": 3,
       "priority": 80,
-      "effort": "S",
+      "effort": "M",
       "state": "planned",
-      "summary": "Stage 0 — name the two sections a plan owes the public, and the rule that keeps the first stable: it is edited when the plan's purpose changes, never because a stage landed",
+      "summary": "Stage A — write docs/PLAN_DOCUMENT.md: the four questions a plan document owes each of its four states, the section ratchet, lettered stages with exits, and one home for evidence",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
     },
     {
