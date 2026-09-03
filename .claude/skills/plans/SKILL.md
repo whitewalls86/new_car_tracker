@@ -1,13 +1,13 @@
 ---
 name: plans
-description: "Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, transcribe a soak result the user supplies, or update a plan's next-executable-slice pointer without moving its row. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it — supplied by the user, or reasoned out and approved before this skill runs — and it does not author one mid-transition, choose a priority or a build-order position, or decide that a gate has closed."
+description: "Open a plan in this repo's planning index or perform a state transition there — insert a previously unindexed plan into the backlog or build order; move a plan between backlog, build order, closeout and superseded; add a closeout row; archive a completed plan; transcribe a supplied soak result; or update a next-executable-slice pointer without moving its row. Use when the user asks to open, move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it, and it does not author one mid-operation, choose a priority or build-order position, or decide that a gate has closed."
 ---
 
-# Moving a plan between states
+# Maintaining a plan's index state
 
 Plan 146 rebuilt `docs/` around one rule: **every plan sits in exactly one
 table, and every row carries the condition that removes it.** These operations
-are what move a row from one to the next. They are small, repetitive, and
+open a row or move it from one state to the next. They are small, repetitive, and
 touch two or three files in a fixed pattern — which is why they are worth
 automating, and why the automation must be narrow.
 
@@ -17,7 +17,7 @@ You place values. You do not compose them.
 
 | You do | The user does |
 |---|---|
-| find the row, remove it, write it into the destination's columns | supply — or approve, before this skill runs — the title, gate, trigger, `Lands` date, description, superseding plan |
+| find the row or confirm it does not exist, then write the destination's columns | supply — or approve, before this skill runs — the title, gate, trigger, `Lands` date, description, superseding plan |
 | renumber `Order` after an insert at a named position | name the position |
 | update the archive's row count in the index | decide the gate has closed |
 | record where each authored value came from | approve every sentence that ends up in a file |
@@ -64,6 +64,7 @@ applying a provenance label to it devalues every genuine one.
 | `docs/PLANS.md` | closeout, build order, backlog, superseded — four tables, one index. **Public: its top four build-order rows are published** |
 | `docs/planning/completed_plans.md` | the archive. Newest first, **prepend-only**, one row per plan. **Public: its top four rows are published** |
 | `docs/plans/plan_NNN_*.md` | the plan's own document, and the authority when it and the index disagree |
+| `docs/PLAN_DOCUMENT.md` | the plan-document contract. This skill points there for document shape and does not restate it |
 | `tests/test_planning_docs.py` | what "correct" means. 33 assertions, ~0.2s |
 | `docs/planning/plans_decision_log.md` | narrative. You do not write here; the user may |
 
@@ -129,11 +130,17 @@ Three things that will bite:
 
 ## The operations
 
-Every one of them: **run the test first**, so a failure afterwards is yours.
+For operations 1–5: **run the test first**, so a failure afterwards is yours.
+Operation 6 begins from one intentional coverage failure and has its own
+preflight below.
 
 ```bash
 LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
 ```
+
+Use the repository interpreter available in the current environment. On
+PowerShell, set `$env:LOG_PATH` and call `.venv\Scripts\python.exe`; the command
+above states the check, not a requirement to invoke it through a POSIX shell.
 
 ### 1. Move a plan between states
 
@@ -256,16 +263,63 @@ If the same request also moves the row, that is operation 1 **and** this one.
 Do them as two edits and say so, rather than rewriting a row and a cell in one
 motion.
 
+### 6. Open a plan
+
+This is the only operation with no source row. It inserts exactly one row for an
+existing plan document that appears in none of the five planning tables. It does
+not draft the document, decide where the plan belongs, or invent any cell.
+
+1. Read the numbered document and derive its `Plan` cell from the exact number
+   and filename. Parse the `Plan` columns in closeout, build order, backlog,
+   superseded, and `docs/planning/completed_plans.md`; do not use a text search
+   that can match prose in another cell. **If any row already owns the number,
+   refuse the operation.** Opening never becomes a move or a duplicate.
+2. Run `tests/test_planning_docs.py`. The expected preflight is one failure
+   naming this document as present in no table. If the plan is not that failure,
+   or any unrelated failure appears, stop before editing. This is the one
+   operation whose valid input is deliberately inconsistent with the index.
+3. Apply the two document-shape gates this operation owns, with
+   [`docs/PLAN_DOCUMENT.md`](../../../docs/PLAN_DOCUMENT.md) as their authority.
+   Full contract enforcement belongs to `tests/test_planning_docs.py`, not to a
+   growing checklist in this skill:
+   - **Backlog refusal:** if the document has a `## Stages` section or any
+     `### Stage X` heading, refuse. A drafted plan with stages has crossed the
+     start boundary and cannot be filed as unreviewed backlog work.
+   - **Build-order refusal:** if the document has no `## Stages` section, no
+     stage rows, or any `### Stage X` without an explicit `Exit:`, refuse. A
+     build-order row must point at executable stages with stated exits.
+4. Require every destination value from outside the operation:
+
+   | Destination | Required values |
+   |---|---|
+   | backlog | placement (`first` or `after Plan N`), title, priority, effort, trigger |
+   | build order | position, title, next executable slice, `Workable?`, `Blocked by`, priority, effort, dependencies / safe stopping point |
+
+   Do not derive a placement, trigger, slice, blocker, priority, effort, or
+   position from the document. Missing any one is a stop.
+5. Splice the supplied row into the requested table. For backlog, use the
+   supplied placement to anchor on the exact row that will sit above it or on
+   the header plus separator to go first.
+   For build order, use operation 1's insertion and one-cell-at-a-time
+   renumbering mechanics. Exactly one new plan row appears.
+6. Apply the status-marker rules below. A document written under the contract
+   has no marker; reporting that fact is the expected path, not a gap to repair.
+7. Run all checks under [After every operation](#after-every-operation). The
+   preflight coverage failure must be gone and no new failure may replace it.
+   If the generator was stale, regenerate it and run its `--check` again; the
+   final check must be clean.
+
 ## Plan documents and their status
 
-**Yes, this skill touches a plan document's status marker — and nothing else in
-the document.**
+**A new-contract document has no status marker.** The index owns state and the
+document owns content, as [`docs/PLAN_DOCUMENT.md`](../../../docs/PLAN_DOCUMENT.md)
+defines. For a legacy document that already carries a marker, this skill updates
+that marker — and nothing else in the document.
 
-It has to. `PLANS.md` states that when the index and a plan document disagree,
-the plan document wins. Move a row and leave the document asserting the old
-state and you have not just created a contradiction, you have made the
-*authority* the wrong one. That is worse than the defect Plan 146 was written
-to fix.
+`PLANS.md` still states that when the index and a plan document disagree, the
+plan document wins. Until a legacy document adopts the new contract, moving its
+row while leaving its marker behind creates the contradiction this skill exists
+to prevent.
 
 Status is written three ways across 79 documents, and often not at all:
 
@@ -287,7 +341,9 @@ Three hard limits:
   complete, superseded) or text the user supplies verbatim.
 - **When there is no marker, say so and move on.** Report it in your summary as
   a fact the user may want to act on. Do not treat it as a failure and do not
-  fix it.
+  fix it. For a document governed by
+  [`docs/PLAN_DOCUMENT.md`](../../../docs/PLAN_DOCUMENT.md), no marker is the
+  intended shape and should be reported as such.
 
 ## After every operation
 
@@ -330,7 +386,10 @@ Read every changed line. Then report, briefly:
 - anything you did not do: a missing status marker, a gate the user has not
   confirmed, a sentence you needed and asked for
 
-If the test fails, **fix the document, not the test.** These assertions were
+If a check fails because of this operation, **fix the document, not the test.**
+That does not authorize rewriting a supplied value: if an approved value violates
+the table or generator contract, show the failure and ask for a corrected value.
+An unrelated failure is a stop, not authority to change its subject. These assertions were
 each watched failing against a deliberate mutation before they were trusted;
 one that starts failing is reporting something real.
 

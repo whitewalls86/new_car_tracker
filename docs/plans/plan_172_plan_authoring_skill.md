@@ -622,8 +622,8 @@ reading A, H, B, C … are what say so at a glance.
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
 | 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `done` | CAR-70 |
-| 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `—` | — |
-| 3 | [**B**](#stage-b) | the `plan-draft` skill | `—` | — |
+| 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `done` | CAR-70 |
+| 3 | [**B**](#stage-b) | the `plan-draft` skill | `next` | — |
 | 4 | [**C**](#stage-c) | the `plan-start` skill | `—` | — |
 | 5 | [**D**](#stage-d) | the assertion and the waiver list | `—` | — |
 | 6 | [**E**](#stage-e) | `close-out` split in two | `—` | — |
@@ -877,3 +877,28 @@ naming, and the two public sections with the freeze rule. No code and no
 existing plan document were edited. Verified by `tests/test_planning_docs.py`
 (35 passed) and `scripts/build_public_roadmap.py --check` on
 `car-70-plan-172-stage-a-contract`.
+
+### Stage H
+
+Added `plans` operation 6 — open a plan currently in no table — plus its two
+document-shape refusals, to `.claude/skills/plans/SKILL.md`. Operations 1–5
+were left unedited apart from the shared preamble and after-every-operation
+sections.
+
+Validated in a disposable clone
+(`cartracker-plan172-stage-h-forward-test-20260903-1`), never committed:
+
+- **Insert:** a no-row plan document was spliced into build-order position 2,
+  inside the published window. `tests/test_planning_docs.py` moved from one
+  expected failure (the document present in no table) to 35 passed.
+  `build_public_roadmap.py --check` correctly reported staleness after the
+  insert, and came back clean after regeneration.
+- **Backlog refusal:** a document with a `## Stages` section and a
+  `### Stage A` heading, attempted as a backlog insert, was refused before any
+  edit to `docs/PLANS.md` — confirmed unmodified afterward.
+- **Build-order refusal:** a document whose only stage carried no `Exit:` line,
+  attempted as a build-order insert, was refused the same way — confirmed
+  unmodified afterward.
+
+Both refusals were exercised by applying the gate text in `SKILL.md` directly
+against the test documents, not by a script standing in for it.
