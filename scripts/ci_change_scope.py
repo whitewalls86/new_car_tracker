@@ -20,6 +20,21 @@ Everything else is unclassified and takes the full workflow. That is the
 fail-open direction and it is deliberate: a path this module has never heard of
 must cost a full run, never a skipped one.
 
+**One group is the other way round, and only because it is net-new.**
+``snapshot_dbt`` gates the job that builds dbt against a production-derived
+Plan 120 snapshot, and it runs on a **named trigger set** rather than on
+"anything unclassified": a changeset touching none of those paths does not run
+it. Plan 139 Stage E's observation window exists because a false positive in a
+*narrowing* selector suppresses evidence that previously existed -- but a job
+that has never run suppresses nothing, so the worst case of a missing trigger
+here is coverage not gained, never coverage silently lost. That asymmetry does
+not hold for ``unit`` or ``heavy`` and this docstring is the whole of why the
+two directions coexist in one module.
+
+Fail-open still applies at the level ``ci.yml`` implements it: when there is no
+base sha to diff, or this module raises, or its output does not parse, every
+group keeps its default -- and ``snapshot_dbt``'s default is true.
+
 Output is one ``name=true|false`` line per job group, which is what
 ``ci.yml`` reads into ``$GITHUB_OUTPUT``.
 """
@@ -31,9 +46,36 @@ import sys
 DOCS_PREFIX = b"docs/"
 ONEOFF_PREFIXES = (b"scripts/oneoff/", b"tests/scripts/oneoff/")
 
+# Paths that can change what `dbt build` does against a pinned snapshot. Wider
+# than `dbt/` on purpose, and each entry earns its place:
+#
+#   dbt/                          the models, the data tests, the profile
+#   db/migrations/                the schema the two postgres_scan() sources read
+#   .github/ci_lake_snapshot_pin.json   which snapshot is built against
+#   .github/workflows/ci.yml      the job, and the dbt version pins it installs
+#   scripts/seed_lake_snapshot.py      how the snapshot reaches MinIO and Postgres
+#   scripts/download_lake_snapshot.py  how it is fetched and verified
+#   scripts/lake_snapshot_common.py    the checksum, extraction and target guards
+#   shared/lake_snapshot_postgres.py   the two Postgres sources' round trip
+#   shared/sql/                   the statements that round trip is made of
+#   scripts/ci_change_scope.py    this file: a gate has to be able to see its
+#                                 own edit, or you cannot test a trigger change
+SNAPSHOT_DBT_TRIGGERS = (
+    b"dbt/",
+    b"db/migrations/",
+    b".github/ci_lake_snapshot_pin.json",
+    b".github/workflows/ci.yml",
+    b"scripts/seed_lake_snapshot.py",
+    b"scripts/download_lake_snapshot.py",
+    b"scripts/lake_snapshot_common.py",
+    b"shared/lake_snapshot_postgres.py",
+    b"shared/sql/",
+    b"scripts/ci_change_scope.py",
+)
+
 # What a run needs when the classifier cannot say. Everything but the docs
 # suite, which is only ever a substitute for the unit run.
-FULL = {"docs_tests": False, "unit": True, "heavy": True}
+FULL = {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": True}
 
 
 def _paths(data: bytes) -> list[bytes]:
@@ -66,15 +108,21 @@ def classify_from_nul(data: bytes) -> dict[str, bool]:
     if not paths:
         return dict(FULL)
 
+    # Computed before the zone check below, because the trigger set is an
+    # allowlist and not the complement of one: it answers its own question on
+    # every changeset, classified or not.
+    snapshot_dbt = any(path.startswith(SNAPSHOT_DBT_TRIGGERS) for path in paths)
+
     docs = sum(path.startswith(DOCS_PREFIX) for path in paths)
     oneoff = sum(path.startswith(ONEOFF_PREFIXES) for path in paths)
     if docs + oneoff != len(paths):
-        return dict(FULL)
+        return {**FULL, "snapshot_dbt": snapshot_dbt}
 
     return {
         "docs_tests": bool(docs) and not oneoff,
         "unit": bool(oneoff),
         "heavy": False,
+        "snapshot_dbt": snapshot_dbt,
     }
 
 

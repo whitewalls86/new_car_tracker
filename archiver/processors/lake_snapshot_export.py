@@ -7,6 +7,14 @@ Given a closed cohort (VINs, listing_ids, and explicit artifact row keys from
 source tables and writes a filtered, dbt-compatible fixture dataset to a
 fingerprint-addressed MinIO prefix.
 
+Plan 162 Stage 10 added a second, unfiltered half: the two Postgres dimension
+tables `dbt/models/sources.yml` resolves through `postgres_scan()`. They are not
+Parquet and not in the lake, so they travel as JSON under `postgres/` and are
+exported whole -- see `shared/lake_snapshot_postgres.py` for why whole is the
+safe direction. A snapshot without them still builds, and builds green over an
+empty world, which is the specific failure the job consuming it exists to
+catch.
+
 Filter semantics (see docs/plans/plan_120_ci_lake_snapshot_delivery.md and the
 Gate D design notes): `artifact_id` is never used as a blanket
 `artifact_id IN (...)` filter against an entity table — a single artifact_id
@@ -26,12 +34,18 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 import pyarrow.parquet as pq
 
 from archiver.processors.lake_snapshot_sql import in_clause, table_time_where
 from archiver.processors.lake_source_audit import resolve_table_path
+from shared.lake_snapshot_postgres import (
+    POSTGRES_SNAPSHOT_TABLES,
+    dump_table,
+    row_count,
+    snapshot_object_name,
+)
 from shared.minio import BUCKET, get_s3fs
 
 logger = logging.getLogger("archiver")
@@ -222,6 +236,64 @@ def _write_table(
     }
 
 
+def _write_text_object(base_path: Optional[str], key: str, text: str) -> None:
+    """Write one small UTF-8 text object, local or MinIO, mirroring the
+    dual-mode split the Parquet writer above already uses."""
+    if base_path:
+        os.makedirs(os.path.dirname(key), exist_ok=True)
+        with open(key, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        get_s3fs().pipe_file(key, text.encode("utf-8"))
+
+
+def _write_postgres_table(
+    conn, schema: str, table: str, base_path: Optional[str], output_root: str,
+) -> Dict[str, Any]:
+    """Export one whole Postgres dimension table. Returns its manifest entry."""
+    relative = snapshot_object_name(schema, table)
+    name = f"{schema}.{table}"
+    t0 = time.monotonic()
+    logger.info("lake_snapshot_export: postgres_table=%s start", name)
+    try:
+        with conn.cursor() as cur:
+            rows_json = dump_table(cur, schema, table)
+        rows = row_count(rows_json)
+        _write_text_object(base_path, f"{output_root.rstrip('/')}/{relative}", rows_json)
+    except Exception as e:
+        logger.warning(
+            "lake_snapshot_export: postgres_table=%s error elapsed_s=%.2f error=%s",
+            name, time.monotonic() - t0, e,
+        )
+        return {
+            "path": relative, "rows": 0, "sha256": None, "error": str(e),
+        }
+
+    digest = hashlib.sha256(rows_json.encode("utf-8")).hexdigest()
+    logger.info(
+        "lake_snapshot_export: postgres_table=%s end elapsed_s=%.2f rows=%d",
+        name, time.monotonic() - t0, rows,
+    )
+    return {"path": relative, "rows": rows, "sha256": digest, "error": None}
+
+
+def materialize_postgres_tables(
+    conn, base_path: Optional[str], output_root: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Export every table in ``POSTGRES_SNAPSHOT_TABLES`` into *output_root*.
+
+    Unfiltered by design. The cohort is a fact-table concept; these are
+    dimensions, small enough to carry whole, and a partial dimension would drop
+    fact rows for a reason that has nothing to do with the cohort.
+    """
+    return {
+        f"{schema}.{table}": _write_postgres_table(
+            conn, schema, table, base_path, output_root,
+        )
+        for schema, table in POSTGRES_SNAPSHOT_TABLES
+    }
+
+
 def _remove_prefix(root: str, base_path: Optional[str]) -> None:
     if base_path:
         if os.path.isdir(root):
@@ -251,12 +323,16 @@ def _write_success_marker(root: str, base_path: Optional[str]) -> None:
 @dataclass
 class MaterializationResult:
     tables: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    postgres_tables: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     generation_id: Optional[str] = None
     data_path: Optional[str] = None
 
     @property
     def ok(self) -> bool:
-        return all(t.get("error") is None for t in self.tables.values())
+        return all(
+            entry.get("error") is None
+            for entry in list(self.tables.values()) + list(self.postgres_tables.values())
+        )
 
 
 def materialize_filtered_tables(
@@ -269,8 +345,10 @@ def materialize_filtered_tables(
     artifact_row_keys: FrozenSet[Tuple[Any, Any, Any]],
     export_fingerprint: str,
     export_prefix: str,
+    pg_conn_factory: Optional[Callable[[], Any]] = None,
 ) -> MaterializationResult:
-    """Filter and write all four supported tables for the given cohort.
+    """Filter and write all four supported tables for the given cohort, plus
+    the two unfiltered Postgres dimension tables when *pg_conn_factory* is given.
 
     Writes to a fresh, immutable, uniquely-named generation directory
     (`{export_prefix}/fingerprints/{export_fingerprint}/generations/{generation_id}/data`,
@@ -320,7 +398,24 @@ def materialize_filtered_tables(
             vins, listing_ids, artifact_row_keys, data_root,
         )
 
-    errors = {name: t["error"] for name, t in tables.items() if t["error"] is not None}
+    # The Postgres half runs only when a caller hands over a connection factory.
+    # A direct caller that does not (unit tests over a local base_path, which
+    # have no database) gets an empty dict rather than a fabricated one --
+    # `export_ci_lake_snapshot` checks for that and refuses to publish, so the
+    # skip can never reach a manifest.
+    postgres_tables: Dict[str, Dict[str, Any]] = {}
+    if pg_conn_factory is not None:
+        conn = pg_conn_factory()
+        try:
+            postgres_tables = materialize_postgres_tables(conn, base_path, data_root)
+        finally:
+            conn.close()
+
+    errors = {
+        name: entry["error"]
+        for name, entry in list(tables.items()) + list(postgres_tables.items())
+        if entry["error"] is not None
+    }
     if errors:
         logger.warning(
             "lake_snapshot_export: materialize_filtered_tables aborting elapsed_s=%.2f "
@@ -328,14 +423,19 @@ def materialize_filtered_tables(
             time.monotonic() - t0, export_fingerprint, generation_id, errors,
         )
         _remove_prefix(generation_root, base_path)
-        return MaterializationResult(tables=tables, generation_id=generation_id)
+        return MaterializationResult(
+            tables=tables, postgres_tables=postgres_tables, generation_id=generation_id,
+        )
 
     _write_success_marker(generation_root, base_path)
     logger.info(
         "lake_snapshot_export: materialize_filtered_tables end elapsed_s=%.2f "
-        "generation_id=%s total_rows=%d",
-        time.monotonic() - t0, generation_id, sum(t["rows"] for t in tables.values()),
+        "generation_id=%s total_rows=%d postgres_rows=%d",
+        time.monotonic() - t0, generation_id,
+        sum(t["rows"] for t in tables.values()),
+        sum(t["rows"] for t in postgres_tables.values()),
     )
     return MaterializationResult(
-        tables=tables, generation_id=generation_id, data_path=data_relative,
+        tables=tables, postgres_tables=postgres_tables,
+        generation_id=generation_id, data_path=data_relative,
     )

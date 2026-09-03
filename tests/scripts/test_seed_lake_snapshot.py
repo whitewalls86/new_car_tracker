@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import tarfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 import zstandard as zstd
@@ -16,6 +17,12 @@ from scripts.lake_snapshot_common import (
     sha256_file,
 )
 from scripts.seed_lake_snapshot import ensure_bucket, main, seed_lake_snapshot
+from shared.lake_snapshot_postgres import (
+    POSTGRES_SNAPSHOT_TABLES,
+    UnknownSnapshotTableError,
+)
+
+LOCAL_POSTGRES_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
 
 def _make_tar_zst(archive_path, files, raw_members=None):
@@ -32,7 +39,7 @@ def _make_tar_zst(archive_path, files, raw_members=None):
     return archive_path
 
 
-def _build_snapshot(tmp_path, files=None, raw_members=None):
+def _build_snapshot(tmp_path, files=None, raw_members=None, tables=None):
     files = files if files is not None else {
         "silver_normalized/observations/source=detail/obs_year=2026/obs_month=7/part-000.parquet":
             b"a" * 10,
@@ -52,8 +59,60 @@ def _build_snapshot(tmp_path, files=None, raw_members=None):
             "path": "snapshot.tar.zst",
         },
     }
+    if tables is not None:
+        manifest["tables"] = tables
     (snapshot_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return archive, manifest
+
+
+# The four lake tables, all non-empty, as the archive manifest records them.
+# Only `rows` is read by --require-non-empty.
+_FULL_TABLES = {
+    "silver_observations": {"rows": 16847},
+    "price_observation_events": {"rows": 16615},
+    "vin_to_listing_events": {"rows": 4036},
+    "blocked_cooldown_events": {"rows": 26},
+}
+
+_SEARCH_CONFIGS_JSON = json.dumps(
+    [{"search_key": "toyota-camry-60614", "enabled": True, "params": {"zip": "60614"}}]
+).encode("utf-8")
+_TRACKED_MODELS_JSON = json.dumps(
+    [{"search_key": "toyota-camry-60614", "make": "toyota", "model": "camry"}]
+).encode("utf-8")
+
+
+def _files_with_postgres(**overrides):
+    """The default archive contents plus the two Postgres dimension members."""
+    files = {
+        "silver_normalized/observations/source=detail/obs_year=2026/obs_month=7/part-000.parquet":
+            b"a" * 10,
+        "ops_normalized/price_observation_events/year=2026/month=7/part-000.parquet": b"b" * 20,
+        "ops_normalized/vin_to_listing_events/year=2026/month=7/part-000.parquet": b"c" * 5,
+        "ops_normalized/blocked_cooldown_events/year=2026/month=7/part-000.parquet": b"d" * 5,
+        "expected/feature_audit_summary.json": b"{}",
+        "postgres/public.search_configs.json": _SEARCH_CONFIGS_JSON,
+        "postgres/ops.tracked_models.json": _TRACKED_MODELS_JSON,
+    }
+    files.update(overrides)
+    return files
+
+
+def _mock_conn(rowcounts=(1, 1)):
+    """A psycopg2-shaped connection whose cursor reports *rowcounts* in order.
+
+    `with conn:` is the transaction and `with conn.cursor()` the cursor, so both
+    context managers have to resolve to something -- a bare MagicMock returns a
+    new child for `__enter__` and the assertions would read the wrong object.
+    """
+    cur = MagicMock()
+    cur.rowcount = rowcounts[0]
+    type(cur).rowcount = PropertyMock(side_effect=list(rowcounts))
+    conn = MagicMock()
+    conn.__enter__.return_value = conn
+    conn.cursor.return_value.__enter__.return_value = cur
+    conn.cursor.return_value.__exit__.return_value = False
+    return conn, cur
 
 
 def _mock_client(existing_objects=None):
@@ -249,3 +308,217 @@ class TestSeedLakeSnapshot:
         assert result["uploaded_files"] == 5
         printed = capsys.readouterr().out
         assert '"uploaded_files": 5' in printed
+
+
+class TestPostgresHalf:
+    """Plan 162 Stage 10: the two dbt sources that resolve through
+    postgres_scan() and so cannot be objects in a bucket."""
+
+    def test_postgres_members_go_to_postgres_and_never_to_minio(self, tmp_path):
+        """The routing property, which is the whole reason `postgres/` is its own
+        top-level prefix rather than a subdirectory of an existing one."""
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+        client = _mock_client()
+        conn, _ = _mock_conn()
+
+        result = seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False,
+            postgres_url=LOCAL_POSTGRES_URL, client=client, conn=conn,
+        )
+
+        uploaded = {call.args[2] for call in client.upload_file.call_args_list}
+        assert not any(key.startswith("postgres/") for key in uploaded)
+        assert result["postgres_rows_by_table"] == {
+            "public.search_configs": 1, "ops.tracked_models": 1,
+        }
+        assert result["postgres_skipped"] == []
+
+    def test_applies_the_tables_in_allowlist_order(self, tmp_path):
+        """Filesystem order is alphabetical, which puts ops before public. The
+        seeder follows POSTGRES_SNAPSHOT_TABLES instead, so the order a future
+        foreign key would need is the one declared rather than the one the tar
+        happened to produce."""
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+        conn, cur = _mock_conn()
+
+        seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False,
+            postgres_url=LOCAL_POSTGRES_URL, client=_mock_client(), conn=conn,
+        )
+
+        relations = [
+            re.search(r"DELETE FROM (\S+);", call.args[0]).group(1)
+            for call in cur.execute.call_args_list
+        ]
+        assert relations == [
+            f"{schema}.{table}" for schema, table in POSTGRES_SNAPSHOT_TABLES
+        ]
+
+    def test_the_json_payload_is_bound_not_formatted(self, tmp_path):
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+        conn, cur = _mock_conn()
+
+        seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False,
+            postgres_url=LOCAL_POSTGRES_URL, client=_mock_client(), conn=conn,
+        )
+
+        payloads = [call.args[1][0] for call in cur.execute.call_args_list]
+        assert json.loads(payloads[0])[0]["search_key"] == "toyota-camry-60614"
+        assert json.loads(payloads[1])[0]["make"] == "toyota"
+
+    def test_an_unknown_postgres_member_is_refused_not_skipped(self, tmp_path):
+        """A snapshot carrying a table this seeder cannot place is a snapshot the
+        seed would silently under-apply -- exactly the empty-world failure the
+        job reading it exists to rule out."""
+        files = _files_with_postgres(**{"postgres/public.users.json": b"[]"})
+        archive, _ = _build_snapshot(tmp_path, files=files)
+        conn, _ = _mock_conn()
+
+        with pytest.raises(UnknownSnapshotTableError):
+            seed_lake_snapshot(
+                snapshot_path=archive, manifest_path=None,
+                minio_endpoint="http://localhost:9000", bucket="bronze",
+                clear_prefixes=False, allow_production_target=False,
+                postgres_url=LOCAL_POSTGRES_URL, client=_mock_client(), conn=conn,
+            )
+
+    def test_without_a_url_the_tables_are_reported_skipped(self, tmp_path):
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+
+        result = seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False,
+            client=_mock_client(),
+        )
+
+        assert result["postgres_rows_by_table"] == {}
+        assert result["postgres_skipped"] == [
+            "public.search_configs", "ops.tracked_models",
+        ]
+
+    def test_refuses_a_postgres_host_that_is_not_loopback_or_private(self, tmp_path):
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+        client = _mock_client()
+        conn, cur = _mock_conn()
+
+        with pytest.raises(ProductionTargetError):
+            seed_lake_snapshot(
+                snapshot_path=archive, manifest_path=None,
+                minio_endpoint="http://localhost:9000", bucket="bronze",
+                clear_prefixes=False, allow_production_target=False,
+                postgres_url="postgresql://u:p@postgres:5432/cartracker",
+                client=client, conn=conn,
+            )
+        cur.execute.assert_not_called()
+        client.upload_file.assert_not_called()
+
+    def test_the_refusal_does_not_echo_the_password(self, tmp_path):
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+        conn, _ = _mock_conn()
+
+        with pytest.raises(ProductionTargetError) as excinfo:
+            seed_lake_snapshot(
+                snapshot_path=archive, manifest_path=None,
+                minio_endpoint="http://localhost:9000", bucket="bronze",
+                clear_prefixes=False, allow_production_target=False,
+                postgres_url="postgresql://u:hunter2@db.example.com:5432/cartracker",
+                client=_mock_client(), conn=conn,
+            )
+        assert "hunter2" not in str(excinfo.value)
+        assert "db.example.com" in str(excinfo.value)
+
+
+class TestRequireNonEmpty:
+    """The flag that turns a short snapshot from a green build over an empty
+    world into a failure at the seed."""
+
+    def test_passes_when_all_six_sources_have_rows(self, tmp_path):
+        archive, _ = _build_snapshot(
+            tmp_path, files=_files_with_postgres(), tables=_FULL_TABLES,
+        )
+        conn, _ = _mock_conn()
+
+        result = seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False,
+            postgres_url=LOCAL_POSTGRES_URL, require_non_empty=True,
+            client=_mock_client(), conn=conn,
+        )
+        assert result["postgres_rows_by_table"]["public.search_configs"] == 1
+
+    def test_fails_when_a_postgres_source_seeded_nothing(self, tmp_path):
+        """The specific case the flag exists for: a snapshot exported before the
+        Postgres half existed uploads four healthy Parquet tables and leaves
+        stg_search_configs reading nothing."""
+        files = _files_with_postgres()
+        del files["postgres/public.search_configs.json"]
+        del files["postgres/ops.tracked_models.json"]
+        archive, _ = _build_snapshot(tmp_path, files=files, tables=_FULL_TABLES)
+        conn, _ = _mock_conn()
+
+        with pytest.raises(LakeSnapshotError) as excinfo:
+            seed_lake_snapshot(
+                snapshot_path=archive, manifest_path=None,
+                minio_endpoint="http://localhost:9000", bucket="bronze",
+                clear_prefixes=False, allow_production_target=False,
+                postgres_url=LOCAL_POSTGRES_URL, require_non_empty=True,
+                client=_mock_client(), conn=conn,
+            )
+        assert "public.search_configs" in str(excinfo.value)
+        assert "ops.tracked_models" in str(excinfo.value)
+
+    def test_fails_on_a_lake_table_with_files_but_no_rows(self, tmp_path):
+        """Read from the manifest, not the upload plan. A zero-row Parquet file
+        is still a file, so a file-count check would pass exactly here."""
+        tables = dict(_FULL_TABLES, vin_to_listing_events={"rows": 0})
+        archive, _ = _build_snapshot(
+            tmp_path, files=_files_with_postgres(), tables=tables,
+        )
+        conn, _ = _mock_conn()
+
+        with pytest.raises(LakeSnapshotError) as excinfo:
+            seed_lake_snapshot(
+                snapshot_path=archive, manifest_path=None,
+                minio_endpoint="http://localhost:9000", bucket="bronze",
+                clear_prefixes=False, allow_production_target=False,
+                postgres_url=LOCAL_POSTGRES_URL, require_non_empty=True,
+                client=_mock_client(), conn=conn,
+            )
+        assert "vin_to_listing_events" in str(excinfo.value)
+
+    def test_a_manifest_with_no_tables_key_fails_rather_than_passing_vacuously(
+        self, tmp_path,
+    ):
+        """An older manifest records no per-table counts. Reading that as "no
+        table is empty" would make the flag assert nothing on exactly the
+        snapshots most likely to be short."""
+        archive, _ = _build_snapshot(tmp_path, files=_files_with_postgres())
+        conn, _ = _mock_conn()
+
+        with pytest.raises(LakeSnapshotError):
+            seed_lake_snapshot(
+                snapshot_path=archive, manifest_path=None,
+                minio_endpoint="http://localhost:9000", bucket="bronze",
+                clear_prefixes=False, allow_production_target=False,
+                postgres_url=LOCAL_POSTGRES_URL, require_non_empty=True,
+                client=_mock_client(), conn=conn,
+            )
+
+    def test_off_by_default_so_a_partial_local_seed_still_works(self, tmp_path):
+        archive, _ = _build_snapshot(tmp_path)
+        result = seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False,
+            client=_mock_client(),
+        )
+        assert result["uploaded_files"] == 5

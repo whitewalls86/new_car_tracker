@@ -30,12 +30,19 @@ class ProductionTargetError(LakeSnapshotError):
     """Raised when a seed target looks production-like without an explicit override."""
 
 
+# What the seeder uploads to MinIO. `postgres/` is deliberately absent: those
+# members are rows for a database, not objects for a bucket, and the seeder has
+# to be able to tell them apart by path before it opens anything. See
+# shared/lake_snapshot_postgres.POSTGRES_PREFIX.
 FIXTURE_PREFIXES = ("silver_normalized/", "ops_normalized/", "expected/")
 
 DEFAULT_ARCHIVE_NAME = "snapshot.tar.zst"
 
 _PRODUCTION_HOST_MARKERS = ("cartracker.info", "147.224.199.86")
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "minio"}
+# The Postgres guard's allowlist. No Compose service names -- see
+# is_production_like_postgres_url for why that half is stricter.
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _PRODUCTION_BUCKET_MARKERS = ("prod",)
 
 
@@ -183,10 +190,46 @@ def is_production_like_bucket(bucket: str) -> bool:
     return any(marker in lowered for marker in _PRODUCTION_BUCKET_MARKERS)
 
 
-def check_production_target(endpoint: str, bucket: str, allow_production_target: bool) -> None:
+def is_production_like_postgres_url(postgres_url: str) -> bool:
+    """Return True unless *postgres_url* points at a loopback or private-IP host.
+
+    **Deliberately stricter than the MinIO guard above**, which treats a bare
+    Compose service name (``minio``) as dev-shaped. Plan 162 Stage 10 gave the
+    seeder a Postgres write path, and a tool that can ``INSERT`` into any
+    connection string it is handed is a different risk class from one that can
+    only upload Parquet: the MinIO half writes fixture objects under known
+    prefixes, while this half runs a ``DELETE`` against a live operational
+    table. So a hostname is not enough here -- only a loopback literal or a
+    private IP passes, and ``postgres:5432`` inside a Compose network (which
+    *is* production, from inside production) is refused rather than waved
+    through by resembling a service name.
+
+    An unparseable or empty URL is production-like, for the same fail-safe
+    reason an unknown public host is.
     """
-    Raise ProductionTargetError if *endpoint* or *bucket* look production-like
-    and *allow_production_target* is not set.
+    host = (urlparse(postgres_url or "").hostname or "").lower()
+    if not host:
+        return True
+    if host in _LOOPBACK_HOSTS:
+        return False
+
+    import ipaddress
+    try:
+        return not ipaddress.ip_address(host).is_private
+    except ValueError:
+        # A hostname, not a literal address. Unknown by construction.
+        return True
+
+
+def check_production_target(
+    endpoint: str,
+    bucket: str,
+    allow_production_target: bool,
+    postgres_url: str = "",
+) -> None:
+    """
+    Raise ProductionTargetError if *endpoint*, *bucket* or *postgres_url* look
+    production-like and *allow_production_target* is not set.
     """
     if allow_production_target:
         return
@@ -199,4 +242,11 @@ def check_production_target(endpoint: str, bucket: str, allow_production_target:
         raise ProductionTargetError(
             f"refusing to seed: bucket '{bucket}' looks production-like; "
             "pass --allow-production-target to override"
+        )
+    if postgres_url and is_production_like_postgres_url(postgres_url):
+        # The host, never the URL -- a DSN carries a password.
+        host = urlparse(postgres_url).hostname or "(unparseable)"
+        raise ProductionTargetError(
+            f"refusing to seed: Postgres host '{host}' is not a loopback or "
+            "private address; pass --allow-production-target to override"
         )

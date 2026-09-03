@@ -7,6 +7,7 @@ mocker, never real MinIO.
 """
 from archiver.processors.lake_snapshot_export_cache import (
     EXPORT_CACHE_SCHEMA_VERSION,
+    INCLUDED_POSTGRES_TABLES,
     INCLUDED_TABLES,
     build_export_manifest,
     compute_export_fingerprint,
@@ -23,6 +24,10 @@ def _complete_manifest(fingerprint="abc"):
         "data_path": "snapshot_exports/fingerprints/abc/generations/gen1/data",
         "tables": {name: {"rows": 1, "files": 1, "sha256": ["x"], "error": None}
                    for name in INCLUDED_TABLES},
+        "postgres_tables": {
+            name: {"rows": 1, "sha256": "x", "error": None}
+            for name in INCLUDED_POSTGRES_TABLES
+        },
     }
 
 # ---------------------------------------------------------------------------
@@ -83,6 +88,7 @@ class TestBuildExportManifest:
             counts={"closed_vins": 5},
             coverage={},
             tables={},
+            postgres_tables={},
             data_path="snapshot_exports/fingerprints/export-abc/generations/gen1/data",
             generation_id="gen1",
         )
@@ -93,6 +99,36 @@ class TestBuildExportManifest:
         assert manifest["counts"] == {"closed_vins": 5}
         assert manifest["generation_id"] == "gen1"
         assert manifest["data_path"].endswith("gen1/data")
+
+
+class TestPostgresTablesGateTheCache:
+    """Plan 162 Stage 10. A manifest that predates the Postgres half describes
+    an archive whose seed leaves two dbt sources empty, and the build reading it
+    is green over an empty world -- so it has to be a miss, not a hit."""
+
+    def test_a_manifest_without_postgres_tables_is_a_miss(self, mocker):
+        manifest = _complete_manifest("abc")
+        del manifest["postgres_tables"]
+        mocker.patch(
+            "archiver.processors.lake_snapshot_export_cache.read_json",
+            return_value=manifest,
+        )
+        assert load_export_manifest("some/path", "abc") is None
+
+    def test_a_postgres_table_that_recorded_an_error_is_a_miss(self, mocker):
+        manifest = _complete_manifest("abc")
+        manifest["postgres_tables"]["public.search_configs"]["error"] = "boom"
+        mocker.patch(
+            "archiver.processors.lake_snapshot_export_cache.read_json",
+            return_value=manifest,
+        )
+        assert load_export_manifest("some/path", "abc") is None
+
+    def test_the_included_list_is_in_the_fingerprint(self, mocker):
+        """Growing the list has to re-key the cache, or the next export reuses an
+        archive that predates the new table."""
+        _, payload = compute_export_fingerprint("planning-abc")
+        assert payload["included_postgres_tables"] == list(INCLUDED_POSTGRES_TABLES)
 
 
 # ---------------------------------------------------------------------------

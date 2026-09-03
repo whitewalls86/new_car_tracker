@@ -12,13 +12,22 @@ output — that's exactly the pollution the Plan 120 closure fix removed, and
 Gate D's writer must not reintroduce it via a naive `artifact_id IN (...)`
 table filter.
 """
+import json
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from archiver.processors.lake_snapshot_export import materialize_filtered_tables
+from archiver.processors.lake_snapshot_export import (
+    materialize_filtered_tables,
+    materialize_postgres_tables,
+)
+from shared.lake_snapshot_postgres import (
+    POSTGRES_SNAPSHOT_TABLES,
+    snapshot_object_name,
+)
 
 UTC = timezone.utc
 
@@ -340,3 +349,102 @@ class TestMaterializeFilteredTables:
         )
         assert written[0]["listing_id"] == "LA"
         assert written[1]["listing_id"] == "LB"
+
+
+class TestPostgresHalf:
+    """Plan 162 Stage 10: the two dimension tables that travel as JSON, whole.
+
+    Local `base_path` mode has no database, so the connection is a mock -- what
+    is under test is the writer's routing, naming and failure handling, not
+    Postgres's ability to serialize a row, which
+    ``tests/integration/sql/test_shared_queries.py`` executes for real.
+    """
+
+    def _conn(self, payloads):
+        cur = MagicMock()
+        cur.fetchone.side_effect = [(payload,) for payload in payloads]
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        conn.cursor.return_value.__exit__.return_value = False
+        return conn, cur
+
+    def test_writes_one_json_file_per_allowlisted_table(self, tmp_path):
+        conn, _ = self._conn(['[{"search_key": "a"}]', '[{"make": "toyota"}]'])
+
+        entries = materialize_postgres_tables(conn, str(tmp_path), str(tmp_path / "data"))
+
+        assert set(entries) == {
+            f"{schema}.{table}" for schema, table in POSTGRES_SNAPSHOT_TABLES
+        }
+        for schema, table in POSTGRES_SNAPSHOT_TABLES:
+            written = tmp_path / "data" / snapshot_object_name(schema, table)
+            assert written.exists()
+            assert json.loads(written.read_text(encoding="utf-8"))
+
+    def test_records_row_counts_and_a_checksum_for_the_manifest(self, tmp_path):
+        conn, _ = self._conn(['[{"a": 1}, {"a": 2}]', "[]"])
+
+        entries = materialize_postgres_tables(conn, str(tmp_path), str(tmp_path / "data"))
+
+        assert entries["public.search_configs"]["rows"] == 2
+        # An empty production table is zero rows, not an error -- the seeder's
+        # --require-non-empty is what decides whether zero is acceptable.
+        assert entries["ops.tracked_models"]["rows"] == 0
+        assert entries["ops.tracked_models"]["error"] is None
+        assert len(entries["public.search_configs"]["sha256"]) == 64
+
+    def test_a_failing_table_is_recorded_rather_than_raised(self, tmp_path):
+        """The writer's contract with `materialize_filtered_tables`, which reads
+        every entry's `error` and discards the whole generation on any one of
+        them -- so a raise here would skip that cleanup."""
+        conn, cur = self._conn([])
+        cur.execute.side_effect = RuntimeError("relation does not exist")
+
+        entries = materialize_postgres_tables(conn, str(tmp_path), str(tmp_path / "data"))
+
+        assert entries["public.search_configs"]["error"] == "relation does not exist"
+        assert entries["public.search_configs"]["rows"] == 0
+
+    def test_a_postgres_failure_discards_the_whole_generation(self, tmp_path):
+        """Four healthy Parquet tables and one failed dimension is exactly the
+        archive that builds green over an empty world, so it must not survive."""
+        _seed_fixture_lake(tmp_path)
+        conn, cur = self._conn([])
+        cur.execute.side_effect = RuntimeError("boom")
+        con = duckdb.connect()
+        try:
+            result = materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_A"}), listing_ids=frozenset(),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+                pg_conn_factory=lambda: conn,
+            )
+        finally:
+            con.close()
+
+        assert result.ok is False
+        assert result.data_path is None
+        generation = tmp_path / "snapshot_exports" / "fingerprints" / "testfp"
+        assert not any(generation.rglob("*.parquet"))
+
+    def test_without_a_factory_the_postgres_half_is_absent_not_fabricated(
+        self, tmp_path,
+    ):
+        _seed_fixture_lake(tmp_path)
+        con = duckdb.connect()
+        try:
+            result = materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_A"}), listing_ids=frozenset(),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+        finally:
+            con.close()
+
+        # `ok` still holds -- the lake half succeeded. It is
+        # `export_ci_lake_snapshot` that refuses to publish an empty dict, so a
+        # direct caller cannot accidentally record a skip as a success.
+        assert result.ok
+        assert result.postgres_tables == {}

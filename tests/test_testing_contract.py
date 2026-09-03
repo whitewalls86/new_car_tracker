@@ -1379,7 +1379,7 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
         "archiver/processors/lake_snapshot_cohort.py:561",
         "archiver/processors/lake_snapshot_cohort.py:595",
         "archiver/processors/lake_snapshot_cohort.py:628",
-        "archiver/processors/lake_snapshot_export.py:131",
+        "archiver/processors/lake_snapshot_export.py:145",
         "archiver/processors/lake_snapshot_selectors.py:129",
         "archiver/processors/lake_source_audit.py:114",
         "archiver/processors/pack_bronze_html.py:440",

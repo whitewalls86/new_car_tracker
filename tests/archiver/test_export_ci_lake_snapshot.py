@@ -38,6 +38,8 @@ from archiver.processors.lake_snapshot_selectors import (
     build_selector_query,
     build_selector_registry,
 )
+from shared.db import get_conn
+from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
 
 # ---------------------------------------------------------------------------
 # Request validation
@@ -1051,10 +1053,24 @@ class TestExportNonDryRun:
     those flags — then materializes filtered Parquet under an
     export-fingerprint-addressed prefix (Gate D)."""
 
-    def _mock_materialize(self, mocker, tables=None, data_path="data/path", ok=True):
+    def _mock_materialize(
+        self, mocker, tables=None, data_path="data/path", ok=True, postgres_tables=None,
+    ):
         tables = tables if tables is not None else {}
+        # Plan 162 Stage 10: a real export always carries the two Postgres
+        # dimension tables, so the default here is the complete shape. A test
+        # that wants the incomplete one passes it explicitly.
+        if postgres_tables is None:
+            postgres_tables = {
+                f"{schema}.{table}": {
+                    "path": f"postgres/{schema}.{table}.json",
+                    "rows": 1, "sha256": "x", "error": None,
+                }
+                for schema, table in POSTGRES_SNAPSHOT_TABLES
+            }
         result = MaterializationResult(
             tables=tables,
+            postgres_tables=postgres_tables,
             generation_id="gen1",
             data_path=data_path if ok else None,
         )
@@ -1119,6 +1135,58 @@ class TestExportNonDryRun:
         assert result.archive_sha256 == "deadbeef"
         assert result.archive_bytes == 123
         assert result.archive_cache_action == "computed"
+
+    def test_the_export_hands_the_writer_a_postgres_connection_factory(self, mocker):
+        """Plan 162 Stage 10. `materialize_filtered_tables` writes the Postgres
+        half only when it is given one, so an export that forgets it produces an
+        archive whose seed leaves two dbt sources empty."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mock_materialize = self._mock_materialize(mocker)
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+        self._mock_archive_success(mocker)
+
+        export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert mock_materialize.call_args.kwargs["pg_conn_factory"] is get_conn
+
+    def test_a_missing_postgres_table_fails_the_export(self, mocker):
+        """The empty-world guard at its source. Left to CI this is a green build
+        over a world with no search configs; here it is an export that refuses to
+        publish, six weeks earlier and with the cause in hand."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(mocker, postgres_tables={})
+        mock_write_manifest = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+        mock_package, _ = self._mock_archive_success(mocker)
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "export_failed"
+        assert any(
+            "public.search_configs" in failure for failure in result.coverage_failures
+        )
+        # Nothing was published: no manifest, and therefore no archive.
+        assert not mock_write_manifest.called
+        assert not mock_package.called
 
     def test_non_dry_run_ignores_run_selectors_flag(self, mocker):
         """run_selectors only gates dry-run diagnostic scope — a real export

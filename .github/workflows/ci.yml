@@ -26,6 +26,7 @@ jobs:
       docs_tests: ${{ steps.scope.outputs.docs_tests }}
       unit: ${{ steps.scope.outputs.unit }}
       heavy: ${{ steps.scope.outputs.heavy }}
+      snapshot_dbt: ${{ steps.scope.outputs.snapshot_dbt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +49,11 @@ jobs:
           docs_tests=false
           unit=true
           heavy=true
+          # Plan 162 Stage 10. Reads true here for the same fail-open reason as
+          # the two above, even though the group it gates is an allowlist rather
+          # than a complement: a run that could not classify anything is not a
+          # run that gets to skip a gate.
+          snapshot_dbt=true
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base_sha="$PR_BASE_SHA"
@@ -71,6 +77,7 @@ jobs:
                   docs_tests=true|docs_tests=false) docs_tests="${line#*=}" ;;
                   unit=true|unit=false) unit="${line#*=}" ;;
                   heavy=true|heavy=false) heavy="${line#*=}" ;;
+                  snapshot_dbt=true|snapshot_dbt=false) snapshot_dbt="${line#*=}" ;;
                 esac
               done <<< "$classified"
             fi
@@ -79,6 +86,7 @@ jobs:
           echo "docs_tests=$docs_tests" >> "$GITHUB_OUTPUT"
           echo "unit=$unit" >> "$GITHUB_OUTPUT"
           echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "snapshot_dbt=$snapshot_dbt" >> "$GITHUB_OUTPUT"
 
   docs-tests:
     name: Documentation tests
@@ -435,6 +443,175 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+  snapshot-dbt:
+    name: dbt build against a production snapshot
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.snapshot_dbt == 'true') && needs.lint.result == 'success'
+    # Plan 162 Stage 10. The only instrument here that can see a production row.
+    # dbt unit tests run on inputs their author chose and the Plan 120 synthetic
+    # fixture seeds authored business-state scenarios, so neither can surface a
+    # `unique` violation, a `not_null` violation, a cast failure or a duplicate
+    # join key that exists in production -- no production row is ever in their
+    # denominator. `dbt build` (not `run`: the assertions are dbt's own data
+    # tests) over a pinned, production-derived snapshot is.
+    #
+    # **Deliberately not a step in `dbt-models`.** That job seeds the synthetic
+    # fixture into a reserved obs_year=2099 partition so it cannot collide with
+    # the empty-schema compilation seed. A production snapshot lands in real
+    # partitions under the same globs, as a third dataset, so sharing a runner
+    # would put fixture-plus-production under the equivalence assertions in
+    # `tests/integration/dbt/`. Separate jobs get independent runners with no
+    # shared filesystem, which dissolves the collision rather than managing it,
+    # and the wall clock stays at max() rather than sum().
+    #
+    # **What a green here does not prove**, recorded rather than solved:
+    #   * Production builds incrementally (`--full-refresh` is conditional in
+    #     dbt_runner/app.py and off by default) while a fresh DuckDB file takes
+    #     every incremental model's cold path, so the two exercise different code.
+    #   * A subset cannot invent a duplicate or a null, so `unique`/`not_null`
+    #     failures here are true positives about production -- but
+    #     `relationships` failures may be artifacts of incomplete cohort
+    #     closure, which Plan 120 records as the hard part and once got wrong.
+    #   * A snapshot captured after production's last dbt run can be red while
+    #     production is green, only because production has not run yet.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cartracker
+          POSTGRES_PASSWORD: cartracker
+          POSTGRES_DB: cartracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        command: server /data
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations (Flyway)
+        # Not only for dbt's on-run-start hook, as in `dbt-models`: this job's
+        # seed writes rows into public.search_configs and ops.tracked_models,
+        # and it writes them into tables Flyway created rather than creating its
+        # own. A column a migration added after the pinned snapshot was exported
+        # arrives NULL and fails on its NOT NULL -- which is the correct signal
+        # to bump the pin, and is only available because the schema is real.
+        uses: docker://flyway/flyway:10-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/cartracker
+            -user=cartracker
+            -password=cartracker
+            -locations=filesystem:/github/workspace/db/migrations
+            -detectEncoding=true
+            -placeholders.viewerPassword=ci_viewer
+            -placeholders.scraperPassword=ci_scraper
+            -placeholders.dbtPassword=ci_dbt
+            -placeholders.authEmailSalt=ci_salt
+            -placeholders.adminEmail=ci@example.com
+            -placeholders.airflowPassword=ci_airflow
+            -placeholders.airflowAppPassword=ci_airflow_app
+            -placeholders.metricsPassword=ci_metrics
+            -defaultSchema=public
+            migrate
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # Same measured-rather-than-assumed install as the other heavy jobs.
+        # Needs: httpx (the downloader's API mode), boto3/botocore and zstandard
+        # (the seeder), psycopg2 (its Postgres half), duckdb (the extension
+        # install below). requirements-dev supplies the first three; archiver's
+        # supplies psycopg2 and duckdb.
+        run: |
+          pip install \
+            -r requirements-dev.txt \
+            -r archiver/requirements.txt
+
+      - name: Create MinIO bucket
+        run: python .github/scripts/create_ci_bucket.py
+
+      - name: Install dbt
+        # Pinned to match dbt_runner/Dockerfile, same as `dbt-models`. A drift
+        # between the two would make this job's verdict about a dbt version
+        # production does not run.
+        run: pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1"
+
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Install DuckDB extensions
+        run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
+
+      - name: Download the pinned lake snapshot
+        # The id comes from .github/ci_lake_snapshot_pin.json, never from
+        # latest.json: a pointer that moves between two runs of the same commit
+        # destroys re-runnability on the one check whose job is telling you what
+        # a change did. See that file for how to bump it.
+        id: snapshot
+        shell: bash
+        env:
+          CARTRACKER_SNAPSHOT_TOKEN: ${{ secrets.CARTRACKER_SNAPSHOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          snapshot_id="$(jq -er .snapshot_id .github/ci_lake_snapshot_pin.json)"
+          echo "snapshot_id=$snapshot_id" >> "$GITHUB_OUTPUT"
+          archive="$(python scripts/download_lake_snapshot.py \
+            --snapshot-id "$snapshot_id" \
+            --base-url https://cartracker.info)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Seed the snapshot into MinIO and Postgres
+        # --require-non-empty is the whole point of the step. Four of the six dbt
+        # sources are Parquet in MinIO and two resolve through postgres_scan();
+        # left empty, stg_search_configs reads nothing, int_active_make_models
+        # inner-joins to nothing, and mart_vehicle_snapshot builds green over an
+        # empty world -- in the job whose purpose is proving the build survives
+        # real data. Without this flag that is a pass.
+        run: |
+          python scripts/seed_lake_snapshot.py \
+            --snapshot "${{ steps.snapshot.outputs.archive }}" \
+            --minio-endpoint http://localhost:9000 \
+            --bucket bronze \
+            --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker \
+            --require-non-empty
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+
+      - name: dbt build (DuckDB — production-shaped data)
+        working-directory: dbt
+        run: dbt build --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/snapshot_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123

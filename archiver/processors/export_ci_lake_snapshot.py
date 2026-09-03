@@ -54,6 +54,8 @@ from archiver.processors.lake_snapshot_planning_cache import (
 )
 from archiver.processors.lake_snapshot_selectors import build_selector_registry, run_lake_selectors
 from archiver.processors.lake_source_audit import audit_source_tables
+from shared.db import get_conn
+from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
 from shared.logging_setup import configure_logging
 
 logger = logging.getLogger("archiver")
@@ -787,6 +789,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 planning.cohort_closed_vins, planning.cohort_listing_ids,
                 planning.cohort_artifact_row_keys,
                 export_fingerprint, request.export_cache_prefix,
+                pg_conn_factory=get_conn,
             )
         finally:
             con.close()
@@ -797,7 +800,10 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             # partial result, or a later reuse_export_cache request would
             # accept an incomplete snapshot as valid.
             table_errors = {
-                name: t["error"] for name, t in result.tables.items() if t["error"]
+                name: entry["error"]
+                for name, entry in
+                list(result.tables.items()) + list(result.postgres_tables.items())
+                if entry["error"]
             }
             logger.warning(
                 "export_ci_lake_snapshot: export failed snapshot_id=%s "
@@ -806,6 +812,25 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             )
             return _export_failed(
                 [f"{name}: {err}" for name, err in table_errors.items()], export_cache_action,
+            )
+
+        # Plan 162 Stage 10. A snapshot missing a Postgres dimension still
+        # produces a green dbt build over an empty world, which is exactly what
+        # the job consuming it exists to disprove — so the absence has to be an
+        # export failure here, not a quiet gap discovered in CI six weeks later.
+        missing_postgres = [
+            f"{schema}.{table}" for schema, table in POSTGRES_SNAPSHOT_TABLES
+            if f"{schema}.{table}" not in result.postgres_tables
+        ]
+        if missing_postgres:
+            logger.warning(
+                "export_ci_lake_snapshot: postgres tables missing snapshot_id=%s "
+                "export_fingerprint=%s missing=%s",
+                snapshot_id, export_fingerprint, missing_postgres,
+            )
+            return _export_failed(
+                [f"postgres table not exported: {name}" for name in missing_postgres],
+                export_cache_action,
             )
 
         manifest = build_export_manifest(
@@ -829,6 +854,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 if planning.selector_diagnostics else {}
             ),
             tables=result.tables,
+            postgres_tables=result.postgres_tables,
             data_path=result.data_path,
             generation_id=result.generation_id,
         )
