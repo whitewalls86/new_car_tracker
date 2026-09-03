@@ -621,7 +621,7 @@ reading A, H, B, C … are what say so at a glance.
 
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
-| 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `next` | — |
+| 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `done` | CAR-70 |
 | 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `—` | — |
 | 3 | [**B**](#stage-b) | the `plan-draft` skill | `—` | — |
 | 4 | [**C**](#stage-c) | the `plan-start` skill | `—` | — |
@@ -865,3 +865,15 @@ Supplies the waiver-list pattern this plan adopts wholesale: a named list that
 must shrink, currently empty, with every remaining entry traceable to the stage
 that opened it. Plan 162 is also one of the two documents whose 187 stage
 references argued against a lettering sweep.
+
+## Record
+
+### Stage A
+
+Landed `docs/PLAN_DOCUMENT.md`: the four questions, the section ratchet, the
+no-status-marker rule, stage lettering and the single `Stage` vocabulary, the
+order table's `State` vocabulary, the record's shape and `docs/evidence/`
+naming, and the two public sections with the freeze rule. No code and no
+existing plan document were edited. Verified by `tests/test_planning_docs.py`
+(35 passed) and `scripts/build_public_roadmap.py --check` on
+`car-70-plan-172-stage-a-contract`.
