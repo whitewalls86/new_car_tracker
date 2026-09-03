@@ -1,5 +1,12 @@
 # Plan 164: The Cycle-Close Ritual
 
+## What this plan is for
+
+Three steps of the routine that closes a work cycle — recording how the cycle
+actually went, rolling unfinished work forward, and tidying the branches left
+behind — have no owner today, and each is only ever correct at the close. This
+plan gives all three a home.
+
 ## Status
 
 Written 2026-08-31, out of Cycle 1's close. Three steps of a ritual that

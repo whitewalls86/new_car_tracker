@@ -979,6 +979,13 @@ must shrink, currently empty, with every remaining entry traceable to the stage
 that opened it. Plan 162 is also one of the two documents whose 187 stage
 references argued against a lettering sweep.
 
+## Public summary
+
+**The plan document contract** — Plans had grown into documents answering four
+questions at once, with no rule for what belonged where or when evidence was
+written down. They now follow a contract: a plan gains one section as it
+advances, and automated checks refuse to publish work that skipped one.
+
 ## Record
 
 ### Stage A
@@ -1384,6 +1391,17 @@ ratchet: its defence is the comment above the constants and the diff being
 visible in review, not the assertion. `docs/TESTING.md` asks for exactly this
 distinction between what is mechanised and what is only specified, so it is
 recorded here instead of leaving the ceiling looking stronger than it is.
+
+**The ratchet was paid down within hours, by this plan's own closeout.**
+Archiving Plan 172 promoted Plan 164 from build-order row 5 into the published
+top four, and Plan 164 was waived. The strict published-window test and
+`test_no_waiver_covers_a_published_plan` both refused that, so the closeout had
+to write Plan 164's `## What this plan is for`, drop its waiver, and lower
+`MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` from 39 to **38**. That is the ceiling
+working in the direction it was built for — a score paid down by fixing a
+document, not a floor — and it is the first evidence that the two Stage D tests
+and this one compose: without them Plan 164 would have been published carrying
+no public sentence and nothing would have said so.
 
 `Public surfaces: no mechanism, name or quantity either surface states was
 changed by this work.`
