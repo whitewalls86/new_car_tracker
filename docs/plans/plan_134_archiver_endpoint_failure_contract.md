@@ -1,5 +1,12 @@
 # Plan 134: The Archiver Endpoints Do Not Signal Failure
 
+## What this plan is for
+
+The archiver's HTTP endpoints return a summary object instead of raising, so a
+partially failed job still answers success and pages nobody. Converts each
+endpoint to a real failure signal, one endpoint per deploy, in ascending order
+of impact.
+
 ## Status
 
 **Build order — Stage 1 deployed 2026-08-30, observing to 2026-09-06.** Split out of [Plan 131](plan_131_packed_cold_storage.md)

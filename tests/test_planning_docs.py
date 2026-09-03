@@ -341,6 +341,186 @@ class TestPlanTableCoverage:
         )
 
 
+# ---------------------------------------------------------------------------
+# Plan 172 Stage D: docs/PLAN_DOCUMENT.md's two public sections, mechanised
+# for the two published windows, then widened to every live plan behind a
+# named, dated waiver list.
+# ---------------------------------------------------------------------------
+_SECTION_MEASURED = date(2026, 9, 3)
+
+
+def _has_section(path: str, heading: str) -> bool:
+    """Presence only -- content and the 320-character cap are the author's
+    job, not this file's."""
+    return re.search(rf"^## {re.escape(heading)}\s*$", _read(path), re.M) is not None
+
+
+def _plan_document_path(number: int) -> str | None:
+    docs = documents_by_plan_number().get(number, ())
+    return f"{PLANS_DIR}/{docs[0]}" if docs else None
+
+
+@dataclass(frozen=True)
+class SectionWaiver:
+    """One live plan that predates ``docs/PLAN_DOCUMENT.md`` and has not been
+    touched since. Cleared the next time the plan is touched and the section
+    is added -- not on a schedule. A plan in the published build-order or
+    archive window may never appear here: the published-window tests below
+    hold no waiver list at all, by design.
+    """
+
+    plan: int
+    since: date = _SECTION_MEASURED
+
+
+# 43 live plans predated this contract. Four already carry '## What this plan
+# is for' -- 172 was written under it, and 162/134/138 were backfilled landing
+# this stage because the published build-order window required it -- leaving
+# these 39. Plans 117 and 163 are the two whose shape does not fit stages at
+# all (an umbrella and a register); the contract's own Design section names a
+# waiver as the right instrument for that too, not a permanent plan kind.
+WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
+    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),
+    SectionWaiver(79), SectionWaiver(94), SectionWaiver(108), SectionWaiver(112),
+    SectionWaiver(113), SectionWaiver(117), SectionWaiver(119), SectionWaiver(121),
+    SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
+    SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
+    SectionWaiver(149), SectionWaiver(150), SectionWaiver(151), SectionWaiver(152),
+    SectionWaiver(154), SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
+    SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(164),
+    SectionWaiver(165), SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
+    SectionWaiver(169), SectionWaiver(170), SectionWaiver(171),
+)
+
+# The closeout plans owing '## The checks'. Plan 129 archived 2026-09-03 and
+# left this list on its way out -- it is not waived here because it is no
+# longer live. Plans 117 and 163 are not here: neither is in closeout, so
+# neither owes this section.
+THE_CHECKS_WAIVERS = (
+    SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
+    SectionWaiver(149), SectionWaiver(160),
+)
+
+
+def _live_plan_numbers() -> frozenset[int]:
+    return plan_numbers(BUILD_ORDER) | plan_numbers(BACKLOG) | plan_numbers(CLOSEOUT)
+
+
+class TestPlanDocumentContract:
+    """``docs/PLAN_DOCUMENT.md`` Stage D: its two public sections, asserted
+    rather than merely written.
+
+    Two different strengths, on purpose. The published windows -- what a
+    reader outside this repository actually sees -- hold with **no waiver
+    list at all**: a plan reaching either one without its section is a
+    failure, full stop, because publishing the gap is worse than not
+    publishing. Every other live plan holds against the same rule behind a
+    named, dated waiver, because 39 of them predate the contract and
+    rewriting all of them on Stage D's one day would be exactly the kind of
+    backfill ``plan_172_plan_authoring_skill.md``'s Adoption section rules
+    out.
+    """
+
+    def test_published_build_order_window_carries_what_this_plan_is_for(self):
+        from scripts import build_public_roadmap as roadmap
+
+        missing = []
+        for row in rows(BUILD_ORDER)[: roadmap.MAX_ITEMS]:
+            number = index_plan_number(BUILD_ORDER, row["Plan"])
+            path = _plan_document_path(number)
+            if path is None or not _has_section(path, "What this plan is for"):
+                missing.append(number)
+        assert not missing, (
+            f"published build-order plans {missing} lack '## What this plan "
+            f"is for'. This window is public; no waiver may cover it -- "
+            f"write the section."
+        )
+
+    def test_published_archive_window_carries_public_summary(self):
+        from scripts import build_public_roadmap as roadmap
+
+        missing = []
+        for row in rows(ARCHIVE_TABLE)[: roadmap.MAX_ITEMS]:
+            for number in archive_plan_numbers(row["Plan"]):
+                path = _plan_document_path(number)
+                if path is None:
+                    continue  # no document -- the record working, not a gap
+                if not _has_section(path, "Public summary"):
+                    missing.append(number)
+        assert not missing, (
+            f"published archive plans {missing} lack '## Public summary'. "
+            f"This window is public; no waiver may cover it -- write the "
+            f"section."
+        )
+
+    def test_no_waiver_covers_a_published_plan(self):
+        """The published-window tests above hold no waiver list at all; this
+        confirms neither waiver list has quietly grown one anyway."""
+        from scripts import build_public_roadmap as roadmap
+
+        published = {
+            index_plan_number(BUILD_ORDER, row["Plan"])
+            for row in rows(BUILD_ORDER)[: roadmap.MAX_ITEMS]
+        }
+        waived = {w.plan for w in WHAT_THIS_PLAN_IS_FOR_WAIVERS}
+        overlap = sorted(published & waived)
+        assert not overlap, (
+            f"{overlap} are both published and waived -- Plan 172 Stage D's "
+            f"exit condition 4. Write the section and drop the waiver."
+        )
+
+    def test_live_plans_carry_what_this_plan_is_for_or_a_waiver(self):
+        missing = {
+            number for number in _live_plan_numbers()
+            if (path := _plan_document_path(number)) is not None
+            and not _has_section(path, "What this plan is for")
+        }
+        waived = {w.plan for w in WHAT_THIS_PLAN_IS_FOR_WAIVERS}
+        unwaived = sorted(missing - waived)
+        assert not unwaived, (
+            f"{unwaived} lack '## What this plan is for' and are not "
+            f"waived. Add the section, or a SectionWaiver naming the plan."
+        )
+        stale = sorted(waived - missing)
+        assert not stale, (
+            f"{stale} are waived but already carry '## What this plan is "
+            f"for' -- drop the waiver, the list only shrinks."
+        )
+
+    def test_closeout_plans_carry_the_checks_or_a_waiver(self):
+        missing = {
+            number for number in plan_numbers(CLOSEOUT)
+            if (path := _plan_document_path(number)) is not None
+            and not _has_section(path, "The checks")
+        }
+        waived = {w.plan for w in THE_CHECKS_WAIVERS}
+        unwaived = sorted(missing - waived)
+        assert not unwaived, (
+            f"{unwaived} lack '## The checks' and are not waived. Add the "
+            f"section, or a SectionWaiver naming the plan."
+        )
+        stale = sorted(waived - missing)
+        assert not stale, (
+            f"{stale} are waived but already carry '## The checks' -- drop "
+            f"the waiver, the list only shrinks."
+        )
+
+    def test_no_waiver_outlives_the_plan_it_names(self):
+        """A waiver for a plan no longer in any live table is stale -- the
+        plan archived, superseded, or was renumbered, and the entry should
+        have been dropped with it."""
+        live = _live_plan_numbers()
+        for waivers, label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, "WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, "THE_CHECKS_WAIVERS"),
+        ):
+            dead = sorted(w.plan for w in waivers if w.plan not in live)
+            assert not dead, (
+                f"{label} names {dead}, no longer in any live table. Drop "
+                f"the entry -- its plan is not waiting on this any more."
+            )
+
+
 class TestRowExitConditions:
     """Every row names what removes it. A row with no exit condition is
     invisible and therefore permanent -- Plan 123 sat unrecorded from

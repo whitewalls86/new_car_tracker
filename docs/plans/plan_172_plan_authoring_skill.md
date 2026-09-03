@@ -625,8 +625,8 @@ reading A, H, B, C … are what say so at a glance.
 | 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `done` | CAR-70 |
 | 3 | [**B**](#stage-b) | the `plan-draft` skill | `done` | CAR-70 |
 | 4 | [**C**](#stage-c) | the `plan-start` skill | `done` | CAR-70 |
-| 5 | [**D**](#stage-d) | the assertion and the waiver list | `next` | — |
-| 6 | [**E**](#stage-e) | `close-out` split in two | `—` | — |
+| 5 | [**D**](#stage-d) | the assertion and the waiver list | `done` | CAR-70 |
+| 6 | [**E**](#stage-e) | `close-out` split in two | `next` | — |
 | 7 | [**F**](#stage-f) | the `note-evidence` skill | `—` | — |
 | 8 | [**G**](#stage-g) | the after-numbers | `—` | — |
 
@@ -1039,3 +1039,43 @@ Validated in two parts, both before committing:
 This same dry run surfaced that `assignee` had been left to Linear's default
 and landed inconsistently; both `plan-start` and `ticket-now` now pass
 `assignee: "me"` explicitly on every issue they create.
+
+### Stage D
+
+Added `TestPlanDocumentContract` to `tests/test_planning_docs.py`: two strict
+tests with no waiver list, holding the published build-order window to
+`## What this plan is for` and the published archive window to
+`## Public summary`; two widened tests holding every live plan and every
+closeout plan to the same two sections behind `WHAT_THIS_PLAN_IS_FOR_WAIVERS`
+(39 entries) and `THE_CHECKS_WAIVERS` (5 entries); one test confirming neither
+waiver list has grown to cover a published plan; one test confirming no
+waiver names a plan no longer in any live table.
+
+Landing the strict published-window test required writing
+`## What this plan is for` into three other live documents first —
+`plan_162_testing_census_and_restructure.md`,
+`plan_134_archiver_endpoint_failure_contract.md`, and
+`plan_138_public_surface_refresh.md` — since all three sat in the build
+order's top four rows and none carried the section yet. Without that, the
+strict test would have failed on arrival against real, currently-published
+plans rather than against a future violation.
+
+**A same-day merge changed the archive window mid-stage.** `origin/master`
+carried Plan 129's closeout (`11aa6d9`) partway through this work, moving it
+from `Current closeout` to the archive and displacing Plan 158 out of the
+published top four. Plan 129 already carried `## Public summary`, so the
+strict archive test passed against the new window without help; the closeout
+waiver count dropped from 6 to 5 as Plan 129 left that table on its way past.
+Both waiver lists were built from the post-merge counts, not the counts this
+plan was filed with.
+
+**Verified by mutation, five separate ways, each restored before the next:**
+stripping Plan 172's own `## What this plan is for` failed the strict
+build-order test; dropping the waiver for Plan 64 (still missing the section)
+failed the widened test's unwaived branch; adding a waiver for Plan 172
+(already compliant, and published) failed both the widened test's stale
+branch and the no-waiver-covers-a-published-plan test; stripping Plan 129's
+`## Public summary` (in the published archive window) failed the strict
+archive test; and adding a waiver naming a nonexistent plan number failed the
+dead-waiver test. All five were reverted and the suite re-ran clean — 41
+passed — before committing.
