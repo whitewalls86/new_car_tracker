@@ -21,6 +21,29 @@ def _nul(paths):
             {"docs_tests": True, "unit": False, "heavy": False},
         ),
         (
+            "a plan document and the summary it renders into: still docs only",
+            [
+                "docs/plans/plan_138_public_surface_refresh.md",
+                "ops/static_ops/generated/project-updates.json",
+            ],
+            {"docs_tests": True, "unit": False, "heavy": False},
+        ),
+        (
+            "the generated projection alone is the docs zone, not a full run",
+            ["ops/static_ops/generated/recaps/2026-08-30.html"],
+            {"docs_tests": True, "unit": False, "heavy": False},
+        ),
+        (
+            "the generator is not its own output: changing it costs a full run",
+            ["scripts/build_public_roadmap.py"],
+            {"docs_tests": False, "unit": True, "heavy": True},
+        ),
+        (
+            "a sibling of the generated directory is not swept in",
+            ["ops/static_ops/info.css"],
+            {"docs_tests": False, "unit": True, "heavy": True},
+        ),
+        (
             "oneoff only: lint and unit, nothing built and no database",
             [
                 "scripts/oneoff/reconcile_april_detail.py",

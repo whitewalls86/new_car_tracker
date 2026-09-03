@@ -28,7 +28,7 @@ not started" a day after Stage 2 was deployed.
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
 | **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
 | **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
-| **9** | **Next, and unblocked 2026-09-03.** Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depended on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads; **Plan 172 Stage A landed 2026-09-02 and all four rows in the published planned window now carry `## What this plan is for`**, so the dependency is discharged. Sequenced first on 2026-09-03: the slice cell is published copy, so keeping the public page current means chasing stale internal pointers by hand, and the page was publishing a closed issue's identifier when the decision was taken |
+| **9** | **Built 2026-09-03 (CAR-74).** The planned projection reads `## What this plan is for`, the slice cell is the fallback, and all four published summaries changed. **Re-measured on the same day: the slice-only class goes 20 → 0** over the commits whose window carries the section. Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depended on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads; **Plan 172 Stage A landed 2026-09-02 and all four rows in the published planned window now carry `## What this plan is for`**, so the dependency is discharged. Sequenced first on 2026-09-03: the slice cell is published copy, so keeping the public page current means chasing stale internal pointers by hand, and the page was publishing a closed issue's identifier when the decision was taken |
 
 **The navigation pane is deliberately unstarted and unticketed**, deferred
 behind Stage 8's destination inventory. Its one carve-out — `/dashboard` is
@@ -3064,6 +3064,60 @@ row — but it is generated locally and asserted in CI, so the ordering is
 regenerate, then fail, not fail, then regenerate. The fallback is what keeps that
 window from publishing an empty summary in between.
 
+### What landed, 2026-09-03 (CAR-74)
+
+`scripts/build_public_roadmap.py` reads `## What this plan is for` for a planned
+row and falls back to the slice cell, with the same character cap and the same
+loud failure the completed side already had; `_linked_plan` now returns the
+document rather than its URL, so the file that is published and the file that is
+quoted are one resolution. Gate 1d's worklist is tagged by side, because the two
+sides fall back to different cells and are fixed by writing different sections.
+All four published planned summaries changed in the regenerated artifact.
+
+**One change outside the stage as scoped**, folded in because the stage creates
+the friction it removes: `scripts/ci_change_scope.py` now counts
+`ops/static_ops/generated/` in the docs zone. After this stage the ordinary prose
+commit — a plan document edit — regenerates a file outside `docs/`, which would
+otherwise have dragged every one of them into the full workflow. The generators
+themselves stay outside the zone, so a change to one still costs a full run.
+
+**That widening narrows coverage unless it is paid for, and it is.** `--check`
+is a byte comparison against a regeneration: it catches a stale or hand-edited
+artifact and nothing else. A *correctly regenerated* artifact whose content is
+wrong — markup the flattener left in a summary, a link resolving to nothing, a
+field the landing page does not read — is a property of `docs/`, so a docs-only
+changeset is the exact path that introduces one, and until now that changeset
+took the unit job. The documentation job therefore also runs
+`tests/scripts/test_build_public_roadmap.py` and
+`tests/scripts/test_build_public_recaps.py`, which are the assertions it would
+otherwise have skipped.
+
+### The re-measurement — exit 5
+
+**Re-run 2026-09-03** over the 60 days to that date, full working in
+[`docs/evidence/plan_138_stage_9_slice_churn_2026-09-03.md`](../evidence/plan_138_stage_9_slice_churn_2026-09-03.md).
+Of 104 first-parent commits touching `PLANS.md`, 87 were comparable and **66
+changed published copy (76%), 37 of them slice-only** — the original 35, still
+there, on a window shifted by a day.
+
+Under the rule this stage lands, with the plan documents as they now stand, that
+falls to **45 changed and 16 slice-only**. Every one of the surviving 16 has a
+plan in its window with no `## What this plan is for` today — 136, 139, 140, 141,
+142, 144, 145, 147, 161, all since archived or on the waiver list — so they are
+the fallback firing on historical rows, and **none of them is in today's
+published window**.
+
+Restricted to the 29 comparable commits whose window holds only plans that carry
+the section today, which is the state
+[`tests/test_planning_docs.py`](../../tests/test_planning_docs.py) now holds every
+future window to: **20 slice-only public edits under the old rule, 0 under the
+new one.** That is the stage's result.
+
+**The original recipe was never written down**, so it was re-derived and checked
+by replaying the original window: 80/60/33 against the recorded 79/59/35. The
+comparison that carries weight is old against new under one recipe, not this
+recipe against the earlier number.
+
 ---
 
 ## Expected file map
@@ -3101,7 +3155,8 @@ window from publishing an empty summary in between.
 | `docs/recaps/*.md` | Unchanged as a source; the recap publication policy is committed alongside them |
 | `docker-compose.yml` | Stage 7's read-only directory bind mount of the generated content into `ops` |
 | `tests/test_ops_content_mount.py` | Stage 7's Compose contract: mount present, read-only, directory-shaped, covering every generator output path |
-| `.github/workflows/ci.yml` | Reject stale or invalid project-updates and recap snapshots |
+| `.github/workflows/ci.yml` | Reject stale or invalid project-updates and recap snapshots; Stage 9 adds the two generator suites the widened docs zone would otherwise skip |
+| `scripts/ci_change_scope.py` | Stage 9's fold-in: `ops/static_ops/generated/` joins the docs zone, so a plan-document edit and the summary it regenerates stay on the documentation job |
 
 ## Recommended build order
 

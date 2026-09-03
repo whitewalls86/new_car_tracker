@@ -237,12 +237,17 @@ finishes, the plan stays exactly where it is, and the build order's **Next
 executable slice** cell has to name what comes next. No row moves. Every other
 column, and every other row, is untouched.
 
-It is an operation of this skill for one reason: **that cell is published
-copy**, and the "After every operation" section below is where this repository
-keeps that fact. A pointer update made anywhere else is an edit to the landing
-page by someone who does not know they are making one — which is how it went
-wrong on 2026-09-01, when Plan 138's own closeout wrote the cell from the
-`close-out` skill and reached none of this.
+It is an operation of this skill because **the cell belongs to a table this
+skill owns and nothing else may write**, which is the same reason every other
+operation here is here. It is not because the cell is public: **since Plan 138
+Stage 9 it is not**. A planned row's published summary is the plan document's
+`## What this plan is for`, and the slice cell reaches the landing page only as
+the fallback for a row whose plan has no such section — which the published
+window is asserted never to be.
+
+**That is one sentence retired, not the discipline.** The row around the cell is
+still published copy, so the checks below still run and are still believed; see
+"After every operation".
 
 1. Read the row. Confirm the plan number and that the row is where the user
    thinks it is.
@@ -250,8 +255,9 @@ wrong on 2026-09-01, when Plan 138's own closeout wrote the cell from the
    words through enough of it to be unique. The `Order`, `Plan`, `Title`,
    `Workable?`, `Blocked by`, `Priority`, `Effort` and `Depends on` cells all
    stay byte-identical. Changing any of them is a different operation.
-3. Run the checks below. **The `--check` is not optional here** — a pointer
-   update inside the top four rows always moves the artifact.
+3. Run the checks below. **The `--check` is not optional here** — it is what
+   tells you whether this edit moved the artifact, and on a row whose plan lacks
+   `## What this plan is for` it still will.
 
 **The text arrives from outside, like everything else.** The user supplies the
 new cell, or approves it in the open session before this skill runs. You do not
@@ -356,11 +362,17 @@ git diff
 **Both of this skill's files are generator input, and the test above cannot
 see it.** Plan 138 Stage 1d publishes `docs/PLANS.md`'s build order and
 `docs/planning/completed_plans.md` to the landing page through
-`ops/static_ops/generated/project-updates.json`. The build order's **Next executable
-slice** cell *is* the published `summary` for a planned plan, so a one-cell
-edit changes public copy — and since Plan 138 Stage 7 mounts that directory into
-`ops` from the checkout, the copy goes live on the next `git pull`, with no
-deploy standing between the edit and the public page.
+`ops/static_ops/generated/project-updates.json`. A planned row publishes its
+title, priority, effort, order and plan link verbatim — and since Plan 138 Stage
+7 mounts that directory into `ops` from the checkout, the copy goes live on the
+next `git pull`, with no deploy standing between the edit and the public page.
+
+**Since Plan 138 Stage 9 the published `summary` is the plan document's
+`## What this plan is for`, not the slice cell.** A slice repoint on a
+conforming row therefore moves nothing, which is the whole of that stage. It
+changes what to expect from the check and nothing about running it: a retitle, a
+priority or effort change, an archive, or an insert that renumbers all still move
+the artifact, and so does a slice repoint on a row whose plan has no section.
 
 If `--check` reports the artifact stale, run
 `python scripts/build_public_roadmap.py` and leave its output in the diff.
