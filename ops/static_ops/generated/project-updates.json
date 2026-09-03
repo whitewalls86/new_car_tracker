@@ -45,6 +45,14 @@
   ],
   "completed": [
     {
+      "plan": "129",
+      "title": "Trained dictionary compression for raw HTML",
+      "date": "2026-09-03",
+      "state": "completed",
+      "summary": "Cut stored detail-page HTML to about 5% of its original size while preserving lossless, independently readable artifacts and compatibility with older captures.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md"
+    },
+    {
       "plan": "161",
       "title": "The testing contract",
       "date": "2026-08-31",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "Split one timestamp into two: when a listing was last fetched, and when it was last understood. A backlog in one stage no longer causes the same pages to be fetched over and over.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_147_scrape_state_ownership.md"
-    },
-    {
-      "plan": "158",
-      "title": "Coordination gate deadlock",
-      "date": "2026-08-30",
-      "state": "completed",
-      "summary": "A deploy could wait forever on a signal that was never sent, and looked like it was working while it hung. The signal is now recorded correctly, and a wait that cannot finish fails with the reason named instead of hanging.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_158_coordination_gate_deadlock.md"
     }
   ]
 }
