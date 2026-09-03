@@ -15,18 +15,9 @@ return cleanly with everything completed so far already durable.
 import logging
 
 from shared.db import db_cursor
+from shared.queries import SELECT_DEPLOY_INTENT_PAUSE
 
 logger = logging.getLogger(__name__)
-
-# Deliberately no staleness clause. A forgotten intent keeps long jobs paused
-# until it is released, the DAG exhausts its retries, and someone is paged —
-# which is the designed outcome (D3b), because an intent nobody cleared is a
-# real problem and not one a long job should paper over by starting anyway.
-_SQL = """
-    SELECT intent = 'pending' AND pause_long_jobs
-    FROM deploy_intent
-    WHERE id = 1
-"""
 
 
 def long_jobs_paused() -> bool:
@@ -40,7 +31,7 @@ def long_jobs_paused() -> bool:
     """
     try:
         with db_cursor(error_context="Long-Jobs-Paused") as cur:
-            cur.execute(_SQL)
+            cur.execute(SELECT_DEPLOY_INTENT_PAUSE)
             row = cur.fetchone()
     except Exception as exc:  # noqa: BLE001 - failing open is the whole point.
         logger.warning(

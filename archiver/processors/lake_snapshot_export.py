@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 
 from archiver.processors.lake_snapshot_sql import in_clause, table_time_where
 from archiver.processors.lake_source_audit import resolve_table_path
+from archiver.queries import SELECT_FILTERED_TABLE_ROWS
 from shared.lake_snapshot_postgres import (
     POSTGRES_SNAPSHOT_TABLES,
     dump_table,
@@ -140,10 +141,8 @@ def _build_table_query(
         else:
             where_sql = windowed_sql
 
-    order_by = ", ".join(spec["sort_keys"])
-    query = (
-        f"SELECT * FROM read_parquet('{path}', union_by_name=true, hive_partitioning=true) "
-        f"WHERE {where_sql} ORDER BY {order_by}"
+    query = SELECT_FILTERED_TABLE_ROWS.format(
+        path=path, where_sql=where_sql, order_by=", ".join(spec["sort_keys"]),
     )
     return query, params
 

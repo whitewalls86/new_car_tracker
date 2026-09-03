@@ -37,6 +37,47 @@ def duckdb_con():
     return duckdb.connect(DUCKDB_PATH, read_only=True)
 
 
+@pytest.fixture(scope="session")
+def duckdb_s3_con():
+    """A DuckDB connection reading MinIO directly, built the way production does.
+
+    Distinct from ``duckdb_con`` above and not a variant of it: that one opens
+    the *file* a dbt build produced, while this one is
+    ``shared.duckdb_s3.get_duckdb_s3_connection()`` -- the same call
+    ``ops/routers/maintenance.py`` makes, reading the ops_normalized Parquet
+    with S3 credentials the analytics file's connection does not carry.
+
+    Absence is a skip locally and a failure in CI (``REQUIRE_MINIO``), for the
+    same reason as the two fixtures around it: a Layer 2 test that skips
+    executes no SQL, and the statement it covers is the one deciding which
+    listings get a 'cleared' event written for them.
+    """
+    if not os.environ.get("MINIO_ENDPOINT"):
+        reason = (
+            "MINIO_ENDPOINT is not set -- no MinIO for the ops_normalized "
+            "Parquet statements to read"
+        )
+        if os.environ.get("REQUIRE_MINIO"):
+            pytest.fail(reason)
+        pytest.skip(reason)
+    from shared.duckdb_s3 import get_duckdb_s3_connection
+    con = get_duckdb_s3_connection()
+    yield con
+    con.close()
+
+
+@pytest.fixture(scope="session")
+def blocked_cooldown_parquet():
+    """The glob ``ops/routers/maintenance.py`` passes as a bound parameter.
+
+    Built here from the same ``shared.minio.BUCKET`` the router reads, rather
+    than typed out: a retyped path is the paraphrase this suite exists to
+    prevent, one level below the statement.
+    """
+    from shared.minio import BUCKET
+    return f"s3://{BUCKET}/ops_normalized/blocked_cooldown_events/**/*.parquet"
+
+
 @pytest.fixture()
 def airflow_metadata(cur):
     """

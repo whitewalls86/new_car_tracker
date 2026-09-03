@@ -813,6 +813,17 @@ jobs:
           # this suite is a broken job, not a local convenience.
           REQUIRE_DUCKDB: "1"
           REQUIRE_LAYER_2_EXECUTION: "1"
+          # Plan 162: the one ops statement that reads MinIO Parquet directly
+          # rather than Postgres or the analytics file -- the blocked-cooldown
+          # reconcile. This job already runs a MinIO service and seeds the lake
+          # fixture into it; these four are what let the duckdb_s3_con fixture
+          # reach it, and REQUIRE_MINIO closes its skip the same way the two
+          # above close theirs.
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+          REQUIRE_MINIO: "1"
 
       - name: Run Airflow integration tests
         run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration

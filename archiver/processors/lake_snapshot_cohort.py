@@ -22,6 +22,16 @@ from archiver.processors.lake_snapshot_selectors import (
 )
 from archiver.processors.lake_snapshot_sql import in_clause, table_time_where
 from archiver.processors.lake_source_audit import resolve_table_path
+from archiver.queries import (
+    SELECT_ARTIFACT_IDS,
+    SELECT_LISTING_IDS_FOR_VINS,
+    SELECT_PREVIOUS_LISTING_IDS,
+    SELECT_ROW_KEYS_FOR_CANDIDATES,
+    SELECT_SEED_VINS_BY_HASH,
+    SELECT_VINS_FOR_LISTING_IDS,
+    SELECT_VINS_RANKED_WITHIN_MAKE_MODEL,
+    WRAP_CANDIDATE_QUERY,
+)
 from shared.duckdb_s3 import get_duckdb_s3_connection
 
 logger = logging.getLogger("archiver")
@@ -105,29 +115,9 @@ def open_duckdb_connection(base_path: Optional[str]):
 # ---------------------------------------------------------------------------
 
 def _wrap_candidate_query(candidate_sql: str, entity_key: str, cap: int) -> str:
-    cap = int(cap)
-    return f"""
-WITH selector_candidates AS (
-{candidate_sql}
-),
-distinct_entities AS (
-    SELECT DISTINCT {entity_key} AS entity_value
-    FROM selector_candidates
-    WHERE {entity_key} IS NOT NULL
-)
-SELECT
-    (SELECT count(*) FROM selector_candidates) AS candidate_rows,
-    (SELECT count(*) FROM distinct_entities) AS entities,
-    (
-        SELECT list(entity_value)
-        FROM (
-            SELECT entity_value
-            FROM distinct_entities
-            ORDER BY entity_value
-            LIMIT {cap}
-        ) AS bounded
-    ) AS bounded_entities
-"""
+    return WRAP_CANDIDATE_QUERY.format(
+        candidate_sql=candidate_sql, entity_key=entity_key, cap=int(cap),
+    )
 
 
 def _selected_row_keys_for_candidates(
@@ -153,9 +143,8 @@ def _selected_row_keys_for_candidates(
     if not selected:
         return ()
     clause, clause_params = in_clause(key_column, selected)
-    query = (
-        f"SELECT DISTINCT artifact_id, vin, listing_id FROM ({candidate_sql}) AS c "
-        f"WHERE {clause}"
+    query = SELECT_ROW_KEYS_FOR_CANDIDATES.format(
+        candidate_sql=candidate_sql, membership=clause,
     )
     try:
         rows = con.execute(query, params + clause_params).fetchall()
@@ -351,13 +340,9 @@ def _fill_representative_vins(
     # Overfetch to allow for excluded vins already in the seed set, then trim
     # in Python — avoids relying on duckdb list-parameter binding semantics.
     fetch_limit = limit + len(exclude)
-    query = f"""
-        SELECT DISTINCT vin
-        FROM read_parquet('{path}', union_by_name=true)
-        WHERE {where_sql}
-        ORDER BY md5(vin)
-        LIMIT {int(fetch_limit)}
-    """
+    query = SELECT_SEED_VINS_BY_HASH.format(
+        path=path, where_sql=where_sql, fetch_limit=int(fetch_limit),
+    )
     try:
         rows = con.execute(query, params).fetchall()
     except Exception as e:
@@ -499,18 +484,9 @@ def _resolve_make_model_seeds(
     where_clauses += time_clauses
     params += time_params
     where_sql = " AND ".join(where_clauses)
-    query = f"""
-        SELECT vin, listing_id
-        FROM (
-            SELECT vin, listing_id,
-                   row_number() OVER (
-                       PARTITION BY concat_ws(' ', make, model) ORDER BY vin
-                   ) AS rn
-            FROM read_parquet('{path}', union_by_name=true)
-            WHERE {where_sql}
-        ) AS ranked
-        WHERE rn <= {int(limit_per_group)}
-    """
+    query = SELECT_VINS_RANKED_WITHIN_MAKE_MODEL.format(
+        path=path, where_sql=where_sql, limit_per_group=int(limit_per_group),
+    )
     try:
         rows = con.execute(query, params).fetchall()
     except Exception as e:
@@ -532,9 +508,8 @@ def _listing_ids_for_vins(
         path = resolve_table_path(table, base_path)
         time_clauses, time_params = table_time_where(window_start, window_end, ts_col)
         clauses = [vin_clause, "listing_id IS NOT NULL"] + time_clauses
-        query = (
-            f"SELECT DISTINCT listing_id FROM read_parquet('{path}', union_by_name=true) "
-            f"WHERE {' AND '.join(clauses)}"
+        query = SELECT_LISTING_IDS_FOR_VINS.format(
+            path=path, where_sql=" AND ".join(clauses),
         )
         try:
             rows = con.execute(query, vin_params + time_params).fetchall()
@@ -557,9 +532,8 @@ def _vins_for_listing_ids(
         path = resolve_table_path(table, base_path)
         time_clauses, time_params = table_time_where(window_start, window_end, ts_col)
         clauses = [listing_clause, "vin IS NOT NULL"] + time_clauses
-        query = (
-            f"SELECT DISTINCT vin FROM read_parquet('{path}', union_by_name=true) "
-            f"WHERE {' AND '.join(clauses)}"
+        query = SELECT_VINS_FOR_LISTING_IDS.format(
+            path=path, where_sql=" AND ".join(clauses),
         )
         try:
             rows = con.execute(query, listing_params + time_params).fetchall()
@@ -591,9 +565,8 @@ def _previous_listing_ids_for(
     time_clauses, time_params = table_time_where(window_start, window_end, "event_at")
     clauses += time_clauses
     params += time_params
-    query = (
-        f"SELECT DISTINCT previous_listing_id FROM read_parquet('{path}', union_by_name=true) "
-        f"WHERE {' AND '.join(clauses)}"
+    query = SELECT_PREVIOUS_LISTING_IDS.format(
+        path=path, where_sql=" AND ".join(clauses),
     )
     try:
         rows = con.execute(query, params).fetchall()
@@ -624,9 +597,8 @@ def _artifact_ids_for(
         time_clauses, time_params = table_time_where(window_start, window_end, ts_col)
         clauses = [f"({' OR '.join(or_parts)})", "artifact_id IS NOT NULL"] + time_clauses
         params += time_params
-        query = (
-            f"SELECT DISTINCT artifact_id FROM read_parquet('{path}', union_by_name=true) "
-            f"WHERE {' AND '.join(clauses)}"
+        query = SELECT_ARTIFACT_IDS.format(
+            path=path, where_sql=" AND ".join(clauses),
         )
         try:
             rows = con.execute(query, params).fetchall()

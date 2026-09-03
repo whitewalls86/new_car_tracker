@@ -7,6 +7,7 @@ from typing import Any, Dict
 from fastapi import APIRouter
 
 from ops.queries import (
+    COUNT_BLOCKED_COOLDOWN_LISTINGS,
     EVICT_DELISTED_COOLDOWNS,
     EXPIRE_ORPHAN_DETAIL_CLAIMS,
     INSERT_ARTIFACT_EVENT,
@@ -30,18 +31,6 @@ router = APIRouter(prefix="/maintenance")
 # the persisted analytics.duckdb view over the same files would contend with
 # dbt's write lock, and the gauges' plain connection has no S3 credentials.
 _BLOCKED_EVENTS_PARQUET = f"s3://{BUCKET}/ops_normalized/blocked_cooldown_events/**/*.parquet"
-
-# Listings still counted as blocked: latest lifecycle event is
-# 'blocked'/'incremented' (not 'cleared').
-_COUNTED_SQL = """
-    SELECT listing_id, current_attempts FROM (
-        SELECT listing_id,
-               arg_max(num_of_attempts, event_at) AS current_attempts,
-               arg_max(event_type, event_at)       AS latest_event
-        FROM read_parquet(?, hive_partitioning=true)
-        GROUP BY listing_id
-    ) WHERE latest_event IN ('blocked', 'incremented')
-"""
 
 
 def _run_maintenance_query(sql: str, params: tuple) -> Dict[str, Any]:
@@ -124,7 +113,9 @@ def _reconcile_cooldown_cohorts() -> Dict[str, Any]:
     try:
         con = get_duckdb_s3_connection()
         try:
-            counted = con.execute(_COUNTED_SQL, [_BLOCKED_EVENTS_PARQUET]).fetchall()
+            counted = con.execute(
+                COUNT_BLOCKED_COOLDOWN_LISTINGS, [_BLOCKED_EVENTS_PARQUET],
+            ).fetchall()
         finally:
             con.close()
     except Exception as e:

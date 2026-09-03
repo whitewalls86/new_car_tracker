@@ -21,6 +21,7 @@ from shared.queries import (
     REPLACE_POSTGRES_SNAPSHOT_TABLE,
     SELECT_COMPRESSION_DICTIONARY,
     SELECT_COMPRESSION_DICTIONARY_REGISTRATION,
+    SELECT_DEPLOY_INTENT_PAUSE,
     SELECT_POSTGRES_SNAPSHOT_TABLE,
 )
 
@@ -79,6 +80,40 @@ class TestDictionaryRegistrationQueries:
         # And the read path resolves the same row.
         cur.execute(SELECT_COMPRESSION_DICTIONARY, (dict_id,))
         assert cur.fetchone() is not None
+
+
+class TestDeployIntentPause:
+    """The cooperative pause every long-running job checks at its boundaries.
+
+    It reads ``deploy_intent`` -- a singleton row in the public schema, not
+    under ``ops`` -- and until Plan 162 it lived in a Python literal in
+    ``shared/deploy_intent.py`` with nothing executing it. A rename of either
+    column would have surfaced as a ten-hour pack that stopped checking, failing
+    open and silently.
+    """
+
+    def test_returns_one_boolean_for_the_singleton_row(self, cur):
+        cur.execute(SELECT_DEPLOY_INTENT_PAUSE)
+        row = cur.fetchone()
+        assert row is not None, "deploy_intent row 1 is created by migration"
+        assert len(row) == 1
+        assert isinstance(next(iter(row.values())), bool)
+
+    def test_true_only_when_the_intent_is_pending_and_the_flag_is_set(self, cur):
+        """Both halves matter. A `pending` intent that does not ask for the
+        pause must not stop a job, and a set flag with no pending deploy must
+        not either -- the AND is the statement's whole content."""
+        for intent, pause, expected in (
+            ("pending", True, True),
+            ("pending", False, False),
+            ("none", True, False),
+        ):
+            cur.execute(
+                "UPDATE deploy_intent SET intent = %s, pause_long_jobs = %s WHERE id = 1",
+                (intent, pause),
+            )
+            cur.execute(SELECT_DEPLOY_INTENT_PAUSE)
+            assert next(iter(cur.fetchone().values())) is expected, (intent, pause)
 
 
 class TestPostgresSnapshotTableQueries:

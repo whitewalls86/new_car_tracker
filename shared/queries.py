@@ -55,3 +55,8 @@ INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = _q("insert_blocked_cooldown_cleared_even
 # the same reason the artifact pair above does.
 SELECT_POSTGRES_SNAPSHOT_TABLE = _q("select_postgres_snapshot_table")
 REPLACE_POSTGRES_SNAPSHOT_TABLE = _q("replace_postgres_snapshot_table")
+
+# Plan 131 Stage 5 D3b: the cooperative pause long-running jobs check at their
+# boundaries. In shared/ because shared/deploy_intent.py is the only caller and
+# is a library the archiver and pack-worker both use, not a service of its own.
+SELECT_DEPLOY_INTENT_PAUSE = _q("select_deploy_intent_pause")

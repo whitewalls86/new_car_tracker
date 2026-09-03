@@ -107,3 +107,8 @@ SELECT_RUNNING_DETAIL_CLAIMS = _q("select_running_detail_claims")
 SELECT_PROCESSING_ARTIFACTS_BACKLOG = _q("select_processing_artifacts_backlog")
 SELECT_AIRFLOW_TASK_INSTANCES = _q("select_airflow_task_instances")
 SELECT_AIRFLOW_GATE_OBSERVATIONS = _q("select_airflow_gate_observations")
+
+# Plan 128: the blocked-cooldown cohort reconcile. Runs against DuckDB over the
+# ops_normalized Parquet, not Postgres -- the only statement in this module that
+# does, which is why the Parquet glob is a bound parameter the caller supplies.
+COUNT_BLOCKED_COOLDOWN_LISTINGS = _q("count_blocked_cooldown_listings")

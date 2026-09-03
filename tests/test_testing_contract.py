@@ -1371,26 +1371,12 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G15", owner=162)
     for subject in (
         "archiver/processors/delete_packed_source_html.py:304",
-        "archiver/processors/lake_snapshot_cohort.py:109",
-        "archiver/processors/lake_snapshot_cohort.py:157",
-        "archiver/processors/lake_snapshot_cohort.py:354",
-        "archiver/processors/lake_snapshot_cohort.py:502",
-        "archiver/processors/lake_snapshot_cohort.py:536",
-        "archiver/processors/lake_snapshot_cohort.py:561",
-        "archiver/processors/lake_snapshot_cohort.py:595",
-        "archiver/processors/lake_snapshot_cohort.py:628",
-        "archiver/processors/lake_snapshot_export.py:145",
-        "archiver/processors/lake_snapshot_selectors.py:129",
-        "archiver/processors/lake_source_audit.py:114",
         "archiver/processors/pack_bronze_html.py:440",
-        "ops/routers/maintenance.py:36",
-        "processing/writers/silver_writer.py:38",
         "scripts/audit_adaptive_refresh_features.py:128",
         "scripts/audit_adaptive_refresh_features.py:136",
         "scripts/compare_gate_b_parity.py:510",
         "scripts/compare_gate_b_parity.py:527",
         "scripts/estimate_dictionary_savings.py:206",
-        "shared/deploy_intent.py:25",
     )
 )
 
