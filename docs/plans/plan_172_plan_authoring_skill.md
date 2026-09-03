@@ -2,11 +2,10 @@
 
 ## What this plan is for
 
-**The planning documents** — Every plan in this project has a written document,
-and those documents have quietly become three things at once: an argument, a work
-list, and a dump of everything that happened. This plan gives each of those a
-place, so a plan can be read for whether it is worth building, or for what to do
-next, without wading through the other two.
+Every plan document here has become an argument, a work list, and a record of
+everything that happened, all at once. This plan gives each of those its own
+place, so a plan can be read for whether it is worth building, or what to do
+next, without the others in the way.
 
 ## The case
 
@@ -621,12 +620,12 @@ reading A, H, B, C … are what say so at a glance.
 
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
-| 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `next` | — |
-| 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `—` | — |
-| 3 | [**B**](#stage-b) | the `plan-draft` skill | `—` | — |
-| 4 | [**C**](#stage-c) | the `plan-start` skill | `—` | — |
-| 5 | [**D**](#stage-d) | the assertion and the waiver list | `—` | — |
-| 6 | [**E**](#stage-e) | `close-out` split in two | `—` | — |
+| 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `done` | CAR-70 |
+| 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `done` | CAR-70 |
+| 3 | [**B**](#stage-b) | the `plan-draft` skill | `done` | CAR-70 |
+| 4 | [**C**](#stage-c) | the `plan-start` skill | `done` | CAR-70 |
+| 5 | [**D**](#stage-d) | the assertion and the waiver list | `done` | CAR-70 |
+| 6 | [**E**](#stage-e) | `close-out` split in two | `next` | — |
 | 7 | [**F**](#stage-f) | the `note-evidence` skill | `—` | — |
 | 8 | [**G**](#stage-g) | the after-numbers | `—` | — |
 
@@ -686,13 +685,42 @@ it. It owns prose and never state.
 **The `plan-start` skill.** The mirror of `close-out`. It puts a plan into the
 build order — from the backlog when its trigger fires, or straight from a draft —
 through an interview: design, rejected alternatives, lettered stages each with an
-exit, and the order table. Then the build-order row via `plans`, and the Linear
-project and issue set.
+exit, the order table, and how those stages chunk into issues. Then the
+build-order row via `plans`, and the Linear project and issue set that chunking
+produced.
 
 It has `close-out`'s shape, including its approval stop. It hands position,
 priority and effort to `plans` and chooses none of them, and it asks for
 estimates rather than deriving them — `ticket-now` already records why an
 estimate derived from a plan's effort label is wrong.
+
+**Chunking is derived from a question, not assumed as a policy.** `1` point
+means "under half a day," and this plan's own measurement found stages from 3
+to 2,190 lines — a plan can hold several stages that do not reach that floor.
+`CAR-70` is the case in evidence: filed for Stage A alone, it was hand-expanded
+onto the same issue three more times in one day rather than minting H, B and C
+their own, because each was minutes of work.
+
+The grouping this plan settled on is not a shape chosen from a menu — it is
+computed from one fact already gathered per stage: **does verifying this
+stage's exit require its code actually running in production, or does it
+verify locally, before a PR ever opens?** All code reaches the VM the same
+way — merged to `master`, pulled, deployed — so every stage merges regardless;
+the question is only whether *proving the exit* needs that last, separately
+gated deploy step.
+
+- **A stage whose exit needs production gets its own issue.** Its PR is the
+  natural proof artifact for that issue, and bundling it with a locally-proven
+  neighbor would let the issue read "done" on the neighbor's proof alone.
+- **A run of consecutive stages that all verify locally bundles into one
+  issue**, each as its own `## Stage X` section, no internal `blockedBy`
+  chain. A plan whose stages are entirely local — this one, so far — collapses
+  to a single issue, the shape `CAR-70` reached by hand before this rule
+  existed to name it.
+
+`plan-start` presents the computed grouping as a proposal via the Questions
+interface and asks the user to confirm it or name an adjustment, rather than
+posing chunking as an open question with no default.
 
 **Exit:**
 1. It adds `## Design` and `## Stages` to an existing document, and edits nothing
@@ -701,14 +729,20 @@ estimate derived from a plan's effort label is wrong.
    to `plans` while any lacks one.
 3. Stage letters are allocated in order of conception, never as a suffix of
    another stage.
-4. It creates one issue per stage, each `Exit` taken from the stage just agreed
-   rather than composed at ticket time, and each `blockedBy` its predecessor in
-   the order table. `save_issue` takes `blockedBy` directly, so the chain needs
-   no GraphQL.
-5. Exactly one of those issues is unblocked, and it is the order table's `next`.
+4. It asks, per stage, whether that stage's exit needs production to verify;
+   derives the grouping from the answers (one issue per deploy-requiring
+   stage, one issue per bundled run of locally-verified stages); confirms the
+   computed grouping via the Questions interface before creating anything; and
+   creates issues to match it exactly. A single-stage issue carries that
+   stage's `Exit` verbatim and is `blockedBy` its predecessor issue; a bundled
+   issue carries every covered stage as its own `## Stage X` section and holds
+   no internal `blockedBy` chain. `save_issue` takes `blockedBy` directly, so a
+   chain needs no GraphQL.
+5. Exactly one issue is unblocked at creation — whichever one contains the
+   order table's `next` stage.
 6. Every issue is created with no cycle, so `fill-cycle` remains the only thing
    that spends the cycle budget.
-7. It writes nothing before the approval stop.
+7. It writes nothing before the approval stop, including the chunking answer.
 8. It runs correctly both ways — on a backlog plan with a row to move, and on a
    fresh draft with no row yet.
 
@@ -742,13 +776,23 @@ section, so that half of the assertion passes on arrival.
 
 **`stage-close`, split out of `close-out`.** Move the per-issue half into its own
 skill: the `## Record` entry, the cost comment, the public-surface question, the
-order table's `State` cell, Linear `Done`. It cannot move a `PLANS.md` row.
+order table's `State` cell, and Linear `Done`. It cannot move a `PLANS.md` row.
 `close-out` is narrowed to the plan-level transition and says which skill closes
 a stage.
 
+**One issue can carry several stages, since Stage C can chunk that way.**
+Closing a stage always writes its `## Record` entry and its order-table `State`
+cell. The issue itself moves to `Done` only when every stage it carries reaches
+`done` in the order table — otherwise `stage-close` stops after the record and
+the state cell, and the issue stays open for whichever stage is still `next` or
+`—` inside it. A one-stage issue is the same rule with a covered set of one, so
+nothing here is a special case for the bundled shape.
+
 **Exit:** each skill's description names the grain it operates on; neither can
 perform the other's write; `close-out` no longer proposes "nothing" as its common
-case, because that case is no longer its job.
+case, because that case is no longer its job; closing one stage of a
+multi-stage issue updates the record and the order table but leaves the issue
+open until its last covered stage closes.
 
 ### Stage F
 
@@ -865,3 +909,225 @@ Supplies the waiver-list pattern this plan adopts wholesale: a named list that
 must shrink, currently empty, with every remaining entry traceable to the stage
 that opened it. Plan 162 is also one of the two documents whose 187 stage
 references argued against a lettering sweep.
+
+## Record
+
+### Stage A
+
+Landed `docs/PLAN_DOCUMENT.md`: the four questions, the section ratchet, the
+no-status-marker rule, stage lettering and the single `Stage` vocabulary, the
+order table's `State` vocabulary, the record's shape and `docs/evidence/`
+naming, and the two public sections with the freeze rule. No code and no
+existing plan document were edited. Verified by `tests/test_planning_docs.py`
+(35 passed) and `scripts/build_public_roadmap.py --check` on
+`car-70-plan-172-stage-a-contract`.
+
+### Stage H
+
+Added `plans` operation 6 — open a plan currently in no table — plus its two
+document-shape refusals, to `.claude/skills/plans/SKILL.md`. Operations 1–5
+were left unedited apart from the shared preamble and after-every-operation
+sections.
+
+Validated in a disposable clone
+(`cartracker-plan172-stage-h-forward-test-20260903-1`), never committed:
+
+- **Insert:** a no-row plan document was spliced into build-order position 2,
+  inside the published window. `tests/test_planning_docs.py` moved from one
+  expected failure (the document present in no table) to 35 passed.
+  `build_public_roadmap.py --check` correctly reported staleness after the
+  insert, and came back clean after regeneration.
+- **Backlog refusal:** a document with a `## Stages` section and a
+  `### Stage A` heading, attempted as a backlog insert, was refused before any
+  edit to `docs/PLANS.md` — confirmed unmodified afterward.
+- **Build-order refusal:** a document whose only stage carried no `Exit:` line,
+  attempted as a build-order insert, was refused the same way — confirmed
+  unmodified afterward.
+
+Both refusals were exercised by applying the gate text in `SKILL.md` directly
+against the test documents, not by a script standing in for it.
+
+### Stage B
+
+Added `.claude/skills/plan-draft/SKILL.md`: allocates the plan number and
+permanent filename, writes `## What this plan is for` (capped at 320
+characters, present tense) and `## The case`, then asks once where the plan
+lands. A build-order answer names `plan-start` and writes nothing further; a
+backlog answer proposes the row's five values and stops for approval before
+handing them to `plans` operation 6.
+
+Validated in the same disposable clone as Stage H, never committed:
+
+- **Number allocation:** scanned against the real `docs/plans/` (highest
+  existing number 172) and correctly proposed 173, with no collision anywhere
+  in the five tables.
+- **Section shape and cap:** the drafted `## What this plan is for` ran 111
+  characters, well inside the 320-character limit, and the document carried
+  only the two required sections — no `## Design`, `## Stages`, or status
+  marker.
+- **Backlog hand-off:** the proposed row was spliced into the backlog table at
+  placement `first`. `tests/test_planning_docs.py` went from one expected
+  failure (173 present in no table) to 35 passed, and
+  `build_public_roadmap.py --check` stayed clean throughout, since the backlog
+  table is outside the published window.
+- **Refusal:** attempted against a deliberately unscoped idea ("improve things
+  around how errors are handled at some point") — no mechanism, boundary, or
+  owner named, so no stranger-readable sentence could be honestly written.
+  Refused; no file was created.
+- **Build-order path:** writes nothing by construction — the skill's
+  build-order branch names `plan-start` and stops, so there is no artifact for
+  this path to produce or to check.
+
+### Stage C
+
+Added `.claude/skills/plan-start/SKILL.md`: the interview (design, rejected
+alternatives, lettered stages each with an exit, the order table, estimates,
+and — per stage — whether its exit needs production to verify), the resulting
+grouping confirmed via the Questions interface rather than posed as an open
+menu, and the write phase — `## Design`/`## Stages` into the plan document,
+the build-order row via `plans` (operation 1 from a backlog trigger, operation
+6 from a fresh draft), the Linear project if none exists, and the issue set
+the grouping produced.
+
+**The grouping rule replaced an earlier, weaker design mid-flight.** The first
+pass asked the user to pick a chunking shape from a short menu — one issue per
+stage, one for the whole plan, or free text. Raised against it directly: the
+real boundary is not a shape to pick but a fact already gathered per stage —
+does proving that stage's exit need its code running in production, not merely
+merged, since every stage merges to `master` regardless and only some then
+need the separately gated deploy step. A deploy-requiring stage gets its own
+issue, its own PR the natural proof; a consecutive run of locally-verified
+stages bundles into one. This document and `plan-start` were both rewritten to
+that rule before Stage C was committed.
+
+**That rule was checked against this plan's own real stage list before
+committing**, not just against synthetic data: all eight of Plan 172's stages
+verify locally — a written contract, a skill's prose, a document round-trip
+through a disposable clone — and none has ever needed the VM. Applying the
+rule therefore collapses the whole plan to one issue, which is exactly the
+shape `CAR-70` reached by hand across four separate expansions before this
+rule existed to name it. The rule reproduces the plan's own observed history
+rather than merely being consistent with it.
+
+Validated in two parts, both before committing:
+
+- **Document and index mechanics**, in the same disposable clone as the earlier
+  stages, never committed: both entry points exercised end to end. A
+  fresh-draft plan (no row anywhere) got `## Design`/`## Stages` appended, then
+  `plans` operation 6 spliced it into the published build-order window — 35
+  passed after the expected single preflight failure, roadmap check stale then
+  clean after regeneration. A backlog-entry plan (row already in the backlog
+  table) got the same document write, then `plans` operation 1 moved its row
+  into the build order with the same result. The already-started refusal
+  (Phase 1: a document already carrying `## Stages` stops the skill) was
+  confirmed directly against the backlog-entry test document once its own
+  `## Stages` existed.
+- **Linear issue-creation mechanics**, live against the real workspace rather
+  than a clone, since issue creation has no disposable-clone equivalent: the
+  Questions interface was exercised for real against two synthetic test
+  stages, confirming a one-per-stage grouping. `CAR-71` and `CAR-72` were
+  created under the existing `Plan 172` project (confirming the
+  reuse-if-exists path), each assigned to the user, `Backlog` status, no
+  cycle, `CAR-72` `blockedBy` `CAR-71` and confirmed from both sides
+  (`CAR-71`'s relations show `blocks: [CAR-72]`). Both were canceled
+  immediately after verification and carry no further meaning. This
+  mechanical layer — issue shape, assignee, status, the `blockedBy` write —
+  is unaffected by which grouping rule chose to create them, so it was not
+  re-run after the rule changed.
+
+This same dry run surfaced that `assignee` had been left to Linear's default
+and landed inconsistently; both `plan-start` and `ticket-now` now pass
+`assignee: "me"` explicitly on every issue they create.
+
+### Stage D
+
+Added `TestPlanDocumentContract` to `tests/test_planning_docs.py`: two strict
+tests with no waiver list, holding the published build-order window to
+`## What this plan is for` and the published archive window to
+`## Public summary`; two widened tests holding every live plan and every
+closeout plan to the same two sections behind `WHAT_THIS_PLAN_IS_FOR_WAIVERS`
+(39 entries) and `THE_CHECKS_WAIVERS` (5 entries); one test confirming neither
+waiver list has grown to cover a published plan; one test confirming no
+waiver names a plan no longer in any live table.
+
+Landing the strict published-window test required writing
+`## What this plan is for` into three other live documents first —
+`plan_162_testing_census_and_restructure.md`,
+`plan_134_archiver_endpoint_failure_contract.md`, and
+`plan_138_public_surface_refresh.md` — since all three sat in the build
+order's top four rows and none carried the section yet. Without that, the
+strict test would have failed on arrival against real, currently-published
+plans rather than against a future violation.
+
+**A same-day merge changed the archive window mid-stage.** `origin/master`
+carried Plan 129's closeout (`11aa6d9`) partway through this work, moving it
+from `Current closeout` to the archive and displacing Plan 158 out of the
+published top four. Plan 129 already carried `## Public summary`, so the
+strict archive test passed against the new window without help; the closeout
+waiver count dropped from 6 to 5 as Plan 129 left that table on its way past.
+Both waiver lists were built from the post-merge counts, not the counts this
+plan was filed with.
+
+**Verified by mutation, five separate ways, each restored before the next:**
+stripping Plan 172's own `## What this plan is for` failed the strict
+build-order test; dropping the waiver for Plan 64 (still missing the section)
+failed the widened test's unwaived branch; adding a waiver for Plan 172
+(already compliant, and published) failed both the widened test's stale
+branch and the no-waiver-covers-a-published-plan test; stripping Plan 129's
+`## Public summary` (in the published archive window) failed the strict
+archive test; and adding a waiver naming a nonexistent plan number failed the
+dead-waiver test. All five were reverted and the suite re-ran clean — 41
+passed — before committing.
+
+**PR #352 review response.** Seven findings, most against gaps this PR itself
+introduced rather than pre-existing ones:
+
+1. Plan 172's own `docs/PLANS.md` slice cell still read Stage A after this PR
+   marked A–D done — exactly the defect Plan 172 was raised to fix, and
+   nothing catches it because the projection only checks itself against
+   `PLANS.md`, which had not changed. Repointed to Stage E via `plans`
+   operation 5, regenerated.
+2. Plan 172's own `## What this plan is for` was 360 characters, over its own
+   320 cap, in the published window. Shortened to 268.
+3. `plan-draft` and `PLAN_DOCUMENT.md` both described the cap as already
+   enforced; finding 2 was the proof it was not — nothing read this section
+   at all before this response. Added real cap-checking to the strict
+   build-order test (`_section_over_cap`, via `roadmap.flatten_markdown`) and
+   corrected both documents' claims to name what actually checks it and when.
+4. The waiver lists had no ratchet: a fresh plan could be waived instead of
+   fixed and both directions of the existing check would still pass. Added
+   `_CONTRACT_PLAN = 172` and a test that no waiver may name a plan at or
+   above it — grandfathering is for what predates the contract, never for
+   what was drafted under it.
+5. `THE_CHECKS_WAIVERS` waives 100% of the closeout table today, so that test
+   is a forward gate only. Said so directly in the comment.
+6. `_plan_document_path` picked `documents_by_plan_number()[n][0]`
+   arbitrarily instead of reusing `build_public_roadmap.plan_document`'s
+   heading-disambiguation. Latent, not live, but the archive-window test is
+   exactly the one that must never check the wrong file. Now delegates to it.
+7. Plan 88 (`**88**`, backlog, no document) was silently invisible to both the
+   compliant and waived counts, so "39 + 4 = 43" quietly didn't reconcile to
+   44. Named explicitly in `NO_DOCUMENT_LIVE_PLANS`, with its own presence
+   test.
+
+Two nits also fixed: `plans/SKILL.md`'s assertion count (33 → 43) and
+`PLAN_DOCUMENT.md`'s Adoption section dating its 44/43 count to 2026-09-02
+when it is actually the 2026-09-03 count, after Plan 129's same-day closeout
+moved it out of `Current closeout`.
+
+Every new and changed check was verified by the same mutate-and-revert
+discipline as the original Stage D work: pushing Plan 172's section back over
+cap, waiving Plan 172 itself, and emptying `NO_DOCUMENT_LIVE_PLANS` each
+failed the test built to catch it. Full suite re-ran clean after —
+`tests/test_planning_docs.py` 43 passed, `tests/scripts/test_build_public_roadmap.py`
+65 passed, the full non-integration suite 3531 passed — before this response
+was committed.
+
+A third nit came out of reviewing that response itself: `_section_over_cap`
+spelled `320` as its default while `build_public_roadmap.MAX_SUMMARY_CHARS`
+held the same number, and the assertion message and class docstring restated it
+twice more. `docs/PLAN_DOCUMENT.md` caps both public sections at one number, so
+three copies of it could have let the two published windows enforce different
+caps the first time that number moved. The default, the message and the
+docstring now all resolve from the constant; no `320` literal remains in the
+file, and the over-cap mutation was re-run against the change.

@@ -1,5 +1,11 @@
 # Plan 162: The Testing Census and CI Restructure
 
+## What this plan is for
+
+Runs a census of the whole automated test suite for coverage, dead assertions,
+and drift between what CI checks and what the code does, then closes the gaps
+it finds and restructures CI around what the census showed actually mattered.
+
 ## Status
 
 **Stages 0–9 are complete. Stage 10 is next.** Stage 8 was narrowed on

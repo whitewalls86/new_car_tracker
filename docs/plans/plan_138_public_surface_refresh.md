@@ -1,5 +1,12 @@
 # Plan 138: Public Surface Refresh
 
+## What this plan is for
+
+Keeps the public-facing site — the landing page and what it claims about the
+platform — honest against what the repository actually contains, and builds
+the generator that publishes the roadmap and recent work from that source
+instead of by hand.
+
 ## Status
 
 **Refreshed 2026-09-02.** Written 2026-08-17 after comparing the live

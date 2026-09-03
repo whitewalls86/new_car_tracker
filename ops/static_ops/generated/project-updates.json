@@ -29,7 +29,7 @@
       "priority": 80,
       "effort": "M",
       "state": "planned",
-      "summary": "Stage A — write docs/PLAN_DOCUMENT.md: the four questions a plan document owes each of its four states, the section ratchet, lettered stages with exits, and one home for evidence",
+      "summary": "Stage E — split stage-close out of close-out: the per-issue ## Record entry, cost comment, public-surface question, order table's State cell, and Linear Done",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
     },
     {
