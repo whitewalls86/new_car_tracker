@@ -2,10 +2,13 @@
 
 ## Status
 
-**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8** — which
-was narrowed on 2026-09-02, before it started: G7 is now the dashboard's
-assertionless Layer 2 suite, and the Streamlit Python it used to mean is G18
-and Plan 150's. [Why](#stage-8-narrowed-and-g7-now-names-a-different-gap).
+**Stages 0–9 are complete. Stage 10 is next.** Stage 8 was narrowed on
+2026-09-02, before it started: G7 became the dashboard's assertionless Layer 2
+suite, and the Streamlit Python it used to mean is G18 and Plan 150's.
+[Why](#stage-8-narrowed-and-g7-now-names-a-different-gap). Stage 9 closed G12
+and, on the way, replaced the two SQL rules Stage 7 built with one keyed on the
+statement rather than on its container —
+[why](#rules-5b-and-5c-became-one-rule-and-that-reverses-a-stage-7-decision).
 The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
@@ -142,7 +145,7 @@ order:
 | **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
 | **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
 | **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
-| **8** | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | -- |
+| **8** | **`scraper`'s floor, and the Layer 2 suite that asserts nothing. Complete — CAR-52, 2026-09-02** | G7, G8 | -- |
 | **9** | **`airflow/dags` and the `.sql` convention. Complete — CAR-53, 2026-09-02** | G12 | -- |
 | **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
 | **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
@@ -1559,6 +1562,21 @@ target waiting: its remaining `Install dependencies` is 18s and its `dbt build`
   answer was recorded above. The numbers it produced are in this section; the
   script is in the history at `e3b4c82` if a later stage wants to re-run it.
 
+
+**Stage 6c's closeout rode in on this PR.** `f6a7077` was already on the branch
+when Stage 8 started — the same pattern as Stage 7 on PR #344 — so #347 also
+carried `docs/PLANS.md` and `ops/static_ops/generated/project-updates.json`,
+the generated roadmap the landing page renders. Neither is Stage 8's work and
+neither is in `public-surface-check`'s scope, which covers the two authored
+surfaces only. It is recorded because a published surface moved inside a PR
+reviewed as a testing change, and that is the shape worth noticing rather than
+the content, which was 6c's and correct.
+
+**One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
+checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
+invoked as `bash scripts/redeploy.sh`. Not this stage's to fix, and recorded
+because the next person to deploy will hit it.
+
 #### Cost, and one regression worth recording
 
 The stage cost one red CI run, and it was self-inflicted in a way the suite
@@ -2950,7 +2968,7 @@ convention is not enough on its own: a mutation anchored on a gap row is
 anchored on the thing the plan is trying to delete. Three anchors were moved to
 live gaps and the full run is now **24 mutations, all caught**.
 
-#### Two production changes, one of them not yet deployed
+#### Two production changes, and the deploy that carried them
 
 `scraper/app.py` imported `from db import close_pool, get_pool`, which resolved
 only because the Dockerfile ran `cp scraper/db.py db.py` — so the module existed
@@ -2960,9 +2978,78 @@ failed outright outside the conftest that put `scraper/` on `sys.path`. That is
 papered over rather than absent. Both removed; the app imports `scraper.db` like
 every other module in its package.
 
-**This needs a scraper image rebuild**, and the deploy is the one gate this
-stage has not passed. The evidence above is CI's; production still runs the
-image with the `cp` layer.
+**This needed a scraper image rebuild**, which the section below records.
+
+#### Deployed 2026-09-02, and confirmed
+
+Merged as `ff690e0`; the VM pulled it and `scripts/redeploy.sh scraper` rebuilt
+the image. Coordination drain confirmed in 1s, container recreated, healthy
+after 5s.
+
+**What the container loaded, asked of the container rather than the checkout.**
+A `git pull` is not a deploy and a healthy container is not evidence the new
+code is running, so all four were read out of the running process:
+
+| Check | Result |
+|---|---|
+| `/app/db.py`, the `cp` layer | gone — `No such file or directory` |
+| `app.py:15` | `from scraper.db import close_pool, get_pool` |
+| `app.get_pool.__module__` | `scraper.db` |
+| bare `db` in `sys.modules` | `False` |
+
+**The pacing seam was checked in production, because it is the change that
+fails silently.** In the running container `BASE_URL` is
+`https://www.cars.com/shopping/results/`, `SCRAPER_RESULTS_BASE_URL` is unset,
+and **`PACING_APPLIES` is `True`** — so `_pace()` calls `time.sleep` exactly as
+the code it replaced did. That is the whole risk of keying pacing to the origin,
+answered against production rather than argued.
+
+**The detail path is confirmed.** In the 25 minutes after the deploy: 400 rows
+in `ops.artifacts_queue`, 3,780 rows in `staging.artifacts_queue_events`, and a
+newest MinIO object at 18:45:20 — against a last pre-deploy artifact of
+18:15:47.
+
+**The SRP path is confirmed, two rotation slots later.** `search_configs`
+rotates on a **four-hour** cycle at `:30`, so the `*/30` DAG mostly
+short-circuits on `advance_rotation` returning `configs=[]` — its runs take
+10–19s when nothing is due. The two slots that were due ran under the new code:
+**21:30 UTC for 521s producing 45 objects**, and **01:30 for 463s producing
+26**. The three newest parse to 24, 24 and 8 listings at pages 22/26, 16/26 and
+26/26, no challenge pages — a complete paginated walk to the last page.
+
+**The pacing is visible in the artifacts themselves**, which is better evidence
+than the config read this section opened with. Those three objects are stamped
+`01:36:57`, `01:37:15` and `01:37:32` — **18 and 17 seconds apart**, inside
+`human_delay`'s 13–35s band. The gaps between stored objects *are* the sleeps,
+so `_pace()` is demonstrably still sleeping against cars.com. Keying pacing to
+the origin was the change with the silent failure mode, and this is that
+question answered from production rather than argued.
+
+**`ops.artifacts_queue` cannot evidence the SRP path at all**, which is worth
+recording because it misleads on first reading: the table holds **zero**
+`results_page` rows *all time*, since they are consumed and deleted downstream.
+Only MinIO object timestamps answer the question.
+
+#### Cost
+
+Estimate 2 points, actual **1**. `In Progress` ran 16:34 to 18:20 UTC on
+2026-09-02 — 1h45m, ending at the merge — across 22 files.
+
+**The first draft of this line said the stage "ran well past" its estimate, and
+that was wrong in a way worth keeping.** It reasoned from how many things turned
+up rather than from what they cost: the mutation-harness repair, the production
+import fix, two `scrape_results` seams and a capture pulled from production
+MinIO all sound like overrun and were minutes each — two lines, fifteen lines,
+three SSH round-trips. Scope surprise is not effort, and this plan has spent
+nine stages arguing that an unmeasured claim is worth less than a measured one
+whichever direction it points. [Stage 7](#evidence--stage-7-sql-execution-from-both-directions-car-51-2026-09-01)
+is the calibration: estimate 2, actual 1, and it was the plan's largest stage by
+file count at 132 files gaining tests.
+
+What genuinely cost time was not the building but the *reading* — settling that
+G8 was a mocked-write defect rather than a file count, and that the SRP path
+composes its URL where the detail path receives one. Both were decided before
+any test was written, and both changed what got built.
 
 ### Evidence — Stage 9, the DAG tree's `.sql` convention (CAR-53), 2026-09-02
 
