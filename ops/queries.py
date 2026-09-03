@@ -99,5 +99,11 @@ UPDATE_SEARCH_CONFIG = _q("update_search_config")
 TOGGLE_SEARCH_CONFIG_ENABLED = _q("toggle_search_config_enabled")
 RETIRE_SEARCH_CONFIG = _q("retire_search_config")
 
-# Read by the drain gate (coordination_drain.py).
+# Read by the drain gate (coordination_drain.py). The last three took f-strings
+# sized to their arguments until Plan 162 Stage 9 made them static; the params
+# each expects are documented in the .sql files and built by the query
+# functions in that module.
 SELECT_RUNNING_DETAIL_CLAIMS = _q("select_running_detail_claims")
+SELECT_PROCESSING_ARTIFACTS_BACKLOG = _q("select_processing_artifacts_backlog")
+SELECT_AIRFLOW_TASK_INSTANCES = _q("select_airflow_task_instances")
+SELECT_AIRFLOW_GATE_OBSERVATIONS = _q("select_airflow_gate_observations")

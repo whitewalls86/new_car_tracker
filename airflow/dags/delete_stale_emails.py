@@ -1,14 +1,10 @@
 from datetime import datetime
-from pathlib import Path
 
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+from dag_queries import DELETE_STALE_EMAILS_SQL
 from sensors import deploy_intent_sensor
 
 from airflow import DAG
-
-SQL_DELETE_STALE_EMAILS = (
-    Path(__file__).parent.parent / "sql" / "delete_stale_emails.sql"
-).read_text(encoding="utf-8")
 
 with DAG(
     dag_id="delete_stale_emails",
@@ -22,7 +18,7 @@ with DAG(
     cleanup = SQLExecuteQueryOperator(
         task_id="delete_stale_emails",
         conn_id="cartracker_db",
-        sql=SQL_DELETE_STALE_EMAILS,
+        sql=DELETE_STALE_EMAILS_SQL,
     )
 
     ready >> cleanup

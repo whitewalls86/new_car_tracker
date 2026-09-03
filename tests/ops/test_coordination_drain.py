@@ -20,7 +20,15 @@ def test_processing_evidence_counts_only_in_flight_not_backlog(mocker):
 
     coordination_drain._processing_artifacts()
 
-    sql = database_count.call_args.args[1]
+    # Comments stripped before asserting. Plan 162 Stage 9 moved this into
+    # ops/sql/, where the statement carries prose explaining that pending and
+    # retry rows are backlog -- and a substring check over the whole file would
+    # then fail on the comment that documents the very rule it is testing.
+    # The statement is what has to be right.
+    sql = " ".join(
+        line for line in database_count.call_args.args[1].splitlines()
+        if not line.lstrip().startswith("--")
+    )
     assert "q.status = 'processing'" in sql
     assert "pending" not in sql
     assert "retry" not in sql
@@ -194,8 +202,12 @@ def test_gate_evidence_counts_active_runs_that_have_not_observed_generation(mock
     sql, params = database_count.call_args.args[1:]
     assert "dr.state IN ('queued', 'running')" in sql
     assert "observed.generation = %s" in sql
-    assert params[-1] == 7
-    assert "results_processing" in params
+    # params is (dag_ids, generation) since Plan 162 Stage 9: the affected DAGs
+    # travel as one text array rather than as one placeholder each, which is
+    # what let the statement stop being an f-string and become a file.
+    dag_ids, generation = params
+    assert generation == 7
+    assert "results_processing" in dag_ids
     assert "scrape_listings" not in params
 
 

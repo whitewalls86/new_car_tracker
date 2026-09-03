@@ -28,13 +28,13 @@ Usage in a DAG:
 """
 import logging
 from datetime import timedelta
-from pathlib import Path
 from typing import Any, Dict
 
 import requests
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.sdk.bases.sensor import BaseSensorOperator
 from coordination_contract import admission_surfaces
+from dag_queries import DEPLOY_INTENT_GATE_SQL, GATE_OBSERVATION_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,6 @@ class JsonPostError(requests.HTTPError):
     def __init__(self, message: str, *, result: Dict[str, Any]):
         super().__init__(message)
         self.result = result
-
-
-# Loaded from airflow/sql/ the way delete_stale_emails.py does, by path rather
-# than through shared.query_loader: nothing under airflow/dags may import
-# shared (G12), so the DAG tree reads its own .sql files directly.
-GATE_OBSERVATION_SQL = (
-    Path(__file__).parent.parent / "sql" / "record_gate_observation.sql"
-).read_text(encoding="utf-8")
 
 
 def _record_observation(hook, generation: int, dag_id: str, context) -> None:
@@ -90,12 +82,7 @@ class _DeployIntentSensor(BaseSensorOperator):
     def poke(self, context) -> bool:
         hook = PostgresHook(postgres_conn_id="cartracker_db")
         row = hook.get_first(
-            """SELECT di.intent, cs.phase,
-                      cs.scope ? 'host' OR cs.scope ?| %s::text[] AS intersects,
-                      cs.generation
-                 FROM deploy_intent di
-                 CROSS JOIN coordination_state cs
-                WHERE di.id = 1 AND cs.id = 1""",
+            DEPLOY_INTENT_GATE_SQL,
             parameters=(list(self.admission_surfaces),),
         )
         if row is None:
