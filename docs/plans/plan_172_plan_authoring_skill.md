@@ -807,10 +807,27 @@ the contract's shape, before it is lost or has to be re-run.
 ### Stage G
 
 **Re-measure.** Re-run [the measurement](#the-measurement) the same way, over a
-window of comparable length, and record the result in `## Record`. The
-before-numbers are in this document: 35 slice-only rewrites in 79 comparable
-commits, 4% of stages with an exit, evidence at four heading depths, 43 of 44
-live plans without a public section.
+window of comparable length, and record the result in `## Record`.
+
+Three of the four before-numbers are in this document's [measurement
+section](#the-measurement): 4% of stages with an exit, evidence at four heading
+depths, and 43 of 44 live plans without a public section. **The fourth is not.**
+The churn number belongs to [Plan 138](plan_138_public_surface_refresh.md) Stage
+9, which owns both the figure and its method — *the 60 days to 2026-09-02,
+replaying `master`'s first-parent line: 79 comparable commits touched
+`docs/PLANS.md`, 59 of them changed published copy (75%), and of those 59, 35
+rewrote only a slice cell while the same four plans stayed in the window.* Read
+it there. `35 in 79` and `35 of 59` are one finding stated against two
+denominators, not two findings.
+
+**That method does not currently replay, and pinning it is this stage's first
+work.** `git log --first-parent --since=2026-07-04 --until=2026-09-02 --
+docs/PLANS.md` returns **96** commits against the 79 recorded, and nothing
+written down says which 17 are excluded or on what rule — the 2026-08-31 and
+2026-09-01 spikes are Plan 146's restructure and are the obvious candidates. An
+after-number measured a different way than the before-number compares nothing,
+so the definition has to be recovered and written into Plan 138 Stage 9 before
+this stage's own numbers are taken.
 
 **Exit:** the after-numbers are taken and recorded, including the ones that did
 not move.
