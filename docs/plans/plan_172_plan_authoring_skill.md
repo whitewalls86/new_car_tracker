@@ -623,8 +623,8 @@ reading A, H, B, C … are what say so at a glance.
 |---:|:---:|---|---|---|
 | 1 | [**A**](#stage-a) | `docs/PLAN_DOCUMENT.md`, the contract | `done` | CAR-70 |
 | 2 | [**H**](#stage-h) | `plans` operation 6, and two refusals | `done` | CAR-70 |
-| 3 | [**B**](#stage-b) | the `plan-draft` skill | `next` | — |
-| 4 | [**C**](#stage-c) | the `plan-start` skill | `—` | — |
+| 3 | [**B**](#stage-b) | the `plan-draft` skill | `done` | CAR-70 |
+| 4 | [**C**](#stage-c) | the `plan-start` skill | `next` | — |
 | 5 | [**D**](#stage-d) | the assertion and the waiver list | `—` | — |
 | 6 | [**E**](#stage-e) | `close-out` split in two | `—` | — |
 | 7 | [**F**](#stage-f) | the `note-evidence` skill | `—` | — |
@@ -902,3 +902,34 @@ Validated in a disposable clone
 
 Both refusals were exercised by applying the gate text in `SKILL.md` directly
 against the test documents, not by a script standing in for it.
+
+### Stage B
+
+Added `.claude/skills/plan-draft/SKILL.md`: allocates the plan number and
+permanent filename, writes `## What this plan is for` (capped at 320
+characters, present tense) and `## The case`, then asks once where the plan
+lands. A build-order answer names `plan-start` and writes nothing further; a
+backlog answer proposes the row's five values and stops for approval before
+handing them to `plans` operation 6.
+
+Validated in the same disposable clone as Stage H, never committed:
+
+- **Number allocation:** scanned against the real `docs/plans/` (highest
+  existing number 172) and correctly proposed 173, with no collision anywhere
+  in the five tables.
+- **Section shape and cap:** the drafted `## What this plan is for` ran 111
+  characters, well inside the 320-character limit, and the document carried
+  only the two required sections — no `## Design`, `## Stages`, or status
+  marker.
+- **Backlog hand-off:** the proposed row was spliced into the backlog table at
+  placement `first`. `tests/test_planning_docs.py` went from one expected
+  failure (173 present in no table) to 35 passed, and
+  `build_public_roadmap.py --check` stayed clean throughout, since the backlog
+  table is outside the published window.
+- **Refusal:** attempted against a deliberately unscoped idea ("improve things
+  around how errors are handled at some point") — no mechanism, boundary, or
+  owner named, so no stranger-readable sentence could be honestly written.
+  Refused; no file was created.
+- **Build-order path:** writes nothing by construction — the skill's
+  build-order branch names `plan-start` and stops, so there is no artifact for
+  this path to produce or to check.
