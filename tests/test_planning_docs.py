@@ -350,14 +350,66 @@ _SECTION_MEASURED = date(2026, 9, 3)
 
 
 def _has_section(path: str, heading: str) -> bool:
-    """Presence only -- content and the 320-character cap are the author's
-    job, not this file's."""
+    """Presence only. Length is ``_section_over_cap``'s job."""
     return re.search(rf"^## {re.escape(heading)}\s*$", _read(path), re.M) is not None
 
 
+def _section_over_cap(path: str, heading: str, cap: int | None = None) -> int | None:
+    """The section's rendered length past ``cap``, or ``None`` if it fits.
+
+    Measured the way a reader would see it, not the way the file spells it:
+    ``build_public_roadmap.flatten_markdown`` strips the formatting a public
+    page would otherwise render literally. Raises via ``_section_body`` if the
+    heading is absent -- call ``_has_section`` first.
+
+    ``cap`` defaults to ``build_public_roadmap.MAX_SUMMARY_CHARS`` rather than
+    restating its value. ``docs/PLAN_DOCUMENT.md`` caps both public sections at
+    one number; spelling it here as well would let the two published windows
+    drift apart silently the first time that number moved.
+    """
+    from scripts import build_public_roadmap as roadmap
+
+    if cap is None:
+        cap = roadmap.MAX_SUMMARY_CHARS
+    body = _section_body(_read(path), heading)
+    rendered = roadmap.flatten_markdown(body)
+    return len(rendered) - cap if len(rendered) > cap else None
+
+
 def _plan_document_path(number: int) -> str | None:
-    docs = documents_by_plan_number().get(number, ())
-    return f"{PLANS_DIR}/{docs[0]}" if docs else None
+    """The plan's main document, or ``None`` if it has none yet.
+
+    Delegates to ``build_public_roadmap.plan_document`` rather than picking
+    ``documents_by_plan_number()[number][0]`` arbitrarily -- that function
+    already disambiguates a number that matches more than one file (a stage
+    handoff sharing a prefix, as Plan 125 did with three documents at once) by
+    reading the ``# Plan N: ...`` heading, which is exactly the property this
+    file's own module docstring declines to assume holds.
+    """
+    from scripts import build_public_roadmap as roadmap
+
+    try:
+        return str(roadmap.plan_document(str(number)).relative_to(REPO_ROOT))
+    except roadmap.RoadmapBuildError:
+        return None
+
+
+# Live plans with no document at all -- a bare '**88**' backlog row, an idea
+# not yet drafted. Named explicitly so a plan missing its document is this
+# repository's decision to track it, not ``_plan_document_path`` returning
+# ``None`` and the plan quietly vanishing from both the compliant and the
+# waived counts below.
+NO_DOCUMENT_LIVE_PLANS = frozenset({88})
+
+
+# Plan 172 is the contract's own plan. A waiver's ``plan`` must be strictly
+# below this: everything from here on was drafted under the contract (or is
+# the contract), and 'plan-draft' already writes the section, so a plan this
+# new reaching the waiver list is not debt grandfathered in -- it is the
+# contract being bypassed the week it landed. Enforced by
+# ``test_no_waiver_names_a_plan_that_postdates_the_contract``, not by
+# convention.
+_CONTRACT_PLAN = 172
 
 
 @dataclass(frozen=True)
@@ -366,19 +418,22 @@ class SectionWaiver:
     touched since. Cleared the next time the plan is touched and the section
     is added -- not on a schedule. A plan in the published build-order or
     archive window may never appear here: the published-window tests below
-    hold no waiver list at all, by design.
+    hold no waiver list at all, by design. Nor may a plan numbered
+    ``_CONTRACT_PLAN`` or above -- see there.
     """
 
     plan: int
     since: date = _SECTION_MEASURED
 
 
-# 43 live plans predated this contract. Four already carry '## What this plan
-# is for' -- 172 was written under it, and 162/134/138 were backfilled landing
-# this stage because the published build-order window required it -- leaving
-# these 39. Plans 117 and 163 are the two whose shape does not fit stages at
-# all (an umbrella and a register); the contract's own Design section names a
-# waiver as the right instrument for that too, not a permanent plan kind.
+# 44 live plans, of which: 4 already carry '## What this plan is for' (172
+# was written under the contract; 162/134/138 were backfilled landing this
+# stage, because the published build-order window required it); 1, Plan 88,
+# has no document at all and is named in NO_DOCUMENT_LIVE_PLANS instead of
+# here; the remaining 39 are waived below. 4 + 1 + 39 = 44. Plans 117 and 163
+# are the two whose shape does not fit stages at all (an umbrella and a
+# register); the contract's own Design section names a waiver as the right
+# instrument for that too, not a permanent plan kind.
 WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),
     SectionWaiver(79), SectionWaiver(94), SectionWaiver(108), SectionWaiver(112),
@@ -392,10 +447,11 @@ WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(169), SectionWaiver(170), SectionWaiver(171),
 )
 
-# The closeout plans owing '## The checks'. Plan 129 archived 2026-09-03 and
-# left this list on its way out -- it is not waived here because it is no
-# longer live. Plans 117 and 163 are not here: neither is in closeout, so
-# neither owes this section.
+# The closeout plans owing '## The checks' -- currently all five of them, so
+# this test is a forward gate only and constrains nothing live yet. Plan 129
+# archived 2026-09-03 and left this list on its way out -- it is not waived
+# here because it is no longer live. Plans 117 and 163 are not here: neither
+# is in closeout, so neither owes this section.
 THE_CHECKS_WAIVERS = (
     SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
     SectionWaiver(149), SectionWaiver(160),
@@ -412,28 +468,42 @@ class TestPlanDocumentContract:
 
     Two different strengths, on purpose. The published windows -- what a
     reader outside this repository actually sees -- hold with **no waiver
-    list at all**: a plan reaching either one without its section is a
-    failure, full stop, because publishing the gap is worse than not
-    publishing. Every other live plan holds against the same rule behind a
-    named, dated waiver, because 39 of them predate the contract and
-    rewriting all of them on Stage D's one day would be exactly the kind of
-    backfill ``plan_172_plan_authoring_skill.md``'s Adoption section rules
-    out.
+    list at all**, and hold the section's character cap as well as its
+    presence: a plan reaching either window without its section, or over
+    cap, is a failure, full stop, because publishing the gap is worse than
+    not publishing. Every other live plan holds against the presence rule
+    only, behind a named, dated waiver, because 39 of the 44 predate the
+    contract and rewriting all of them on Stage D's one day would be exactly
+    the kind of backfill ``plan_172_plan_authoring_skill.md``'s Adoption
+    section rules out. A waiver cannot cover a plan numbered
+    ``_CONTRACT_PLAN`` or above, or one that has no document at all --
+    see ``NO_DOCUMENT_LIVE_PLANS``.
     """
 
     def test_published_build_order_window_carries_what_this_plan_is_for(self):
         from scripts import build_public_roadmap as roadmap
 
         missing = []
+        over_cap = []
         for row in rows(BUILD_ORDER)[: roadmap.MAX_ITEMS]:
             number = index_plan_number(BUILD_ORDER, row["Plan"])
             path = _plan_document_path(number)
             if path is None or not _has_section(path, "What this plan is for"):
                 missing.append(number)
+                continue
+            over = _section_over_cap(path, "What this plan is for")
+            if over is not None:
+                over_cap.append((number, over))
         assert not missing, (
             f"published build-order plans {missing} lack '## What this plan "
             f"is for'. This window is public; no waiver may cover it -- "
             f"write the section."
+        )
+        assert not over_cap, (
+            f"published build-order plans {over_cap} (plan, chars over "
+            f"{roadmap.MAX_SUMMARY_CHARS}) exceed the cap "
+            f"docs/PLAN_DOCUMENT.md sets for this section. "
+            f"Shorten it -- this is public copy."
         )
 
     def test_published_archive_window_carries_public_summary(self):
@@ -519,6 +589,53 @@ class TestPlanDocumentContract:
                 f"{label} names {dead}, no longer in any live table. Drop "
                 f"the entry -- its plan is not waiting on this any more."
             )
+
+    def test_no_waiver_names_a_plan_that_postdates_the_contract(self):
+        """The half of 'the list only shrinks' that presence/staleness alone
+        cannot enforce: nothing stops a *new* violation from being waived
+        instead of fixed, because a freshly-waived plan that genuinely lacks
+        the section passes both directions of the check above cleanly. A
+        plan numbered ``_CONTRACT_PLAN`` or higher was drafted under the
+        contract -- 'plan-draft' already writes this section -- so it may
+        never be grandfathered here, unlike the 39 that predate it.
+        """
+        for waivers, label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, "WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, "THE_CHECKS_WAIVERS"),
+        ):
+            postdate = sorted(w.plan for w in waivers if w.plan >= _CONTRACT_PLAN)
+            assert not postdate, (
+                f"{label} names {postdate}, which postdates Plan "
+                f"{_CONTRACT_PLAN} itself. A plan drafted under the contract "
+                f"is missing the section because it was never written, not "
+                f"because it predates the rule -- fix the document, don't "
+                f"waive it."
+            )
+
+    def test_every_live_plan_without_a_document_is_named(self):
+        """A live plan with no document at all -- a bare bold number, like
+        Plan 88's backlog row -- cannot carry either section, so it belongs
+        in neither the compliant set nor a waiver. Left unnamed, it simply
+        disappears from both counts; named here, its absence is a decision
+        this repository can see and audit.
+        """
+        undocumented = {
+            number for number in _live_plan_numbers()
+            if _plan_document_path(number) is None
+        }
+        unnamed = sorted(undocumented - NO_DOCUMENT_LIVE_PLANS)
+        assert not unnamed, (
+            f"{unnamed} are live with no document and are not named in "
+            f"NO_DOCUMENT_LIVE_PLANS. If a document exists under a name the "
+            f"parser cannot read, fix the filename; otherwise add the plan "
+            f"here."
+        )
+        stale = sorted(NO_DOCUMENT_LIVE_PLANS - undocumented)
+        assert not stale, (
+            f"{stale} are named in NO_DOCUMENT_LIVE_PLANS but now have a "
+            f"document -- drop the entry, and give it '## What this plan is "
+            f"for' or a waiver like everything else."
+        )
 
 
 class TestRowExitConditions:

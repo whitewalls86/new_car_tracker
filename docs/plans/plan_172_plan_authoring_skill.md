@@ -2,11 +2,10 @@
 
 ## What this plan is for
 
-**The planning documents** — Every plan in this project has a written document,
-and those documents have quietly become three things at once: an argument, a work
-list, and a dump of everything that happened. This plan gives each of those a
-place, so a plan can be read for whether it is worth building, or for what to do
-next, without wading through the other two.
+Every plan document here has become an argument, a work list, and a record of
+everything that happened, all at once. This plan gives each of those its own
+place, so a plan can be read for whether it is worth building, or what to do
+next, without the others in the way.
 
 ## The case
 
@@ -1079,3 +1078,56 @@ branch and the no-waiver-covers-a-published-plan test; stripping Plan 129's
 archive test; and adding a waiver naming a nonexistent plan number failed the
 dead-waiver test. All five were reverted and the suite re-ran clean — 41
 passed — before committing.
+
+**PR #352 review response.** Seven findings, most against gaps this PR itself
+introduced rather than pre-existing ones:
+
+1. Plan 172's own `docs/PLANS.md` slice cell still read Stage A after this PR
+   marked A–D done — exactly the defect Plan 172 was raised to fix, and
+   nothing catches it because the projection only checks itself against
+   `PLANS.md`, which had not changed. Repointed to Stage E via `plans`
+   operation 5, regenerated.
+2. Plan 172's own `## What this plan is for` was 360 characters, over its own
+   320 cap, in the published window. Shortened to 268.
+3. `plan-draft` and `PLAN_DOCUMENT.md` both described the cap as already
+   enforced; finding 2 was the proof it was not — nothing read this section
+   at all before this response. Added real cap-checking to the strict
+   build-order test (`_section_over_cap`, via `roadmap.flatten_markdown`) and
+   corrected both documents' claims to name what actually checks it and when.
+4. The waiver lists had no ratchet: a fresh plan could be waived instead of
+   fixed and both directions of the existing check would still pass. Added
+   `_CONTRACT_PLAN = 172` and a test that no waiver may name a plan at or
+   above it — grandfathering is for what predates the contract, never for
+   what was drafted under it.
+5. `THE_CHECKS_WAIVERS` waives 100% of the closeout table today, so that test
+   is a forward gate only. Said so directly in the comment.
+6. `_plan_document_path` picked `documents_by_plan_number()[n][0]`
+   arbitrarily instead of reusing `build_public_roadmap.plan_document`'s
+   heading-disambiguation. Latent, not live, but the archive-window test is
+   exactly the one that must never check the wrong file. Now delegates to it.
+7. Plan 88 (`**88**`, backlog, no document) was silently invisible to both the
+   compliant and waived counts, so "39 + 4 = 43" quietly didn't reconcile to
+   44. Named explicitly in `NO_DOCUMENT_LIVE_PLANS`, with its own presence
+   test.
+
+Two nits also fixed: `plans/SKILL.md`'s assertion count (33 → 43) and
+`PLAN_DOCUMENT.md`'s Adoption section dating its 44/43 count to 2026-09-02
+when it is actually the 2026-09-03 count, after Plan 129's same-day closeout
+moved it out of `Current closeout`.
+
+Every new and changed check was verified by the same mutate-and-revert
+discipline as the original Stage D work: pushing Plan 172's section back over
+cap, waiving Plan 172 itself, and emptying `NO_DOCUMENT_LIVE_PLANS` each
+failed the test built to catch it. Full suite re-ran clean after —
+`tests/test_planning_docs.py` 43 passed, `tests/scripts/test_build_public_roadmap.py`
+65 passed, the full non-integration suite 3531 passed — before this response
+was committed.
+
+A third nit came out of reviewing that response itself: `_section_over_cap`
+spelled `320` as its default while `build_public_roadmap.MAX_SUMMARY_CHARS`
+held the same number, and the assertion message and class docstring restated it
+twice more. `docs/PLAN_DOCUMENT.md` caps both public sections at one number, so
+three copies of it could have let the two published windows enforce different
+caps the first time that number moved. The default, the message and the
+docstring now all resolve from the constant; no `320` literal remains in the
+file, and the over-cap mutation was re-run against the change.

@@ -58,8 +58,10 @@ slug later.
 
 Present tense, for a reader who has never seen this repository. One or two
 sentences, under **320 characters** — it is one of the two sections
-`docs/PLAN_DOCUMENT.md` caps and publishes, and the cap is enforced at build
-time, not proposed as a guideline.
+`docs/PLAN_DOCUMENT.md` caps and publishes. `tests/test_planning_docs.py`
+checks the cap once a plan reaches the published build-order window, not at
+draft time; write within it now rather than leaving a future editor to
+discover the failure when the plan is promoted.
 
 **Refuse to write a placeholder.** If the idea cannot yet be stated in one
 sentence a stranger could read, that is a sign the idea itself is not ready to

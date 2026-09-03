@@ -65,7 +65,7 @@ applying a provenance label to it devalues every genuine one.
 | `docs/planning/completed_plans.md` | the archive. Newest first, **prepend-only**, one row per plan. **Public: its top four rows are published** |
 | `docs/plans/plan_NNN_*.md` | the plan's own document, and the authority when it and the index disagree |
 | `docs/PLAN_DOCUMENT.md` | the plan-document contract. This skill points there for document shape and does not restate it |
-| `tests/test_planning_docs.py` | what "correct" means. 33 assertions, ~0.2s |
+| `tests/test_planning_docs.py` | what "correct" means. 43 assertions, ~0.2s |
 | `docs/planning/plans_decision_log.md` | narrative. You do not write here; the user may |
 
 ## Splice, never reflow

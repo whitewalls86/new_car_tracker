@@ -154,8 +154,12 @@ published claim continues to describe the plan.
 This contract governs every new plan. Its backward reach is deliberately
 bounded:
 
-- Backlog, build-order, and closeout documents are in scope. At the 2026-09-02
-  baseline that was 44 plans, 43 of which lacked `## What this plan is for`.
+- Backlog, build-order, and closeout documents are in scope. At the 2026-09-03
+  baseline — after Plan 129's same-day closeout moved it out of `Current
+  closeout` — that was 44 plans, 43 of which lacked `## What this plan is
+  for`. (This bullet postdates this document's own 2026-09-02 measurement
+  above; the count moved with Plan 129, and Stage D's waiver list was built
+  against the count it actually landed against.)
 - Existing live plans acquire the applicable public section, and closeout plans
   acquire `## The checks`. They are not backfilled with `## Design` or
   `## Stages`.
@@ -180,7 +184,8 @@ exemption.
 | Record entries and stage completion | `note-evidence` and `stage-close` |
 | Checks, archive transition, and completed public copy | `close-out` |
 | Live-document adoption, waivers, and both published windows | `tests/test_planning_docs.py` |
-| The planned and completed projections | `scripts/build_public_roadmap.py` |
+| The completed projection, and `## Public summary`'s cap | `scripts/build_public_roadmap.py` |
+| The planned projection reading `## What this plan is for` | [Plan 138](plans/plan_138_public_surface_refresh.md) Stage 9 — not yet landed; today the build order's published slice cell is what `build_public_roadmap.py` reads for a planned row |
 
 Until a named skill or assertion lands, its row describes specified but
 unmechanized behavior; it must not be presented as already enforced.
