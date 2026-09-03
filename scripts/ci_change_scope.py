@@ -1,9 +1,27 @@
 """Decide which CI jobs a changeset needs, from a NUL-delimited git path list.
 
-Two zones of the tree can be changed without building or deploying anything:
+Three zones of the tree can be changed without building or deploying anything:
 
 ``docs/``
     Prose. Needs the documentation tests and nothing else.
+
+``ops/static_ops/generated/``
+    The published projection of ``docs/``, and the same zone as its source. It
+    is written only by ``build_public_roadmap.py`` and ``build_public_recaps.py``
+    and it reaches production through ``git pull`` alone -- Plan 138 Stage 7
+    mounts the directory read-only from the checkout, so no image carries it and
+    no build publishes it. The documentation job runs both generators'
+    ``--check``, which is a byte comparison against a regeneration from
+    ``docs/``, so a hand-edited artifact fails there. **The generators
+    themselves are not in this zone**: they are under ``scripts/``, so changing
+    one costs a full run, which is what keeps a bad generator from being waved
+    through by its own output.
+
+    Plan 138 Stage 9 is why this zone exists. Before it, an edit to a plan
+    document could not move the published page; now ``## What this plan is for``
+    is the planned summary, so the ordinary docs change regenerates a file
+    outside ``docs/`` and would otherwise have dragged every prose commit into
+    the full workflow.
 
 ``scripts/oneoff/`` and ``tests/scripts/oneoff/``
     Scripts whose owning plan has archived. Nothing builds them into an image,
@@ -12,9 +30,10 @@ Two zones of the tree can be changed without building or deploying anything:
     suite -- spent is not untested -- but no Docker build, no dbt build and no
     database.
 
-**The zones compose.** A changeset touching both takes the union of what each
-needs rather than falling back to the full workflow, which is the whole point
-of classifying by zone instead of by a single "is it all docs?" question.
+**The zones compose.** A changeset touching more than one takes the union of
+what each needs rather than falling back to the full workflow, which is the
+whole point of classifying by zone instead of by a single "is it all docs?"
+question.
 
 Everything else is unclassified and takes the full workflow. That is the
 fail-open direction and it is deliberate: a path this module has never heard of
@@ -43,7 +62,7 @@ from __future__ import annotations
 
 import sys
 
-DOCS_PREFIX = b"docs/"
+DOCS_PREFIXES = (b"docs/", b"ops/static_ops/generated/")
 ONEOFF_PREFIXES = (b"scripts/oneoff/", b"tests/scripts/oneoff/")
 
 # Paths that can change what `dbt build` does against a pinned snapshot. Wider
@@ -113,7 +132,7 @@ def classify_from_nul(data: bytes) -> dict[str, bool]:
     # every changeset, classified or not.
     snapshot_dbt = any(path.startswith(SNAPSHOT_DBT_TRIGGERS) for path in paths)
 
-    docs = sum(path.startswith(DOCS_PREFIX) for path in paths)
+    docs = sum(path.startswith(DOCS_PREFIXES) for path in paths)
     oneoff = sum(path.startswith(ONEOFF_PREFIXES) for path in paths)
     if docs + oneoff != len(paths):
         return {**FULL, "snapshot_dbt": snapshot_dbt}

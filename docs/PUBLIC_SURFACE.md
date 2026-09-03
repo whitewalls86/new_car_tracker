@@ -102,6 +102,20 @@ The public feed is a projection of the roadmap, not a second roadmap:
 
 - "Planned next" comes from the ordered rows in `docs/PLANS.md`'s **Default
   build order** table. Publish only the first four executable rows.
+- **A planned row's summary is the plan document's `## What this plan is for`,
+  and the build order's Next executable slice cell is not published copy.** The
+  feed says what a plan is *for*; which stage is next is an internal pointer,
+  rewritten every time one lands, and republishing it put a file path, a ticket
+  identifier and a stage number on the page and rewrote them every few days. The
+  slice cell remains the fallback for a row whose plan has no such section, so
+  the page degrades to the old behaviour rather than to nothing — but a row in
+  the published window is required to carry one, and that is asserted rather than
+  trusted. Decided and measured in Plan 138 Stage 9.
+- **The rest of the row still is published copy.** Title, priority, effort,
+  order and the plan link reach the page verbatim, and a build-order insert
+  renumbers and can carry a plan across the four-row boundary in either
+  direction. "The slice cell is not published copy" is not "`PLANS.md` is not
+  published copy."
 - "Recently completed" comes from the newest-first table in
   [`planning/completed_plans.md`](planning/completed_plans.md). Publish only the
   first four rows. **This is a different file from the build order.** Plan 146
@@ -308,7 +322,7 @@ fixed elsewhere. An entry is deleted when it is repaired, not marked closed.
 | P1 | **`/dashboard` is linked from no public surface.** `ops/templates/info.html` has no `<nav>` and mentions the route nowhere; its only calls to action are `/request-access`, at the hero and the footer. A visitor who requests access, is granted a role, and returns has no path to the thing they were granted | Plan 138, deferred navigation stage |
 | P2 | **`/recaps` has a canonical route, a sitemap entry, and no inbound link.** The landing page's only recap mention resolves to GitHub | Plan 138 Stage 3d / D1 |
 | P3 | **The live stats section carries no anchor id**, so nothing can link to it — including the roadmap section directly above it | Plan 138 Stage 4 |
-| P4 | **The commit gate covers two of five public surfaces.** `public_surface_gate.py` fires on `README.md` and `ops/templates/info.html`; the generated artifacts and the `docs/PLANS.md` slice cell are outside it. The slice cell is covered instead by the `plans` skill, which knows it is publishing; the generated artifacts are covered by their sources and their `--check` | Plan 138 |
+| P4 | **The commit gate covers two of five public surfaces.** `public_surface_gate.py` fires on `README.md` and `ops/templates/info.html`; the generated artifacts and the `docs/PLANS.md` build-order row are outside it. The row is covered instead by the `plans` skill, which knows it is publishing; the generated artifacts by their sources and their `--check`. **Stage 9 added a sixth thing to this list rather than removing one**: a planned row's published sentence is now a plan document's `## What this plan is for`, so a plan document is public copy and is outside the gate too — covered only by `tests/test_planning_docs.py`, which holds the published window to the section's presence and its cap but reads nothing in it | Plan 138 |
 | P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/writings` | Plan 138 Stage 1g |
 
 ---

@@ -102,9 +102,10 @@ Present, in this order:
 2. **The `PLANS.md` consequence**, chosen from:
    - **the slice pointer moves, the plan does not** — the row stays where it is
      and its slice cell now names the wrong next step. Propose the exact
-     replacement text. That cell is published copy on the landing page, so it is
-     `plans` operation 5 and it goes through that skill like any other
-     `PLANS.md` edit.
+     replacement text. It is `plans` operation 5 and it goes through that skill
+     like any other `PLANS.md` edit — because the table is that skill's, not
+     because the cell is public. Since Plan 138 Stage 9 it is not: the landing
+     page publishes the plan document's `## What this plan is for` instead.
    - **build order → closeout** — deployed, evidence pending. Needs a `Lands`
      date and a gate, and neither is yours to invent. Propose `## The checks`
      alongside it — see below.
