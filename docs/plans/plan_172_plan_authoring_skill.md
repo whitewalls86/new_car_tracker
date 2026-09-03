@@ -686,13 +686,31 @@ it. It owns prose and never state.
 **The `plan-start` skill.** The mirror of `close-out`. It puts a plan into the
 build order — from the backlog when its trigger fires, or straight from a draft —
 through an interview: design, rejected alternatives, lettered stages each with an
-exit, and the order table. Then the build-order row via `plans`, and the Linear
-project and issue set.
+exit, the order table, and how those stages chunk into issues. Then the
+build-order row via `plans`, and the Linear project and issue set that chunking
+produced.
 
 It has `close-out`'s shape, including its approval stop. It hands position,
 priority and effort to `plans` and chooses none of them, and it asks for
 estimates rather than deriving them — `ticket-now` already records why an
 estimate derived from a plan's effort label is wrong.
+
+**Chunking is asked, not assumed.** `1` point means "under half a day," and this
+plan's own measurement found stages from 3 to 2,190 lines — a plan can hold
+several stages that do not reach that floor. `CAR-70` is the case in evidence:
+filed for Stage A alone, it was hand-expanded onto the same issue three more
+times in one day rather than minting H, B and C their own, because each was
+minutes of work. Once stages, exits and estimates are agreed, `plan-start` asks
+with the Questions interface how they chunk into issues, offering genuine
+shapes rather than a policy name:
+
+- **one issue per stage** — every stage gets its own issue, chained `blockedBy`
+  in the order table's order. Right when stages are independently sized, a day
+  or more each.
+- **one issue for the whole plan** — every stage becomes a `## Stage X` section
+  inside a single issue, with no chain. The shape `CAR-70` reached by hand.
+- anything else, as free text — a custom split named directly in the interview,
+  such as bundling the small early stages and splitting out one large one.
 
 **Exit:**
 1. It adds `## Design` and `## Stages` to an existing document, and edits nothing
@@ -701,14 +719,17 @@ estimate derived from a plan's effort label is wrong.
    to `plans` while any lacks one.
 3. Stage letters are allocated in order of conception, never as a suffix of
    another stage.
-4. It creates one issue per stage, each `Exit` taken from the stage just agreed
-   rather than composed at ticket time, and each `blockedBy` its predecessor in
-   the order table. `save_issue` takes `blockedBy` directly, so the chain needs
-   no GraphQL.
-5. Exactly one of those issues is unblocked, and it is the order table's `next`.
+4. It asks the chunking question above via the Questions interface before
+   creating anything, and creates issues to match the answer: one-per-stage
+   issues each carry their one stage's `Exit` and are `blockedBy` their
+   predecessor; a bundled issue carries every stage it covers as its own
+   `## Stage X` section and holds no internal `blockedBy` chain. `save_issue`
+   takes `blockedBy` directly, so a chain needs no GraphQL.
+5. Exactly one issue is unblocked at creation — whichever one contains the
+   order table's `next` stage.
 6. Every issue is created with no cycle, so `fill-cycle` remains the only thing
    that spends the cycle budget.
-7. It writes nothing before the approval stop.
+7. It writes nothing before the approval stop, including the chunking answer.
 8. It runs correctly both ways — on a backlog plan with a row to move, and on a
    fresh draft with no row yet.
 
@@ -742,13 +763,23 @@ section, so that half of the assertion passes on arrival.
 
 **`stage-close`, split out of `close-out`.** Move the per-issue half into its own
 skill: the `## Record` entry, the cost comment, the public-surface question, the
-order table's `State` cell, Linear `Done`. It cannot move a `PLANS.md` row.
+order table's `State` cell, and Linear `Done`. It cannot move a `PLANS.md` row.
 `close-out` is narrowed to the plan-level transition and says which skill closes
 a stage.
 
+**One issue can carry several stages, since Stage C can chunk that way.**
+Closing a stage always writes its `## Record` entry and its order-table `State`
+cell. The issue itself moves to `Done` only when every stage it carries reaches
+`done` in the order table — otherwise `stage-close` stops after the record and
+the state cell, and the issue stays open for whichever stage is still `next` or
+`—` inside it. A one-stage issue is the same rule with a covered set of one, so
+nothing here is a special case for the bundled shape.
+
 **Exit:** each skill's description names the grain it operates on; neither can
 perform the other's write; `close-out` no longer proposes "nothing" as its common
-case, because that case is no longer its job.
+case, because that case is no longer its job; closing one stage of a
+multi-stage issue updates the record and the order table but leaves the issue
+open until its last covered stage closes.
 
 ### Stage F
 
