@@ -1277,14 +1277,39 @@ are prose no test reads.
 `Public surfaces: no mechanism, name or quantity either surface states was
 changed by this work.`
 
-**Two stale cross-references were found and deliberately not edited.**
-[Plan 138](plan_138_public_surface_refresh.md)'s Gate 1h and
-[Plan 164](plan_164_cycle_close_ritual.md)'s ritual table both name `close-out`
-for the public-surface question and for writing a finished issue's evidence;
-both now live in `stage-close`. Editing another live plan's agreed gate text
-from inside this stage would be a design change dressed as a docs fix, and Plan
-138 has three stages in flight. Named here so the next reader of either document
-can find the step.
+**Five stale cross-references were left by this split, and all five were fixed
+before the PR opened.** They were first recorded here as deliberately *not*
+edited, on the reasoning that touching another live plan's agreed gate text is a
+design change dressed as a docs fix. Raised directly against that: a pointer
+saying which skill performs a step is not the gate's substance, and leaving five
+documents naming a skill that no longer does the thing is the drift this plan
+exists to remove. So the pointers moved and the gates did not:
+
+- [Plan 138](plan_138_public_surface_refresh.md) Gate 1h — the gate text now
+  says "the skill that closes a unit of work" rather than naming one, and its
+  two supporting arguments (Phase 1 has the material already; gathers and
+  proposes, never writes) hold verbatim for `stage-close`. Its Files table row
+  moved to `stage-close/SKILL.md`. **What was not touched is the history**: the
+  `Built 2026-09-01, PR #335, a4166ee` line stands, with a dated note beneath it
+  that the step moved on 2026-09-03 and why. The move is a *widening* — the
+  question now rides every stage close instead of only the closeouts that moved
+  a row, which were the minority.
+- [Plan 164](plan_164_cycle_close_ritual.md)'s ritual table split one row into
+  two, since closing finished issues and closing out a plan are now separate
+  owners.
+- [Plan 149](plan_149_linear_execution_layer.md)'s manual-transition note named
+  `close-out` as a skill assuming hand-run status changes; `close-out` no longer
+  touches Linear at all.
+- `public-surface-check`'s never-do list said a plan document belongs to `plans`
+  and `close-out`; it now names all five writers and their grains.
+- [Plan 168](plan_168_generated_knowledge_substrate.md)'s skill count read 8 and
+  is now 12 — already wrong before this stage, since Stages B and C added two,
+  so it is this plan's own accumulated drift rather than a neighbour's.
+
+Audited by grepping every `close-out` reference in `docs/` and `.claude/`
+afterwards: the eight that remain are each either still true (`close-out` does
+still own `## Public summary` and the `plans` seam) or deliberately historical
+past-tense record of what was built in PR #335.
 
 **Plan 172's own slice cell in `docs/PLANS.md` still reads Stage E**, which this
 entry marks `done`. That cell is published copy, so repointing it is `plans`

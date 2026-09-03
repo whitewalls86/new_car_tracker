@@ -47,7 +47,7 @@ reconciled overviews and the assigned replacement claims.
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01 and **deployed the same day**, soaking. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
 | **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01 and deployed the same day**, soaking. **The pages are already public and always were** — `handle /static_ops/*` is unauthenticated, so they served 200 from the moment the image carried them; measured 2026-09-01. They are *unlinked*, not unreachable, and what Stage 2 owes them is a canonical route rather than a first one. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
-| **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
+| **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01; moved 2026-09-03 to the `stage-close` skill by [Plan 172](plan_172_plan_authoring_skill.md) Stage E, which now runs it on every stage close rather than only on the closeouts that moved a row.** The step is: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
 | **3d** Recap presentation | Not started, and **both open decisions were settled 2026-09-02**: the recap pages keep the generator's inlined `_STYLE` rather than sharing `info.css`, and `/recaps` leads with the newest published week rendered in full, with its week stated at the top and `rel=canonical` pointing at the recap's own page. 1g is unblocked |
 | **1g** Publish the writing page and link it from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed. Unblocked 2026-09-02, and redesigned 2026-09-03 — `/writings` is now its own page of cards rather than a list inline on `/`, which makes this stage a route rather than a template section.** — 3d's two decisions, which govern its markup, are settled. 1f decided the corpus is not maintained here; 1g links it anyway, under cards that carry only immutable facts — title, date, URL, preview image, and a snippet about the article rather than about the system — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
 | **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
@@ -1613,7 +1613,7 @@ what this stage exists to stop needing a second time.**
 
 **Closeout is the right moment, and the argument is availability rather than
 rigour.** At closeout the person knows what the work changed and why; the
-`close-out` skill's Phase 1 has already gathered the slice's commits and
+`stage-close` skill's Phase 1 has already gathered the stage's commits and
 evidence, so the marginal cost is one question against material already on
 screen. Every alternative moment is worse: a test cannot judge materiality, CI
 cannot see intent, and a periodic sweep is Gate 0 again — expensive, late, and
@@ -1637,9 +1637,10 @@ its digest stamp to avoid. The 1c skill's discipline applies unchanged: most
 invocations end in one line. The prompt is answerable from the slice's own
 evidence and does not re-read either surface unless the answer is yes.
 
-**What it produces, and what it must not.** The `close-out` skill "gathers and
+**What it produces, and what it must not.** The `stage-close` skill "gathers and
 proposes first and writes nothing until the user approves", and 1h inherits that
-without exception — **a closeout must never silently edit a public surface.**
+without exception — **closing a stage must never silently edit a public
+surface.**
 Three outcomes, all recorded:
 
 - **No** — recorded in one line in the evidence section, so the record shows the
@@ -1657,8 +1658,8 @@ because it rides a ritual that already exists rather than asking for a new one,
 and because the alternative on offer is another Gate 0. **1c remains the
 enforceable gate; 1h is the one that catches what 1c cannot see.**
 
-**Gate 1h:** the `close-out` skill asks the question as a named step, in the
-taxonomy above; its three outcomes are written into the skill including the
+**Gate 1h:** the skill that closes a unit of work asks the question as a named
+step, in the taxonomy above; its three outcomes are written into the skill including the
 requirement to record a "no"; the step is demonstrated on a real closeout whose
 answer is "no" and one whose answer is "yes"; and the skill's "what this must
 never do" section names silently editing a public surface.
@@ -1667,6 +1668,14 @@ never do" section names silently editing a public surface.
 
 **Built 2026-09-01, PR #335, `a4166ee`.** `.claude/skills/close-out/SKILL.md`,
 +67/−5.
+
+**Moved 2026-09-03 to `.claude/skills/stage-close/SKILL.md`**, unchanged in
+substance, by [Plan 172](plan_172_plan_authoring_skill.md) Stage E, which split
+`close-out` at the stage/plan grain. The step travelled with the per-stage half
+because that is where its Phase 1 material is. This is a widening rather than a
+move sideways: the question now rides *every* stage close instead of only the
+closeouts that moved a plan's row, which were the minority of them. Gate 1h's
+"yes" demonstration is still outstanding and is unaffected.
 
 | Gate 1h check | Where |
 |---|---|
@@ -3081,7 +3090,7 @@ window from publishing an empty summary in between.
 | `ops/static_ops/writings/*` | Stage 1g's self-hosted preview images, within the 150 KB / 600 KB budget |
 | `scripts/public_surface_gate.py` | Extend Stage 1c's commit gate to the corpus data file and `writings.html`, on the same digest-stamp mechanism |
 | A published-writing reconciliation skill | Stage 1g's two-way check: article against both surfaces, for drift and for harvest |
-| `.claude/skills/close-out/SKILL.md` | Stage 1h's step: did this work change a mechanism, name, or quantity either surface states |
+| `.claude/skills/stage-close/SKILL.md` | Stage 1h's step: did this work change a mechanism, name, or quantity either surface states. Built in `close-out`; moved here by [Plan 172](plan_172_plan_authoring_skill.md) Stage E |
 | `docs/PUBLIC_SURFACE.md` | Stage 8's durable contract: what may be said, what resolves and for whom, and where a reader is meant to go |
 | `.claude/skills/public-surface-check/SKILL.md` | Stage 8 re-sources its authority from the contract rather than from this plan |
 | `dashboard/app.py` | Canonical portfolio and dashboard links |

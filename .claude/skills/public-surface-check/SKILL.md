@@ -120,7 +120,10 @@ acceptable.
   surface is a different, larger job, and it is not this gate.
 - **Edit either surface.** Report; the author writes.
 - **Touch a plan document, `docs/PLANS.md`, a status marker or the archive.**
-  Those belong to the `plans` and `close-out` skills.
+  `docs/PLANS.md` and the archive belong to `plans`; a plan document belongs to
+  `plan-draft`, `plan-start`, `note-evidence`, `stage-close` and `close-out`,
+  each at its own grain. A new-contract document carries no status marker at
+  all.
 - **Stamp a diff it did not read**, or stamp around a finding to unblock a
   commit. The gate is worth exactly as much as that rule.
 - **Judge the deployed page.** These files are the template and the source; the

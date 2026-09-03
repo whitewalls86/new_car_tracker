@@ -17,7 +17,8 @@ specified. Most of it has skills. Some of it does not.
 
 | Cycle-close step | Owner today |
 |---|---|
-| Close finished issues, write their evidence | `close-out` |
+| Close finished issues, write their evidence | `stage-close` |
+| Close out a plan that has finished | `close-out` |
 | Move rows in `PLANS.md` and the archive | `plans` |
 | Write the weekly recap | `plan-week` |
 | Seed the next cycle | `fill-cycle` |
