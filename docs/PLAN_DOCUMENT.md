@@ -189,7 +189,7 @@ exemption.
 | Checks, archive transition, and completed public copy | `close-out` |
 | Live-document adoption, waivers, and both published windows | `tests/test_planning_docs.py` |
 | The completed projection, and `## Public summary`'s cap | `scripts/build_public_roadmap.py` |
-| The planned projection reading `## What this plan is for` | [Plan 138](plans/plan_138_public_surface_refresh.md) Stage 9 — not yet landed; today the build order's published slice cell is what `build_public_roadmap.py` reads for a planned row |
+| The planned projection reading `## What this plan is for` | `scripts/build_public_roadmap.py`, since [Plan 138](plans/plan_138_public_surface_refresh.md) Stage 9 landed it 2026-09-03. The build order's slice cell is the fallback for a row whose plan has no section, and is no longer published copy for one that does |
 
 Until a named skill or assertion lands, its row describes specified but
 unmechanized behavior; it must not be presented as already enforced.

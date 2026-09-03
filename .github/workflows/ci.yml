@@ -93,7 +93,8 @@ jobs:
       # markdown-it-py is what Stage 1e's recap projection renders with. It is
       # present locally only as a transitive dependency of `rich`, so this job
       # names it rather than relying on something else's dependency tree.
-      - run: pip install pytest markdown-it-py
+      # pytest-mock is what the two generator suites below patch with.
+      - run: pip install pytest pytest-mock markdown-it-py
       # Plan 138 Stage 1d. The public roadmap projection is generated from
       # docs/PLANS.md and docs/planning/completed_plans.md, so a roadmap edit is
       # exactly the change that can leave it stale -- and it is also the change
@@ -117,6 +118,23 @@ jobs:
       # every relative link classified, and no page left behind by a recap that
       # stopped being published.
       - run: python scripts/build_public_recaps.py --check
+      # Plan 138 Stage 9. `--check` above is a byte comparison against a
+      # regeneration, so it catches a stale or hand-edited artifact and nothing
+      # else. What it cannot see is a *correctly regenerated* artifact whose
+      # content is wrong -- markup the flattener left in a summary, a link that
+      # resolves to nothing, a planned field the landing page does not read --
+      # and those are properties of `docs/`, so a docs-only changeset is the
+      # exact path that introduces them. Stage 9 put
+      # `ops/static_ops/generated/` in the docs zone, which is what made this
+      # path reachable without the unit job; these two suites are the assertions
+      # the unit job would otherwise have run.
+      - run: >
+          pytest --noconftest -q
+          tests/scripts/test_build_public_roadmap.py
+          tests/scripts/test_build_public_recaps.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          LOG_PATH: /tmp/app.log
       - run: pytest --noconftest tests/test_planning_docs.py -q
         env:
           # The repo root carries an __init__.py, so pytest's package-root walk

@@ -298,9 +298,9 @@ def test_extraction_is_recorded_so_the_gate_knows_which_rows_to_read(tmp_path, m
         "| Plan | Description | Date |\n|---|---|---|\n"
         "| 161 | **Extracted title** — extracted summary. And more. | 2026-08-31 |\n"
     )
-    extracted: list[str] = []
-    (item,) = brm.completed_items(archive, extracted)
-    assert extracted == ["161"]
+    fallbacks: list[tuple[str, str]] = []
+    (item,) = brm.completed_items(archive, fallbacks)
+    assert fallbacks == [("completed", "161")]
     assert item["summary"] == "extracted summary."
 
 
@@ -315,6 +315,101 @@ def test_a_summary_over_the_cap_fails_and_says_what_to_write(mocker):
         brm.completed_items(archive)
 
 
+# ---------------------------------------------------------------------------
+# The planned side's own public copy, and the fallback to the slice cell
+# ---------------------------------------------------------------------------
+
+# One build-order row, in the live table's shape. The Plan cell points at a
+# document that really exists, because ``_linked_plan`` checks the tree.
+_BUILD_ORDER = (
+    "## Default build order\n\n"
+    "| Order | Plan | Title | Next executable slice | Workable? | Blocked by "
+    "| Priority | Effort | Depends on / safe stopping point |\n"
+    "|---|---|---|---|---|---|---|---|---|\n"
+    "| 1 | [161](plans/plan_161_testing_contract.md) | Testing contract "
+    "| Stage 4 (CAR-9) — the internal pointer | **Y** | -- | 70 | S | -- |\n"
+)
+
+_ARCHIVE_ROW = (
+    "| Plan | Description | Date |\n|---|---|---|\n"
+    "| 161 | **Extracted title** — extracted summary. | 2026-08-31 |\n"
+)
+
+
+def test_a_plan_with_no_purpose_section_returns_none(tmp_path):
+    """Which is when the slice cell is published in its place."""
+    assert brm.purpose_summary(_plan_doc(tmp_path, "## The case\n\nBecause.\n")) is None
+
+
+def test_a_purpose_section_is_read_whole_rather_than_cut(tmp_path):
+    """It is capped where it is written, so there is nothing to truncate."""
+    path = _plan_doc(
+        tmp_path,
+        "## What this plan is for\n\nKeeps `the page` honest against the\n"
+        "tree. It also builds the generator.\n\n## The case\n\nBecause.\n",
+    )
+    assert brm.purpose_summary(path) == (
+        "Keeps the page honest against the tree. It also builds the generator."
+    )
+
+
+def test_a_purpose_section_stops_at_a_subheading(tmp_path):
+    """A ``###`` under the section is document structure, not public copy."""
+    path = _plan_doc(
+        tmp_path,
+        "## What this plan is for\n\nThe published sentence.\n\n"
+        "### Not this\n\nNor this.\n",
+    )
+    assert brm.purpose_summary(path) == "The published sentence."
+
+
+def test_an_empty_purpose_section_fails_the_build(tmp_path):
+    with pytest.raises(RoadmapBuildError, match="is empty"):
+        brm.purpose_summary(
+            _plan_doc(tmp_path, "## What this plan is for\n\n## The case\n\nBecause.\n")
+        )
+
+
+def test_a_planned_summary_comes_from_the_plan_document(mocker):
+    """The stage's whole point: a stage number and a ticket id stop being public."""
+    mocker.patch.object(brm, "purpose_summary", return_value="What this plan is for.")
+    (item,) = brm.planned_items(_BUILD_ORDER)
+    assert item["summary"] == "What this plan is for."
+
+
+def test_a_planned_row_without_the_section_falls_back_to_the_slice_cell(mocker):
+    """The window's membership moves with the order; the fallback guards the gap."""
+    mocker.patch.object(brm, "purpose_summary", return_value=None)
+    (item,) = brm.planned_items(_BUILD_ORDER)
+    assert item["summary"] == "Stage 4 (CAR-9) — the internal pointer"
+
+
+def test_the_fallback_worklist_names_planned_rows_as_well_as_completed_ones(mocker):
+    """Gate 1d's worklist covers both sides, tagged by the section each one owes."""
+    mocker.patch.object(brm, "purpose_summary", return_value=None)
+    mocker.patch.object(brm, "authored_summary", return_value=None)
+    fallbacks: list[tuple[str, str]] = []
+    brm.planned_items(_BUILD_ORDER, fallbacks)
+    brm.completed_items(_ARCHIVE_ROW, fallbacks)
+    assert fallbacks == [("planned", "161"), ("completed", "161")]
+    assert {side for side, _ in fallbacks} == set(brm.FALLBACK_SOURCES)
+
+
+def test_an_authored_planned_summary_over_the_cap_says_to_shorten_it(mocker):
+    """The same loud failure the completed side has, pointing at the section."""
+    mocker.patch.object(brm, "purpose_summary", return_value="word " * 100)
+    with pytest.raises(RoadmapBuildError, match="Shorten '## What this plan is for'"):
+        brm.planned_items(_BUILD_ORDER)
+
+
+def test_a_fallback_summary_over_the_cap_says_to_write_the_section(mocker):
+    """The other remedy. A message naming the wrong one is worse than none."""
+    mocker.patch.object(brm, "purpose_summary", return_value=None)
+    long_cell = _BUILD_ORDER.replace("Stage 4 (CAR-9) — the internal pointer", "word " * 100)
+    with pytest.raises(RoadmapBuildError, match="Write a '## What this plan is for'"):
+        brm.planned_items(long_cell)
+
+
 def test_a_build_order_link_to_a_missing_file_fails_the_build():
     with pytest.raises(RoadmapBuildError, match="missing file"):
         brm._linked_plan("[999](plans/plan_999_nonexistent.md)", "x")
@@ -322,11 +417,11 @@ def test_a_build_order_link_to_a_missing_file_fails_the_build():
 
 def test_a_stage_marker_after_the_link_does_not_confuse_the_plan_cell():
     """Rows such as ``[154](...) **Stage 0**`` are live in the build order."""
-    number, href = brm._linked_plan(
+    number, document = brm._linked_plan(
         "[154](plans/plan_154_container_log_coverage.md) **Stage 0**", "x"
     )
     assert number == "154"
-    assert href.endswith("docs/plans/plan_154_container_log_coverage.md")
+    assert document == brm.REPO_ROOT / "docs/plans/plan_154_container_log_coverage.md"
 
 
 # ---------------------------------------------------------------------------
