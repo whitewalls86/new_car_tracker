@@ -411,6 +411,32 @@ NO_DOCUMENT_LIVE_PLANS = frozenset({88})
 # convention.
 _CONTRACT_PLAN = 172
 
+# Plan 172 Stage G. ``docs/PLAN_DOCUMENT.md`` says of the waiver list: "The
+# list only shrinks." The three tests below each enforce that a *particular*
+# entry is legitimate -- present, not stale, not postdating the contract --
+# and none of them enforces that sentence, because every check is per-entry: a
+# list that grows by one legitimate-looking pre-contract waiver passes all
+# three cleanly. These two ceilings are the sentence, asserted on the count.
+#
+# Recorded 2026-09-03, the day Stage G took them. **Lower them as plans are
+# fixed; never raise one.** Raising a ceiling is the bypass this exists to
+# catch -- a waiver added instead of the section being written.
+#
+# Growth in either list is a bypass rather than new debt, for a different
+# reason per list:
+#
+# * ``WHAT_THIS_PLAN_IS_FOR_WAIVERS`` can only grow if a pre-172 plan re-enters
+#   a live table from the archive or the superseded table. The contract's
+#   Adoption section already says a live plan acquires the applicable public
+#   section, so that section is what such a plan owes -- not an entry here.
+# * ``THE_CHECKS_WAIVERS`` can only grow when a plan enters closeout owing
+#   ``## The checks``. Since Stage E that section is 'close-out''s to write on
+#   exactly that transition, so a new entry means the skill was bypassed. This
+#   is the ceiling that gets tested first: all five entries are pre-172 plans
+#   still live, and more will reach closeout.
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 39
+MAX_THE_CHECKS_WAIVERS = 5
+
 
 @dataclass(frozen=True)
 class SectionWaiver:
@@ -610,6 +636,38 @@ class TestPlanDocumentContract:
                 f"is missing the section because it was never written, not "
                 f"because it predates the rule -- fix the document, don't "
                 f"waive it."
+            )
+
+    def test_neither_waiver_list_has_grown(self):
+        """Plan 172 Stage G: the half of "the list only shrinks" that no
+        per-entry check can see.
+
+        The three tests above ask whether a given entry is *legitimate*. A
+        waiver naming a live, pre-contract plan that genuinely lacks the
+        section is legitimate by all three, so the escape valve can be widened
+        one honest-looking entry at a time without any of them objecting. The
+        count is the only place that shows up.
+
+        This is deliberately a ratchet and not a measurement. The alternative
+        Stage G considered was reading the two counts again after thirty days
+        and recording whether they moved -- which passes trivially in the case
+        where nothing happened at all, and notices a bypass a month after the
+        commit that made it. A ceiling fails in CI on the commit itself.
+
+        Lower ``MAX_*`` as plans are fixed. Raising one to make this pass is
+        the exact move it exists to refuse.
+        """
+        for waivers, ceiling, label, ceiling_label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS,
+             "WHAT_THIS_PLAN_IS_FOR_WAIVERS", "MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, MAX_THE_CHECKS_WAIVERS,
+             "THE_CHECKS_WAIVERS", "MAX_THE_CHECKS_WAIVERS"),
+        ):
+            assert len(waivers) <= ceiling, (
+                f"{label} holds {len(waivers)} entries, over its ceiling of "
+                f"{ceiling}. docs/PLAN_DOCUMENT.md says the waiver list only "
+                f"shrinks. Write the section the new entry is waiving; do not "
+                f"raise {ceiling_label}."
             )
 
     def test_every_live_plan_without_a_document_is_named(self):

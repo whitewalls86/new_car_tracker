@@ -651,7 +651,7 @@ reading A, H, B, C … are what say so at a glance.
 | 5 | [**D**](#stage-d) | the assertion and the waiver list | `done` | CAR-70 |
 | 6 | [**E**](#stage-e) | `close-out` split in two | `done` | CAR-73 |
 | 7 | [**F**](#stage-f) | the `note-evidence` skill | `done` | CAR-73 |
-| 8 | [**G**](#stage-g) | the after-numbers | `next` | CAR-73 |
+| 8 | [**G**](#stage-g) | the waiver-list ratchet | `done` | CAR-73 |
 
 Stages B and D are what [Plan 138](plan_138_public_surface_refresh.md) Stage 9
 waits on; the rest may follow at any pace.
@@ -830,32 +830,55 @@ the contract's shape, before it is lost or has to be re-run.
 
 ### Stage G
 
-**Re-measure.** Re-run [the measurement](#the-measurement) the same way, over a
-window of comparable length, and record the result in `## Record`.
+**Assert that the waiver list only shrinks.**
+[`docs/PLAN_DOCUMENT.md`](../PLAN_DOCUMENT.md) says of the waiver list that it
+only shrinks, and after Stage D nothing enforced that sentence. Stage D's three
+waiver tests each ask whether a *particular* entry is legitimate — the plan is
+live, the plan still lacks the section, the plan predates the contract — and a
+new entry naming a live pre-172 plan that genuinely lacks its section satisfies
+all three. The escape valve could therefore be widened one honest-looking entry
+at a time with the suite green. Stage G closes that with a ceiling per list,
+recorded at the count Stage G found and lowered as plans are fixed.
 
-Three of the four before-numbers are in this document's [measurement
-section](#the-measurement): 4% of stages with an exit, evidence at four heading
-depths, and 43 of 44 live plans without a public section. **The fourth is not.**
-The churn number belongs to [Plan 138](plan_138_public_surface_refresh.md) Stage
-9, which owns both the figure and its method — *the 60 days to 2026-09-02,
-replaying `master`'s first-parent line: 79 comparable commits touched
-`docs/PLANS.md`, 59 of them changed published copy (75%), and of those 59, 35
-rewrote only a slice cell while the same four plans stayed in the window.* Read
-it there. `35 in 79` and `35 of 59` are one finding stated against two
-denominators, not two findings.
+**This replaced a re-measurement, and the reason is worth keeping.** Stage G was
+written as *re-run [the measurement](#the-measurement) over a window of
+comparable length*. Three things killed that:
 
-**That method does not currently replay, and pinning it is this stage's first
-work.** `git log --first-parent --since=2026-07-04 --until=2026-09-02 --
-docs/PLANS.md` returns **96** commits against the 79 recorded, and nothing
-written down says which 17 are excluded or on what rule — the 2026-08-31 and
-2026-09-01 spikes are Plan 146's restructure and are the obvious candidates. An
-after-number measured a different way than the before-number compares nothing,
-so the definition has to be recovered and written into Plan 138 Stage 9 before
-this stage's own numbers are taken.
+1. **Three of the four before-numbers do not replay**, established by attempting
+   it — see this stage's `## Record` entry. The published-section count replays,
+   because it is a literal string match with no judgement in it; the section
+   count, the evidence-depth histogram and the churn corpus do not, and nothing
+   written down says what they counted.
+2. **Two of the three measure adoption, and adoption is structurally frozen.**
+   [Out of scope](#out-of-scope) rules out backfilling `## Design` and
+   `## Stages` into the live plans, and the archive is never rewritten, so the
+   denominators are almost entirely pre-contract by design. Those numbers move
+   when plans are *written through* `plan-draft` and `plan-start`, not when time
+   passes — a 60-day window in which no new plan was drafted returns the
+   before-number and would read as "the contract changed nothing."
+3. **A 30-day re-read is the wrong instrument for something assertable.** The
+   version of this stage that read the two counts again after thirty days passes
+   trivially when nothing happened, and notices a bypass a month after the
+   commit that made it. A ceiling fails in CI on that commit.
 
-**Exit:** the after-numbers are taken and recorded, including the ones that did
-not move.
+**The churn number leaves this plan rather than moving inside it.** It is
+[Plan 138](plan_138_public_surface_refresh.md) Stage 9's, which owns both the
+figure and its method, and Plan 138 Stage 9 is that plan's current slice. This
+plan claimed a re-measure of it and no longer does — see
+[success criteria](#success-criteria). For the record, the recorded recipe does
+not replay either: `git log --first-parent --since=2026-07-04 --until=2026-09-02
+-- docs/PLANS.md` returns **97** commits against the 79 recorded and the 96 this
+document previously reported, no window in the plausible range yields 79, and
+today's generator raises on 52 of the 97 because the build-order table has lost
+a column since — so a generator-based definition cannot reach across the window
+at all.
 
+**Exit:** growth in either waiver list fails the suite, on the commit that adds
+the entry rather than on a later review; each ceiling is recorded with its date
+and the reason growth in that list is a bypass rather than new debt; the
+assertion is verified by mutation, including the demonstration that Stage D's
+three per-entry tests pass against the same growth; and what the ratchet cannot
+catch is stated rather than implied.
 ## Files
 
 | Path | Change |
@@ -868,6 +891,7 @@ not move.
 | `.claude/skills/stage-close/SKILL.md` | New — Stage E |
 | `.claude/skills/close-out/SKILL.md` | Narrowed to plan-level, Stage E |
 | `.claude/skills/note-evidence/SKILL.md` | New — Stage F |
+| `tests/test_planning_docs.py` | Stage G — the two waiver-list ceilings |
 | `docs/plans/plan_*.md` | `## What this plan is for`, as each waiver is retired |
 | `docs/PUBLIC_SURFACE.md` | §4 points at the contract for the two public sections |
 
@@ -903,8 +927,12 @@ not move.
    skills, and neither can perform the other's write.
 5. Both published windows are asserted rather than reviewed, and the waiver list
    is shorter than 43.
-6. **Stage G's numbers are taken.** A plan about documents that churn which never
-   re-measures its own churn is the failure mode this document exists to avoid.
+6. **The waiver list cannot grow.** `docs/PLAN_DOCUMENT.md` says it only
+   shrinks; a per-entry check cannot see the count, so the sentence is asserted
+   on the count itself. The churn re-measure this criterion used to demand
+   belongs to [Plan 138](plan_138_public_surface_refresh.md) Stage 9, which owns
+   that figure and its method — this plan supplies the section that stage reads
+   and stops claiming its number.
 
 ## Intersections
 
@@ -1307,3 +1335,96 @@ the rule Stage E just shipped the issue stays open and its cost comment waits
 for its last covered stage. Stage G's `State` is `next`: recovering the baseline
 definition is workable now, and only its exit waits on a window of comparable
 length to have elapsed.
+
+### Stage G
+
+Added `test_neither_waiver_list_has_grown` to `tests/test_planning_docs.py`,
+with `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 39` and `MAX_THE_CHECKS_WAIVERS = 5`
+recorded 2026-09-03. Suite 43 → 44.
+
+**The gap it closes was invisible to Stage D's own tests, and that is
+demonstrated rather than argued.** Adding one more waiver naming Plan 167 — a
+live, pre-172 plan that genuinely lacks `## What this plan is for`, so a
+legitimate entry by every existing rule — leaves all three of Stage D's
+per-entry waiver tests passing and all nine contract tests green except the new
+one. Each of those three asks whether a given entry is justified; none can see
+the list getting longer. Verified in both directions: growing
+`WHAT_THIS_PLAN_IS_FOR_WAIVERS` to 40 and `THE_CHECKS_WAIVERS` to 6 each failed
+only the new test, and both were reverted.
+
+**What the ratchet cannot catch, stated rather than implied.** Raising a `MAX_*`
+constant instead of writing the section passes — confirmed by mutation, setting
+the ceiling to 45 and watching the test go green. That is inherent to every
+ratchet: its defence is the comment above the constants and the diff being
+visible in review, not the assertion. `docs/TESTING.md` asks for exactly this
+distinction between what is mechanised and what is only specified, so it is
+recorded here instead of leaving the ceiling looking stronger than it is.
+
+`Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.`
+
+#### The re-measurement this stage was, and why it is not that
+
+Stage G was written as *re-run the measurement over a window of comparable
+length*. The attempt is the evidence for replacing it, so it is recorded rather
+than discarded.
+
+**Three of the four before-numbers do not replay.** Measured against `7cb7f0e`,
+the 2026-09-02 tree, which carries the 98 plan documents the measurement
+section names:
+
+| Before-number | Recorded | Re-measured | Verdict |
+|---|---|---|---|
+| live plans carrying a public section | 43 of 44 lacked it | 1 of 98 documents carried it on 09-02, 4 today | **replays** |
+| work-unit sections, and how many state an exit | 291 across 57 documents, 14 with an exit | 372 across 57 (loose) or 357 across 54 (identifier-bearing); 13 with an exit on 09-02, 17 today | **does not** |
+| evidence-shaped headings by depth | `##` 25, `###` 77, `####` 41, `#####` 4 (147) | 14 / 56 / 17 / 0 (87) | **does not** |
+| `PLANS.md` churn | 79 comparable commits, 59 changing published copy (75%), 35 slice-only | 97 in the corpus; of the 45 that parse, 34 changed published copy (76%) | **does not** |
+
+The section count is the instructive failure. **57 documents replays exactly**
+under a loose filter — any heading opening with `Stage`, `Gate`, `Phase`,
+`Track`, `Step` or `Wave` — but that filter counts 372 sections, not 291.
+Requiring an identifier after the word gives 357 and drops the document count to
+54, breaking the 57 that had just matched. The two readings cannot both be the
+recorded one, and neither produces 291. The exit numerator nearly replays (13
+against 14); its denominator does not.
+
+**The churn number's recipe does not replay in three independent ways.** The
+recorded `git log --first-parent --since=2026-07-04 --until=2026-09-02 --
+docs/PLANS.md` returns **97**, against the 79 recorded and the 96 this document
+itself reported the day before. Sweeping `--since` from 2026-07-01 to 2026-07-14
+gives 99 down to 94 — no window in the plausible range approaches 79, so
+"comparable" is a content filter and not a date range. The principled candidate
+filters do not partition it either: 95 of the 97 touch a table row, 2 are
+narrative-only, none has an empty diff. And **today's generator raises on 52 of
+the 97**, because the build-order table held 10 columns then and holds 9 now, so
+a generator-based definition physically cannot reach across the window. This
+document's previous guess — that the 08-31 and 09-01 spikes are Plan 146's
+restructure — is also wrong; those days are Plan 138 and Plan 162 stage work.
+
+One thing survives: on the 45 commits that do parse, **34 changed published copy
+— 76%**, against the recorded 75%. The ratio replays; the denominators do not.
+
+**No filter was fitted to recover a recorded number.** Reverse-engineering a
+rule until it emits 79 or 291 would manufacture the definition rather than find
+it, which is the failure this plan was raised against. The numbers are recorded
+as unrecoverable instead.
+
+**And two of the three would have measured the wrong variable anyway.** The
+section count and the evidence histogram are adoption numbers, and adoption here
+is structurally frozen, not slow: [out of scope](#out-of-scope) rules out
+backfilling `## Design` and `## Stages` into the live plans and the archive is
+never rewritten, so both denominators stay almost entirely pre-contract by
+design. They move when plans are *written through* `plan-draft` and
+`plan-start` — and none has been. The highest plan number is still 172; the 173
+that Stage B's dry run proposed lived in a disposable clone and was never
+committed. A 60-day window in which no plan was drafted returns the
+before-number, which would read as the contract having changed nothing.
+
+The published-section count, the one number that does replay, moved 1 → 4 and
+needs no window at all: it is Stage D's waiver ratchet working, which is what
+Stage G now asserts directly instead of re-reading.
+
+Verified: `tests/test_planning_docs.py` 44 passed, the full non-integration
+suite 3532 passed, `build_public_roadmap.py --check` up to date, `ruff` clean —
+after merging `origin/master` at `28ffccd`, which moved Plan 138's slice to
+Stage 9 and touched none of this plan's files.
