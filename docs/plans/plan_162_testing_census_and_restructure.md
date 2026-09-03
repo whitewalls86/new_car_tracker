@@ -6,58 +6,6 @@ Runs a census of the whole automated test suite for coverage, dead assertions,
 and drift between what CI checks and what the code does, then closes the gaps
 it finds and restructures CI around what the census showed actually mattered.
 
-## Status
-
-**Stages 0–9 are complete. Stage 10 is next.** Stage 8 was narrowed on
-2026-09-02, before it started: G7 became the dashboard's assertionless Layer 2
-suite, and the Streamlit Python it used to mean is G18 and Plan 150's.
-[Why](#stage-8-narrowed-and-g7-now-names-a-different-gap). Stage 9 closed G12
-and, on the way, replaced the two SQL rules Stage 7 built with one keyed on the
-statement rather than on its container —
-[why](#rules-5b-and-5c-became-one-rule-and-that-reverses-a-stage-7-decision).
-The census enumerated
-the work; Stage 1 ran the 73 tests nothing
-had ever invoked and found no production defects behind them, which
-[confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
-Stage 2 [unblinded the coverage instrument](#evidence--stage-2-unblinding-coverage-car-46-2026-08-31)
-the later stages are graded by, taking the reported number from 88% to 75.95%
-without a line of production code changing; Stage 3
-[gave the two health-sensor censuses one declared source](#evidence--stage-3-one-declared-source-for-the-health-sensor-censuses-car-47-2026-08-31)
-and found a third census, `DAG_SPECS`, already one DAG short; Stage 4
-[split the 267s dbt job](#evidence--stage-4-splitting-the-267s-dbt-job-car-48-2026-09-01)
-and took CI's wall clock from 292s to about 155s, most of it by answering Plan 139
-Stage C's question — the 92s step was 21 Python interpreters starting, not 21
-dbt builds running; and Stage 5
-[swept the 34 mock conversions and the 16 layer renames](#evidence--stage-5-the-mechanical-sweeps-car-49-2026-09-01),
-closing G4, G11 and G13; and Stage 6b
-[mechanised the encoding-sensitive I/O guard](#evidence--stage-6b-mechanising-the-encoding-sensitive-io-guard-car-60-2026-09-01),
-fixing 234 sites across three shapes and closing G13's class with a rule that
-fails on the exact call ruff cannot see. **The list stood at 68 after Stage 5 and stands at 56
-now**, down from 116: Stage 5 deleted exactly the 50 it was scoped to and added
-2 back, having found
-[the Layer 2 check crediting files by substring](#the-instrument-was-weaker-than-its-own-docstring),
-and Stage 6 emptied the 12 route waivers. Neither Stage 3 nor Stage 4 closes
-waivers; Stage 3 closes Plan 139's Stage H and Stage 4 its Stages B and C.
-Stage 6b closes none either — it adds a rule whose list starts empty.
-
-**Every count in this section is the number an instrument reports, not a
-number this document remembers.** The 68 above survived here for a day after
-Stage 6 made it 56, and was caught during Stage 6b's closeout by importing the
-waiver tuples rather than reading this paragraph. That is this plan's own
-subject matter happening to this plan, and it is left on the record rather than
-quietly corrected.
-
-This document was written as a deliberate stub on 2026-08-30, when
-[Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
-plan measures against. That blocker is gone: 161's contract landed, was
-asserted, and is archived.
-
-Stages 2 through 10, including 5b, 6b and 6c, are scoped below and unblocked. Effort is
-**L**, down from the XL placeholder, on the reasoning in
-[The estimate](#the-estimate) and now confirmed against a measurement rather
-than proposed. [`docs/PLANS.md`](../PLANS.md) owns priority and effort; this
-document does not choose them.
-
 ## What the census found
 
 [`tests/test_testing_contract.py`](../../tests/test_testing_contract.py)
@@ -68,11 +16,32 @@ list. That list is this plan's backlog:
 
 This is the census as taken, kept as the baseline the stages are measured
 against; the live count is whatever `tests/test_testing_contract.py` holds
-today. **Stage 1 has since cleared the CI-invocation row and Stage 5 the
-mocker and layer-numbering rows. Stage 5 also corrected the Layer 2 row
+today. Stage 1 has since cleared the CI-invocation row, Stage 5 the mocker and
+layer-numbering rows, Stage 6 the route row, and Stage 6b's encoding rule
+started empty and has stayed empty. Stage 5 also corrected the Layer 2 row
 upward, from 54 to 56 — see
 [the instrument note](#the-instrument-was-weaker-than-its-own-docstring).
-**The live total is 56.**
+
+**Measured 2026-09-03, by importing the tuples: the live total is 37**, down
+from 120 at the census.
+
+| Tuple | Live | Gap |
+|---|---|---|
+| `DUPLICATE_SQL_WAIVERS` | 1 | G17 — the one waived pair, two policies that agree |
+| `INLINE_SQL_WAIVERS` | 15 | G5 |
+| `SQL_LITERAL_WAIVERS` | 21 | G15 |
+| `CI_INVOCATION`, `MOCKER`, `ROUTE`, `LAYER_NUMBER`, `ENCODING` | 0 | G1, G2, G4, G6, G11, G13's class — all drained |
+| **Total** | **37** | |
+
+**Every count here is the number an instrument reports, not a number this
+document remembers**, and the rule exists because this document keeps breaking
+it. The count read 68 for a day after Stage 6 had made it 56, and was caught
+during Stage 6b's closeout by importing the waiver tuples rather than reading
+the paragraph that claimed it. It then read 56 from 2026-09-02 until
+2026-09-03, when Stages 7, 8 and 9 had between them taken it to 37, and was
+caught the same way — while scoping Stage 10. Twice is a pattern, and both are
+left on the record rather than quietly corrected: this plan's own subject
+matter, happening to this plan, in the one section that asserts it will not.
 
 | Rule | Waivers | Gap |
 |---|---|---|
@@ -138,31 +107,47 @@ order:
 
 ## The stages
 
-| Stage | Work | Closes | Waivers |
-|---|---|---|---|
-| **0** | **The census. Complete — CAR-40, 2026-08-31** | — | — |
-| **1** | **The orphaned suites. Complete — CAR-45, 2026-08-31** | G1, G2 | 4 |
-| **2** | **Unblind coverage. Complete — CAR-46, 2026-08-31** | G10 | -- |
-| **3** | **The two health-sensor censuses read one declared source. Complete — CAR-47, 2026-08-31** | Plan 139 Stage H | -- |
-| **4** | **Split the 267s `dbt build + test` job. Complete — CAR-48, 2026-09-01** | Plan 139 Stages B, C | -- |
-| **5** | **The mechanical sweeps. Complete — CAR-49, 2026-09-01** | G4, G11, G13 | 50 |
-| **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
-| **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
-| **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
-| **6c** | **Every service contract produces an intent row the database accepts. Complete — CAR-66, 2026-09-02** | -- | 0 |
-| **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
-| **8** | **`scraper`'s floor, and the Layer 2 suite that asserts nothing. Complete — CAR-52, 2026-09-02** | G7, G8 | -- |
-| **9** | **`airflow/dags` and the `.sql` convention. Complete — CAR-53, 2026-09-02** | G12 | -- |
-| **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
-| **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
-| **12** | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | -- |
+| Stage | State | Work | Closes | Issue | Waivers |
+|---|---|---|---|---|---|
+| **0** | `done` | The census | — | CAR-40, 2026-08-31 | — |
+| **1** | `done` | The orphaned suites | G1, G2 | CAR-45, 2026-08-31 | 4 |
+| **2** | `done` | Unblind coverage | G10 | CAR-46, 2026-08-31 | -- |
+| **3** | `done` | The two health-sensor censuses read one declared source | Plan 139 Stage H | CAR-47, 2026-08-31 | -- |
+| **4** | `done` | Split the 267s `dbt build + test` job | Plan 139 Stages B, C | CAR-48, 2026-09-01 | -- |
+| **5** | `done` | The mechanical sweeps | G4, G11, G13 | CAR-49, 2026-09-01 | 50 |
+| **5b** | `done` | Separate production scripts from spent ones | — | CAR-55, 2026-09-01 | -- |
+| **6** | `done` | Route coverage, and `container_health`'s test home | G6, G9 | CAR-50, 2026-09-01 | 12 |
+| **6b** | `done` | Encoding-sensitive I/O, mechanised | G13's class | CAR-60, 2026-09-01 | 0 |
+| **6c** | `done` | Every service contract produces an intent row the database accepts | -- | CAR-66, 2026-09-02 | 0 |
+| **7** | `done` | SQL execution, from both directions | G14; G5 to 15 | CAR-51, 2026-09-01 | 56 |
+| **8** | `done` | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | CAR-52, 2026-09-02 | -- |
+| **9** | `done` | `airflow/dags` and the `.sql` convention | G12 | CAR-53, 2026-09-02 | -- |
+| **10** | `next` | [dbt builds against production-shaped data](#stage-10-dbt-builds-against-production-shaped-data) | — | CAR-54 | -- |
+| **10b** | `—` | [CI's services are production's, in definition and in contents](#stage-10b-cis-services-are-productions-in-definition-and-in-contents) | — | — | -- |
+| **10c** | `—` | [CI selection, and the instrument that has to precede it](#stage-10c-ci-selection-and-the-instrument-that-has-to-precede-it) | Plan 139 Stage E | — | -- |
+| **11** | `—` | The dbt testing contract, and what leaves the SQL census | G16 | — | -- |
+| **12** | `—` | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | — | -- |
+
+`State` takes the five values [the plan-document
+contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
+`blocked`, `done`, `canceled` — and exactly one stage carries `next`. **There is
+no `Order` column, deliberately.** The contract pairs a numbered `Order` with a
+lettered `Stage` precisely so the two namespaces cannot collide; this plan's
+stages are numbered, and adding `Order` beside them would rebuild the ambiguity
+that column exists to prevent — "let's do stage 2" meaning either the second row
+or Stage 2. The stage numbers already carry the order, which is the legacy
+defect [Plan 172](plan_172_plan_authoring_skill.md) names and deliberately does
+not sweep here: this plan's 187 stage references are one of the two reasons it
+declined a lettering conversion.
 
 **4 + 50 + 12 + 56 = 122.** The stages account for the whole waiver list; no
 entry is left without a stage that deletes it. Stage 7 later raised its own
 column from 56 to 66 + 23 across two new rules — see [Stage 7 grew two
 gaps](#stage-7-grew-two-gaps-while-closing-one), and note that a stage
 discovering more than it was scoped for is the instrument working, not the
-arithmetic failing.
+arithmetic failing. That column records what each stage was **scoped to drain**
+and is deliberately not restated as work lands; what the tuples hold today is
+[measured above](#what-the-census-found) and is 37.
 
 ### Why this order
 
@@ -730,7 +715,201 @@ and both `compare_gate_*_parity.py` against Plan 125, and
 plans that are still open.** Spent is a property of the owning plan's state, not
 of how finished a script looks.
 
-### Stage 10 inherits a question Stage 5b raised and declined
+### Stage 10 was one row and is three
+
+**Split 2026-09-03, while scoping it.** The row read "suites on real Compose
+services, dbt against the Plan 120 snapshot, advisory CI impact selection" and
+carried a 2-point estimate for six separable pieces, three of which the ticket
+never listed. Nothing about them shares a mechanism, a file or a risk profile:
+one adds an isolated job, one rewrites four existing ones, and one builds a
+selector. Splitting them is not a rescope — every piece stays owned here — but
+it stops a single issue from being able to read "done" on a third of its
+content.
+
+The numbering follows this plan's own precedent and the contract's exemption
+for it. Stages 11 and 12 are already allocated, and [Stage 5b's
+reasoning](#why-this-order) applies unchanged: inserting an
+integer renumbers later stages and invalidates issues already filed against the
+old numbers. So 10b and 10c, as with 5b, 6b and 6c.
+
+### Stage 10: dbt builds against production-shaped data
+
+**What it is.** An isolated CI job whose only work is `dbt build` against a
+Plan 120 production-derived snapshot, on its own runner with its own Postgres
+and MinIO, gated to changes that can affect a dbt build.
+
+**Why it is not the fixture we already have.**
+[`seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py)
+seeds authored business-state scenarios, and authored rows are well-behaved by
+construction. dbt unit tests are semantic and run on inputs their author chose.
+Neither can surface a `unique` violation, a `not_null` violation, a cast
+failure or a duplicate join key that exists in production **because no
+production row is ever in the denominator.** A `dbt build` over a real snapshot
+is the only instrument here that can, and it answers the question before a
+deploy rather than after one.
+
+**Why a separate job rather than a step in `dbt-models`.** The fixture lives in
+a reserved `obs_year=2099` partition specifically so it cannot collide with the
+empty-schema compilation seed. A production snapshot lands in real partitions,
+under the same globs, as a third dataset — so sharing a runner would mean the
+existing equivalence assertions run over fixture-plus-production. Separate
+GitHub Actions jobs get independent runners with no shared filesystem or
+network, which dissolves the collision rather than managing it, and parallelism
+keeps the wall clock at `max()` rather than `sum()`, protecting [success
+criterion 3](#success-criteria).
+
+**Why it may be path-gated from the start, though [Stage
+10c](#stage-10c-ci-selection-and-the-instrument-that-has-to-precede-it) may
+not.** Plan 139 Stage E requires an observation window before a selector is
+promoted to skipping jobs, because a false positive in a *narrowing* selector
+suppresses evidence that previously existed. A job that has never run suppresses
+nothing; the worst case of a wrong trigger is coverage not gained. The
+asymmetry does not bind on a net-new job, and this is the one place in the plan
+where gating is free.
+
+**Four things it needs that do not exist yet.**
+
+1. **Two Postgres sources travel with the snapshot.** `sources.yml` declares six
+   source tables. Four are MinIO Parquet and are exactly what
+   [`seed_lake_snapshot.py`](../../scripts/seed_lake_snapshot.py) already
+   uploads. The other two — `public.search_configs` and `ops.tracked_models` —
+   resolve through `postgres_scan()` and so must be live rows in Postgres, not
+   objects in MinIO. Left empty, `stg_search_configs` reads nothing,
+   `int_active_make_models` inner-joins to nothing, and `mart_vehicle_snapshot`
+   builds green over an empty world — in the job whose entire purpose is proving
+   the build survives real data. Both tables are small enough to export whole,
+   which is also the safe direction: full dimensions against a cohort fact set
+   drop rows for cohort reasons only, never because a dimension row was left
+   behind. Neither carries VIN or dealer data.
+2. **The exporter grows those two tables**, and the seeder grows a Postgres
+   write path, which it has never had — it uploads objects and nothing else.
+   Its refusal to run against a production-looking target must extend to
+   `POSTGRES_URL` at the same time: a seeder that can `INSERT` into any
+   connection string it is handed is a different risk class from one that can
+   only upload Parquet.
+3. **The snapshot id is pinned in the repository**, not read from
+   `latest.json`. Not because a moving pointer would produce false failures —
+   it mostly would not, since prod-green plus CI-red on a fixed snapshot means
+   the change did it — but because a pointer that moves between two runs of the
+   same commit destroys re-runnability on the one check whose job is telling you
+   what a change did. Pinning also turns "production data changed and a model
+   now fails" into a snapshot-bump PR: a reviewable diff with an owner, rather
+   than an ambient condition that lands on whoever opened a PR that morning.
+4. **A trigger set wider than `dbt/`.** The pin itself, the seeder and
+   downloader, the dbt version pins, and `db/migrations/` all change this
+   build's outcome. Unclassified paths fail open, as
+   [`ci_change_scope.py`](../../scripts/ci_change_scope.py) already does.
+
+**What it deliberately does not do.** It does not run
+`tests/integration/dbt/`; those keep their fixture and their job. It asserts
+through dbt's own data tests, which is why the verb is `build` and not `run`.
+
+**Three residuals, recorded rather than solved**, because each is a real limit
+on what a green here proves. Production builds incrementally — `--full-refresh`
+is conditional in [`dbt_runner/app.py`](../../dbt_runner/app.py) and off by
+default — while a fresh DuckDB file takes every incremental model's cold path,
+so the two exercise different code. A subset cannot invent a duplicate or a
+null, so `unique` and `not_null` failures here are true positives about
+production; `relationships` failures may be artifacts of incomplete cohort
+closure, which Plan 120 records as the hard part and once got wrong. And a
+snapshot captured after production's last dbt run can be red while production is
+green only because production has not run yet — a correct finding, arriving
+early, landing on an unrelated author.
+
+**Exit.** A gated CI job builds the full dbt project against a pinned,
+production-derived snapshot with all six sources populated, and fails on a
+production row that violates a dbt data test. Demonstrated by a deliberate
+violation, not asserted.
+
+### Stage 10b: CI's services are production's, in definition and in contents
+
+**What it is.** Three questions with one thesis — CI's services are not
+production's — approached from the definition, the contents and one named
+instance.
+
+**The definition.** Four jobs (`dbt-models`, `schema-contracts`,
+`service-integration`, `lake-integration`) each declare their own `services:`
+block and their own `docker://flyway/flyway` step: four copies of `postgres:16`,
+three of `minio/minio:latest`, four hand-maintained Flyway argument lists. The
+drift is already measurable. CI's Postgres omits Compose's `command: postgres -c
+shared_buffers=2GB -c max_connections=100` and its `shm_size: 1gb`; CI's MinIO
+omits the console, the OIDC identity configuration and
+`MINIO_PROMETHEUS_AUTH_TYPE`; CI's Flyway omits `-baselineOnMigrate=true`.
+Nothing asserts any of it. This is the general form of the CI-schema gap Plan
+139 Stage F closed narrowly.
+
+The shape is already precedented here.
+[`docker-compose.lakehouse.ci.yml`](../../docker-compose.lakehouse.ci.yml) is a
+CI-only override that makes `cartracker-net` non-external and substitutes
+throwaway services, and
+[`tests/test_lakehouse_compose_config.py`](../../tests/test_lakehouse_compose_config.py)
+is its parity suite. A `docker-compose.ci.yml` needs the same two moves —
+`cartracker-net` and `cartracker_pgdata` are both `external: true` in the base
+file — and running Flyway as `docker compose run --rm flyway` makes CI execute
+the identical command production executes, rather than a fourth transcription
+of it.
+
+**The contents.** CI's Postgres is greenfield and production's carries hundreds
+of thousands of rows, so this stage measures *which* suites depend on an empty
+database rather than assuming the answer. The rehearsal that would close it
+needs a deployed stack and belongs to [Plan 121](plan_121_staging_environment.md);
+this stage owes the measurement and the handoff, not the repair.
+
+**The instance.** `tests/integration/airflow/` still points at
+`sqlite:////tmp/airflow.db`. Plan 139 Stage F left it deliberately, to keep test
+data out of the Postgres metadata schema the drain tests read. Now that a real
+Airflow metadata schema exists in the same job, whether those suites should
+share it is decided here — and it is the same question as the other two, one
+service down.
+
+**Why the three are one stage.** They touch the same four jobs. Splitting them
+means editing those jobs two or three times, and the sqlite question cannot be
+answered without knowing what the job's services are.
+
+**Exit.** The four jobs' services come from the Compose definitions with a
+mechanism that fails if a bare `services:` image returns; the greenfield
+measurement is recorded with its Plan 121 handoff; and the sqlite question has
+a decision with its reasoning.
+
+### Stage 10c: CI selection, and the instrument that has to precede it
+
+**What it is.** Plan 139 Stage E's advisory impact selector, the two questions
+Stage 5b raised and declined, and — first — the instrument both of them need.
+
+**The instrument comes first, and the plan did not previously say so.**
+`test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+*directory* appears in a step's arguments. A directory is not a suite, and the
+rule cannot distinguish "this file runs in CI" from "the directory containing
+this file is named in a `run:` line", nor either from "this file sits in
+`tests/integration/` and needs nothing that makes it one".
+[Stage 5 found this](#a-unit-test-filed-as-an-integration-test-and-two-wrong-answers-before-the-right-one)
+and assigned it here. **A path-to-test-group selector cannot be built on top of
+an instrument that does not know which tests a step runs**, so this is a
+prerequisite rather than a companion, and the order inside the stage is: fix
+the instrument, build the advisory selector, then decide the two questions on
+top of it.
+
+**The selector stays advisory**, on Plan 139 Stage E's terms: record what it
+would have run, compare against every actual failure, and treat any failure
+outside the predicted set as evidence against promotion rather than an
+exception to allowlist. Promotion to job skipping requires a written observation
+window with zero unexplained misses and a benefit larger than runner variance.
+Plan 142's service graph is evidence for the selector and not the selector
+itself — production asks which live work depends on a service, CI asks which
+tests, images and environments can detect a changed path.
+
+**The two questions it inherits** are
+[below](#stage-10-inherits-a-question-stage-5b-raised-and-declined): classifying
+the incremental diff rather than the cumulative one, which Stage E's own rule
+answers *not yet*, and content-addressed skipping for `docker-build`, which is
+a claim about content rather than about run history and is the cheaper first
+win.
+
+**Exit.** The invocation rule distinguishes a suite from a directory; an
+advisory selector emits its prediction on every full run without gating
+anything; and both inherited questions have a recorded decision.
+
+#### Stage 10 inherits a question Stage 5b raised and declined
 
 **Scoped 2026-09-01, from a question asked while reviewing Stage 5b's CI
 change. Recorded here rather than acted on, because it is Stage E's subject
@@ -980,6 +1159,12 @@ owner of thirteen entries — twelve at the census, plus G13, re-owned here on
 2026-08-31 — and an assertion fails if that owner is ever an archived plan — so this plan cannot be quietly abandoned without the suite
 saying so.
 
+**This document was written as a deliberate stub on 2026-08-30**, when Plan 161
+had not yet decided the standard this plan measures against. Writing the stages
+before the standard existed would have been scoping work against a rule nobody
+had agreed. That blocker is gone: 161's contract landed, was asserted, and is
+archived.
+
 ### Plans 103 and 107 — coverage
 
 Superseded, and **their targets are this plan's inheritance rather than their
@@ -1016,7 +1201,7 @@ is Stage 10's.
 Owns the deployed-stack rehearsal that Stage 10's greenfield-versus-populated
 question cannot close from inside a CI job.
 
-## Evidence
+## Record
 
 ### Evidence — Stage 0, the census (CAR-40), 2026-08-31
 

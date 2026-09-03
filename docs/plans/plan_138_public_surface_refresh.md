@@ -9,7 +9,9 @@ instead of by hand.
 
 ## Status
 
-**Refreshed 2026-09-02.** Written 2026-08-17 after comparing the live
+**Refreshed 2026-09-03**, when Stage 3b/3c's deploy was confirmed against the
+live site and Stage 1g was redesigned into its own page. Written 2026-08-17
+after comparing the live
 `https://cartracker.info/info` page and `README.md` against `master` at
 `6f6a2ba`; the headline below is re-measured against the tree rather than
 carried forward, because the version it replaced still read "Stages 2 through 6
@@ -18,15 +20,15 @@ not started" a day after Stage 2 was deployed.
 | Stage | State |
 |---|---|
 | **0** | **Complete.** Both gates closed 2026-08-31 |
-| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started but unblocked 2026-09-02**, now that 3d's decisions are settled |
+| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started, unblocked 2026-09-02 and redesigned 2026-09-03** — it now builds `/writings` as its own page of cards rather than a list inline on `/`, which makes it a route rather than a template section. Gate 1g's demonstration half is owed until Article D is written, and is recorded as such rather than closed |
 | **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
-| **3** | **3b and 3c built 2026-09-02 (CAR-68), not yet deployed** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
+| **3** | **3b and 3c complete and deployed (CAR-68, PR #346)** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **The deploy was confirmed on 2026-09-03 against the live site**: `/` answers 200 with zero `cdn.` references in the markup and serves the full header set, including `img-src 'self' data:` — which is the constraint 1g's preview images now have to live inside. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
 | **4** | **Not started.** Unblocked since Plan 143 completed 2026-08-20 |
 | **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
 | **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
 | **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
-| **9** | **New 2026-09-02, not started.** Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depends on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads, and is a no-op rather than a breakage until that exists |
+| **9** | **Next, and unblocked 2026-09-03.** Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depended on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads; **Plan 172 Stage A landed 2026-09-02 and all four rows in the published planned window now carry `## What this plan is for`**, so the dependency is discharged. Sequenced first on 2026-09-03: the slice cell is published copy, so keeping the public page current means chasing stale internal pointers by hand, and the page was publishing a closed issue's identifier when the decision was taken |
 
 **The navigation pane is deliberately unstarted and unticketed**, deferred
 behind Stage 8's destination inventory. Its one carve-out — `/dashboard` is
@@ -47,7 +49,7 @@ reconciled overviews and the assigned replacement claims.
 | **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01 and deployed the same day**, soaking. **The pages are already public and always were** — `handle /static_ops/*` is unauthenticated, so they served 200 from the moment the image carried them; measured 2026-09-01. They are *unlinked*, not unreachable, and what Stage 2 owes them is a canonical route rather than a first one. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
 | **3d** Recap presentation | Not started, and **both open decisions were settled 2026-09-02**: the recap pages keep the generator's inlined `_STYLE` rather than sharing `info.css`, and `/recaps` leads with the newest published week rendered in full, with its week stated at the top and `rel=canonical` pointing at the recap's own page. 1g is unblocked |
-| **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed. Unblocked 2026-09-02** — 3d's two decisions, which govern its markup, are settled. 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
+| **1g** Publish the writing page and link it from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed. Unblocked 2026-09-02, and redesigned 2026-09-03 — `/writings` is now its own page of cards rather than a list inline on `/`, which makes this stage a route rather than a template section.** — 3d's two decisions, which govern its markup, are settled. 1f decided the corpus is not maintained here; 1g links it anyway, under cards that carry only immutable facts — title, date, URL, preview image, and a snippet about the article rather than about the system — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
 | **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
 
 **The two public surfaces converged on 2026-09-01, and the gap they closed is
@@ -1214,27 +1216,70 @@ the only ordering where alignment is free: 1e's shapes are real code, so 1g
 conforms to them rather than both negotiating.
 
 **One section on `/`, two destinations behind it.** The reader sees a single
-place to go for more depth. Inside it, the articles are listed *inline* and the
-recaps are reached through their index at `/recaps`. The asymmetry is
-principled rather than incidental: **inline what is small and finite, index what
-grows.** Four articles gaining one or two a year belong on the page; 20 recap
-pages growing weekly need an index of their own. This also avoids renaming a
-route that Stage 2's contract and the sitemap already carry.
+place to go for more depth. What sits behind it was revised on 2026-09-03 and
+the original text is replaced rather than annotated, because it described a
+layout that no longer exists.
 
-**Three shapes 1g reuses rather than reinvents**, all of them now real in
+**Superseded 2026-09-03: both corpora are pages, and neither is inline on `/`.**
+This subsection first said the articles are listed *inline* on `/` while the
+recaps are reached through their index, on the principle **inline what is small
+and finite, index what grows.** That principle is withdrawn for this section.
+Two facts killed it, and both were discovered after it was written:
+
+- **3d gave `/recaps` real weight.** The decision of 2026-09-02 — the newest
+  week rendered in full at the top of the index — turned `/recaps` from a list
+  of links into a page you land on and read. Pairing a page you read against
+  four links inlined somewhere on `/` is not one section with two destinations;
+  it is one destination and one appetiser.
+- **The row reuse was never shared code, and it imports the wrong aesthetic.**
+  `.index-list` lives in `_STYLE` inside `scripts/build_public_recaps.py`, which
+  is the recap *pages'* self-contained stylesheet. `/` cannot load it, so
+  "reuse" always meant hand-copying a CSS rule into `info.css` — a visual
+  convention, not an implementation. And the convention it copies is the recap
+  pages' deliberately plain one: a 46rem reading column, system fonts, no
+  JavaScript. `/` is built from cards — fourteen `.service-card`s and four
+  `.highlight-card`s with borders, hover states and hierarchy. A bare `<li>`
+  list of four links would read as foreign on `/`, not as consistent with it.
+
+**So the shape is two pages and one door to each.** `/recaps` is the account of
+what happened, week by week. `/writings` is the author's own published articles,
+each a card carrying a self-hosted preview image, a title, a snippet and a date,
+linking out to the third-party platform. `/` carries **one** "more depth"
+section holding both doors, plus the newest article rendered as a card so the
+front door still shows prose rather than only pointing at it.
+
+**What survives from the withdrawn version is its actual requirement:** the
+reader sees a single place to go for more depth. That was always the point, and
+two doors inside one section satisfies it. What is dropped is the claim that the
+two lists must look alike — they are never on the same page, so no reader
+compares them.
+
+**Two shapes 1g still reuses rather than reinvents**, both real in
 `scripts/build_public_recaps.py`:
 
 | Shape | Where it lives | Why 1g takes it |
 |---|---|---|
-| The index row — `<li><a>title</a><span class="meta">…</span></li>` | `render_index`, class `.index-list` | An article entry is title, link and date. That is the same row with a different meta line. Two list treatments for two lists of writing is the fragmentation this subsection exists to prevent |
-| The §5 note block — `.note`, text from `_POINT_IN_TIME` | `_page`'s `note` argument | 1g already committed to reusing 3d's point-in-time framing. This names the mechanism instead of the intent |
-| The date-in-the-meta-line convention | `Week ending {week_end}` | An article's meta line is its publication date. Same position, same weight, same reason — a dated record must show its date without the reader hunting |
+| The §5 note block — `.note`, text from `_POINT_IN_TIME` | `_page`'s `note` argument | 1g already committed to reusing 3d's point-in-time framing. This names the mechanism instead of the intent. 1g writes its own sentence in that block rather than stretching `_POINT_IN_TIME`, which is worded for a week |
+| The date-in-the-meta-line convention | `Week ending {week_end}` | An article's card shows its publication date in a fixed position, at a fixed weight, for the same reason — a dated record must show its date without the reader hunting |
 
-**One thing they do not share, and the page must show it.** A recap link stays on
-this site; an article link leaves it for a third-party platform. Listing both
-under one heading without marking that is a small lie of omission, and it is
-exactly the defect that only appears when the two are designed together — each
-alone is internally consistent. **Outbound links are visibly outbound.**
+**The third shape — the `.index-list` row — is deliberately not reused**, per the
+supersession above. That is a change from this subsection's first version and is
+the one place where 1g and 3d now diverge on purpose.
+
+**One thing they do not share, and both pages must show it.** A recap link stays
+on this site; an article link leaves it for a third-party platform. It is exactly
+the defect that only appears when the two are designed together — each alone is
+internally consistent. **Outbound links are visibly outbound**, and the two-page
+split does not retire the rule, it moves where it applies:
+
+- On `/`, the "more depth" section holds three things with two different
+  behaviours — the `/writings` and `/recaps` doors navigate within the site,
+  while the newest-article card leaves it. Three items in one section, one of
+  which departs, is precisely the undifferentiated set the rule exists to
+  prevent.
+- On `/writings`, **every** card leaves the site. A page where the rule applies
+  uniformly may state it once for the page rather than decorating each card, and
+  that is the cheaper and less noisy treatment.
 
 **Both are §5 records, for different reasons, and the framing must not flatten
 them.** A recap is a dated record *of a week*, generated from history. An article
@@ -1266,10 +1311,19 @@ which is true** before 1g writes any markup. Flagged here rather than resolved,
 because 1e was in review and this is its stage's call.
 
 **Resolved 2026-09-02 in 3d: the inlined `_STYLE` stands and this stage's text
-was the wrong one.** 1g takes `_STYLE`, and the note block it reuses is the
-generator's, not a landing-page class.
+was the wrong one.** The recap pages keep `_STYLE`.
 
-### 1g. Link the published writing from the landing page
+**And superseded in part on 2026-09-03, by the two-page split above.** The
+question was which stylesheet 1g should conform to. 1g no longer renders
+alongside the recaps at all: `/writings` is its own page with its own card
+treatment, drawn from `/`'s vocabulary rather than from the recap generator's.
+What 1g still takes from `_STYLE` is the `.note` block's role and the date
+convention, not its rules.
+
+### 1g. Publish the writing page and link it from the landing page
+
+**Renamed 2026-09-03.** The stage was scoped to add a section to `/`; it now
+builds `/writings` and links it. The `1g` identifier is unchanged.
 
 **Raised 2026-09-01, out of 1f.** 1f decided the articles are not a surface this
 plan maintains. It did not decide whether the landing page *points at* them, and
@@ -1328,6 +1382,55 @@ is the whole difference, and it gives the list its rule:
 > **An entry carries only immutable facts about the article — title,
 > publication date, URL. Anything that would need revisiting when the tree moves
 > does not belong in the list.**
+
+#### The rule survives the card treatment, and the snippet is where it is tested
+
+**Amended 2026-09-03**, when the entry grew from a list row to a card carrying a
+preview image and a descriptive snippet. The rule above is unchanged and the two
+new fields are admitted under it rather than as exceptions, because the rule's
+subject was never the field count — it was **what the field is about**.
+
+| Field | Immutable? | Why |
+|---|---|---|
+| Title | Yes | A property of a published artifact that is never revised |
+| Publication date | Yes | The original argument; a fact about the article, not about its relationship to a repository |
+| URL | Yes | Recorded without the per-session `trackingId`/`lipi` parameters, which are not part of the address |
+| Preview image | Yes | The article's own hero image, self-hosted. It changes when the article changes, which is never |
+| **Snippet** | **Only if written about the article** | The one field that can violate the rule while looking like it complies |
+
+**The snippet is one word wide from being the annotation this stage rejected**,
+and the distinction is the whole of the amendment:
+
+- *"How I learned my cost model was measuring the wrong noun"* describes **the
+  article**. It is true for as long as the article exists, which is forever.
+- *"Explains how our compression works"* describes **the system**. It is a claim
+  about the tree wearing a snippet's clothing, and it becomes false the next time
+  storage changes — with nothing to tell you, which is exactly the failure mode
+  that killed option (b).
+
+Both sentences fit the same slot and read the same way to a reviewer who is not
+looking for the difference. So the rule gets its operational form:
+
+> **A snippet says what the article is about. It never says what the system is,
+> does, or currently has.** If a repository change could make the snippet false,
+> it is an annotation and belongs nowhere in the list.
+
+**Decided 2026-09-03: the snippets are hand-written, not lifted mechanically.**
+The alternative was to take each article's own subtitle or opening line, which
+would be verifiable against the artifact and holdable by a test in the way the
+date is. It is rejected because the platform's ledes are weak and this is a
+portfolio surface whose value is the author's register — the same argument 1f
+made when it found the corpus was better front-door prose than the surfaces
+carried. Handing that surface a mechanical extract to save a judgment call spends
+the asset to buy a test.
+
+**What that costs is stated rather than waved past:** no test can distinguish the
+two sentences above, so the snippet is held by the add-time gate below and by
+nothing else. That is the same trade Stage 1c already made and recorded — "judging
+whether a claim is still true needs the tree read with judgment, which is a
+skill's job" — and the gate is the reason the trade is affordable rather than
+merely accepted. **If this call is wrong, the recovery is cheap**: four snippets
+rewritten by hand, with no mechanism to unbuild.
 
 The contradiction between A and C is then handled where contradictions actually
 get handled: **once, when the article is added**, by the procedure below — not by
@@ -1398,21 +1501,87 @@ have their own reckoning." **1g is that reckoning.**
   disabled at 360 px. 1g decides *what is linked and how it is framed*; Stage 3
   holds it to the same bar as everything else on the page.
 - **Placement and shape are set by [the writing surface](#the-writing-surface--what-1e3d-and-1g-share)
-  above**, not decided here: one section on `/`, articles inline and the recap
-  index linked, reusing `.index-list`, the `.note` block and the date-in-the-meta
-  -line convention that `scripts/build_public_recaps.py` already establishes.
-  Outbound links are visibly outbound, and 1g writes its own §5 sentence rather
-  than stretching `_POINT_IN_TIME`, which is worded for a week.
+  above**, not decided here. As amended 2026-09-03: `/writings` is its own page
+  of cards, `/` carries one "more depth" section holding a door to it, a door to
+  `/recaps`, and the newest article as a card. 1g still takes the `.note` block's
+  role and the date convention from the recap generator, and writes its own §5
+  sentence rather than stretching `_POINT_IN_TIME`, which is worded for a week.
+- **`/writings` is a route, and that is new scope as of 2026-09-03.** See below.
 
-**Gate 1g:** the landing page carries one writing section, not two, and it reuses
-1e's list row, note block and date convention rather than a second treatment;
-every linked article renders with its publication date and the §5
-point-in-time framing; outbound links are visibly outbound; no entry carries anything beyond the immutable facts; a
-test fails if an entry is added without a date, and no linked URL carries the
-per-session `trackingId`/`lipi` parameters 1f stripped when it recorded the
-corpus; and **adding an entry without the two-way reconciliation having run
-against that exact staged content is blocked by the gate, not by memory** —
-demonstrated by adding Article D through the procedure rather than by hand.
+#### `/writings` is a public route, with everything that entails
+
+**Added 2026-09-03.** This stage was scoped as a section of an existing template
+and is now a page. The difference is not cosmetic — a public route has a
+contract in this repository, and the stage inherits all of it:
+
+| What a public route costs | Where |
+|---|---|
+| A route handler | `ops/routers/public.py`, beside `/recaps` |
+| A sitemap entry | the `paths` list in the same file |
+| A Caddy handler importing the two policy snippets | a `handle` block importing `public_response_policy` and `public_document_cache`, as six blocks already do |
+| A row in the external route matrix | Stage 6's verification, which 3c already owes a re-run of |
+| A row in the route and access contract, and in the destination inventory | [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), Stage 8's document |
+
+**None of this needs inventing.** Stage 2 built the pattern and it is repeated
+six times in the `Caddyfile` today; the sitemap is a Python list. The reason to
+write it down is that the stage's estimate was made when it was a template
+section, and a route is the difference between an afternoon and a slice.
+
+**The preview images must be self-hosted, and this is a hard constraint rather
+than a preference.** The deployed CSP — verified against the live site on
+2026-09-03 — is `img-src 'self' data:`. A preview loaded from the third-party
+platform's CDN would require widening that to a third-party host, which would
+undo precisely what 3c shipped the day before: twelve CDN requests removed, the
+icons and stylesheet vendored, the page taken same-origin. **The page that links
+the articles must not be the page that reopens the CSP.** So each preview is
+fetched once, committed under `ops/static_ops/`, and served fingerprinted from
+this origin under 3c's existing one-year `immutable` policy.
+
+**A weight budget, because 3b just spent one.** 3b removed a 41.7 MB hero video
+on the argument that the page led with its weakest asset. Four uncompressed
+preview images would quietly return a fraction of that weight to a surface this
+plan has been making lighter. The budget: **150 KB per preview and 600 KB for
+the set**, served in a modern format with dimensions set on the element so the
+cards do not reflow on load. An article whose image cannot meet that is listed
+without one — the card degrades to title, snippet and date rather than the page
+degrading.
+
+**Two consequences worth stating before they surprise someone.** The images are
+the author's own article artwork, so there is no third-party licence question of
+the kind 3c had to answer for PicoCSS and Simple Icons — but a `NOTICE` entry is
+still cheaper than re-deriving that later. And `/writings` is the first public
+page in this plan that is **authored rather than generated**, which puts it in
+`public_surface_gate.py`'s scope: it is a public surface making claims, and gap
+P4 already records that the gate covers two of five.
+
+**Gate 1g:** `/writings` serves 200 with the public response policy, appears in
+the sitemap and in `PUBLIC_SURFACE.md`'s route table and destination inventory,
+and renders with JavaScript disabled and no horizontal overflow at 360 px; `/`
+carries **one** "more depth" section, holding a door to `/writings`, a door to
+`/recaps`, and the newest article as a card — not two sections and not a second
+list treatment; every article card renders its publication date, its snippet and
+the §5 point-in-time framing, and no card carries anything beyond the immutable
+facts of the amended rule above; outbound links are visibly outbound on both
+surfaces; every preview is served from this origin within the weight budget, with
+the CSP unchanged from what 3c deployed — asserted, because a widened `img-src`
+is the one regression here that would still look like a working page; a test
+fails if an entry is added without a date, and no linked URL carries the
+per-session `trackingId`/`lipi` parameters 1f stripped; and **adding an entry
+without the two-way reconciliation having run against that exact staged content
+is blocked by the gate, not by memory.**
+
+**The demonstration half of this gate is owed, not met, and cannot be met by
+this stage.** It was written as "demonstrated by adding Article D through the
+procedure rather than by hand", and 1f's corpus table records D as *planned, not
+yet written*. Two things follow. The gate mechanism ships and is exercised by the
+initial commit of the data file, which stages three entries and must clear the
+hook to land — that proves the gate fires and clears. It does **not** prove the
+reconciliation caught anything, because A, B and C were reconciled by hand in 1f
+a week earlier. **So this gate carries an explicit unmet remainder until Article
+D is written**, in the same shape as Gate 1h's demonstration half and Gate 7's
+runtime half. Recording it as owed is the point; a gate closed on entries that
+were already reconciled would be the exact "check you must remember" that Stage
+1c argued against.
 
 ### 1h. Ask at closeout whether the landed work moved a surface
 
@@ -2087,7 +2256,10 @@ requirement.
 Stage 1g links the published articles from the same section of `/` that reaches
 this index, and takes its list row, note block and date convention from what 1e
 built. One item there lands on 3d unchanged: the landing page carries **one**
-"more depth" section rather than a link per corpus.
+"more depth" section rather than a link per corpus. **What that section
+holds changed on 2026-09-03** — a door to `/writings`, a door to `/recaps`,
+and the newest article as a card — but the one-section requirement 3d has to
+honour is the same one.
 
 #### Decided 2026-09-02: the recap pages keep their inlined `_STYLE`
 
@@ -2145,9 +2317,14 @@ seeing whether any of this is worth reading, and the newest week is both the mos
 current and the most likely to be the one they wanted. It also gives the page
 characterisable content — a list of links has nothing in it to summarise, quote
 or preview. And it is the same instinct the writing surface already applies one
-level up: **put content where the reader lands, not only links.** Articles are
-inline on `/` because they are few; the newest recap is inline on `/recaps`
-because it is the one most worth reading.
+level up: **put content where the reader lands, not only links.**
+
+*(This paragraph originally cited the articles being inline on `/` as the
+parallel case. That placement was withdrawn on 2026-09-03 — the articles now
+have their own page — but the principle it appealed to is what survived the
+redesign and drove it: `/writings` is a page of cards rather than a list of
+links, and `/` shows the newest article rather than only pointing at it. The
+argument for a full recap at the top of `/recaps` is unaffected.)*
 
 **Three consequences a bare index does not have, and each needs an answer:**
 
@@ -2686,16 +2863,18 @@ decision it becomes a second plan, and the two drift.
 destination questions go into them rather than blocking the document:
 
 - whether `/recaps` survives Stage 3 as its own destination or becomes a section
-  of `/`;
-- whether long-form writing is one place or two — 1g currently puts articles
-  inline on `/` and reaches the recaps through their index, a local call nobody
-  has checked against a whole-surface picture;
+  of `/` — **answered 2026-09-02 (D1): it survives and gains weight**;
+- whether long-form writing is one place or two — **answered 2026-09-03 (D2):
+  two, `/recaps` and `/writings`, with one "more depth" section on `/` holding a
+  door to each**;
 - what earns a destination slot at all, so the next generated artifact does not
-  repeat the route-then-sitemap-then-no-link sequence.
+  repeat the route-then-sitemap-then-no-link sequence — **still open (D3)**.
 
-Settling those is Stage 3d's and Stage 1g's work. **Recording them as open is
-this stage's**, and it is worth doing on its own: they are currently scattered
-across 3d's open question, 1g's scope note, and nothing at all.
+Settling those is Stage 3d's and Stage 1g's work. **Recording them as open was
+this stage's**, and it earned its keep: two of the three were answered within a
+day and two days of being written down, by the stages that owned them, having
+previously been scattered across 3d's open question, 1g's scope note, and
+nothing at all.
 
 ### Navigation is deferred behind this, deliberately
 
@@ -2790,7 +2969,30 @@ worth stating because it is easy to mistake for "either order is fine":
 
 So landing the code early buys nothing and the stage stays open either way. What
 this stage must never do is land *without* the fallback, which would blank the
-planned list on a tree where no plan has an A — which is every tree today.
+planned list on a tree where no plan has an A — which was every tree when this
+was written.
+
+**Discharged 2026-09-03, and the last sentence above is the one that expired.**
+Plan 172's Stage A landed `docs/PLAN_DOCUMENT.md` on 2026-09-02, and the four
+plans in the published planned window — 162, 134, 172 and this one — all carry
+`## What this plan is for`. So exit 4's sentence is now true when written, and
+the stage can be both landed and finished.
+
+**The fallback is still required, and the reason changed rather than
+disappeared.** It is no longer protecting against a tree where no plan has the
+section; it protects against a *row* that lacks one. The published window is the
+first four executable build-order rows, and that membership changes every time
+the order moves — a plan promoted into the window without the section would
+blank its own published summary. `tests/test_planning_docs.py` asserts the
+window conforms, so this is belt-and-braces rather than the load-bearing guard
+it originally was, and it stays for the same cost as before.
+
+**One consequence outside this plan.** `PLANS.md` places Plan 172 at row 3,
+above a higher-scored row, on the written justification that it blocks this
+stage. That justification is spent: 172's remaining stages build
+`stage-close`, which this stage does not consume. Whether 172 keeps that slot on
+other grounds is a question for the index, not for this document — recorded here
+because the reason written in the row is now stale.
 
 ### Open — this stage owns it
 
@@ -2809,10 +3011,49 @@ answered.
    output, as it does today.
 3. The fallback worklist names planned rows as well as completed ones.
 4. `PUBLIC_SURFACE.md` §4 and the `plans` skill agree on whether the slice cell
-   is published copy — **both change, or neither does.**
+   is published copy — **both change, or neither does.** Scoped to the *cell*,
+   and the distinction is load-bearing: see below.
 5. **The measurement is re-run** over a comparable window and the slice-only
    figure is recorded here beside the 35. A stage about churn that never
    re-measures its own churn has not demonstrated anything.
+
+#### Exit 4 retires one cell, not the file
+
+**Written 2026-09-03, before the stage is built, because this is the misread the
+exit invites.** "The slice cell is no longer published copy" is true. "`PLANS.md`
+is no longer published copy" is false, and acting on the second would remove a
+guard that is still doing work.
+
+Measured against `scripts/build_public_roadmap.py` as it stands, a planned row
+publishes six fields and the slice cell is one of them:
+
+```python
+order_cell, plan_cell, title, slice_cell = row[0], row[1], row[2], row[3]
+priority_cell, effort_cell = row[6], row[7]
+```
+
+`title`, `priority`, `effort`, `order` and the plan link reach the artifact
+verbatim and are untouched by this stage. So after it lands:
+
+- **A slice-cell-only edit stops moving public copy.** That is the 35 rewrites
+  this stage was raised to remove, and it is the whole win.
+- **A priority change, an effort change, a retitle, or a build-order insert that
+  renumbers still moves it** — the last one especially, because renumbering can
+  carry a plan across the four-row publication boundary in either direction.
+
+**So the `plans` skill keeps its regenerate-and-`--check` discipline after this
+stage; what it drops is the sentence calling a slice edit a public edit.** The
+skill's own "After every operation" section already states the general rule —
+*do not try to reason about which edits move the artifact; run the check and
+believe it* — and that rule survives this stage unchanged.
+
+**The fallback's purpose changes rather than ending.** It no longer guards a tree
+where no plan carries the section; it guards a *row* that lacks one, and window
+membership shifts every time the order moves. `tests/test_planning_docs.py`
+asserts the window conforms, so the fallback should never fire for a published
+row — but it is generated locally and asserted in CI, so the ordering is
+regenerate, then fail, not fail, then regenerate. The fallback is what keeps that
+window from publishing an empty summary in between.
 
 ---
 
@@ -2821,7 +3062,7 @@ answered.
 | File | Change |
 |---|---|
 | `README.md` | Rewrite technical public entry point |
-| `Caddyfile` | Public root, redirect, robots/sitemap, scoped headers, static caching |
+| `Caddyfile` | Public root, redirect, robots/sitemap, scoped headers, static caching, and Stage 1g's `/writings` handler |
 | `ops/routers/info.py` | Render the Plan 143 presentation cache; canonical public responses |
 | `ops/public_stats.py` | **Plan 143-owned** snapshot reader/cache; this plan changes presentation only |
 | `ops/app.py` | Preserve the Plan 143 cache lifecycle; no analytics collector added here |
@@ -2834,8 +3075,11 @@ answered.
 | `scripts/build_public_recaps.py` | Render `docs/recaps/` to static HTML, rewrite links, emit the index and sitemap URL list, and `--check` for drift |
 | `ops/routers/info.py` or a recap router | Serve the generated recap index and pages as static responses |
 | `ops/requirements.txt` | One Markdown rendering library, used at build time only |
-| A committed published-writing data file | Stage 1g's corpus entries — title, publication date, URL, and nothing that a moving tree could falsify |
-| `scripts/public_surface_gate.py` | Extend Stage 1c's commit gate to the corpus data file, on the same digest-stamp mechanism |
+| A committed published-writing data file | Stage 1g's corpus entries — title, publication date, URL, snippet, preview image, and nothing that a moving tree could falsify |
+| `ops/templates/writings.html` | Stage 1g's `/writings` page: one card per article, linking out |
+| `ops/routers/public.py` | Stage 1g's `/writings` route, beside `/recaps`, plus its sitemap entry |
+| `ops/static_ops/writings/*` | Stage 1g's self-hosted preview images, within the 150 KB / 600 KB budget |
+| `scripts/public_surface_gate.py` | Extend Stage 1c's commit gate to the corpus data file and `writings.html`, on the same digest-stamp mechanism |
 | A published-writing reconciliation skill | Stage 1g's two-way check: article against both surfaces, for drift and for harvest |
 | `.claude/skills/close-out/SKILL.md` | Stage 1h's step: did this work change a mechanism, name, or quantity either surface states |
 | `docs/PUBLIC_SURFACE.md` | Stage 8's durable contract: what may be said, what resolves and for whom, and where a reader is meant to go |
@@ -2852,106 +3096,114 @@ answered.
 
 ## Recommended build order
 
-**Rewritten 2026-09-01**, replacing the original PR A-D sequence. That sequence
-was written before Stage 1 ran, and Stage 1 produced two facts it could not have
-anticipated: **everything that changed the landing page is merged and
-undeployed**, and **Stage 1e's generated pages have no route**. The order below
-is driven by those.
+**Rewritten 2026-09-03**, the third version. The 2026-09-01 rewrite was driven by
+two facts — everything touching the landing page was merged and undeployed, and
+1e's generated pages had no route. Both are now false: the deploys ran and the
+routes exist. What drives this version is that **the plan's remaining work is no
+longer sequential**. Four of the five open items depend on nothing in this list,
+so the order below is a priority, not a dependency chain, and the one real
+dependency is called out where it applies.
 
-**1. Deploy the merged copy — `ops` image only, no Caddy change. DONE
-2026-09-01.** The live page had gone on serving the pre-plan copy the Stage 0
-baseline screenshotted while 1b, 1d, 1e and 1f were all merged. Stage 6 defers
-every deploy to the end, which is *why* four slices had accumulated unreleased;
-the template needed no route change to go live, so this was separable from
-Stage 6 and did not wait for it. Verified on the live page the same day — see
-the status section's measurement.
+### What has landed
 
-**2. Stage 1h (CAR-61) — the closeout question.** Cheap, ready, and it belongs
-*before* the stages below rather than after: steps 3 onward change mechanisms,
-names and quantities across the system, and 1h is what stops them silently
-re-drifting the copy step 1 just published.
+Compressed rather than deleted, because the order these ran in is the argument
+for the order below.
 
-**3. Stage 7 — publish content without an image rebuild.** Raised out of Stage
-2's scoping and placed *before* it deliberately: Stage 7 moves the generated
-artifacts to `ops/static_ops/generated/`, which is the path Stage 2's recap route
-has to resolve. Doing it after would mean writing that route twice. It also has
-to land before step 6, because Stage 3c puts CSS and JavaScript into
-`static_ops/` and the mount's seam depends on those staying on the image side.
+| Step | Work | Landed |
+|---|---|---|
+| 1 | Deploy the merged Stage 1 copy — `ops` image only | 2026-09-01, verified on the live page |
+| 2 | Stage 1h (CAR-61), the closeout question | 2026-09-01 |
+| 3 | Stage 7 (CAR-65), publish content without an image rebuild | 2026-09-01; Gate 7's runtime half still owed |
+| 3b | Give Streamlit a base path — `--server.baseUrlPath=dashboard` | 2026-09-02, after Stage 2 was deployed and reverted on it |
+| 4 | Stage 2 (CAR-62), the public root, `/info` redirect and recap routes | 2026-09-02, Gate 2 met at `6d08b0a` |
+| 5 | Stage 6, route half — Caddy and `ops` deployed together | 2026-09-02 |
+| 6 | Stage 3b and 3c (CAR-68, PR #346), the asset and header pass | Merged and deployed 2026-09-02; confirmed live 2026-09-03 |
+| 8b | Stage 8 (CAR-67), extract `docs/PUBLIC_SURFACE.md` | 2026-09-02 |
 
-**3b. Give Streamlit a base path — NEW, and it blocks step 4. BUILT 2026-09-02,
-not yet deployed.** Added after Stage 2 was deployed and reverted.
-`dashboard/Dockerfile` ran Streamlit with no `--server.baseUrlPath`, so Streamlit
-owned the origin root: it served its machinery from there, answered every
-unrecognised path with a shell that links assets relatively, *and* fell back
-there when its client router did not recognise a path. Moving `/` to the landing
-page took that fallback away and `/dashboard` stopped working while every other
-Gate 2 check passed. `--server.baseUrlPath=dashboard` plus the Compose
-healthcheck path confines Streamlit to `/dashboard/*` and retires the catch-all
-dependency; `tests/test_dashboard_base_path.py` holds it. Verified against a
-locally built image — see the Stage 2 evidence for the probe table. **Deploy this
-and confirm the dashboard in a browser before step 4 goes near production
-again.**
+**Two verification debts survive those steps** and are not carried by any item
+below, so they are named here rather than assumed: **3c owes the full external
+route-matrix re-run** now that its headers are deployed, and **Gate 7's runtime
+half** — a recap going live on `git pull` alone — is still unrecorded.
 
-**4. Stage 2 — the public root, the `/info` redirect, and the recap routes.**
-**Attempted 2026-09-02 and reverted; blocked on 3b.**
-The unlock: it makes `/` the front door, and it gives 1e's 20 pages a URL. It
-also carries this plan's riskiest change. **Write Stage 5's Streamlit-coupling
-assertion as part of this stage, not after it** — Gate 2 as written cannot see
-the failure mode, and a test that lands after the change has shipped protects
-nothing.
+### The live order
 
-**5. Stage 6, route half — deploy Caddy and `ops` together** and run the full
-matrix, including loading the dashboard as `viewer` to confirm the websocket
-connects.
+**1. Stage 9 — publish what a plan is *for*, not which stage is next.** First,
+and the reason is a user-facing one rather than a sequencing one: **the build
+order's slice cell is published copy**, so every repoint of it is a public edit,
+and keeping the public page current means chasing stale internal pointers by
+hand. The projection measured on 2026-09-02 that 75% of `PLANS.md` commits
+changed published copy over 60 days, 35 of 59 being a slice rewrite over the same
+four plans. This stage removes that treadmill, and the page stops advertising
+sequencing prose to strangers.
 
-**6. Stage 3b and 3c — the asset and header pass. BUILT 2026-09-02 (CAR-68),
-not yet deployed.** The largest user-visible quality change available. 3b
-removed the hero media rather than re-encoding it, per the decision made the
-same day. 3c vendored PicoCSS and the service icons — the page had been making
-twelve third-party requests on every visit, one stylesheet from
-`cdn.jsdelivr.net` and eleven icons from `cdn.simpleicons.org`, which is what
-made a same-origin CSP impossible — extracted the inline CSS and JavaScript, and
-applied the headers and caching policy to the six public handlers. **The
-route-matrix re-run this step's mitigation calls for is the outstanding half**
-and needs the deploy; see the Stage 3c evidence.
+The evidence that it is worth doing first is on the live page today: the planned
+row for this very plan published `Stage 8 (CAR-67) — extract docs/PUBLIC_SURFACE.md…`
+while CAR-67 was already closed. A published field that goes stale between
+commits is exactly what this stage retires.
 
-**7. Stage 3a — semantic interactions.** The service and decision cards are
-clickable `<div>` elements: not focusable, not announced, not operable without a
-mouse, with active state signalled by colour alone.
+**Unblocked 2026-09-03.** Plan 172's Stage A landed `docs/PLAN_DOCUMENT.md`, and
+all four rows in the published planned window — Plans 162, 134, 172 and 138 — now
+carry `## What this plan is for`. Exit 4 flips `PUBLIC_SURFACE.md` §4 and the
+`plans` skill to say the slice cell is no longer published copy; that sentence is
+true only once the window has something else to read, and now it does. **Plan 172
+no longer blocks this stage**, which spends the justification written into its
+`PLANS.md` row for sitting above a higher-scored plan.
 
-**8. Stage 4 — the Plan 143 snapshot presentation.** Unblocked since Plan 143
-completed on 2026-08-20 and **dependent on nothing above**, so it can move
-earlier if shipping the numbers is worth more than the recap route.
+Depends on nothing else in this plan, and nothing else here depends on it.
 
-**8b. Stage 8 — extract the public surface contract. NEW 2026-09-02.** Raised
-out of a navigation question this plan could not answer: `/recaps` has a
-canonical route and no link, and the landing page links `/dashboard` nowhere.
-It sits **before step 9** because the destination questions it records are
-exactly what 3d and 1g need settled, and it blocks nothing above it — Stage 4 in
-particular is unaffected, so 8 and 8b may run in either order.
+**2. Stage 3a (CAR-64) — semantic interactions.** The service and highlight cards
+are clickable `<div>` elements: not focusable, not announced, not operable
+without a mouse, with active state signalled by colour alone. Two near-identical
+toggle blocks in `ops/static_ops/info.js` and eighteen cards in
+`ops/templates/info.html`. Independent of everything below; `aria-expanded`
+carries the active state for free, which is why this stage is also where the
+colour-only defect gets fixed.
 
-**9. Stage 3d, then Stage 1g.** 3d's two open decisions — the stylesheet
-question and whether `/recaps` leads with the newest week in full — governed both
-3d's markup and 1g's. **Both were settled 2026-09-02**, so this step is build
-rather than decide: `_STYLE` stands, and `/recaps` leads with the newest week in
-full under the three conditions 3d attaches. Build 3d, then link the articles.
+**3. Stage 3d — recap presentation.** The full-render path at the top of
+`/recaps`, `rel=canonical` to the week's own page, the per-week §5 note beside
+the index's collection-level one, the week stated prominently at the top, and the
+reading measures. Self-contained, deployable on its own, and it changes
+`render_index` in `scripts/build_public_recaps.py` rather than any template.
 
-**10. The remainder of Stage 5, then Stage 6's final verification.**
+**4. Stage 1g — `/writings`, and the "more depth" section on `/`.** **This is the
+one real dependency in the list**: it comes after 3d because `/`'s section carries
+a door to `/recaps`, and 3d is what makes that door lead somewhere worth landing
+on. It is also where the unknowns are — a new route, a new template, the corpus
+data file, self-hosted previews under a weight budget, the gate extension and the
+reconciliation skill. Gate 1g's demonstration half stays owed until Article D is
+written; see the stage.
+
+**5. Stage 4 (CAR-63) — the Plan 143 snapshot presentation.** Unblocked since
+Plan 143 completed on 2026-08-20 and **dependent on nothing above**, so it moves
+earlier freely if publishing the numbers is worth more than the writing surface.
+It also carries gap P3, the live stats section having no anchor id.
+
+**6. The remainder of Stage 5, then Stage 6's final verification** — folding in
+3c's owed route-matrix re-run and Gate 7's runtime half, both named above.
 
 ### What this order costs, stated
 
-The original sequence had PRs B and C reviewed together for CSP and asset-path
-compatibility. Here routing (step 4) ships before the CSP work (step 6), so the
-headers arrive after the routes rather than with them. **Mitigation:** step 4
-ships without tightening CSP, and step 6 adds it and re-runs the full route
-matrix rather than trusting step 5's run. The alternative — holding the routes
-until the asset pass is ready — keeps the live page stale and 1e's pages
-unreachable for longer, which is the worse trade while the surfaces disagree.
+**The earlier cost is spent and the mitigation worked.** The 2026-09-01 order
+shipped routing before the CSP work, against an original sequence that reviewed
+them together. The mitigation was that the route step ship without tightening
+CSP and the asset step add it and re-run the full matrix rather than trusting the
+earlier run. Both halves shipped on 2026-09-02; **the re-run is the piece still
+outstanding**, which is the mitigation's own terms not yet met rather than a new
+problem.
 
-Two seams from the original sequence survive and still hold. The recap work
+**What this version costs is different: four of six items are independent, so the
+order expresses priority and nothing enforces it.** A reader who takes this list
+as a dependency chain will conclude that Stage 4 is blocked behind the writing
+surface, and it is not. The one edge that is real — 3d before 1g — is stated in
+step 4 rather than left to the numbering.
+
+**One seam from the original sequence survives and still holds.** The recap work
 splits between build-time generation and frontend presentation, and **Stage 1g
-splits on that same seam**: its corpus data file and date-assertion test are
-generation work, its section markup is step 9.
+splits on that same seam**: its corpus data file, its date and tracking-parameter
+assertions and its gate extension are generation-side work; its cards, its
+section on `/` and its route are presentation. A slice that stalls can stop at
+that seam.
+
 
 ## Completion criteria
 
