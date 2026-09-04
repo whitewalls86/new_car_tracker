@@ -219,6 +219,35 @@ jobs:
       - name: Verify the recorded Docker API contract against the real proxy
         run: python scripts/verify_container_health_docker_contract.py
 
+  git-ref-hygiene:
+    name: Git ref hygiene contract (real remote)
+    runs-on: ubuntu-latest
+    # No `changes` gate. What this asserts lives on the remote, not in the
+    # tree, so it can drift without a single file changing -- somebody flipping
+    # a setting in the GitHub UI is exactly the regression it exists to catch,
+    # and that produces no changeset at all.
+    if: github.repository == 'whitewalls86/new_car_tracker'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Load-bearing. The accretion count reads refs/remotes/origin/*, and
+          # the default single-branch shallow clone has none of them. The
+          # verifier fails closed rather than counting zero, so getting this
+          # wrong is loud rather than a false green.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Reads two facts nothing in the tree can hold: that the remote deletes
+      # merged head branches, and that every PR still lands as a merge commit.
+      # The second is what keeps `plan-week` able to attribute a commit whose
+      # own text names no plan -- a squash or rebase merge leaves no merge
+      # commit, so the branch name stops being permanent history.
+      - name: Verify the remote is not configured to accrete refs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/verify_git_ref_hygiene_contract.py
+
   unit-tests:
     name: Unit tests (pytest)
     runs-on: ubuntu-latest

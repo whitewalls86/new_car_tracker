@@ -23,24 +23,24 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
-      "plan": "164",
-      "title": "Cycle-close ritual",
-      "order": 3,
-      "priority": 70,
-      "effort": "S",
-      "state": "planned",
-      "summary": "Three steps of the routine that closes a work cycle — recording how the cycle actually went, rolling unfinished work forward, and tidying the branches left behind — have no owner today, and each is only ever correct at the close. This plan gives all three a home.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
-    },
-    {
       "plan": "154",
       "title": "Container log coverage",
-      "order": 4,
+      "order": 3,
       "priority": 70,
       "effort": "S",
       "state": "planned",
       "summary": "Gets logs from the services that currently produce none into one searchable place, deciding service by service what is worth collecting before turning any of it on — so a failure in an unlogged component stops being invisible.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_154_container_log_coverage.md"
+    },
+    {
+      "plan": "151",
+      "title": "Distributed tracing and runtime topology audit",
+      "order": 4,
+      "priority": 72,
+      "effort": "M",
+      "state": "planned",
+      "summary": "Runs a bounded experiment in watching requests move between services, to answer two questions with evidence: whether seeing the live dependency graph reveals anything the hand-written one misses, and whether it costs less than it is worth. The experiment is allowed to conclude no.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md"
     }
   ],
   "completed": [

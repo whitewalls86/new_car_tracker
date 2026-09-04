@@ -171,13 +171,29 @@ which is an answer; the 42nd has no body at all and stays unattributed.
 
 Three layers you might reach for, and why not:
 
-- **The containing branch is a hint, never a source.** `git branch --contains`
-  answers only while the branch still exists, and merging is supposed to delete
-  it. On the measured week the branch layer rescued 18 commits over 30 days,
-  every one of them also on `master`, found only because 76 refs are still
-  lying around. The same window recapped in three months rescues nothing. Use a
-  branch name to *confirm* a reading; never let a recap depend on one, and
-  never treat a missing branch as a failure.
+- **The containing branch is a hint, never a source, and it is a weaker hint
+  than this file used to claim.** It read "the branch layer rescued 18 commits
+  over 30 days" until 2026-09-04, when it was measured: over 2026-08-24..30, on
+  the 9 commits that needed a fallback, `git branch --contains` returned **75
+  refs each** and discriminated nothing. It is informative only for commits that
+  are *not* on `origin/master` — 24 of them, at 1-2 refs each — and it gets
+  *better* as dead refs are pruned, not worse. Use a branch name to *confirm* a
+  reading; never let a recap depend on one, and never treat a missing branch as
+  a failure.
+
+- **The enclosing merge commit is the fallback that actually works**, and it was
+  missing from this list. `git log --merges --ancestry-path <sha>..origin/master`
+  names the merge that brought a commit in, and that subject —
+  `Merge pull request #296 from whitewalls86/docs/recap-backfill-to-repo-start` —
+  carries the branch name in `master`'s history **permanently**. It answered all
+  9 of the commits above; branch deletion cannot touch it. It is still a hint and
+  not a source: the commit's own text attributes it, and a merge subject only
+  tells you where to look.
+
+  This is why deleting merged branches costs the recap nothing, and why the
+  setting that *would* cost it something is squash or rebase merging — either
+  lands a PR with no merge commit at all. `scripts/verify_git_ref_hygiene_contract.py`
+  holds both off in CI.
 - **Plan documents touched by the diff contribute nothing.** Measured over 170
   commits in 30 days: **+0** beyond what subjects and bodies already gave. Work
   commits touch code, not plan documents.

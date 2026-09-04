@@ -38,7 +38,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -434,7 +434,7 @@ _CONTRACT_PLAN = 172
 #   exactly that transition, so a new entry means the skill was bypassed. This
 #   is the ceiling that gets tested first: all five entries are pre-172 plans
 #   still live, and more will reach closeout.
-MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 37
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 36
 MAX_THE_CHECKS_WAIVERS = 5
 
 
@@ -452,24 +452,33 @@ class SectionWaiver:
     since: date = _SECTION_MEASURED
 
 
-# 43 live plans, of which: 4 already carry '## What this plan is for'
-# (162/134/138 were backfilled landing Stage D, because the published
-# build-order window required it; 164 was backfilled when Plan 172 archived and
+# 44 live plans, of which: 7 already carry '## What this plan is for'
+# (162 and 134 were backfilled landing Stage D, because the published
+# build-order window required it; 164 followed when Plan 172 archived and
 # promoted it into that window, which is also what paid the ceiling above down
-# from 39); 1, Plan 88, has no document at all and is named in
-# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 38 are waived below.
-# 4 + 1 + 38 = 43. Plan 172 itself is no longer counted here -- it archived
-# 2026-09-03 and left the live tables. Plans 117 and 163
-# are the two whose shape does not fit stages at all (an umbrella and a
-# register); the contract's own Design section names a waiver as the right
-# instrument for that too, not a permanent plan kind.
+# from 39; 154 and 151 followed on the same mechanism twice more on 2026-09-04,
+# as Plan 138 archived and Plan 164 left for closeout -- each departure moved
+# the published boundary one row further down and caught the plan beneath it.
+# 173 and 174 carry the section already and needed no backfill); 1, Plan 88,
+# has no document at all and is named in NO_DOCUMENT_LIVE_PLANS instead of
+# here; the remaining 36 are waived below. 7 + 1 + 36 = 44.
+#
+# **The mechanism is worth naming, because it has now fired three times.** A
+# plan is promoted into the published window by a row *above* it leaving, which
+# nobody edits and no reviewer of that change is looking at. Plans 172, 138 and
+# 175 are no longer counted here -- they archived and left the live tables, and
+# each departure is what put a fresh plan on the landing page.
+#
+# Plans 117 and 163 are the two whose shape does not fit stages at all (an
+# umbrella and a register); the contract's own Design section names a waiver as
+# the right instrument for that too, not a permanent plan kind.
 WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),
     SectionWaiver(79), SectionWaiver(94), SectionWaiver(108), SectionWaiver(112),
     SectionWaiver(113), SectionWaiver(117), SectionWaiver(119), SectionWaiver(121),
     SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
     SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
-    SectionWaiver(149), SectionWaiver(150), SectionWaiver(151), SectionWaiver(152),
+    SectionWaiver(149), SectionWaiver(150), SectionWaiver(152),
     SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
     SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
     SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
@@ -1301,6 +1310,38 @@ def _headings(text: str) -> set[str]:
     }
 
 
+# The week ending Sunday N is owed a recap by end of N+3, so the assertion
+# below turns red on the Thursday. Named rather than inlined because the
+# failure message quotes the same number it asserts on.
+RECAP_GRACE_DAYS = 3
+
+
+def _oldest_acceptable_recap(today: date) -> date:
+    """The oldest window-end a recap set may stop at and still be current.
+
+    Pure and parameterised on ``today`` so the deadline itself can be asserted
+    rather than only documented -- the boundary is the whole design decision,
+    and a rule this shape is easy to get right in prose and wrong by a day in
+    code.
+    """
+    # The most recent Sunday strictly before today. A week ending today is not
+    # complete until today is over, so today never ends its own window.
+    last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
+    # Inside the grace window the newest recap may still be the *previous*
+    # Sunday's; past it, the week that just closed is owed one.
+    within_grace = (today - last_complete).days <= RECAP_GRACE_DAYS
+    return last_complete - timedelta(days=7 if within_grace else 0)
+
+
+def _recap_sundays() -> list[date]:
+    """Every recap's window-end date, sorted. Filenames are the source."""
+    return sorted(
+        date(*(int(part) for part in match.groups()))
+        for path in recap_files()
+        if (match := _RECAP_NAME.match(path.name))
+    )
+
+
 class TestWeeklyRecaps:
     """Plan 146 Stage 6's output, held to its shape rather than its content.
 
@@ -1397,6 +1438,89 @@ class TestWeeklyRecaps:
             "them as generic hedging makes 25 backfilled rows look like "
             "hedging too. Mark uncertainty in the recap's own words."
         )
+
+    def test_the_recap_series_has_no_interior_gap(self):
+        """A skipped week that was never noticed is a week with no record.
+
+        Every other assertion here checks a recap that *exists*. This one
+        checks the set: Sundays run every seven days, so a missing one is
+        arithmetic, not judgement. It is the half of "did the ritual run" that
+        can be mechanised, and it is stable over time -- a gap that opens in
+        2026 is still a gap in 2027.
+        """
+        days = _recap_sundays()
+        assert days, "no recaps at all; the assertions below prove nothing"
+        present = set(days)
+        missing = []
+        cursor = days[0]
+        while cursor <= days[-1]:
+            if cursor not in present:
+                missing.append(cursor.isoformat())
+            cursor += timedelta(days=7)
+        assert not missing, (
+            "no recap exists for these Sundays, which sit between recaps that "
+            "do exist: " + ", ".join(missing) + ". A week with no recap is a "
+            "week whose work has no durable why. Write it with the plan-week "
+            "skill; the window is that Monday through that Sunday."
+        )
+
+    def test_the_recap_series_is_not_stale(self):
+        """The forcing function: this goes red if the weekly ritual stops.
+
+        **This test depends on the clock, deliberately**, which every other
+        assertion in this file avoids. ``docs/TESTING.md`` requires that a test
+        depending on something environmental declare it rather than let it
+        decide quietly, so: the dependency is today's date, the behaviour under
+        test is whether a habit is still being kept, and there is no way to
+        observe that without a clock. It is the one assertion here that cannot
+        be made time-independent without ceasing to test anything.
+
+        **The deadline is the Wednesday after the window closes.** The week
+        ending Sunday N is owed a recap by end of N+3; the failure arrives on
+        the Thursday. That keeps an ordinary Monday and Tuesday green -- the
+        recap is written at the close, not the instant the week ends -- while
+        never letting a recap go more than half a week stale. A zero grace
+        would put CI red every Monday until the recap landed; a full week let
+        the record drift further than is useful.
+        """
+        days = _recap_sundays()
+        assert days, "no recaps at all; the assertions below prove nothing"
+
+        today = date.today()
+        last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
+
+        assert days[-1] >= _oldest_acceptable_recap(today), (
+            f"the newest recap is {days[-1].isoformat()}, and the week ending "
+            f"{last_complete.isoformat()} was owed one by "
+            f"{(last_complete + timedelta(days=RECAP_GRACE_DAYS)).isoformat()}. "
+            f"Run the plan-week skill. If a week is genuinely being skipped on "
+            f"purpose, that is a decision to write down in docs/recaps/, not a "
+            f"threshold to raise."
+        )
+
+    @pytest.mark.parametrize(
+        ("today", "stale_if_newest_is"),
+        [
+            # The week ending Sunday 2026-09-06 is owed a recap by Wednesday
+            # 2026-09-09. Each row is a day of the following week and the
+            # oldest recap that is still acceptable on it.
+            (date(2026, 9, 7), date(2026, 8, 30)),  # Monday   -- grace
+            (date(2026, 9, 8), date(2026, 8, 30)),  # Tuesday  -- grace
+            (date(2026, 9, 9), date(2026, 8, 30)),  # Wednesday -- last day of grace
+            (date(2026, 9, 10), date(2026, 9, 6)),  # Thursday -- the deadline has passed
+            (date(2026, 9, 11), date(2026, 9, 6)),  # Friday
+            (date(2026, 9, 13), date(2026, 9, 6)),  # Sunday, its own week not yet complete
+        ],
+    )
+    def test_the_deadline_lands_on_the_wednesday(self, today, stale_if_newest_is):
+        """The boundary asserted, not just described.
+
+        A grace expressed in prose is easy to state correctly and implement a
+        day out. These six rows pin it: Monday through Wednesday accept the
+        previous Sunday's recap, and from Thursday the week that just closed is
+        owed one.
+        """
+        assert _oldest_acceptable_recap(today) == stale_if_newest_is
 
     def test_the_recap_scan_actually_reads_recaps(self):
         """A scan that matches nothing passes forever.
