@@ -137,6 +137,36 @@ _ARCHIVE_KEY_RE = re.compile(
 # Auth
 # ---------------------------------------------------------------------------
 
+def _tokens_configured() -> bool:
+    """Whether any credential exists at all — a 503, not a 403.
+
+    Separate from :func:`_resolve_token` because the two answer different
+    questions and produce different statuses: "this deployment has no tokens"
+    is an operator's problem, "your token is wrong" is the caller's.
+    """
+    return bool(SNAPSHOT_TOKENS)
+
+
+def _resolve_token(presented: str) -> Optional[SnapshotToken]:
+    """Return the entry *presented* matches, or None.
+
+    **This function and the one above are the storage seam.** Everything around
+    them — the scope grants, the timing property, the logging, every test — is
+    written against the returned entry, not against where it came from. Moving
+    credentials out of environment variables and into a table is then one
+    function body rather than a change to the auth path.
+
+    The loop compares every entry with no early exit. Breaking on the first
+    match leaks nothing about a token's value but does leak which caller
+    presented it, through response time.
+    """
+    matched: Optional[SnapshotToken] = None
+    for entry in SNAPSHOT_TOKENS:
+        if secrets.compare_digest(presented, entry.token):
+            matched = entry
+    return matched
+
+
 def require_snapshot_token(required_scope: str = "read"):
     """Build a dependency asserting the caller holds a token granting *required_scope*.
 
@@ -152,22 +182,14 @@ def require_snapshot_token(required_scope: str = "read"):
         raise ValueError(f"unknown scope {required_scope!r}")
 
     def dependency(authorization: Optional[str] = Header(default=None)) -> None:
-        if not SNAPSHOT_TOKENS:
+        if not _tokens_configured():
             raise HTTPException(
                 status_code=503, detail="snapshot downloads not configured",
             )
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="missing bearer token")
-        presented = authorization[len("Bearer "):]
 
-        # Every entry is compared, with no early exit. Breaking on the first
-        # match would make the response time depend on an entry's position in
-        # the set, which leaks nothing about the token's *value* but does leak
-        # which caller presented it.
-        matched: Optional[SnapshotToken] = None
-        for entry in SNAPSHOT_TOKENS:
-            if secrets.compare_digest(presented, entry.token):
-                matched = entry
+        matched = _resolve_token(authorization[len("Bearer "):])
         if matched is None:
             raise HTTPException(status_code=403, detail="invalid token")
 

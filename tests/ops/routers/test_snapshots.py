@@ -127,6 +127,59 @@ class TestScopes:
             snapshots.require_snapshot_token("delete")
 
 
+class TestStorageSeam:
+    """`_resolve_token` and `_tokens_configured` are the only two functions that
+    know where credentials live. Everything above them reads the returned entry.
+
+    These tests are what a later move to table-backed tokens lands against: swap
+    the two bodies, and if the auth path still passes, the swap did not change
+    behaviour. They assert against the seam rather than through a route, which
+    is the point — the route should not be able to tell.
+    """
+
+    def test_resolve_returns_the_matching_entry(self, mocker):
+        entry = snapshots.SnapshotToken("mlflow", "read", "m-token")
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (entry,))
+        assert snapshots._resolve_token("m-token") is entry
+
+    def test_resolve_returns_none_for_an_unknown_token(self):
+        assert snapshots._resolve_token("nope") is None
+
+    def test_resolve_compares_every_entry_without_stopping_early(self, mocker):
+        """The timing property, asserted rather than left to a comment. An early
+        exit leaks nothing about a token's value but does leak which caller
+        presented it, through how long the response took."""
+        calls: list[str] = []
+
+        def counting_compare(presented, stored):
+            calls.append(stored)
+            return presented == stored
+
+        mocker.patch.object(snapshots.secrets, "compare_digest", counting_compare)
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
+            snapshots.SnapshotToken("first", "read", "a"),
+            snapshots.SnapshotToken("second", "read", "b"),
+            snapshots.SnapshotToken("third", "read", "c"),
+        ))
+
+        # Matching the *first* entry must still compare the other two.
+        snapshots._resolve_token("a")
+        assert calls == ["a", "b", "c"]
+
+    def test_configured_is_a_separate_question_from_resolution(self, mocker):
+        """503 and 403 answer different questions and must not collapse into
+        one: "this deployment has no tokens" is an operator's problem, "your
+        token is wrong" is the caller's."""
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", ())
+        assert snapshots._tokens_configured() is False
+        assert snapshots._resolve_token("anything") is None
+
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
+            snapshots.SnapshotToken("ci", "read", "t"),
+        ))
+        assert snapshots._tokens_configured() is True
+
+
 class TestTokenSetParsing:
     def test_parses_named_scoped_entries(self):
         parsed = snapshots._parse_token_set("ci:read:abc,mlflow:write:def", "")
