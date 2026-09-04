@@ -157,4 +157,66 @@ remains.
 
 | Order | Stage | Estimate | Status |
 |---:|---|---:|---|
-| 1 | A — Enforcement moves inside `git commit` | 1 | next |
+| 1 | A — Enforcement moves inside `git commit` | 1 | done |
+
+## Record
+
+### Stage A — Enforcement moves inside `git commit` — 2026-09-04
+
+Landed in [PR #368](https://github.com/whitewalls86/new_car_tracker/pull/368),
+merged `622e3d7`. `.githooks/pre-commit` calls
+`scripts/public_surface_gate.py --pre-commit`, and git runs it after `-a` has
+staged, so the index it reads is the index being committed. The check is
+shared, not copied — `check_staged()` has two entry points. The `PreToolUse`
+path keeps the one job a git hook cannot do for itself: refuse any
+`git commit` until `core.hooksPath` is set, checked before the index read
+rather than after, since a missing install is exactly the case where the index
+proves nothing.
+
+**Verified in a disposable clone, with no agent in the picture.** A terminal
+`git commit -am` on an unread `README.md` was refused by git itself (exit 1)
+and committed once the stamp matched (`ace8270`, exit 0). With
+`core.hooksPath` unset the `PreToolUse` path printed the install command and
+exited 2. A relative `core.hooksPath` was confirmed to resolve against the
+working-tree root rather than the cwd, so a commit made from a subdirectory is
+held too. Four deliberate mutations were each caught by the intended
+assertion: `hooks_installed()` forced `True`, the install check made
+conditional on the index, `--pre-commit` falling through to the payload path,
+and `--chmod=-x` on the hook. 3,658 unit tests, `ruff check` clean, CI green on
+every job.
+
+**The stage reintroduced its own defect twice, and that is the finding worth
+keeping.** First, `chmod +x` on Windows does not reach the index —
+`core.fileMode` is off — so the hook committed as `100644`. Git silently
+declines to run a hook without the execute bit, so it would have been checked
+out on macOS installed, configured, and never firing. Caught by reading
+`git ls-files -s`, not by any test; fixed before merge and now asserted on the
+tracked mode, watched failing against the real `--chmod=-x`.
+
+Second, and after the merge: `hooks_installed()` compared
+`git config core.hooksPath` against the literal string `.githooks`. Within
+hours the value in this clone had become an absolute path to the same
+directory — rewritten by something outside this work, unexplained — so git was
+still running the hook while the gate called it uninstalled and refused every
+agent commit. **A false refusal is the one failure this mechanism cannot
+afford**, because it is how a gate teaches people to route around it. Fixed in
+`d9eaf8d` by resolving the configured value against the working-tree root and
+comparing paths, so an absolute path, `./.githooks` and a trailing separator
+all read as installed; two tests watched failing against the exact merged bug.
+Both defects are the same shape as the one the plan set out to close: a
+mechanism that looks installed and is not, or looks broken and is not.
+
+Setup cost is one command per clone, not one per worktree: linked worktrees
+share `core.hooksPath`, while the stamp stays per-worktree because it is keyed
+on `--git-dir`. That was measured before the design was committed to, against
+`.claude/worktrees/car-41-plan-164`, whose `git config --show-origin` resolves
+to the main clone's `.git/config`. Gap **P4** in
+[`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) narrowed accordingly, to
+`--no-verify` and a clone where the install was never run.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. The only quantity in range — "More than 3,000 tests run
+in CI", in both — stays true at 3,660, and is deliberately rounded.
+
+Cost: estimate 1 → actual **not measured**. Elapsed from `startedAt` to merge
+was 1h14m, which is calendar time and not effort; no effort figure was taken.
