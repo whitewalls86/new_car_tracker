@@ -212,7 +212,14 @@ class TestDownloadApiAgainstOpsRouter:
         }
         manifest["archive"]["path"] = alias["archive_key"]
 
-        mocker.patch.object(snapshots_router, "SNAPSHOT_DOWNLOAD_TOKEN", "test-token")
+        # Plan 162: the router authenticates against a named, scoped token set.
+        # The downloader still presents a bare bearer string, which is the half
+        # of the contract this test exists to hold — a change to the server's
+        # token *format* must not change what the client sends.
+        mocker.patch.object(
+            snapshots_router, "SNAPSHOT_TOKENS",
+            (snapshots_router.SnapshotToken("ci", "read", "test-token"),),
+        )
 
         def fake_read_json(key):
             if key == "ci_snapshots/adaptive_refresh/latest.json":

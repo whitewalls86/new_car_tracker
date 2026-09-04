@@ -122,11 +122,12 @@ order:
 | **7** | `done` | SQL execution, from both directions | G14; G5 to 15 | CAR-51, 2026-09-01 | 56 |
 | **8** | `done` | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | CAR-52, 2026-09-02 | -- |
 | **9** | `done` | `airflow/dags` and the `.sql` convention | G12 | CAR-53, 2026-09-02 | -- |
-| **10** | `next` | [dbt builds against production-shaped data](#stage-10-dbt-builds-against-production-shaped-data) | — | CAR-54 | -- |
-| **10b** | `—` | [CI's services are production's, in definition and in contents](#stage-10b-cis-services-are-productions-in-definition-and-in-contents) | — | — | -- |
+| **10** | `done` | [dbt builds against production-shaped data](#stage-10-dbt-builds-against-production-shaped-data) | — | CAR-54, 2026-09-04 | -- |
+| **10b** | `next` | [CI's services are production's, in definition and in contents](#stage-10b-cis-services-are-productions-in-definition-and-in-contents) | — | — | -- |
 | **10c** | `—` | [CI selection, and the instrument that has to precede it](#stage-10c-ci-selection-and-the-instrument-that-has-to-precede-it) | Plan 139 Stage E | — | -- |
 | **11** | `—` | The dbt testing contract, and what leaves the SQL census | G16 | — | -- |
 | **12** | `—` | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | — | -- |
+| **13** | `—` | [Every skip in CI is declared, or the run fails](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails) | — | — | -- |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -821,6 +822,89 @@ production-derived snapshot with all six sources populated, and fails on a
 production row that violates a dbt data test. Demonstrated by a deliberate
 violation, not asserted.
 
+#### Stage 10 ships in two parts, and the reason is a cycle
+
+**Split 2026-09-03, on the way to opening the PR.** The stage's own gate cannot
+land in the change that introduces it. The job builds against a snapshot; that
+snapshot can only be produced by an exporter carrying the two Postgres dimension
+tables; and that exporter has to be merged and deployed before it can produce
+one. Introduced together, the job is red on its own PR and stays red on master
+until a pin bump lands — for two reasons that are both the job working exactly
+as designed: no `CARTRACKER_SNAPSHOT_TOKEN` secret existed yet, and a
+placeholder pin necessarily names a snapshot exported before the Postgres half,
+which the seeder's `--require-non-empty` correctly refuses.
+
+The alternatives were worse in the way this plan cares about. Merging one
+known-red check leaves master red on a schedule nobody owns. Gating the job on
+the secret's presence makes it skip silently the day that secret is rotated or
+removed — a job that disappears when its credential does is the failure class
+Stage 1 spent its budget making impossible, and it would have needed a
+waiver-shaped justification to sit beside `DORMANT_SUITES`.
+
+So:
+
+* **Part 1** — what a production export needs: the exporter's two dimension
+  tables, `shared/lake_snapshot_postgres.py` and its round-trip SQL pair, the
+  export cache schema bump, and the seeder's Postgres write path with its
+  stricter `POSTGRES_URL` guard. Merged as
+  [#357](https://github.com/whitewalls86/new_car_tracker/pull/357) on
+  2026-09-04, every job green.
+* **Part 2** — the gate, arriving with a pin that resolves: the `snapshot-dbt`
+  job, the `snapshot_dbt` classifier group and its trigger set,
+  `.github/ci_lake_snapshot_pin.json` with a real snapshot id, and the
+  deliberate violation the exit above demands.
+
+**The pin travels with the job, not ahead of it.** A pin file in master naming
+a snapshot no job reads, and which would fail if one did, is a file that lies
+about which snapshot is authoritative — and the change that adds the job is
+where it gets a real value anyway. The same reasoning moved the trigger set:
+`SNAPSHOT_DBT_TRIGGERS` with no job consuming it is dead config in
+`ci_change_scope.py`, the one file in this stage whose blast radius is every job
+in the workflow.
+
+#### The export DAG fails on a successful export
+
+**Found 2026-09-03, pre-flighting the first `ci`-tier run.**
+[`check_snapshot_result`](../../airflow/dags/export_ci_lake_snapshot.py) accepts
+only `{"created"}` as a non-dry-run success status. The exporter returns
+`"exported"`. A DAG-triggered export therefore publishes its archive and both
+pointers, and then fails the task.
+
+**Nothing caught it because the DAG has never run** — `airflow.dag_run` holds
+zero rows for `export_ci_lake_snapshot`, and both snapshots in production before
+this stage came from the `snapshot-worker` invocation `docker-compose.yml`
+documents. The stage's own pre-flight is the only reason it is not still waiting
+for whoever triggered the DAG first.
+
+**It is a Layer 1 instance of the rule this plan keeps rediscovering.**
+`tests/integration/airflow/test_export_ci_lake_snapshot_dag.py` seeds
+`{"status": "created"}` and asserts the checker accepts it — a status string the
+test author chose and the exporter never emits. Both halves of the contract are
+written in the same file, so the test passes forever and proves nothing. It
+belongs in *[a run that succeeds has done the work its success
+implies](../TESTING.md#specified-here-not-yet-asserted)*, and the general shape
+is worth naming: **a DAG-side checker keyed on a string a service returns needs
+one test that reads the string from the service**, not from the test.
+
+The repair is two lines and its test correction, and it is Part 2's rather than
+a stage of its own — Part 2 is already the change that makes the export routine
+instead of hand-run, so the DAG is the surface it lands on. Until it ships,
+exports run through `snapshot-worker` directly.
+
+#### The CI credential became Plan 173, not a stage here
+
+Wiring Part 1's download needed a bearer token in CI for the first time, which
+turned one shared string into a question about three callers — CI, a
+developer's laptop, and the Plan 112 MLflow rehearsal. The *format* half landed
+alongside this stage, because a credential format is cheapest to change while
+nothing automated depends on it. The *storage* half became
+[Plan 173](plan_173_machine_credential_lifecycle.md), which also records why
+OAuth2's `client_credentials` and GitHub Actions OIDC were rejected and
+deferred respectively.
+
+Recorded here only so the trail from this stage to that plan is not lost. The
+reasoning lives there and is deliberately not repeated.
+
 ### Stage 10b: CI's services are production's, in definition and in contents
 
 **What it is.** Three questions with one thesis — CI's services are not
@@ -978,6 +1062,41 @@ added reactively in `33b275e` is documentation, not a mechanism, and will drift
 again. Plan 139 scoped this as XS and warned that an XL plan should not hold a
 two-file fix hostage; giving it a numbered stage near the front settles that
 permanently.
+
+### Stage 13: every skip in CI is declared, or the run fails
+
+**Found 2026-09-04, closing Stage 10.** The run that proved the snapshot gate
+works reported `3622 passed, 1 skipped`, and the skip took a paragraph to
+explain — which is a paragraph nobody would have written if the number had not
+been quoted in a record entry.
+
+Measured across the whole run: **two skips, two jobs, two reasons, zero
+mechanisms.** `test_every_sha_a_recap_names_is_a_real_commit` skips because
+`actions/checkout@v4` clones at depth 1 and it needs real git history.
+`test_dictionary_compressed_objects_and_packed_members_are_both_readable` skips
+because `INTEGRATION_HTML_DICT_ID` is deliberately unset. Both are correct
+decisions. Both are held in place by prose — a docstring and a `ci.yml` comment
+— and a third would arrive the same way, silently.
+
+**`REQUIRE_LAYER_2_EXECUTION` is narrower than its name.** It fails a run on any
+skip in `tests/integration/sql/`, which is one suite in one job. The dictionary
+skip is in `tests/integration/shared/` and the recap skip is a Layer 0 test in
+the unit job; neither is in its reach. Its `pytest_terminal_summary` hook is the
+right mechanism sitting at the wrong scope.
+
+**The shape is `DORMANT_SUITES`, one level down.** That tuple made a deliberately
+unrun *suite* declare itself, with an assertion that fails when an undeclared one
+appears and a second that fails when a declared one starts running. The same two
+directions apply to a deliberately skipped *test*, and the second direction is
+the one that matters most here: a skip whose reason has stopped being true is
+exactly the drift this plan exists against.
+
+**Estimate: 1 point.**
+
+**Exit:** every skip observed in a CI run is named in a declared-skips registry
+with its reason and its condition; an undeclared skip fails the run; a declared
+skip that stops skipping fails too; and the hook covers every job rather than
+one suite. Demonstrated by an undeclared skip failing a run, not asserted.
 
 ## Success criteria
 
@@ -3586,3 +3705,71 @@ which is what made the comparison possible outside CI.
 **Ledger effect: three waivers deleted, none added.** `INLINE_SQL_WAIVERS` is
 16 → 15 and `SQL_LITERAL_WAIVERS` 23 → 21. Verified: 3,523 unit tests pass,
 ruff clean, all 24 contract mutations still caught.
+
+### Evidence — Stage 10, dbt builds against production-shaped data (CAR-54), 2026-09-04
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Neither describes CI's job set or which snapshot it
+reads, and both still say "More than 3,000 tests run in CI", which CI's
+`3622 passed, 1 skipped` satisfies.
+
+The one skip is `test_every_sha_a_recap_names_is_a_real_commit`, and it is
+declared rather than incidental: it resolves recap SHAs against real git
+history, `actions/checkout@v4` clones at depth 1, and the test detects the
+shallow repository and skips. Its docstring predicts exactly this and locates
+its value locally, in the run `plan-week` makes after writing a recap. Noted
+because a bare count hides it, and because nothing mechanical holds it there —
+`REQUIRE_LAYER_2_EXECUTION` fails a run on any skip in
+`tests/integration/sql/`, but this is a Layer 0 test in the unit job and
+outside that guard's reach. What stops one declared skip becoming three is the
+docstring, which is the same shape as the gaps this plan has been closing and
+is left open here deliberately: the fix is a general declared-skip rule, not
+something Stage 10 should grow.
+
+**The gate was shown failing on a production row, not asserted to.** The exit
+demanded a demonstration because a green build proves the instrument runs and
+says nothing about whether it can fail — the failure mode this plan is named
+after.
+
+Recipe, both runs on PR #358, job `dbt build against a production snapshot`,
+against pinned snapshot `adaptive-refresh-2026-09-04-002234`:
+
+- **Green** — run [33830401797](https://github.com/whitewalls86/new_car_tracker/actions/runs/33830401797).
+  `Done. PASS=251 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=251`, covering 7
+  incremental models, 12 table models, 4 views, 161 data tests and 66 unit
+  tests in 9.95s. The seed reported `postgres_rows_by_table:
+  {public.search_configs: 13, ops.tracked_models: 13}` with `postgres_skipped:
+  []`, so all six sources were populated and `--require-non-empty` had
+  something to check.
+- **Red** — run [33830916950](https://github.com/whitewalls86/new_car_tracker/actions/runs/33830916950),
+  identical but for one statement run against the seeded database between the
+  seed and the build:
+
+      UPDATE public.search_configs SET params = params - 'makes'
+      WHERE search_key = (SELECT min(search_key) FROM public.search_configs);
+
+  Result: `21 of 250 FAIL 1 not_null_stg_search_configs_make_slug`, "Got 1
+  result, configured to fail if != 0", `Done. PASS=214 WARN=0 ERROR=1 SKIP=36
+  NO-OP=0 TOTAL=251`. The 36 skips are downstream models declining to build on
+  a failed ancestor.
+
+**One statement, one failing test, one row.** The mutation was routed through
+`public.search_configs` deliberately rather than through a Parquet source: a
+violation dbt catches there also proves the two `postgres_scan()` sources are
+load-bearing, since a snapshot without them builds this same project green over
+an empty world. One run answers both questions.
+
+**`dbt model tests (real build)` stayed green on the red run**, which is the
+job-separation argument holding: the synthetic fixture in its reserved
+`obs_year=2099` partition and the production snapshot in real partitions are two
+datasets on two runners, and corrupting one did not reach the other.
+
+**161 dbt data tests ran against 808,069 production silver rows and found
+nothing** — no `unique` violation, no `not_null` violation, no cast failure, no
+duplicate join key anywhere in the pinned cohort. That is a result, not an
+absence of one: nothing had ever asked the question before.
+
+Two limits on what the green half proves, both already recorded in the stage
+above and neither retired by this run: the whole build took 9.95s because the
+cohort is 5,127 VINs against production's 313,291, and a fresh DuckDB file takes
+every incremental model's cold path where production builds incrementally.
