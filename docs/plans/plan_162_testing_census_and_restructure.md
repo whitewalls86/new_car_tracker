@@ -283,12 +283,70 @@ because a closed issue keeps the name it closed under. A suffix cost nothing and
 broke nothing, which is the argument the lettering
 [now generalises](#the-stage-letters-and-the-numbers-they-replace).
 
+### The remaining eight, ordered 2026-09-04
+
+The stages that closed were placed one at a time, by what unblocked what. The
+eight that remain were ordered together, once, on three constraints and one
+deadline: **U, X, S, T, W, Q, V, R.**
+
+**Stage U goes first because two later stages hand work to it, and it costs a
+point.** [Stage Q's fourth scoping
+decision](#four-decisions-taken-while-scoping-this-stage-2026-09-04) says its
+`docker compose config` guard *"must skip cleanly when `docker` is absent and be
+required in CI — which is exactly [Stage U]'s mechanism, and a dependency this
+stage should hand forward rather than solve locally"*, and Stage R's first piece
+runs after U precisely so it can read U's output instead of simulating it. Under
+the numbering, U sat after both of them. Putting it first is the third
+application of one argument this plan has already made twice — Stage C ahead of
+the stages it measures, Stage J ahead of L, M and N: **a guard that lands first
+is one the later stages get for free rather than one that has to sweep what they
+wrote.**
+
+**Stage X is second** because it is also a point, nothing in it is invented, and
+it retires the scoping compromise Stage T was carrying.
+
+**Stage S is third because it holds the only measurement that expires.** Its
+capture baseline must be taken while DuckDB is still authoritative, and a
+baseline taken after [Plan 125 Gate
+D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration) is not a
+baseline. Nothing else in the plan is lost by waiting. Plan 125 is build-order
+row 9 with Gate D two gates out, so two one-point stages ahead of S cost nothing
+— but that is room for U and X, not for V and R.
+
+**S's own exit bundles that deadline with a dependency pulling the other way**,
+and the stage should not start before deciding which half lands when. Capture is
+engine-local and cheap. The aggregation it also promises — an artifact and a
+gate job — is why CAR-79 was filed blocked on CAR-78: Stages Q and R are what
+settle how those jobs are defined. Taking the baseline early and letting the
+aggregation land with or after Q loses nothing, and it probably splits the
+stage.
+
+**Then T, which wants S's recorder**, and **W, which wants U's registry** — W's
+whole output is a declaration that something is deliberate, and U is what builds
+the shape such declarations take. **Then Q**, now holding U's skip mechanism.
+**Then V**, whose own issue warns it may turn production-gated: if a variable
+genuinely needs wiring into `docker-compose.yml`, only a deploy proves it
+arrived, which is a different risk class and does not belong on a critical path.
+**Then R**, for the three reasons its own section gives.
+
+**Two consequences outside this document, both acted on 2026-09-04.** CAR-78
+bundled Stages Q and R, because both were CI-infrastructure work on the same
+jobs. That stopped holding when Stage R's selector was cut — what remains of R
+is an instrument fix, a caching measurement and a docs-zone path — and the order
+now separates them by two positions. R left to **CAR-87**. CAR-81 bundled Stages
+U and V as one class, a declaration nothing enforces; the order puts them six
+positions apart, with U as the plan's `next`, so V left to **CAR-88**. Both new
+issues carry no estimate: their parents' points covered two halves each, and
+splitting a number is a judgement rather than arithmetic.
+
 ## Stages
 
 **`Order` is numbered and rewritten freely; `Stage` is lettered and never
-changes.** Stage R is the clearest case: it holds order 22 and the letter it was
-allocated, because [the CI cost census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md)
-moved it behind Stages S–X without making it a different stage.
+changes.** The 2026-09-04 reordering is what that buys: eight stages changed
+position and not one changed name, so every inbound reference still resolves.
+Stage R is the clearest case — it holds order 22 and the letter it was allocated,
+because [the CI cost census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md)
+moved it to the end without making it a different stage.
 
 | Order | Stage | Legacy | What it delivers | Closes | State | Issue |
 |---:|:---:|:---:|---|---|---|---|
@@ -306,18 +364,21 @@ moved it behind Stages S–X without making it a different stage.
 | 12 | [**M**](#stage-m-narrowed-and-g7-now-names-a-different-gap) | 8 | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | `done` | CAR-52 |
 | 13 | [**N**](#stage-n-the-dag-trees-sql-convention) | 9 | `airflow/dags` and the `.sql` convention | G12 | `done` | CAR-53 |
 | 14 | [**P**](#stage-p-dbt-builds-against-production-shaped-data) | 10 | dbt builds against production-shaped data | — | `done` | CAR-54 |
-| 15 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `next` | CAR-78 |
-| 16 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | The dbt testing contract, and what leaves the SQL census | G16 | `—` | CAR-79 |
-| 17 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `—` | CAR-80 |
-| 18 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `—` | CAR-81 |
-| 19 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-81 |
-| 20 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
-| 21 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either | — | `—` | CAR-83 |
-| 22 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-78 |
+| 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `next` | CAR-81 |
+| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either | — | `—` | CAR-83 |
+| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | The dbt testing contract, and what leaves the SQL census | G16 | `—` | CAR-79 |
+| 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `—` | CAR-80 |
+| 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
+| 20 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
+| 21 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-88 |
+| 22 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
 `blocked`, `done`, `canceled` — and exactly one stage carries `next`.
+**The stage sections below run in letter order, not work order**, so a stage is
+found by its name rather than by remembering where it sits today. `Order` is the
+only thing that says what comes next, which is the point of it being a column.
 
 **4 + 50 + 12 + 56 = 122**, from Stages B, F, H and L respectively. The stages
 account for the whole waiver list; no entry is left without a stage that deletes
@@ -1044,7 +1105,7 @@ old numbers. So Stages Q and R, as with G, J and K.
 
 ### Stage Q: CI's services are production's, in definition and in contents
 
-**Legacy:** Stage 10b · **Issue:** CAR-78 · **State:** `next`
+**Legacy:** Stage 10b · **Issue:** CAR-78 · **State:** `—`
 
 **What it is.** Three questions with one thesis — CI's services are not
 production's — approached from the definition, the contents and one named
@@ -1154,6 +1215,161 @@ building rather than now: whether CI adopts production's `shared_buffers=2GB` /
 also hosting DuckDB, a dbt build and an Airflow venv is not the VM those numbers
 were chosen for — and whether the unset variables arrive through a committed
 `.env.ci` or through defaults in the override file.
+
+### Stage R: CI selection, and the instrument that has to precede it
+
+**Legacy:** Stage 10c · **Issue:** CAR-87 · **State:** `—`
+
+**Rescoped 2026-09-04, and moved to run after Stage X.** The selector this
+stage was built around is cut. [The CI cost
+census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md) found that its
+premises describe a workflow that no longer exists: the wall clock is set by a
+single job (`schema-contracts`, 123s) and every other heavy job already
+finishes inside its shadow, so **skipping any subset that excludes that job
+saves exactly zero seconds**. Plan 139 Stage E requires "a benefit larger than
+runner variance" before a selector is promoted; the available benefit is 0–30s
+against ±10–20s of variance, so the rule cannot be satisfied at any precision
+the selector could reach. Runner minutes are not a second justification — the
+repository is public.
+
+**What the stage is now.** Three pieces, in order:
+
+1. **The instrument fix**, reduced to whatever [Stage U](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) has not already
+   supplied. The defect is real and unchanged —
+   `test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+   *directory* appears in a step's arguments, which is why 7 tests sat
+   deselected until a coverage number caught them. But the fix as scoped below
+   is a *static* reimplementation of pytest's own selection, and Stage U builds
+   a `pytest_terminal_summary` hook across every job that observes what actually
+   ran. Transcribing what a tool already knows is the same defect [Stage Q](#stage-q-cis-services-are-productions-in-definition-and-in-contents)
+   exists to remove from the services blocks. **This stage runs after Stage U so
+   it can read Stage U's output instead of simulating it.**
+2. **Install caching, measured before adopted.** 98 of `schema-contracts`' 123
+   seconds is infrastructure and dependency installs; the tests are 6. That is
+   the compressible number, and unlike selection a cache miss costs time rather
+   than correctness. Two candidates need measuring **both ways** rather than
+   assuming: the 27s Airflow venv, where restoring several hundred MB may cost
+   what installing it costs, and `setup-python`'s `cache: pip`, which caches
+   downloads rather than installs. Having rejected the selector on measured
+   grounds, this stage may not adopt caching on projected ones.
+3. **`.claude/skills/**/*.md` joins the docs zone.** Prose edits of 12 and 14
+   files are pulling the full heavy workflow, three dbt builds included, because
+   `.claude/` is not in `DOCS_PREFIXES`. This is the fail-open direction and
+   carries none of the risk the trigger sets were declined for.
+   `.claude/settings.json` stays out: one such merge paired it with
+   `tests/scripts/test_build_public_roadmap.py`, and hooks can change what runs.
+
+**What it drops, each with the condition that would revive it.** A flat no
+ossifies; these expire on checkable events.
+
+| Dropped | Why | Revisit when |
+|---|---|---|
+| The advisory impact selector | 0s available under the `max()` ceiling | The ceiling falls far enough that job-level skipping beats runner variance |
+| A trigger set for `dbt-models` | 57% of heavy runs would skip it, saving 0s; and narrowing an *existing* job suppresses evidence, unlike `snapshot-dbt` | Caching has promoted it to the critical path **and** Plan 125 Gate E has retired the dual-run, so its surface is stable |
+| Incremental-diff classification | The plan's own four conditions, against ~2 minutes that the census shows is nearer zero | Not on current evidence |
+| Content-addressed `docker-build` skipping | Called "the cheaper first win"; measures at 0s, since 96s sits under a 123s ceiling | Caching promotes `docker-build` to the critical path — which piece 2 above would do |
+
+**Why it runs last.** Three mechanisms, not a general caution. Stage U
+may subsume piece 1, as above. [Stage X](#stage-x-a-test-may-not-author-sql-either) creates a new SQL root with its
+own census — a path class no invocation rule can know about yet. [Stage T](#stage-t-exists-because-this-plan-grew-the-suite) may move the suite
+boundaries that piece 1's unit of analysis rests on.
+
+**Exit.** The invocation rule distinguishes a suite from a directory, built on
+Stage U's observation rather than a second implementation of it; the caching
+candidates are measured both ways and only the winners adopted; the docs zone
+covers `.claude/skills/**/*.md`; and each of the four dropped items carries its
+revisit condition in the record.
+
+**What it was scoped as**, kept below because the reasoning that produced the
+four drops is worth reading against what replaced it.
+
+**What it is.** Plan 139 Stage E's advisory impact selector, the two questions
+Stage G raised and declined, and — first — the instrument both of them need.
+
+**The instrument comes first, and the plan did not previously say so.**
+`test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+*directory* appears in a step's arguments. A directory is not a suite, and the
+rule cannot distinguish "this file runs in CI" from "the directory containing
+this file is named in a `run:` line", nor either from "this file sits in
+`tests/integration/` and needs nothing that makes it one".
+[Stage F found this](../evidence/plan_162_stage_F_evidence.md#a-unit-test-filed-as-an-integration-test-and-two-wrong-answers-before-the-right-one)
+and assigned it here. **A path-to-test-group selector cannot be built on top of
+an instrument that does not know which tests a step runs**, so this is a
+prerequisite rather than a companion, and the order inside the stage is: fix
+the instrument, build the advisory selector, then decide the two questions on
+top of it.
+
+**The selector stays advisory**, on Plan 139 Stage E's terms: record what it
+would have run, compare against every actual failure, and treat any failure
+outside the predicted set as evidence against promotion rather than an
+exception to allowlist. Promotion to job skipping requires a written observation
+window with zero unexplained misses and a benefit larger than runner variance.
+Plan 142's service graph is evidence for the selector and not the selector
+itself — production asks which live work depends on a service, CI asks which
+tests, images and environments can detect a changed path.
+
+**The two questions it inherits** are
+[below](#stage-p-inherits-a-question-stage-g-raised-and-declined): classifying
+the incremental diff rather than the cumulative one, which Plan 139 Stage E's own rule
+answers *not yet*, and content-addressed skipping for `docker-build`, which is
+a claim about content rather than about run history and is the cheaper first
+win.
+
+**Exit.** The invocation rule distinguishes a suite from a directory; an
+advisory selector emits its prediction on every full run without gating
+anything; and both inherited questions have a recorded decision.
+
+#### Stage P inherits a question Stage G raised and declined
+
+**Scoped 2026-09-01, from a question asked while reviewing Stage G's CI
+change. Recorded here rather than acted on, because it is Plan 139 Stage E's subject
+and Plan 139 Stage E already has a rule for it.**
+
+`ci_change_scope.py` classifies the **cumulative** PR diff — `base.sha` to
+`head.sha` — so a documentation commit pushed onto a PR that has already gone
+green re-runs the whole workflow, because the cumulative diff still contains
+the production paths verified two pushes ago. Classifying the *incremental*
+diff instead would skip it.
+
+**The saving is about two minutes** — PR #325's full workflow was 127s wall
+clock after Stage E. That is the number any design here has to beat, and it is
+small.
+
+**The cost is four conditions, not one diff.** A skip is only sound if all of
+them hold, and three of them are invisible when they do not:
+
+1. **The reference commit must be verified, not merely green.** The previous
+   push may itself have skipped the heavy jobs, so the reference has to be the
+   most recent ancestor where they actually concluded `success` rather than
+   `skipped` — an Actions API walk with `actions: read`, or a marker written
+   when heavy passes and read back later.
+2. **The base must not have moved.** `actions/checkout` builds
+   `refs/pull/N/merge` on a `pull_request` event, so the workflow tests
+   `merge(base, head)` and not `head`. If `master` advances between the
+   verified run and the new push, the merged tree differs even for a
+   documentation-only diff and the earlier verdict does not carry. This is the
+   dangerous one: green, fast, and not verifying the tree being merged.
+3. **Rebases and force-pushes must fail closed**, via an ancestry check rather
+   than a SHA equality that can match a commit no longer on the branch.
+4. **The selection logic needs its own tests**, in Python beside
+   `ci_change_scope.py` rather than in workflow shell, because it is riskier
+   than the path classification it would sit on top of.
+
+**Plan 139 Stage E's rule already decides this, and the answer is not yet.** Promotion
+to job skipping requires an observation window with zero unexplained misses and
+a benefit larger than runner variance; a false negative costs time and a false
+positive suppresses evidence. Incremental gating is a false-positive risk by
+construction. It also weakens exactly what Plan 139 Stage E told it not to: the current
+fast path's proof is strong *because* it is cumulative — "every changed path in
+this PR is under `docs/`" is a claim about a tree, and going incremental turns
+it into a claim about a chain of runs.
+
+**The cheaper target, if Stage P wants a win here first, is
+content-addressed skipping for `docker-build`** — key the build on a hash of
+the Dockerfiles, requirements and service sources and reuse the layer cache
+when it matches. That is a claim about content rather than about run history,
+so it carries none of the four conditions above, and `docker-build` is the job
+`promtail-config` waits on.
 
 ### Stage S answers a question Plan 161 did not ask
 
@@ -1337,7 +1553,7 @@ concluding nothing is not.
 
 ### Stage U: every skip in CI is declared, or the run fails
 
-**Legacy:** Stage 13 · **Issue:** CAR-81 · **State:** `—`
+**Legacy:** Stage 13 · **Issue:** CAR-81 · **State:** `next`
 
 **Found 2026-09-04, closing Stage P.** The run that proved the snapshot gate
 works reported `3622 passed, 1 skipped`, and the skip took a paragraph to
@@ -1374,7 +1590,7 @@ one suite. Demonstrated by an undeclared skip failing a run, not asserted.
 
 ### Stage V: a variable the environment documents reaches the service that reads it
 
-**Legacy:** Stage 14 · **Issue:** CAR-81 · **State:** `—`
+**Legacy:** Stage 14 · **Issue:** CAR-88 · **State:** `—`
 
 **Found 2026-09-04, deploying this plan's own change.** Stage P's credential
 work added `SNAPSHOT_DOWNLOAD_TOKENS` to `.env.example` and to
@@ -1572,12 +1788,14 @@ this plan's newest rule — a denominator fitted to what exists when it is writt
 will be wrong — so the detector is mutation-tested before it is trusted, not
 after.
 
-**Ordering: it must precede Stage T's SQL half, and does not.** The stage
-numbers carried the order here, so X ran after T, which would build shared
-helpers that X then converts to files — the [Stage F/G
-collision](#why-this-order) exactly. Resolved by scoping rather than
-renumbering: Stage T keeps the Python helpers, this stage takes the SQL, and
-neither waits on the other.
+**Ordering: it must precede Stage T's SQL half, and now does.** Under the
+numbering it ran after T, which would have built shared helpers that this stage
+then converted to files — the [Stage F/G collision](#why-this-order) exactly.
+That was resolved by scoping: T kept the Python helpers, this stage took the
+SQL, and neither waited on the other. **The 2026-09-04 reordering resolves it
+outright** — X is order 16 and T is order 18 — and the scoping split is kept
+anyway, because two stages that cannot collide are cheaper to reason about than
+two that merely do not.
 
 **Estimate: 1 point.** Unsized when the stage was opened, and settled by the
 paragraph above: nothing is invented here, five existing mechanisms are pointed
@@ -1592,161 +1810,6 @@ struck from `docs/TESTING.md` and from the reviewer skill, taking the split to
 8/3; test DDL has a recorded position; and the detector has been watched failing
 against a mutation of each shape it claims to catch. Demonstrated by an inline
 statement failing the suite, not asserted.
-
-### Stage R: CI selection, and the instrument that has to precede it
-
-**Legacy:** Stage 10c · **Issue:** CAR-78 · **State:** `—`
-
-**Rescoped 2026-09-04, and moved to run after Stage X.** The selector this
-stage was built around is cut. [The CI cost
-census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md) found that its
-premises describe a workflow that no longer exists: the wall clock is set by a
-single job (`schema-contracts`, 123s) and every other heavy job already
-finishes inside its shadow, so **skipping any subset that excludes that job
-saves exactly zero seconds**. Plan 139 Stage E requires "a benefit larger than
-runner variance" before a selector is promoted; the available benefit is 0–30s
-against ±10–20s of variance, so the rule cannot be satisfied at any precision
-the selector could reach. Runner minutes are not a second justification — the
-repository is public.
-
-**What the stage is now.** Three pieces, in order:
-
-1. **The instrument fix**, reduced to whatever [Stage U](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) has not already
-   supplied. The defect is real and unchanged —
-   `test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
-   *directory* appears in a step's arguments, which is why 7 tests sat
-   deselected until a coverage number caught them. But the fix as scoped below
-   is a *static* reimplementation of pytest's own selection, and Stage U builds
-   a `pytest_terminal_summary` hook across every job that observes what actually
-   ran. Transcribing what a tool already knows is the same defect [Stage Q](#stage-q-cis-services-are-productions-in-definition-and-in-contents)
-   exists to remove from the services blocks. **This stage runs after Stage U so
-   it can read Stage U's output instead of simulating it.**
-2. **Install caching, measured before adopted.** 98 of `schema-contracts`' 123
-   seconds is infrastructure and dependency installs; the tests are 6. That is
-   the compressible number, and unlike selection a cache miss costs time rather
-   than correctness. Two candidates need measuring **both ways** rather than
-   assuming: the 27s Airflow venv, where restoring several hundred MB may cost
-   what installing it costs, and `setup-python`'s `cache: pip`, which caches
-   downloads rather than installs. Having rejected the selector on measured
-   grounds, this stage may not adopt caching on projected ones.
-3. **`.claude/skills/**/*.md` joins the docs zone.** Prose edits of 12 and 14
-   files are pulling the full heavy workflow, three dbt builds included, because
-   `.claude/` is not in `DOCS_PREFIXES`. This is the fail-open direction and
-   carries none of the risk the trigger sets were declined for.
-   `.claude/settings.json` stays out: one such merge paired it with
-   `tests/scripts/test_build_public_roadmap.py`, and hooks can change what runs.
-
-**What it drops, each with the condition that would revive it.** A flat no
-ossifies; these expire on checkable events.
-
-| Dropped | Why | Revisit when |
-|---|---|---|
-| The advisory impact selector | 0s available under the `max()` ceiling | The ceiling falls far enough that job-level skipping beats runner variance |
-| A trigger set for `dbt-models` | 57% of heavy runs would skip it, saving 0s; and narrowing an *existing* job suppresses evidence, unlike `snapshot-dbt` | Caching has promoted it to the critical path **and** Plan 125 Gate E has retired the dual-run, so its surface is stable |
-| Incremental-diff classification | The plan's own four conditions, against ~2 minutes that the census shows is nearer zero | Not on current evidence |
-| Content-addressed `docker-build` skipping | Called "the cheaper first win"; measures at 0s, since 96s sits under a 123s ceiling | Caching promotes `docker-build` to the critical path — which piece 2 above would do |
-
-**Why it runs after S–X.** Three mechanisms, not a general caution. Stage U
-may subsume piece 1, as above. [Stage X](#stage-x-a-test-may-not-author-sql-either) creates a new SQL root with its
-own census — a path class no invocation rule can know about yet. [Stage T](#stage-t-exists-because-this-plan-grew-the-suite) may move the suite
-boundaries that piece 1's unit of analysis rests on.
-
-**Exit.** The invocation rule distinguishes a suite from a directory, built on
-Stage U's observation rather than a second implementation of it; the caching
-candidates are measured both ways and only the winners adopted; the docs zone
-covers `.claude/skills/**/*.md`; and each of the four dropped items carries its
-revisit condition in the record.
-
-**What it was scoped as**, kept below because the reasoning that produced the
-four drops is worth reading against what replaced it.
-
-**What it is.** Plan 139 Stage E's advisory impact selector, the two questions
-Stage G raised and declined, and — first — the instrument both of them need.
-
-**The instrument comes first, and the plan did not previously say so.**
-`test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
-*directory* appears in a step's arguments. A directory is not a suite, and the
-rule cannot distinguish "this file runs in CI" from "the directory containing
-this file is named in a `run:` line", nor either from "this file sits in
-`tests/integration/` and needs nothing that makes it one".
-[Stage F found this](../evidence/plan_162_stage_F_evidence.md#a-unit-test-filed-as-an-integration-test-and-two-wrong-answers-before-the-right-one)
-and assigned it here. **A path-to-test-group selector cannot be built on top of
-an instrument that does not know which tests a step runs**, so this is a
-prerequisite rather than a companion, and the order inside the stage is: fix
-the instrument, build the advisory selector, then decide the two questions on
-top of it.
-
-**The selector stays advisory**, on Plan 139 Stage E's terms: record what it
-would have run, compare against every actual failure, and treat any failure
-outside the predicted set as evidence against promotion rather than an
-exception to allowlist. Promotion to job skipping requires a written observation
-window with zero unexplained misses and a benefit larger than runner variance.
-Plan 142's service graph is evidence for the selector and not the selector
-itself — production asks which live work depends on a service, CI asks which
-tests, images and environments can detect a changed path.
-
-**The two questions it inherits** are
-[below](#stage-p-inherits-a-question-stage-g-raised-and-declined): classifying
-the incremental diff rather than the cumulative one, which Plan 139 Stage E's own rule
-answers *not yet*, and content-addressed skipping for `docker-build`, which is
-a claim about content rather than about run history and is the cheaper first
-win.
-
-**Exit.** The invocation rule distinguishes a suite from a directory; an
-advisory selector emits its prediction on every full run without gating
-anything; and both inherited questions have a recorded decision.
-
-#### Stage P inherits a question Stage G raised and declined
-
-**Scoped 2026-09-01, from a question asked while reviewing Stage G's CI
-change. Recorded here rather than acted on, because it is Plan 139 Stage E's subject
-and Plan 139 Stage E already has a rule for it.**
-
-`ci_change_scope.py` classifies the **cumulative** PR diff — `base.sha` to
-`head.sha` — so a documentation commit pushed onto a PR that has already gone
-green re-runs the whole workflow, because the cumulative diff still contains
-the production paths verified two pushes ago. Classifying the *incremental*
-diff instead would skip it.
-
-**The saving is about two minutes** — PR #325's full workflow was 127s wall
-clock after Stage E. That is the number any design here has to beat, and it is
-small.
-
-**The cost is four conditions, not one diff.** A skip is only sound if all of
-them hold, and three of them are invisible when they do not:
-
-1. **The reference commit must be verified, not merely green.** The previous
-   push may itself have skipped the heavy jobs, so the reference has to be the
-   most recent ancestor where they actually concluded `success` rather than
-   `skipped` — an Actions API walk with `actions: read`, or a marker written
-   when heavy passes and read back later.
-2. **The base must not have moved.** `actions/checkout` builds
-   `refs/pull/N/merge` on a `pull_request` event, so the workflow tests
-   `merge(base, head)` and not `head`. If `master` advances between the
-   verified run and the new push, the merged tree differs even for a
-   documentation-only diff and the earlier verdict does not carry. This is the
-   dangerous one: green, fast, and not verifying the tree being merged.
-3. **Rebases and force-pushes must fail closed**, via an ancestry check rather
-   than a SHA equality that can match a commit no longer on the branch.
-4. **The selection logic needs its own tests**, in Python beside
-   `ci_change_scope.py` rather than in workflow shell, because it is riskier
-   than the path classification it would sit on top of.
-
-**Plan 139 Stage E's rule already decides this, and the answer is not yet.** Promotion
-to job skipping requires an observation window with zero unexplained misses and
-a benefit larger than runner variance; a false negative costs time and a false
-positive suppresses evidence. Incremental gating is a false-positive risk by
-construction. It also weakens exactly what Plan 139 Stage E told it not to: the current
-fast path's proof is strong *because* it is cumulative — "every changed path in
-this PR is under `docs/`" is a claim about a tree, and going incremental turns
-it into a claim about a chain of runs.
-
-**The cheaper target, if Stage P wants a win here first, is
-content-addressed skipping for `docker-build`** — key the build on a hash of
-the Dockerfiles, requirements and service sources and reuse the layer cache
-when it matches. That is a claim about content rather than about run history,
-so it carries none of the four conditions above, and `docker-build` is the job
-`promtail-config` waits on.
 
 ## Success criteria
 
