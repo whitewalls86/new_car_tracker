@@ -410,6 +410,16 @@ effect and share no token -- so unlike G5, G15 and G17 there is no cheap
 derived check waiting to be written. The stage should say plainly whether it
 found one or whether it leaves prose behind, per success criterion 2.
 
+**Exit.** The duplication is re-measured against the same recipe that produced
+the table above, and every delta is recorded — including the ones that did not
+move. Shared test helpers replace the duplications that genuinely share intent;
+a duplication whose callers want different data is left alone and that decision
+is recorded rather than silently skipped. No read-back assertion becomes a
+`.sql` file. `tests/scripts/oneoff/` is untouched. And the stage states plainly
+whether it found a mechanical instrument for "two helpers do the same thing" or
+leaves prose behind: concluding that none exists is a permitted outcome,
+concluding nothing is not.
+
 ### Stage 11 answers a question Plan 161 did not ask
 
 **Added 2026-09-01.** [Plan 161](plan_161_testing_contract.md) asked what a
@@ -468,6 +478,34 @@ decided by Plan 125 Gate D2: under "serving extracts from Iceberg" they do,
 under "DuckDB as a non-authoritative Iceberg reader/cache" — which that plan
 currently calls the lower-risk first cut — they do not, and `duckdb_con`
 remains the correct fixture.
+
+**Exit.** Three clauses, one per thing this stage owns:
+
+1. **The dbt project's obligation is expressible and held.** The "enough"
+   table's derivation admits a non-package surface, or a second table does, so
+   the row no longer fails as a phantom. All 22 models have a dbt unit test —
+   the five that do not, gain one.
+2. **G16 is asserted.** `production_sql_files()` may shrink only when the change
+   names the dbt model that absorbed the statement; a silent shrink fails.
+   Demonstrated by a silent shrink failing, not asserted.
+3. **The execution recorder captures, and the cross-engine assertion does not
+   land here.** Capture records what text executed against which engine, and its
+   baseline is taken while DuckDB is still authoritative. Both known hard parts
+   are solved rather than noted: `.format()` templates record rendered but are
+   stored as templates, and the suites run in separate CI jobs, so aggregation
+   needs an artifact and a gate job. The cross-engine assertion is explicitly
+   **not** in this exit — it needs two live engines to design honestly and
+   belongs to [Plan 125 Gate D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration).
+
+**Clause 3 resolves an ambiguity in this section rather than contradicting it,
+and the resolution is recorded so it is not re-litigated.** "Scoped here and
+built later" above and "worth doing while DuckDB is still authoritative" two
+paragraphs down cannot both govern capture. The second wins, because it names a
+deadline the first does not: a baseline taken after Plan 125 Gate D is not a
+baseline, so deferring the cheap half is the one choice that cannot be undone.
+The cost is a visibly larger stage — a mechanism with two hard parts, a CI
+artifact and a gate job, not a specification — and that is a sizing problem
+where the alternative is an unobtainable measurement.
 
 ### Stage 6b was added by the failure this plan predicted
 
