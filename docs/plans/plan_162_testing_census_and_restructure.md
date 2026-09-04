@@ -263,7 +263,7 @@ of Stage F's 34 mocker waivers name files under `tests/scripts/` and
 `tests/integration/scripts/`, character for character, and `_assert_exactly`
 asserts both directions — so moving a test file breaks its waiver twice, once
 because the old subject has stopped existing and once because the new path is
-an unwaived violation. Running 5b first means rewriting ten waiver subjects
+an unwaived violation. Running Stage G first means rewriting ten waiver subjects
 that Stage F then deletes outright. Running it second costs nothing, because
 Stage F has already emptied the colliding set. No other waiver tuple names a
 `scripts/` path — `LAYER_2_WAIVERS` and `LAYER_NUMBER_WAIVERS` have none, and
@@ -276,10 +276,12 @@ against the cleaned denominator, which was the whole point of going early. The
 CI payoff is not delayed either: Stage E is the dbt job split, and the impact
 selector that reads the new prefix is Stage P.
 
-**It is numbered 5b rather than 6.** Inserting an integer renumbers five stages
-and invalidates two issues already filed against the old numbers — CAR-50 names
-Stage H and CAR-52 names Stage M in their titles. A letter costs nothing and
-breaks nothing.
+**It was numbered 5b rather than 6.** Inserting an integer would have renumbered
+five stages and invalidated two issues already filed against the old numbers —
+CAR-50 and CAR-52 still read `Stage 6` and `Stage 8` in their titles today,
+because a closed issue keeps the name it closed under. A suffix cost nothing and
+broke nothing, which is the argument the lettering
+[now generalises](#the-stage-letters-and-the-numbers-they-replace).
 
 ## Stages
 
@@ -597,9 +599,9 @@ lands first is one those stages get for free rather than one that has to sweep
 what they wrote. That is the same argument that put Stage C ahead of the stages
 it measures.
 
-**The letter is positional, not topical.** 6b has nothing to do with route
-coverage; it is numbered this way for the reason 5b was, and CAR-52 still names
-Stage M.
+**The old suffix was positional, not topical.** This stage has nothing to do
+with route coverage; it was numbered 6b for the reason 5b was, and CAR-52 — closed
+under the old namespace — still reads `Stage 8` in its title.
 
 **Exit.** The 22 `PLW1514` violations are resolved or explicitly waived, the production ones included; a mechanism fails on `(tmp_path / "a.md").write_text("—")` — the exact shape ruff cannot see — **or** the plan records why neither an AST rule nor a Windows runner is worth building; and success criterion 2 names precisely which part of G13's class remains unmechanisable rather than leaving the exception standing whole.
 
@@ -661,15 +663,15 @@ what stops the *next* unrelated failure in this path costing the same
 diagnosis, and finding 3 is the whole reason a passing deploy script is not
 sufficient evidence here.
 
-**It sits after 6b for 6b's own reason** — Stages M and N author more new
+**It sits after Stage J for Stage J's own reason** — Stages M and N author more new
 tests than the rest of the plan combined, and this is a guard those stages get
-for free rather than one that has to sweep what they wrote. **The letter is
-positional, not topical**, as it was for 5b and 6b.
+for free rather than one that has to sweep what they wrote. **The old suffix was
+positional, not topical**, as it was for Stages G and J.
 
-*Written on 2026-09-01 as "after 6b and before 7", by a deploy that did not
-know Stage L was in flight on another branch. Stage L completed the same day,
-so 6c gets 8 and 9 rather than 7, 8 and 9 — the argument is unchanged and the
-count is not.*
+*Written on 2026-09-01 as "after Stage J and before Stage L", by a deploy that
+did not know Stage L was in flight on another branch. Stage L completed the same
+day, so this stage gets Stages M and N rather than L, M and N — the argument is
+unchanged and the count is not.*
 
 #### Finding 3 was corroborated the same day, on the same endpoint
 
@@ -1038,7 +1040,7 @@ The numbering follows this plan's own precedent and the contract's exemption
 for it. Stages S and T are already allocated, and [Stage G's
 reasoning](#why-this-order) applies unchanged: inserting an
 integer renumbers later stages and invalidates issues already filed against the
-old numbers. So 10b and 10c, as with 5b, 6b and 6c.
+old numbers. So Stages Q and R, as with G, J and K.
 
 ### Stage Q: CI's services are production's, in definition and in contents
 
@@ -1571,8 +1573,8 @@ will be wrong — so the detector is mutation-tested before it is trusted, not
 after.
 
 **Ordering: it must precede Stage T's SQL half, and does not.** The stage
-numbers carry the order here, so 16 runs after 12, which would build shared
-helpers that 16 then converts to files — the [Stage F/G
+numbers carried the order here, so X ran after T, which would build shared
+helpers that X then converts to files — the [Stage F/G
 collision](#why-this-order) exactly. Resolved by scoping rather than
 renumbering: Stage T keeps the Python helpers, this stage takes the SQL, and
 neither waits on the other.
@@ -1617,8 +1619,8 @@ repository is public.
    is a *static* reimplementation of pytest's own selection, and Stage U builds
    a `pytest_terminal_summary` hook across every job that observes what actually
    ran. Transcribing what a tool already knows is the same defect [Stage Q](#stage-q-cis-services-are-productions-in-definition-and-in-contents)
-   exists to remove from the services blocks. **This stage runs after 13 so it
-   can read 13's output instead of simulating it.**
+   exists to remove from the services blocks. **This stage runs after Stage U so
+   it can read Stage U's output instead of simulating it.**
 2. **Install caching, measured before adopted.** 98 of `schema-contracts`' 123
    seconds is infrastructure and dependency installs; the tests are 6. That is
    the compressible number, and unlike selection a cache miss costs time rather
@@ -1787,8 +1789,8 @@ Three exceptions, stated here so they are decisions rather than omissions:
   someone running the suite where CI does not. It is the third instance of the
   class, which is enough of a pattern to stop treating each one as a one-file
   repair, so [Stage J](#stage-j-was-added-by-the-failure-this-plan-predicted)
-  now owns the class. **The exception stands only for the part 6b concludes it
-  cannot mechanise**, and 6b is required to say which part that is rather than
+  now owns the class. **The exception stands only for the part Stage J concludes
+  it cannot mechanise**, and Stage J is required to say which part that is rather than
   leaving it implied. What is already settled is that the obvious mechanism does
   not close it: `PLW1514` cannot see a `tmp_path / "name"` receiver, so the rule
   that looks like the answer would have passed this defect too.

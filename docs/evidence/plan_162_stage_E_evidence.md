@@ -232,7 +232,7 @@ the generated roadmap the landing page renders. Neither is Stage M's work and
 neither is in `public-surface-check`'s scope, which covers the two authored
 surfaces only. It is recorded because a published surface moved inside a PR
 reviewed as a testing change, and that is the shape worth noticing rather than
-the content, which was 6c's and correct.
+the content, which was Stage K's and correct.
 
 **One incidental finding.** `scripts/redeploy.sh` is `-rw-rw-r--` in the
 checkout, so `./scripts/redeploy.sh` is `Permission denied` and it has to be
