@@ -68,7 +68,13 @@ REQUIRED_REMOTE_SETTINGS = {
 #   2026-09-04  67  measured before any of this landed; `delete_branch_on_merge`
 #                   had never been on, so every merged head branch since the
 #                   repository's start was still there.
-MERGED_BRANCH_BUDGET = 67
+#   2026-09-04   5  after the one-time backfill swept 65 of them. The true
+#                   count is 2 -- both merged branches an active worktree is
+#                   sitting on, which the sweep deliberately left. The three
+#                   of headroom absorbs a merge landing between GitHub
+#                   deleting the head branch and this job reading the remote;
+#                   it does not absorb a regression, which is 13 a day.
+MERGED_BRANCH_BUDGET = 5
 BUDGET_SET_ON = "2026-09-04"
 
 

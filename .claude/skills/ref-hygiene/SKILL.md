@@ -57,6 +57,13 @@ propagation, it needs no coordination, and it beats a `post-checkout` hook,
 which fires on every rebase step and `worktree add`, needs network each time,
 and is not versioned with the repository.
 
+**What this looked like once it worked.** The settings went on and a one-time
+backfill removed the 65 merged branches no worktree held, on 2026-09-04:
+**69 remote refs became 4** — `master`, one genuinely unmerged branch, and two
+that active worktrees were sitting on. Three local branches immediately began
+reading `gone`, which is the same fact arriving on the other machine at its next
+fetch. Nothing has to run weekly to keep that true.
+
 **These settings are enforced, not merely recommended.**
 `scripts/verify_git_ref_hygiene_contract.py` runs in its own CI job against the
 live remote and fails the build if `delete_branch_on_merge` is off, or if squash
@@ -174,6 +181,14 @@ honest:
 Delete them individually. Do not pipe the list into `xargs`: a batch that fails
 halfway leaves you unsure which half ran, and there is nothing to inspect
 afterwards.
+
+**This is also the operation the harness permits.** Measured 2026-09-04:
+`git branch -D <one>` runs without a prompt, and a bulk
+`xargs … git push origin --delete` over 65 refs against the real remote was
+refused by the permission classifier. That is not an obstacle to work around —
+it is the same judgement the two rules above already encode, arriving from a
+second direction. A remote deletion is not this skill's to make; if one is ever
+genuinely needed, it is the user's command to run, not yours to batch.
 
 **Assume another agent is working in this checkout.** The repository already
 carries that rule for staging; it applies with more force to ref deletion, which

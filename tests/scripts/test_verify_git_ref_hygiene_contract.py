@@ -78,7 +78,7 @@ class TestAccretion:
         # A ratchet is only a ratchet if raising it is a visible edit. This
         # records the value so a silent bump shows up as a failing test in the
         # same diff that raised it.
-        assert MERGED_BRANCH_BUDGET <= 67, (
+        assert MERGED_BRANCH_BUDGET <= 5, (
             "MERGED_BRANCH_BUDGET is a ratchet and only ever shrinks. Raising it "
             "means the remote accreted refs again; fix that instead."
         )
