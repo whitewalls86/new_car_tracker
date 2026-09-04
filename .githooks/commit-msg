@@ -13,10 +13,29 @@ set -e
 msg_file="$1"
 subject="$(head -n 1 "$msg_file")"
 
+# Consuming the stamp belongs to *accepting* a message, not to one particular
+# reason for accepting it. Both accept paths below call this; the reject path
+# deliberately does not, so an author who fixes a wording can commit again
+# without re-invoking the skill.
+#
+# It used to live only in the second accept path, which meant a merge or a
+# revert exited above it and left the stamp behind -- and the next commit then
+# cleared scripts/commit_attribution_gate.py without the skill running at all.
+# That is exactly the "invoke once per session" hole this hook exists to close,
+# reintroduced through its own exemption. Measured 2026-09-04 against a real
+# merge commit.
+consume_stamp() {
+    # Unconditional: `rm -f` succeeds on a missing file, whereas a `[ -f ] &&`
+    # test returns 1 when there is no stamp and `set -e` would turn that into a
+    # rejected commit.
+    rm -f "$(git rev-parse --git-dir)/commit-attribution-stamp"
+}
+
 # Git composes these itself, or they are addressed to a commit that already
 # carries attribution.
 case "$subject" in
     Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *)
+        consume_stamp
         exit 0
         ;;
 esac
@@ -25,10 +44,7 @@ esac
 # the subject, or an explicit disclaimer. Any one of the three satisfies the
 # contract in .claude/skills/commit-plan-attribution/SKILL.md.
 if grep -Eqi '(^|[^a-z])plans?[ -][0-9]+|\(plan-[0-9]+\)|no plan[ ]*(--|—|-)' "$msg_file"; then
-    # Unconditional: `rm -f` succeeds on a missing file, whereas a `[ -f ] &&`
-    # test returns 1 when there is no stamp and `set -e` would turn that into a
-    # rejected commit.
-    rm -f "$(git rev-parse --git-dir)/commit-attribution-stamp"
+    consume_stamp
     exit 0
 fi
 
