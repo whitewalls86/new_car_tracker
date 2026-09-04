@@ -129,6 +129,7 @@ order:
 | **12** | `—` | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | — | -- |
 | **13** | `—` | [Every skip in CI is declared, or the run fails](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails) | — | — | -- |
 | **14** | `—` | [A variable the environment documents reaches the service that reads it](#stage-14-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | — | — | -- |
+| **15** | `—` | [A test may not supply both halves of a contract](#stage-15-a-test-may-not-supply-both-halves-of-a-contract) | — | — | -- |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -1192,6 +1193,61 @@ deleted, or declared; every remaining `.env.example` key is referenced by a
 compose file or declared script-only with its consumer; an undeclared unwired
 key fails; and a script-only declaration that stops being true fails.
 Demonstrated by an unwired key failing, not asserted.
+
+### Stage 15: a test may not supply both halves of a contract
+
+**Found 2026-09-04, closing Stage 10.** `check_snapshot_result` in the export
+DAG accepted only `{"created"}` as a successful non-dry-run status. The exporter
+returns `"exported"`. A DAG-triggered export would have published its archive
+and both pointers and then failed the task, and it went unnoticed for as long as
+it did because the DAG had never run.
+
+**The test was the reason it could survive being written.**
+`tests/integration/airflow/test_export_ci_lake_snapshot_dag.py` seeded
+`{"status": "created"}` itself and asserted the checker accepted it. Both halves
+of the contract were authored in one file, so the test passes for *any* string
+its author picks — including one no service emits. It was not a weak test of the
+right thing; it was a strong test of nothing.
+
+**The class is narrower than the rule it sits under, and that is what makes it
+reachable.** [*A run that succeeds has done the work its success
+implies*](../TESTING.md#specified-here-not-yet-asserted) is recorded as having no
+general form, and that is correct — "did this actually do the thing" is specific
+to each thing. But *this* has a signature: **production enumerates a closed set
+of values, and a test restates a member of that set as a literal rather than
+deriving it.** Status sets, scope names, enum members, state vocabularies. The
+same shape the `.sql` convention already solved for statements — defined once in
+production, read by the test rather than retyped.
+
+The repair for the instance is
+`tests/airflow/test_export_ci_lake_snapshot_statuses.py`, which reads the DAG's
+`acceptable` sets by AST and the exporter's `status=` literals by import, and
+fails when the DAG accepts a status the exporter cannot produce. Both its
+assertions were watched failing against the reintroduced bug. **That is one
+instance and no mechanism**, which is why this stage exists rather than the
+Record entry that named the shape being the end of it.
+
+**The stage may conclude that only the narrow form is reachable**, and should
+say so plainly rather than stretching for a general checker — the same licence
+[Stage 12](#stage-12-exists-because-this-plan-grew-the-suite) has. Enumerating
+"a closed set in production restated in a test" is a static question. Deciding
+whether an arbitrary fixture value should have come from somewhere is not, and a
+rule that tried would fail on correct code.
+
+**Three stages from one evening, all the same class.** Stages 13, 14 and this
+one were each found closing Stage 10, and each is a declaration held by prose
+that nothing enforces — a skip explained in a docstring, a variable documented in
+`.env.example`, a status agreed in a comment. That they arrived together is not a
+coincidence: the stage that closed was the one that asked what its own numbers
+meant.
+
+**Estimate: not sized.** Whether the narrow form is one rule or several is what
+the first measurement answers.
+
+**Exit:** the closed sets production enumerates and tests consume are
+identified; a test that restates a member as a literal rather than deriving it
+fails; and the stage states plainly which forms of the class the rule reaches
+and which it does not. Demonstrated by a restated literal failing, not asserted.
 
 ## Success criteria
 
