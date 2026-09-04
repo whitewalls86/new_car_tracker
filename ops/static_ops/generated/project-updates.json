@@ -23,24 +23,24 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
+      "plan": "175",
+      "title": "Commit gate bundling hole",
+      "order": 3,
+      "priority": 90,
+      "effort": "XS",
+      "state": "planned",
+      "summary": "A check holds a commit that edits this project's public copy until that change has been read against the rest of the repository. It only sees edits staged by an earlier command, so a commit that stages its own changes passes unread. This plan closes that hole.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_175_commit_gate_bundling.md"
+    },
+    {
       "plan": "164",
       "title": "Cycle-close ritual",
-      "order": 3,
+      "order": 4,
       "priority": 70,
       "effort": "S",
       "state": "planned",
       "summary": "Three steps of the routine that closes a work cycle — recording how the cycle actually went, rolling unfinished work forward, and tidying the branches left behind — have no owner today, and each is only ever correct at the close. This plan gives all three a home.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
-    },
-    {
-      "plan": "154",
-      "title": "Container log coverage",
-      "order": 4,
-      "priority": 70,
-      "effort": "S",
-      "state": "planned",
-      "summary": "Gets logs from the services that currently produce none into one searchable place, deciding service by service what is worth collecting before turning any of it on — so a failure in an unlogged component stops being invisible.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_154_container_log_coverage.md"
     }
   ],
   "completed": [
