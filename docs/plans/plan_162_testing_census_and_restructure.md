@@ -3669,3 +3669,71 @@ which is what made the comparison possible outside CI.
 **Ledger effect: three waivers deleted, none added.** `INLINE_SQL_WAIVERS` is
 16 → 15 and `SQL_LITERAL_WAIVERS` 23 → 21. Verified: 3,523 unit tests pass,
 ruff clean, all 24 contract mutations still caught.
+
+### Evidence — Stage 10, dbt builds against production-shaped data (CAR-54), 2026-09-04
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Neither describes CI's job set or which snapshot it
+reads, and both still say "More than 3,000 tests run in CI", which CI's
+`3622 passed, 1 skipped` satisfies.
+
+The one skip is `test_every_sha_a_recap_names_is_a_real_commit`, and it is
+declared rather than incidental: it resolves recap SHAs against real git
+history, `actions/checkout@v4` clones at depth 1, and the test detects the
+shallow repository and skips. Its docstring predicts exactly this and locates
+its value locally, in the run `plan-week` makes after writing a recap. Noted
+because a bare count hides it, and because nothing mechanical holds it there —
+`REQUIRE_LAYER_2_EXECUTION` fails a run on any skip in
+`tests/integration/sql/`, but this is a Layer 0 test in the unit job and
+outside that guard's reach. What stops one declared skip becoming three is the
+docstring, which is the same shape as the gaps this plan has been closing and
+is left open here deliberately: the fix is a general declared-skip rule, not
+something Stage 10 should grow.
+
+**The gate was shown failing on a production row, not asserted to.** The exit
+demanded a demonstration because a green build proves the instrument runs and
+says nothing about whether it can fail — the failure mode this plan is named
+after.
+
+Recipe, both runs on PR #358, job `dbt build against a production snapshot`,
+against pinned snapshot `adaptive-refresh-2026-09-04-002234`:
+
+- **Green** — run [33830401797](https://github.com/whitewalls86/new_car_tracker/actions/runs/33830401797).
+  `Done. PASS=251 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=251`, covering 7
+  incremental models, 12 table models, 4 views, 161 data tests and 66 unit
+  tests in 9.95s. The seed reported `postgres_rows_by_table:
+  {public.search_configs: 13, ops.tracked_models: 13}` with `postgres_skipped:
+  []`, so all six sources were populated and `--require-non-empty` had
+  something to check.
+- **Red** — run [33830916950](https://github.com/whitewalls86/new_car_tracker/actions/runs/33830916950),
+  identical but for one statement run against the seeded database between the
+  seed and the build:
+
+      UPDATE public.search_configs SET params = params - 'makes'
+      WHERE search_key = (SELECT min(search_key) FROM public.search_configs);
+
+  Result: `21 of 250 FAIL 1 not_null_stg_search_configs_make_slug`, "Got 1
+  result, configured to fail if != 0", `Done. PASS=214 WARN=0 ERROR=1 SKIP=36
+  NO-OP=0 TOTAL=251`. The 36 skips are downstream models declining to build on
+  a failed ancestor.
+
+**One statement, one failing test, one row.** The mutation was routed through
+`public.search_configs` deliberately rather than through a Parquet source: a
+violation dbt catches there also proves the two `postgres_scan()` sources are
+load-bearing, since a snapshot without them builds this same project green over
+an empty world. One run answers both questions.
+
+**`dbt model tests (real build)` stayed green on the red run**, which is the
+job-separation argument holding: the synthetic fixture in its reserved
+`obs_year=2099` partition and the production snapshot in real partitions are two
+datasets on two runners, and corrupting one did not reach the other.
+
+**161 dbt data tests ran against 808,069 production silver rows and found
+nothing** — no `unique` violation, no `not_null` violation, no cast failure, no
+duplicate join key anywhere in the pinned cohort. That is a result, not an
+absence of one: nothing had ever asked the question before.
+
+Two limits on what the green half proves, both already recorded in the stage
+above and neither retired by this run: the whole build took 9.95s because the
+cohort is 5,127 VINs against production's 313,291, and a fresh DuckDB file takes
+every incremental model's cold path where production builds incrementally.
