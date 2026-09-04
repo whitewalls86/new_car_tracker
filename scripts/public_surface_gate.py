@@ -80,8 +80,22 @@ def stamp_path() -> pathlib.Path:
 
 
 def hooks_installed() -> bool:
-    """Is the tracked ``pre-commit`` hook actually wired up in this clone?"""
-    return _git("config", "--get", "core.hooksPath").strip() == HOOKS_PATH
+    """Is the tracked ``pre-commit`` hook actually wired up in this clone?
+
+    Compared as a resolved path, not as a string. ``git config`` stores
+    whatever spelling it was handed -- an absolute path, ``./.githooks``, a
+    trailing separator -- and every one of those runs the same hook. An exact
+    string match calls the working ones uninstalled and refuses every commit,
+    which is how a gate teaches people to route around it.
+    """
+    configured = _git("config", "--get", "core.hooksPath").strip()
+    if not configured:
+        return False
+
+    top = pathlib.Path(_git("rev-parse", "--show-toplevel").strip() or ".")
+    # Git resolves a relative hooks path against the working tree root, which
+    # is where it runs hooks from. An absolute one survives the join unchanged.
+    return (top / configured).resolve() == (top / HOOKS_PATH).resolve()
 
 
 def check_staged() -> int:
