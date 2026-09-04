@@ -1,0 +1,31 @@
+#!/bin/sh
+# Plan 175 Stage A: the public-surface commit gate, run by git itself.
+#
+# Git runs a pre-commit hook after `-a` has staged, so the index this reads is
+# the index being committed. That is the entire point of it. The PreToolUse
+# hook it shares its code with runs *before* the command, so a commit that
+# stages its own changes -- `git add README.md && git commit`, or
+# `git commit -am` -- presented that one with an empty index and passed.
+#
+# Fails closed: if it cannot run the check, it does not let the commit through
+# claiming one happened. `git commit --no-verify` is the deliberate bypass.
+set -e
+
+gate="$(git rev-parse --show-toplevel)/scripts/public_surface_gate.py"
+
+if [ ! -f "$gate" ]; then
+    echo "public-surface gate: $gate is missing, so nothing checked this commit." >&2
+    echo "Restore it, or bypass deliberately with: git commit --no-verify" >&2
+    exit 1
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 "$gate" --pre-commit
+fi
+if command -v python >/dev/null 2>&1; then
+    exec python "$gate" --pre-commit
+fi
+
+echo "public-surface gate: no python interpreter found, so nothing checked this commit." >&2
+echo "Bypass deliberately with: git commit --no-verify" >&2
+exit 1
