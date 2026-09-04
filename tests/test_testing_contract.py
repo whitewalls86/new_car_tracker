@@ -62,6 +62,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.plugins.declared_skips import (
+    DECLARED_SKIP_CEILING,
+    DECLARED_SKIPS,
+    GATE,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = "docs/TESTING.md"
 WORKFLOW = ".github/workflows/ci.yml"
@@ -1699,12 +1705,18 @@ def test_every_pytest_invocation_in_ci_sets_pythonpath():
 
 @lru_cache(maxsize=None)
 def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
-    """The ``env:`` keys visible to one step -- its own, and its job's."""
+    """The ``env:`` keys visible to one step -- the workflow's, its job's, its own.
+
+    The workflow level was added by Plan 162 Stage U, which sets the
+    declared-skips gate there precisely so that a job nobody has written yet
+    inherits it. Reading only the two inner scopes would have reported every
+    step as ungated.
+    """
     document = yaml.safe_load(_read(WORKFLOW))
     for job in document["jobs"].values():
         if job.get("name") != job_name:
             continue
-        keys = list(job.get("env", {}))
+        keys = list(document.get("env", {})) + list(job.get("env", {}))
         for step in job.get("steps", []):
             if _step_name(step) == step_name:
                 keys += list(step.get("env", {}))
@@ -2091,6 +2103,163 @@ def test_the_coverage_number_the_unit_job_produces_is_consumed():
     assert not unmeasured, (
         f"pytest steps in {WORKFLOW} that set a coverage threshold without "
         f"measuring coverage: {unmeasured}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 9 -- every skip in a CI run is declared, and the gate that says so runs.
+#
+# The runtime half is ``tests/plugins/declared_skips.py``, which fails a run on
+# an undeclared skip, on a declared skip that stopped skipping, and on one that
+# skipped for something other than the condition it declares. What lives here
+# is the half a hook cannot check about itself: that the registry names real
+# tests, that it may not be used where a skip is inadmissible, that the gate
+# and the plugin registration are both still in place, and that the registry
+# only shrinks.
+# ---------------------------------------------------------------------------
+PLUGIN_MODULE = "tests.plugins.declared_skips"
+
+# The layers where no declaration is admissible at all. Layer 2 is the whole
+# list and the reason is the plan's origin: a Layer 2 test that skips executes
+# no SQL against a real engine, and the statement it covers is the one that
+# reached production unexecuted. ``REQUIRE_LAYER_2_EXECUTION`` used to say this
+# by naming ``tests/integration/sql/`` in that suite's own conftest, which made
+# it a fact about one path. Said as a layer it is derived from the contract's
+# headings through :func:`_layer_of`, so a second Layer 2 root is strict on the
+# day the contract declares it rather than on the day someone remembers.
+LAYERS_ADMITTING_NO_SKIP = frozenset({2})
+
+
+@lru_cache(maxsize=None)
+def _test_ids(relative: str) -> frozenset[str]:
+    """Every ``Class::function`` and bare ``function`` id defined in a test file."""
+    tree = ast.parse((REPO_ROOT / relative).read_text(encoding="utf-8"))
+    ids = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            ids.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    ids.add(f"{node.name}::{child.name}")
+    return frozenset(ids)
+
+
+def test_every_declared_skip_names_a_test_that_exists():
+    """A declaration that names nothing is a comment with a dataclass around it.
+
+    The nodeid is the join between the registry and the run, so a renamed or
+    deleted test has to fail here rather than quietly stop matching -- at which
+    point the entry would sit in the tuple describing a decision about a test
+    nobody can find, and the *real* skip, if it came back under the new name,
+    would read as undeclared and fail a run with no explanation attached.
+    """
+    missing = []
+    for entry in DECLARED_SKIPS:
+        path, _, test_id = entry.nodeid.partition("::")
+        if not (REPO_ROOT / path).is_file():
+            missing.append(f"{entry.nodeid} -- no such file")
+        elif test_id not in _test_ids(path):
+            missing.append(f"{entry.nodeid} -- {path} defines no {test_id}")
+    assert not missing, (
+        "DECLARED_SKIPS entries naming a test that does not exist:\n  "
+        + "\n  ".join(missing)
+        + "\nRename the entry with the test, or delete it."
+    )
+
+
+def test_no_declared_skip_sits_at_a_layer_that_admits_none():
+    """Retiring ``REQUIRE_LAYER_2_EXECUTION`` may not loosen Layer 2.
+
+    The general gate offers a door the suite-scoped hook did not: a skip there
+    used to be unconditionally fatal, and under a registry someone could make
+    one legal by adding four lines. This is the door being nailed shut for the
+    layer that needed it shut, in the one form that does not have to be
+    maintained -- :func:`_layer_of` reads the contract's own headings, so this
+    rule follows the contract rather than a path list beside it.
+
+    It fails at the registry rather than in the hook, which is deliberate: the
+    plugin loads in a job that installs three packages and must stay importable
+    with nothing but the standard library, and a rule read out of
+    ``docs/TESTING.md`` is not that.
+    """
+    layers = {
+        entry.nodeid: _layer_of((REPO_ROOT / entry.nodeid.split("::")[0]).parent)
+        for entry in DECLARED_SKIPS
+    }
+    inadmissible = sorted(
+        f"{nodeid} (Layer {layer})"
+        for nodeid, layer in layers.items()
+        if layer in LAYERS_ADMITTING_NO_SKIP
+    )
+    assert not inadmissible, (
+        f"these skips are declared at a layer that admits none "
+        f"{sorted(LAYERS_ADMITTING_NO_SKIP)}:\n  " + "\n  ".join(inadmissible)
+        + "\nA Layer 2 test that skips executes no SQL. Fix the fixture the "
+        "test depends on; there is no declaration for this."
+    )
+
+
+def test_every_pytest_step_runs_under_the_declared_skip_gate():
+    """Both halves, because either one alone is inert.
+
+    Nothing guarded ``REQUIRE_LAYER_2_EXECUTION``. It was one line of YAML, and
+    deleting it would have restored the blind spot with no test failing and no
+    reviewer prompted -- which is still true today of ``REQUIRE_DUCKDB``,
+    ``REQUIRE_MINIO`` and ``REQUIRE_AIRFLOW_SCHEMA``. So the general gate is
+    asserted from the workflow file itself, and loosening it now costs a diff
+    that touches this docstring.
+
+    The registration is the other half: with the gate set and no ``-p``, every
+    job passes having loaded no hook at all. ``docs-tests`` is why it is
+    ``addopts`` rather than a conftest -- it runs ``--noconftest``, and
+    ``pythonpath`` is what makes the module importable at the point ``-p``
+    resolves it, which is before the collection that would otherwise put the
+    repository root on ``sys.path``.
+    """
+    ungated = sorted(
+        f"{job}: {step}"
+        for job, step, _ in pytest_steps()
+        if GATE not in _step_env(job, step)
+    )
+    assert not ungated, (
+        f"pytest steps in {WORKFLOW} that do not run under {GATE}: {ungated}. "
+        f"The gate is set once at workflow level so that every job inherits "
+        f"it; a step this reports has shadowed or removed it."
+    )
+
+    config = tomllib.loads(_read("pyproject.toml"))["tool"]["pytest"]["ini_options"]
+    assert f"-p {PLUGIN_MODULE}" in config.get("addopts", ""), (
+        f"pyproject.toml no longer registers {PLUGIN_MODULE} through addopts, "
+        f"so {GATE} is set in every job and read in none of them."
+    )
+    assert "." in config.get("pythonpath", ()), (
+        f"pyproject.toml no longer puts the repository root on pythonpath, so "
+        f"`-p {PLUGIN_MODULE}` cannot import at plugin-registration time."
+    )
+
+
+def test_the_declared_skip_registry_only_ratchets_down():
+    """The ``--cov-fail-under`` idiom, pointed the other way.
+
+    A ceiling is what stops a third declaration being a quiet tuple append.
+    With one, adding a skip means moving a number that carries a comment, in
+    the same diff, and the number is the thing review argues about -- which is
+    the entire difference between a registry and a place to put things.
+
+    It fails in both directions for the same reason the waiver checks do: a
+    ceiling left above the real count is a budget nobody spent and everybody
+    may.
+    """
+    assert len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING, (
+        f"{len(DECLARED_SKIPS)} declared skips against a ceiling of "
+        f"{DECLARED_SKIP_CEILING}. Fix the cause, or make the case for raising "
+        f"the ceiling in the same diff."
+    )
+    assert len(DECLARED_SKIPS) == DECLARED_SKIP_CEILING, (
+        f"DECLARED_SKIP_CEILING is {DECLARED_SKIP_CEILING} and there are "
+        f"{len(DECLARED_SKIPS)} declared skips. A stage that removed one lowers "
+        f"the ceiling with it; headroom left behind is headroom that gets used."
     )
 
 

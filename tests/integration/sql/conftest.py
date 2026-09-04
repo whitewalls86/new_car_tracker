@@ -116,30 +116,3 @@ def airflow_metadata(cur):
             pytest.fail(reason)
         pytest.skip(reason)
     return cur
-
-
-def pytest_terminal_summary(terminalreporter):
-    """Fail the Layer 2 run if anything skipped, when CI says nothing may.
-
-    ``REQUIRE_DUCKDB`` and ``REQUIRE_AIRFLOW_SCHEMA`` each close one fixture's
-    skip. This closes the class: the next fixture someone adds will default to
-    skipping when its dependency is absent, because that is the courteous thing
-    to do locally, and it will silently subtract from the CI run the day its
-    dependency breaks. A suite whose job is executing production SQL against a
-    real engine has nothing to say when it does not run.
-    """
-    if not os.environ.get("REQUIRE_LAYER_2_EXECUTION"):
-        return
-    skipped = terminalreporter.stats.get("skipped", [])
-    if not skipped:
-        return
-    reasons = sorted({str(report.longrepr[2]) for report in skipped})
-    terminalreporter.section("Layer 2 execution required", red=True)
-    terminalreporter.write_line(
-        f"{len(skipped)} test(s) skipped while REQUIRE_LAYER_2_EXECUTION is set. "
-        "A skipped Layer 2 test executes no SQL, so this run proves nothing "
-        "about the statements it names:"
-    )
-    for reason in reasons:
-        terminalreporter.write_line(f"  {reason}")
-    terminalreporter._session.exitstatus = 1
