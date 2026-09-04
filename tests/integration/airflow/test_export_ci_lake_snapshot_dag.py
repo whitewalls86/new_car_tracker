@@ -75,7 +75,7 @@ def test_check_snapshot_result_coverage_failures_do_not_block_by_default(dag_mod
     payload = dag_module.build_snapshot_payload({})
     result = {
         "snapshot_id": "adaptive-refresh-x",
-        "status": "created",
+        "status": "exported",
         "archive_key": "k",
         "manifest_key": "m",
         "coverage_failures": ["relisted_vin: found 1, required 10"],
@@ -84,11 +84,11 @@ def test_check_snapshot_result_coverage_failures_do_not_block_by_default(dag_mod
 
 
 @pytest.mark.integration
-def test_check_snapshot_result_created_requires_keys(dag_module):
+def test_check_snapshot_result_exported_requires_keys(dag_module):
     payload = dag_module.build_snapshot_payload({})
     result = {
         "snapshot_id": "adaptive-refresh-x",
-        "status": "created",
+        "status": "exported",
         "archive_key": None,
         "manifest_key": None,
         "coverage_failures": [],
@@ -98,11 +98,11 @@ def test_check_snapshot_result_created_requires_keys(dag_module):
 
 
 @pytest.mark.integration
-def test_check_snapshot_result_created_passes_with_keys(dag_module):
+def test_check_snapshot_result_exported_passes_with_keys(dag_module):
     payload = dag_module.build_snapshot_payload({})
     result = {
         "snapshot_id": "adaptive-refresh-x",
-        "status": "created",
+        "status": "exported",
         "archive_key": "ci_snapshots/.../snapshot.tar.zst",
         "manifest_key": "ci_snapshots/.../manifest.json",
         "archive_bytes": 123,

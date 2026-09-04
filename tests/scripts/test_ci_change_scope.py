@@ -18,7 +18,7 @@ def _nul(paths):
         (
             "docs only: the documentation suite substitutes for the unit run",
             ["docs/PLANS.md", "docs/plans/plan_148.md"],
-            {"docs_tests": True, "unit": False, "heavy": False},
+            {"docs_tests": True, "unit": False, "heavy": False, "snapshot_dbt": False},
         ),
         (
             "a plan document and the summary it renders into: still docs only",
@@ -26,22 +26,22 @@ def _nul(paths):
                 "docs/plans/plan_138_public_surface_refresh.md",
                 "ops/static_ops/generated/project-updates.json",
             ],
-            {"docs_tests": True, "unit": False, "heavy": False},
+            {"docs_tests": True, "unit": False, "heavy": False, "snapshot_dbt": False},
         ),
         (
             "the generated projection alone is the docs zone, not a full run",
             ["ops/static_ops/generated/recaps/2026-08-30.html"],
-            {"docs_tests": True, "unit": False, "heavy": False},
+            {"docs_tests": True, "unit": False, "heavy": False, "snapshot_dbt": False},
         ),
         (
             "the generator is not its own output: changing it costs a full run",
             ["scripts/build_public_roadmap.py"],
-            {"docs_tests": False, "unit": True, "heavy": True},
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
         ),
         (
             "a sibling of the generated directory is not swept in",
             ["ops/static_ops/info.css"],
-            {"docs_tests": False, "unit": True, "heavy": True},
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
         ),
         (
             "oneoff only: lint and unit, nothing built and no database",
@@ -49,32 +49,52 @@ def _nul(paths):
                 "scripts/oneoff/reconcile_april_detail.py",
                 "tests/scripts/oneoff/test_reconcile_april_detail.py",
             ],
-            {"docs_tests": False, "unit": True, "heavy": False},
+            {"docs_tests": False, "unit": True, "heavy": False, "snapshot_dbt": False},
         ),
         (
             "docs + oneoff: the union, still nothing heavy",
             ["docs/PLANS.md", "scripts/oneoff/reconcile_april_detail.py"],
-            {"docs_tests": False, "unit": True, "heavy": False},
+            {"docs_tests": False, "unit": True, "heavy": False, "snapshot_dbt": False},
         ),
         (
             "one unclassified path drags the whole changeset to a full run",
             ["docs/PLANS.md", "ops/routers/deploy.py"],
-            {"docs_tests": False, "unit": True, "heavy": True},
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
         ),
         (
             "a production script is not spent, so it takes the full workflow",
             ["scripts/ci_change_scope.py"],
-            {"docs_tests": False, "unit": True, "heavy": True},
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": True},
         ),
         (
             "prefix, not substring: a sibling with the same stem is not swept in",
             ["scripts/oneoff_helpers.py"],
-            {"docs_tests": False, "unit": True, "heavy": True},
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
         ),
         (
             "an empty changeset is not a licence to skip anything",
             [],
-            {"docs_tests": False, "unit": True, "heavy": True},
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": True},
+        ),
+        (
+            "a model change is the snapshot build's own subject",
+            ["dbt/models/marts/mart_vehicle_snapshot.sql"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": True},
+        ),
+        (
+            "a migration changes the schema the two postgres_scan() sources read",
+            ["db/migrations/V037__something.sql"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": True},
+        ),
+        (
+            "bumping the pin runs the build the bump is about",
+            [".github/ci_lake_snapshot_pin.json"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": True},
+        ),
+        (
+            "a service the snapshot build never reads does not trigger it",
+            ["dashboard/queries.py"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
         ),
     ],
 )
@@ -108,15 +128,62 @@ def test_paths_in_neither_zone_can_never_narrow_the_run():
 
     Whatever else is in the changeset, one unclassified path must produce
     exactly the full-workflow answer -- not merely `heavy`, the whole row.
+
+    ``snapshot_dbt`` is excluded on purpose and is the one group this property
+    does not hold for: it is an allowlist, so an unclassified path leaves it
+    false rather than dragging it true. That direction is safe only because the
+    job is net-new -- see the module docstring for why an untaken gate can
+    suppress no evidence, and why the same argument does not license narrowing
+    ``unit`` or ``heavy``.
     """
     unclassified = "airflow/dags/scrape_listings.py"
+    expected = {name: value for name, value in FULL.items() if name != "snapshot_dbt"}
     for companions in (
         [],
         ["docs/PLANS.md"],
         ["scripts/oneoff/reconcile_april_detail.py"],
         ["docs/PLANS.md", "tests/scripts/oneoff/test_reconcile_april_detail.py"],
     ):
-        assert classify_from_nul(_nul([*companions, unclassified])) == FULL
+        classified = classify_from_nul(_nul([*companions, unclassified]))
+        assert {
+            name: value for name, value in classified.items() if name != "snapshot_dbt"
+        } == expected
+        assert classified["snapshot_dbt"] is False
+
+
+def test_a_trigger_path_runs_the_snapshot_build_from_inside_any_zone():
+    """The allowlist answers its own question regardless of the zone check.
+
+    The two decisions are independent, which is what stops a future widening of
+    the docs or oneoff zones from silently switching this gate off.
+    """
+    classified = classify_from_nul(
+        _nul(["scripts/oneoff/reconcile_april_detail.py", "dbt/models/sources.yml"])
+    )
+    assert classified["snapshot_dbt"] is True
+    # The trigger did not disturb the zone answer: the dbt path is unclassified
+    # for the other two groups, so they take the full run.
+    assert classified["heavy"] is True
+
+
+def test_every_snapshot_trigger_is_a_path_that_exists():
+    """A trigger naming a path that is not there gates on nothing.
+
+    The rename that moves `scripts/seed_lake_snapshot.py` and leaves this tuple
+    behind is silent otherwise: the job simply stops running for the change that
+    should have run it, and no test fails.
+    """
+    from pathlib import Path
+
+    from scripts.ci_change_scope import SNAPSHOT_DBT_TRIGGERS
+
+    repo_root = Path(__file__).resolve().parents[2]
+    missing = [
+        trigger.decode()
+        for trigger in SNAPSHOT_DBT_TRIGGERS
+        if not (repo_root / trigger.decode().rstrip("/")).exists()
+    ]
+    assert not missing, f"snapshot_dbt triggers name paths that do not exist: {missing}"
 
 
 def test_docs_only_supports_spaces_in_paths():
@@ -124,6 +191,7 @@ def test_docs_only_supports_spaces_in_paths():
         "docs_tests": True,
         "unit": False,
         "heavy": False,
+        "snapshot_dbt": False,
     }
 
 
@@ -144,19 +212,19 @@ def test_malformed_input_fails_closed(data):
     [
         (
             "docs/PLANS.md\0docs/plans/plan_148.md\0",
-            ["docs_tests=true", "unit=false", "heavy=false"],
+            ["docs_tests=true", "unit=false", "heavy=false", "snapshot_dbt=false"],
         ),
         (
             "scripts/oneoff/reconcile_april_detail.py\0",
-            ["docs_tests=false", "unit=true", "heavy=false"],
+            ["docs_tests=false", "unit=true", "heavy=false", "snapshot_dbt=false"],
         ),
         (
             "docs/PLANS.md\0scripts/oneoff/reconcile_april_detail.py\0",
-            ["docs_tests=false", "unit=true", "heavy=false"],
+            ["docs_tests=false", "unit=true", "heavy=false", "snapshot_dbt=false"],
         ),
         (
             "ops/routers/deploy.py\0",
-            ["docs_tests=false", "unit=true", "heavy=true"],
+            ["docs_tests=false", "unit=true", "heavy=true", "snapshot_dbt=false"],
         ),
     ],
 )

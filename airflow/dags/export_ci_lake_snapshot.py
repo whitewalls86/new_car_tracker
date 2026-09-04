@@ -80,12 +80,17 @@ def check_snapshot_result(result: Dict[str, Any], payload: Dict[str, Any]) -> No
     audit_sources = payload.get("audit_sources", False)
     dry_run = payload.get("dry_run", False)
 
+    # These three strings are the exporter's, not this module's. `SnapshotResult`
+    # returns "exported" on a successful non-dry-run; this checker accepted only
+    # "created" until 2026-09-03, so a DAG-triggered export would have published
+    # its archive and both pointers and then failed the task. Nothing caught it
+    # because the DAG had never run -- see Plan 162 Stage 10's record.
     if audit_sources:
         acceptable = {"audited"}
     elif dry_run:
         acceptable = {"planned"}
     else:
-        acceptable = {"created"}
+        acceptable = {"exported"}
 
     if status not in acceptable:
         raise RuntimeError(
@@ -93,8 +98,10 @@ def check_snapshot_result(result: Dict[str, Any], payload: Dict[str, Any]) -> No
             f"audit_sources={audit_sources} (expected one of {acceptable})"
         )
 
-    if status == "created" and (not result.get("archive_key") or not result.get("manifest_key")):
-        raise RuntimeError("created snapshot missing archive_key/manifest_key")
+    if status == "exported" and (
+        not result.get("archive_key") or not result.get("manifest_key")
+    ):
+        raise RuntimeError("exported snapshot missing archive_key/manifest_key")
 
 
 def _run_export(**context):
