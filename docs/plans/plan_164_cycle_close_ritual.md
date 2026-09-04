@@ -310,3 +310,148 @@ which includes the dangling-link check over all of `docs/`.
 
 Public surfaces: no mechanism, name or quantity either surface states was
 changed by this work.
+
+### Stage 1 — 2026-09-04
+
+[`.claude/skills/cycle-measures/`](../../.claude/skills/cycle-measures/SKILL.md)
+reads a cycle and proposes Plan 149's six measures. It writes that one table and
+nothing else — no `cycleId`, no issue, no other section.
+
+**The stage's stated precondition was wrong, and correcting it is what let the
+stage happen.** This plan scheduled it behind a closed cycle because it "needs a
+closed cycle to develop against". Recording an authoritative number needs one;
+building the skill does not, and the 47% undercount that motivated the rule came
+from a mid-cycle number being *written*, not read. The skill therefore carries a
+**provisional** mode that reads any cycle, labels every number provisional and
+refuses to write.
+
+**Validated against known-good rather than asserted.** Cycle 1 is closed and its
+column was written by hand on 2026-08-31, so it is a regression target. Eight of
+nine derivations reproduce it exactly — total and completed issues and points,
+rollover in both units, seeded issues, and issues added after start. The ninth,
+seeded *points*, derives 16 against 17 because CAR-6 carries no estimate at all:
+it was created 2026-08-24 and Fibonacci estimation was not enabled until the
+25th. Named in the skill rather than rounded away.
+
+**Running it against the live board then found two defects in the first draft.**
+Both are now encoded, and neither was visible from reasoning:
+
+- *The source depends on the mode, and getting it backwards undercounts both
+  ways.* On a closed cycle the history arrays are the truth and membership has
+  decayed — Cycle 1 answers with **23 issues, not the 25 it closed with**,
+  because Linear moved the rolled pair into Cycle 2. On an open cycle membership
+  is the truth and the arrays lag: Cycle 2's last daily rollup read 44 issues /
+  78 points against a live 48 / 84.
+- *`seeded issues` is exact only for the first cycle.* A cycle's `startsAt` is
+  the previous cycle's `endsAt`, so an issue rolled *in* was also created before
+  the start and `createdAt` cannot tell it from a seed. Cycle 2 carries two. The
+  clean Cycle 1 validation proved less than it looked, because Cycle 1 had no
+  predecessor.
+
+**Outstanding:** no measure has been recorded yet. Cycle 2 closes 2026-09-07 and
+is this skill's first authoritative write.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+### Stage 2 — 2026-09-04
+
+[`.claude/skills/roll-cycle/`](../../.claude/skills/roll-cycle/SKILL.md)
+establishes what a closing cycle leaves unfinished, reconciles it against what
+Linear already moved, and acts only on the remainder. It sets `cycleId` on
+approved issues and touches nothing else — no status, no estimate, no plan
+document.
+
+**The skill's first job is not to move anything.** Cycle 1 rolled CAR-17 and
+CAR-31 and nobody did anything: Linear moved both at `endsAt`. So the skill
+assumes the move already happened and verifies, rather than assuming it did not
+and duplicating it. Three outcomes per unfinished issue — already moved, the
+remainder, and *should not roll at all* — and the third is reported and never
+acted on, because cancelling an issue to improve a rollover number is the
+failure this measure would be most susceptible to.
+
+Amended on the same grounds as Stage 1: the standing rule governs the **write**,
+not the read, so this skill also carries a provisional mode that reports what
+*would* roll and changes nothing.
+
+**Exercised against the live board.** Cycle 2, read 2026-09-04 with three days
+left: **6 issues / 10 points would roll** — CAR-89 and CAR-31 soaking, CAR-79,
+CAR-81 and CAR-83 ready, and CAR-41 itself. Three issues were cancelled during
+the cycle (CAR-64, CAR-75, CAR-76, 4 points). Nothing was written, and the
+report carried the caveat that Cycle 1's last two days landed four plans, so a
+mid-cycle spill figure is a loose upper bound.
+
+**Outstanding:** nothing has been rolled. Cycle 2 closes 2026-09-07 and is this
+skill's first authoritative write.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+### Stage 3 — 2026-09-04
+
+[`scripts/audit_git_refs.py`](../../scripts/audit_git_refs.py) classifies every
+local branch, worktree and stash and deletes nothing;
+[`.claude/skills/ref-hygiene/`](../../.claude/skills/ref-hygiene/SKILL.md)
+proposes a set and performs only what is approved. Only `landed` authorises
+anything, and a failed or skipped fetch, or an unlistable pull-request state,
+collapses every verdict to `unknown`, which refuses.
+
+**Success criterion 4 is met by construction.**
+`tests/scripts/test_audit_git_refs.py` builds a real repository with a real
+remote holding a deliberate case per finding, in the shape Plan 158 Stage 3
+used:
+
+| Finding | What its constructed case proves |
+|---|---|
+| 1 — the trunk is `origin/master` | both directions: `git branch --merged master` **clears** a branch whose content exists nowhere else, and calls a landed branch unmerged |
+| 2 — ancestry is not the test | a patch replayed under a different SHA is `landed` by `git cherry`, unmerged by ancestry |
+| 3 — the only copy | no remote ref, and ahead-of-remote, both refuse; `0 0` is the verification, not a quiet `git push` |
+| 4 — safe to delete is not landed | pushed and verified and still `owed`, with its commits listed individually |
+| 5 — stashes | reported, never deletable, invisible to every `git branch` command |
+| 6 — protected refs | trunk, HEAD, worktree-held and open-PR head, with an identical unheld branch as the control |
+
+**The stage changed direction once, on a measurement, and the first design was
+wrong.** It was built as a cleanup ritual. Measured 2026-09-04: 69 remote
+branches, **67 already merged**, 0 open PRs — against 9 local branches, 7 held
+by worktrees. The accretion was never local, and its cause was one setting.
+`delete_branch_on_merge` was off, so a merged branch's remote ref survived, so
+no local branch could ever read `gone`, so the only detector left was the
+patch-id archaeology this stage had built.
+
+Applied: `delete_branch_on_merge` on; squash and rebase merging off (both land a
+PR with no merge commit, and that subject is the only permanent record of a
+branch name); `fetch.prune` and `push.autoSetupRemote` in `~/.gitconfig`. A
+one-time backfill then swept the 65 merged branches no worktree held: **69
+remote refs became 4**, and three local branches immediately began reading
+`gone` — the same fact that reaches the second machine at its next fetch, with
+no hook and nothing to remember.
+
+**Enforced, not merely recommended.**
+[`scripts/verify_git_ref_hygiene_contract.py`](../../scripts/verify_git_ref_hygiene_contract.py)
+runs in its own CI job against the live remote and fails on a settings
+regression or on merged branches climbing past a dated ratchet (67 → 5 after
+the sweep; the true count is 2). Local branch state is deliberately
+**unenforced**: a runner clones fresh and has one branch, so a test reading
+`git branch` would pass forever — the false green `docs/TESTING.md` names.
+
+Two further assertions landed here but hold **Stage 0's order, not this
+stage's refs**: `test_the_recap_series_has_no_interior_gap` and
+`test_the_recap_series_is_not_stale`. The week ending Sunday N is owed a recap
+by end of N+3, so CI turns red on the Thursday; the deadline is a pure function
+pinned by six rows rather than described in prose. Both were mutation-tested —
+removing `docs/recaps/2026-08-09.md` fails the first naming that Sunday,
+removing the two newest fails the second naming the date one is owed by.
+
+**Running it for real earned its place twice.** The first live run raised
+`UnicodeEncodeError` on the Windows console from one `→` in the worktree list,
+which every test had passed over; the report is ASCII now with an assertion
+holding it. The first run of the CI verifier found `allow_rebase_merge` still
+true, which the squash decision had missed.
+
+Verified by 53 tests across `tests/scripts/test_audit_git_refs.py` and
+`tests/scripts/test_verify_git_ref_hygiene_contract.py`; `pytest tests/ -m "not
+integration"`, 3698 passed; the documentation job, 52 passed; and the verifier
+green against the live remote.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Both surfaces mention branches only as code branches.
