@@ -1579,10 +1579,13 @@ helpers duplicate each other freely and should, because the plans that own them
 have archived.
 
 **The instrument this stage needs does not exist yet**, which is why it is
-scoped after Stage S rather than before it. "Two helpers do the same thing" is
-not a textual property -- `_seed` and `_insert_queue_row` may be identical in
-effect and share no token -- so unlike G5, G15 and G17 there is no cheap
-derived check waiting to be written. The stage should say plainly whether it
+scoped after [Stage X](#stage-x-a-test-may-not-author-sql-either) rather than
+before it. "Two helpers do the same thing" is not a textual property -- `_seed`
+and `_insert_queue_row` may be identical in effect and share no token -- so
+unlike G5, G15 and G17 there is no cheap derived check waiting to be written.
+The instrument that would answer it is the execution recorder, which records
+what text each helper actually executed; it was Stage S's until 2026-09-04 and
+is X's now, so this stage's dependency moved with it. The stage should say plainly whether it
 found one or whether it leaves prose behind, per success criterion 2.
 
 **Exit.** Scoped to the Python half; the SQL is Stage X's and is not re-measured
