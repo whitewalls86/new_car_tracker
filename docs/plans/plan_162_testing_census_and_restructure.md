@@ -130,6 +130,7 @@ order:
 | **13** | `—` | [Every skip in CI is declared, or the run fails](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails) | — | — | -- |
 | **14** | `—` | [A variable the environment documents reaches the service that reads it](#stage-14-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | — | — | -- |
 | **15** | `—` | [A test may not supply both halves of a contract](#stage-15-a-test-may-not-supply-both-halves-of-a-contract) | — | — | -- |
+| **16** | `—` | [A test may not author SQL either](#stage-16-a-test-may-not-author-sql-either) | — | — | -- |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -379,12 +380,16 @@ is written out **17 times**, across `tests/integration/processing/` and
 `SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid`
 nine times; `SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid` six.
 
-**These must not become `.sql` files.** A read-back assertion is the test's own
-half of the work, not a statement production issues, and `shared/sql/` feeds
+**~~These must not become `.sql` files.~~ Reversed by
+[Stage 16](#stage-16-a-test-may-not-author-sql-either), 2026-09-04**, and struck
+rather than deleted because the mechanism it names is right and only the
+conclusion was wrong. As written: a read-back assertion is the test's own half of
+the work, not a statement production issues, and `shared/sql/` feeds
 `production_sql_files()` -- filing one there would demand a Layer 2 test *for
 an assertion*, which is circular, and would inflate the production census with
-statements no service runs. The repair is a shared *test* helper, which is why
-this is its own stage and not a continuation of Stage 7.
+statements no service runs. **Every clause of that holds, and none of it requires
+the file to live in `shared/sql/`.** A separate root with its own census answers
+the circularity without keeping the exemption, which is what Stage 16 builds.
 
 **Why this is the same defect as G17 and not a tidiness exercise.** A seed
 `INSERT` written by hand inside a test is a statement that has to agree with
@@ -394,6 +399,15 @@ one keeps passing against whatever it seeds. `tests/` is exempt from the Layer 2
 census by design, and correctly so, because fixture seeds are not production
 SQL. That exemption is what makes this invisible: the rules this plan built all
 stop at the tests' own door.
+
+**That paragraph is Stage 16's thesis, written here first and scoped as
+duplication.** It states the drift exactly -- 96 statements that must agree with
+a schema, with no single definition and nothing that notices when 95 of them are
+found -- and then reaches for a shared helper, which removes the retyping and
+leaves the drift. **This stage keeps the half a file cannot answer**: the 55
+module-local seed helpers, the three `_seed` definitions, `_make_tar_zst` in
+three script modules. Two helpers doing the same thing is not a question a file
+answers, which is what the instrument note below is about. The SQL is Stage 16's.
 
 **Two things the stage must not do**, stated now so they are decisions rather
 than discoveries. It must not consolidate a fixture whose two callers want
@@ -411,12 +425,13 @@ effect and share no token -- so unlike G5, G15 and G17 there is no cheap
 derived check waiting to be written. The stage should say plainly whether it
 found one or whether it leaves prose behind, per success criterion 2.
 
-**Exit.** The duplication is re-measured against the same recipe that produced
+**Exit.** Scoped to the Python half; the SQL is Stage 16's and is not re-measured
+here. The helper duplication is re-measured against the same recipe that produced
 the table above, and every delta is recorded — including the ones that did not
 move. Shared test helpers replace the duplications that genuinely share intent;
 a duplication whose callers want different data is left alone and that decision
-is recorded rather than silently skipped. No read-back assertion becomes a
-`.sql` file. `tests/scripts/oneoff/` is untouched. And the stage states plainly
+is recorded rather than silently skipped. `tests/scripts/oneoff/` is untouched.
+And the stage states plainly
 whether it found a mechanical instrument for "two helpers do the same thing" or
 leaves prose behind: concluding that none exists is a permitted outcome,
 concluding nothing is not.
@@ -1219,6 +1234,15 @@ deriving it.** Status sets, scope names, enum members, state vocabularies. The
 same shape the `.sql` convention already solved for statements — defined once in
 production, read by the test rather than retyped.
 
+**That precedent is holed, and [Stage 16](#stage-16-a-test-may-not-author-sql-either)
+is the repair.** The `.sql` convention solved this for *production* statements.
+Test statements were exempted by [Plan 161 question
+3](plan_161_testing_contract.md#3-what-must-never-be-mocked), so a read-back
+assertion retyped inside a test is the very thing this stage is about, in the
+form this stage cites as already handled. Nothing here needs to wait on it —
+the closed-set form is independent and the repair above stands — but the
+sentence should not be read as saying the statement case is closed.
+
 The repair for the instance is
 `tests/airflow/test_export_ci_lake_snapshot_statuses.py`, which reads the DAG's
 `acceptable` sets by AST and the exporter's `status=` literals by import, and
@@ -1248,6 +1272,93 @@ the first measurement answers.
 identified; a test that restates a member as a literal rather than deriving it
 fails; and the stage states plainly which forms of the class the rule reaches
 and which it does not. Demonstrated by a restated literal failing, not asserted.
+
+### Stage 16: a test may not author SQL either
+
+**Added 2026-09-04, from a review of what the SQL contract actually guarantees.**
+The contract's claim is not that SQL *should* live in files. It is that SQL which
+does not live in a file cannot be green. That property is total for production
+statements and stops at `tests/`, and everything below follows from asking why.
+
+**The exemption was reasoned, and its premise no longer holds.** [Plan 161
+question 3](plan_161_testing_contract.md#3-what-must-never-be-mocked) settled that
+paraphrase detection is judgement rather than mechanism, for one stated reason:
+*fixture seeds are SQL in test files too*, and a checker that cannot tell a seed
+from a paraphrase fails on correct code. That is true and it is the whole
+argument. **If no SQL literal appears in a test file at all, the ambiguity has
+nothing to live in** — any SQL-shaped literal under `tests/` is a violation, and
+the rule stops needing judgement.
+
+**So this stage removes a judgement rule rather than adding a mechanical one.**
+The contract's split moves **7 mechanical / 4 judgement → 8 / 3**, and the rule
+that leaves is the one [Plan 161 flagged as reading mechanical and not being
+it](plan_161_testing_contract.md#7-what-does-the-agent-skill-check-and-what-can-it-not).
+`.claude/skills/testing-contract/SKILL.md` loses its fourth judgement rule in the
+same change; a skill that goes on refusing to certify something now asserted is
+the stale-waiver defect in prose.
+
+**The measurement already exists and belongs to
+[Stage 12](#stage-12-exists-because-this-plan-grew-the-suite)**, taken
+2026-09-01: **96 ad-hoc `INSERT` statements inside test modules**, **161 distinct
+read-back `SELECT`s**, 43 of them written more than once for **145 total
+retypings** —
+`SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid`
+seventeen times. Stage 12 read those as duplication and reached for a shared
+helper. A helper removes the retyping and leaves the drift: one definition that
+still has to agree with a schema, with nothing asserting that it does.
+
+**Nothing here needs inventing, which is why this is a stage.** Five mechanisms
+exist and are pointed at a second root: `shared.query_loader` loads it,
+`production_sql_files()` is the derivation pattern for the census, the Layer 2
+execution rule is the assertion shape, the waiver tuples are the ratchet, and
+[`verify_testing_contract_mutations.py`](../../scripts/verify_testing_contract_mutations.py)
+is how the new rule earns trust before it is believed.
+
+**The root is separate and its census is its own.** `tests/sql/` is loaded by the
+same loader and is **not** in `production_sql_files()`. That answers Stage 12's
+circularity objection without keeping the exemption: a read-back assertion is
+still not a production statement, still owes no Layer 2 test, and still does not
+inflate the production denominator — it is simply no longer a literal typed
+inside a test.
+
+**`PREPARE` is likely the right instrument for validating them.**
+`PREPARE stmt AS <sql>` parses and plans against the live catalogue of a
+Flyway-migrated Postgres, so a renamed column fails loudly with no rows written
+and nothing to clean up, and placeholders are native. It does not cover DDL and
+does not catch constraint violations, so the real executions still happen in the
+suites that own them; `PREPARE` is what schema-checks **every** test statement
+whether or not a test using it ran. Today a seed is only checked if its own test
+happens to execute — which is the same conditional coverage
+[G14](../TESTING.md#the-gap-list) found on the production side.
+
+**Two things to settle rather than discover.** Test DDL — temp tables and
+scaffolding created inside tests — is neither production DDL that Flyway owns nor
+a seed, and needs a stated position. And **the detector is itself an instrument
+with a hostile failure surface**: docstrings, log lines and fixture text all
+contain SQL keywords, and [G5's own measure](#stage-7-grew-two-gaps-while-closing-one)
+matched a `SELECT` inside `db_cursor`'s docstring. This plan's rule applies to
+this plan's newest rule — a denominator fitted to what exists when it is written
+will be wrong — so the detector is mutation-tested before it is trusted, not
+after.
+
+**Ordering: it must precede Stage 12's SQL half, and does not.** The stage
+numbers carry the order here, so 16 runs after 12, which would build shared
+helpers that 16 then converts to files — the [Stage 5/5b
+collision](#why-this-order) exactly. Resolved by scoping rather than
+renumbering: Stage 12 keeps the Python helpers, this stage takes the SQL, and
+neither waits on the other.
+
+**Estimate: not sized.** The first measurement is the census of SQL literals
+under `tests/`, and it sets the waiver list this stage drains.
+
+**Exit:** no SQL literal appears in any file under `tests/`; every statement they
+now hold lives under `tests/sql/`, loaded rather than typed, and is validated
+against a Flyway-migrated Postgres whether or not the test consuming it runs;
+the production census is unchanged in size by the move; judgement rule 4 is
+struck from `docs/TESTING.md` and from the reviewer skill, taking the split to
+8/3; test DDL has a recorded position; and the detector has been watched failing
+against a mutation of each shape it claims to catch. Demonstrated by an inline
+statement failing the suite, not asserted.
 
 ## Success criteria
 
