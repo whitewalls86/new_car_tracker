@@ -336,8 +336,7 @@ is an instrument fix, a caching measurement and a docs-zone path — and the ord
 now separates them by two positions. R left to **CAR-87**. CAR-81 bundled Stages
 U and V as one class, a declaration nothing enforces; the order puts them six
 positions apart, with U as the plan's `next`, so V left to **CAR-88**. Both new
-issues carry no estimate: their parents' points covered two halves each, and
-splitting a number is a judgement rather than arithmetic.
+issues carry 1 point: each parent held 2 across two halves, split one apiece.
 
 ## Stages
 
