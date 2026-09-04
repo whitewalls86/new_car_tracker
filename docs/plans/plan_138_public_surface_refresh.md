@@ -20,7 +20,7 @@ not started" a day after Stage 2 was deployed.
 | Stage | State |
 |---|---|
 | **0** | **Complete.** Both gates closed 2026-08-31 |
-| **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started, unblocked 2026-09-02 and redesigned 2026-09-03** — it now builds `/writings` as its own page of cards rather than a list inline on `/`, which makes it a route rather than a template section. Gate 1g's demonstration half is owed until Article D is written, and is recorded as such rather than closed |
+| **1** | **1a–1f and 1h complete and deployed.** 1c shipped as a skill and commit hook rather than the tests it specifies. **Gate 1h is met on both halves** — the "yes" landed at Stage 2's close and again at Stage 9's, and the "no" was re-run from the skill at Stage 4's close on 2026-09-04, replacing one run from recall. **1g moved to [Plan 174](plan_174_public_site_shape.md)** (CAR-76 canceled), taking Gate 1g's owed demonstration with it |
 | **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
 | **3** | **3b and 3c complete and deployed (CAR-68, PR #346)** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **The deploy was confirmed on 2026-09-03 against the live site**: `/` answers 200 with zero `cdn.` references in the markup and serves the full header set, including `img-src 'self' data:` — which is the constraint 1g's preview images now have to live inside. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
 | **4** | **Complete, and Gate 4 met in production 2026-09-04 (CAR-63).** Items 1–5 were already satisfied in `master` when the stage was opened — the "not started" this row used to read was itself the drift this plan is about. Gap P3 repaired with an anchor id; item 3 decided as met by the stale label. **Verifying the gate against production found two defects in the same field**: the stale threshold (900s) was shorter than the producer's hourly cadence, so the page called a healthy snapshot stale for 45 of every 60 minutes; and with that noise removed, the timestamp beside it proved to be a bucket *label* rendered as an end, understating freshness by an hour. Both fixed and deployed — measured live at 15:48Z (no `(stale)` on a 46.7-minute-old snapshot) and at 16:07:02Z (`datetime="2026-09-04T16:00:00Z"`, the bucket end) |
@@ -1683,7 +1683,7 @@ closeouts that moved a plan's row, which were the minority of them. Gate 1h's
 | Named step, in the taxonomy | `### Did this work move a public surface?`, quoting the question and citing `public-surface-check` as its source |
 | Three outcomes, including recording a "no" | The "no" has a literal one-line shape; "yes, and small" lands with the closeout and then trips the commit gate; "yes, and larger" is a `ticket-now` ticket |
 | "Never do" names silently editing a surface | Added, counting a skipped question — or one answered and not recorded — as the same failure one step earlier |
-| Demonstrated on a "no" **and** a "yes" | **Unmet.** See the two paragraphs below: the "no" was run from recall, and the "yes" is owed |
+| Demonstrated on a "no" **and** a "yes" | **Met.** Both halves have since run through the skill against a merged file. The **"yes"** landed twice — Stage 2's *"yes, and corrected in the slice"* (the canonical URL moved from `/info` to `/`, and `c80f494` fixed `README.md` in the same commit), which is exactly the instance the paragraphs below predicted; and Stage 9's *"yes, and small — and the first answer here was wrong"*, where the question caught a surface the diff did not touch. The **"no"** ran from the skill at Stage 4's close on 2026-09-04, replacing the recall-run one below. **This row read "Unmet" until 2026-09-04**, long after both had landed — a summary standing still while the record underneath it moved, which is the defect this plan is named for |
 
 **The step sits at Phase 2 position 3, before the plan-document edit**, because
 its answer becomes a line in that edit. Phase 3's write order gained the surface
@@ -1706,6 +1706,13 @@ minutes before this slice started, so its closeout ran without the step. The
 "yes" half is owed to the next closeout that answers yes; **Stage 2 (CAR-62) is
 the likely one**, since it moves the public root and the recap routes and both
 surfaces make claims about what is reachable and what requires authentication.
+
+**And it was — the prediction held.** Stage 2's close answered *"yes, and
+corrected in the slice"*, and Stage 9's answered *"yes, and small"* after first
+recording a "no" that the question itself overturned. The recall-run "no" was
+replaced at Stage 4's close on 2026-09-04, run from the skill against a merged
+file on a branch that did not author it. **Gate 1h is met on both halves**, and
+the exit row above went on reading "Unmet" for days after the fact.
 
 **What the question caught anyway, and the gap was narrower than "nobody
 knew".** Running it by hand surfaced that this closeout's `docs/PLANS.md` slice
