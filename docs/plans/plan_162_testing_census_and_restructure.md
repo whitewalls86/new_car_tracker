@@ -365,8 +365,8 @@ moved it to the end without making it a different stage.
 | 12 | [**M**](#stage-m-narrowed-and-g7-now-names-a-different-gap) | 8 | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | `done` | CAR-52 |
 | 13 | [**N**](#stage-n-the-dag-trees-sql-convention) | 9 | `airflow/dags` and the `.sql` convention | G12 | `done` | CAR-53 |
 | 14 | [**P**](#stage-p-dbt-builds-against-production-shaped-data) | 10 | dbt builds against production-shaped data | — | `done` | CAR-54 |
-| 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `next` | CAR-81 |
-| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `—` | CAR-83 |
+| 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `done` | CAR-81 |
+| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `next` | CAR-83 |
 | 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `—` | CAR-79 |
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `—` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
@@ -1601,7 +1601,7 @@ concluding nothing is not.
 
 ### Stage U: every skip in CI is declared, or the run fails
 
-**Legacy:** Stage 13 · **Issue:** CAR-81 · **State:** `next`
+**Legacy:** Stage 13 · **Issue:** CAR-81 · **State:** `done`
 
 **Found 2026-09-04, closing Stage P.** The run that proved the snapshot gate
 works reported `3622 passed, 1 skipped`, and the skip took a paragraph to
@@ -1762,7 +1762,7 @@ and which it does not. Demonstrated by a restated literal failing, not asserted.
 
 ### Stage X: a test may not author SQL either
 
-**Legacy:** Stage 16 · **Issue:** CAR-83 · **State:** `—`
+**Legacy:** Stage 16 · **Issue:** CAR-83 · **State:** `next`
 
 **Added 2026-09-04, from a review of what the SQL contract actually guarantees.**
 The contract's claim is not that SQL *should* live in files. It is that SQL which
@@ -2836,3 +2836,90 @@ Two limits on what the green half proves, both already recorded in the stage
 above and neither retired by this run: the whole build took 9.95s because the
 cohort is 5,127 VINs against production's 313,291, and a fresh DuckDB file takes
 every incremental model's cold path where production builds incrementally.
+
+### Stage U — every skip in CI is declared, or the run fails
+
+**Legacy:** Stage 13 · **Issue:** CAR-81 · **Closed:** 2026-09-04
+
+**Cost:** estimate 2 points on CAR-81, which was sized while it still carried
+Stage V; the stage section sized U alone at 1. Actual 1.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+**This closes the loop [Stage P's entry](#stage-p--dbt-builds-against-production-shaped-data)
+left open**, in the terms that entry set: it recorded one declared skip held in
+place by a docstring, noted that `REQUIRE_LAYER_2_EXECUTION` could not reach it,
+and said the fix was a general declared-skip rule rather than something Stage P
+should grow. `tests/plugins/declared_skips.py` is that rule.
+
+**The hook moved scope without changing shape.** The same
+`pytest_terminal_summary` mechanism now runs repo-wide under a workflow-level
+`REQUIRE_DECLARED_SKIPS`, failing an undeclared skip, a declared skip that was
+selected and did not skip, and one that skipped for text its declared
+`condition` does not match. It reports on green runs too, because a job where
+the plugin failed to load is otherwise indistinguishable from one where it was
+satisfied.
+
+**Registered through `addopts`, not a conftest, and that is forced rather than
+chosen.** `docs-tests` runs `pytest --noconftest` — it installs three packages
+and cannot import `tests/conftest.py` — and it is one of the two jobs holding a
+skip. `-p` loads through `--noconftest`; `pythonpath = ["."]` makes the module
+importable at plugin-registration time, before the collection that would
+otherwise put the repository root on `sys.path`.
+
+**`REQUIRE_LAYER_2_EXECUTION` is retired, and Layer 2 was kept absolute by
+deriving the rule rather than listing the path.** The general gate offers a door
+the suite-scoped hook did not: a Layer 2 skip used to be unconditionally fatal,
+and under a registry someone could make one legal in four lines.
+`test_no_declared_skip_sits_at_a_layer_that_admits_none` nails that door shut
+through `_layer_of`, which reads the contract's own headings — so a second Layer
+2 root is strict the day the contract declares it. A path list would have been a
+fresh instance of the enumeration
+[Stage N](#stage-n--the-dag-trees-sql-convention) deleted.
+
+**Nothing had guarded the variable it replaces.** `REQUIRE_LAYER_2_EXECUTION`
+was one line of YAML, and deleting it would have restored the blind spot with no
+test failing — still true of `REQUIRE_DUCKDB`, `REQUIRE_MINIO` and
+`REQUIRE_AIRFLOW_SCHEMA`, which the new gate check now covers as a side effect.
+Four checks stand behind the hook: every entry names a test that exists, none
+sits at a layer admitting none, the gate and the `-p` registration both survive,
+and `DECLARED_SKIP_CEILING` makes a third declaration move a number rather than
+append to a tuple. All four are in
+[`scripts/verify_testing_contract_mutations.py`](../../scripts/verify_testing_contract_mutations.py),
+28/28 caught.
+
+**Demonstrated across three runs on PR #374, not asserted:**
+
+- **Green** — [33914747213](https://github.com/whitewalls86/new_car_tracker/actions/runs/33914747213)
+  (`03553fb`). The hook reported in 9 pytest steps across 4 jobs. Both
+  declarations accepted for the condition each names — the recap skip in
+  `Unit tests (pytest)`, the dictionary skip in `Lake integration tests (MinIO)`.
+- **Red** — [33915286492](https://github.com/whitewalls86/new_car_tracker/actions/runs/33915286492)
+  (`fcec5ac`), one deliberately undeclared skip in
+  `tests/test_stage_u_demonstration.py`. `Unit tests (pytest)` failed alone;
+  eleven jobs stayed green; the summary read `3767 passed, 2 skipped, 662
+  deselected` with no `FAILED` line, and the step exited 1 on the `Declared
+  skips` section alone. **A skip is not a failure, which is why nothing noticed
+  before this stage.** The same section carried the refusal and an acceptance
+  together.
+- **Green again** — [33915566312](https://github.com/whitewalls86/new_car_tracker/actions/runs/33915566312)
+  (`7b8ea40`), the file deleted. Deleting rather than declaring is the
+  registry's intended move: fixing the cause is the default and a declaration is
+  the exception that has to be argued for.
+
+**The drift direction was demonstrated too, locally rather than in CI.**
+`PYTHONPATH=. REQUIRE_DECLARED_SKIPS=1 pytest --noconftest tests/test_planning_docs.py -q`
+on a full clone reports `1 declared skip(s) ran instead of skipping … (declared
+2026-09-04: shallow clone)` and exits 1 with 52 tests passing. CI cannot
+demonstrate it — every job clones at depth 1, so the condition is always true
+there — and this is the same invocation shape `docs-tests` uses, so it doubles
+as proof the plugin loads under `--noconftest`.
+
+**One job has still never run under the gate.**
+[`scripts/ci_change_scope.py`](../../scripts/ci_change_scope.py) makes
+`docs_tests` true only for a docs-only changeset, and all three runs were code
+changes, so `docs-tests` was skipped in each. The commit carrying this record
+entry is docs-only and is therefore the run that exercises it. That is why the
+plugin prints its accepted declarations rather than staying silent: for that
+job, the evidence is a green log rather than a watched failure.
