@@ -33,14 +33,14 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
     },
     {
-      "plan": "164",
-      "title": "Cycle-close ritual",
+      "plan": "154",
+      "title": "Container log coverage",
       "order": 4,
       "priority": 70,
       "effort": "S",
       "state": "planned",
-      "summary": "Three steps of the routine that closes a work cycle — recording how the cycle actually went, rolling unfinished work forward, and tidying the branches left behind — have no owner today, and each is only ever correct at the close. This plan gives all three a home.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
+      "summary": "Eighteen of the twenty-eight services running in production send their logs nowhere a person can search, so when one misbehaves the only record is inside the container. This plan decides which of them are worth collecting centrally, and measures what that would cost in log volume before switching any of them on.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_154_container_log_coverage.md"
     }
   ],
   "completed": [

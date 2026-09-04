@@ -434,7 +434,7 @@ _CONTRACT_PLAN = 172
 #   exactly that transition, so a new entry means the skill was bypassed. This
 #   is the ceiling that gets tested first: all five entries are pre-172 plans
 #   still live, and more will reach closeout.
-MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 38
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 37
 MAX_THE_CHECKS_WAIVERS = 5
 
 
@@ -452,13 +452,16 @@ class SectionWaiver:
     since: date = _SECTION_MEASURED
 
 
-# 43 live plans, of which: 4 already carry '## What this plan is for'
+# 43 live plans, of which: 5 already carry '## What this plan is for'
 # (162/134/138 were backfilled landing Stage D, because the published
 # build-order window required it; 164 was backfilled when Plan 172 archived and
 # promoted it into that window, which is also what paid the ceiling above down
-# from 39); 1, Plan 88, has no document at all and is named in
-# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 38 are waived below.
-# 4 + 1 + 38 = 43. Plan 172 itself is no longer counted here -- it archived
+# from 39; 154 was backfilled when Plan 164 left the build order for closeout
+# and promoted it into that window, which is the same mechanism again -- a
+# published-window boundary moves on its own when a row above it leaves);
+# 1, Plan 88, has no document at all and is named in
+# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 37 are waived below.
+# 5 + 1 + 37 = 43. Plan 172 itself is no longer counted here -- it archived
 # 2026-09-03 and left the live tables. Plans 117 and 163
 # are the two whose shape does not fit stages at all (an umbrella and a
 # register); the contract's own Design section names a waiver as the right
@@ -470,7 +473,7 @@ WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
     SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
     SectionWaiver(149), SectionWaiver(150), SectionWaiver(151), SectionWaiver(152),
-    SectionWaiver(154), SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
+    SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
     SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
     SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
     SectionWaiver(169), SectionWaiver(170), SectionWaiver(171),

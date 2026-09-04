@@ -1,5 +1,12 @@
 # Plan 154: Container Log Coverage
 
+## What this plan is for
+
+Eighteen of the twenty-eight services running in production send their logs
+nowhere a person can search, so when one misbehaves the only record is inside
+the container. This plan decides which of them are worth collecting centrally,
+and measures what that would cost in log volume before switching any of them on.
+
 ## Status
 
 **BUILD ORDER, written 2026-08-25.** Priority **70 (medium)**. Effort **S plus a

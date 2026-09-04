@@ -273,6 +273,46 @@ Unrelated despite the vocabulary overlap: Plan 142's "worktree" is a checkout on
 the production VM, not a `git worktree` on a developer machine. Named here so
 the next reader does not have to check.
 
+## The checks
+
+Both outstanding success criteria need one real cycle close, and Cycle 2 is the
+first that can supply one. Nothing here owes code: all four stages closed
+2026-09-04 with their `## Record` entries and CAR-41 is `Done`.
+
+**1 — Cycle 2's measures, recorded from a closed cycle.** Success criterion 2.
+
+- **Deployed:** `.claude/skills/cycle-measures/`, 2026-09-04.
+- **Watched:** Plan 149's `## Cycle measures` table, its Cycle 2 column, filled
+  by that skill in **final** mode, with any partial measure opening
+  `**Partial —**`.
+- **Due:** Cycle 2 ends 2026-09-07T05:00Z; the reading is taken at the close and
+  never before it.
+- **Receives the result:** a paragraph inside `### Stage 1 — 2026-09-04`, via
+  `note-evidence`.
+- **What would falsify it:** `seeded issues` coming out wrong rather than
+  partial. Cycle 2 is the first cycle with roll-ins — CAR-17 and CAR-31 — which
+  is precisely the case Cycle 1 could not exercise, so the clean Cycle 1
+  validation does not cover it.
+
+**2 — One close runs end to end, in the written order.** Success criterion 3.
+
+- **Deployed:** [`docs/planning/cycle_close_order.md`](../planning/cycle_close_order.md)
+  and all four skills, 2026-09-04.
+- **Watched:** that the eight steps run in the order the document gives, and
+  specifically that `docs/recaps/2026-09-06.md` exists before `ref-hygiene`
+  deletes anything.
+- **Due:** 2026-09-09, the recap deadline for the week ending 2026-09-06.
+- **Receives the result:** a paragraph inside `### Stage 0 — 2026-09-04`, via
+  `note-evidence`.
+- **What would falsify it:** a step turning out to be in the wrong place. The
+  order was derived from two rules rather than from having run it, and the first
+  real close is the only thing that tests that derivation.
+
+This plan's check 1 also feeds [Plan 149](plan_149_linear_execution_layer.md)'s
+own 2026-09-15 gate, which requires the Cycle measures table to hold real
+post-cycle reads for all three cycles. Plan 149 owns that gate; this plan owes
+it the Cycle 2 column.
+
 ## Record
 
 ### Stage 0 — 2026-09-04
