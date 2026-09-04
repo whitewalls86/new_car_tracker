@@ -1301,6 +1301,29 @@ def _headings(text: str) -> set[str]:
     }
 
 
+# The week ending Sunday N is owed a recap by end of N+3, so the assertion
+# below turns red on the Thursday. Named rather than inlined because the
+# failure message quotes the same number it asserts on.
+RECAP_GRACE_DAYS = 3
+
+
+def _oldest_acceptable_recap(today: date) -> date:
+    """The oldest window-end a recap set may stop at and still be current.
+
+    Pure and parameterised on ``today`` so the deadline itself can be asserted
+    rather than only documented -- the boundary is the whole design decision,
+    and a rule this shape is easy to get right in prose and wrong by a day in
+    code.
+    """
+    # The most recent Sunday strictly before today. A week ending today is not
+    # complete until today is over, so today never ends its own window.
+    last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
+    # Inside the grace window the newest recap may still be the *previous*
+    # Sunday's; past it, the week that just closed is owed one.
+    within_grace = (today - last_complete).days <= RECAP_GRACE_DAYS
+    return last_complete - timedelta(days=7 if within_grace else 0)
+
+
 def _recap_sundays() -> list[date]:
     """Every recap's window-end date, sorted. Filenames are the source."""
     return sorted(
@@ -1432,7 +1455,7 @@ class TestWeeklyRecaps:
             "skill; the window is that Monday through that Sunday."
         )
 
-    def test_the_recap_series_is_not_more_than_a_week_behind(self):
+    def test_the_recap_series_is_not_stale(self):
         """The forcing function: this goes red if the weekly ritual stops.
 
         **This test depends on the clock, deliberately**, which every other
@@ -1443,30 +1466,52 @@ class TestWeeklyRecaps:
         observe that without a clock. It is the one assertion here that cannot
         be made time-independent without ceasing to test anything.
 
-        **The grace is one full week.** The window closing on Sunday N may be
-        recapped any time up to Sunday N+7, and the failure arrives on the
-        Monday after that. So an ordinary Monday morning is never red, and a
-        genuinely skipped week always is. A zero grace would put CI red every
-        Monday until the recap landed; that is a different tradeoff, and it is
-        rejected here on purpose rather than left unconsidered.
+        **The deadline is the Wednesday after the window closes.** The week
+        ending Sunday N is owed a recap by end of N+3; the failure arrives on
+        the Thursday. That keeps an ordinary Monday and Tuesday green -- the
+        recap is written at the close, not the instant the week ends -- while
+        never letting a recap go more than half a week stale. A zero grace
+        would put CI red every Monday until the recap landed; a full week let
+        the record drift further than is useful.
         """
         days = _recap_sundays()
         assert days, "no recaps at all; the assertions below prove nothing"
 
         today = date.today()
-        # The most recent Sunday strictly before today. A week ending today is
-        # not complete until today is over, so today never ends its own window.
         last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
-        oldest_acceptable = last_complete - timedelta(days=7)
 
-        assert days[-1] >= oldest_acceptable, (
-            f"the newest recap is {days[-1].isoformat()}, and the last complete "
-            f"week ended {last_complete.isoformat()}. A recap is owed for every "
-            f"Sunday through {oldest_acceptable.isoformat()} at the latest. Run "
-            f"the plan-week skill. If a week is genuinely being skipped on "
+        assert days[-1] >= _oldest_acceptable_recap(today), (
+            f"the newest recap is {days[-1].isoformat()}, and the week ending "
+            f"{last_complete.isoformat()} was owed one by "
+            f"{(last_complete + timedelta(days=RECAP_GRACE_DAYS)).isoformat()}. "
+            f"Run the plan-week skill. If a week is genuinely being skipped on "
             f"purpose, that is a decision to write down in docs/recaps/, not a "
             f"threshold to raise."
         )
+
+    @pytest.mark.parametrize(
+        ("today", "stale_if_newest_is"),
+        [
+            # The week ending Sunday 2026-09-06 is owed a recap by Wednesday
+            # 2026-09-09. Each row is a day of the following week and the
+            # oldest recap that is still acceptable on it.
+            (date(2026, 9, 7), date(2026, 8, 30)),  # Monday   -- grace
+            (date(2026, 9, 8), date(2026, 8, 30)),  # Tuesday  -- grace
+            (date(2026, 9, 9), date(2026, 8, 30)),  # Wednesday -- last day of grace
+            (date(2026, 9, 10), date(2026, 9, 6)),  # Thursday -- the deadline has passed
+            (date(2026, 9, 11), date(2026, 9, 6)),  # Friday
+            (date(2026, 9, 13), date(2026, 9, 6)),  # Sunday, its own week not yet complete
+        ],
+    )
+    def test_the_deadline_lands_on_the_wednesday(self, today, stale_if_newest_is):
+        """The boundary asserted, not just described.
+
+        A grace expressed in prose is easy to state correctly and implement a
+        day out. These six rows pin it: Monday through Wednesday accept the
+        previous Sunday's recap, and from Thursday the week that just closed is
+        owed one.
+        """
+        assert _oldest_acceptable_recap(today) == stale_if_newest_is
 
     def test_the_recap_scan_actually_reads_recaps(self):
         """A scan that matches nothing passes forever.

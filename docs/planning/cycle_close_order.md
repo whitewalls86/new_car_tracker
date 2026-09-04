@@ -160,7 +160,7 @@ and it is worth being exact about which:
 |---|---|
 | `verify_git_ref_hygiene_contract.py`, in CI | the remote being reconfigured to accrete refs, from any machine |
 | `test_the_recap_series_has_no_interior_gap` | a week that was skipped and never noticed |
-| `test_the_recap_series_is_not_more_than_a_week_behind` | the weekly habit stopping, with one week of grace before it goes red |
+| `test_the_recap_series_is_not_stale` | the weekly habit stopping. The week ending Sunday N is owed a recap by end of N+3, so CI turns red on the Thursday |
 
 Nothing mechanises steps 1 through 5 or step 7. They write Linear and `docs/`
 state from judgements no test can make, and a check that asserted they had "run"
