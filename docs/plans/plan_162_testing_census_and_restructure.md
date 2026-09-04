@@ -1280,6 +1280,12 @@ The contract's claim is not that SQL *should* live in files. It is that SQL whic
 does not live in a file cannot be green. That property is total for production
 statements and stops at `tests/`, and everything below follows from asking why.
 
+This stage came from a conversation rather than an incident or a sweep, so its
+reasoning — the prior-art comparison that prompted it, the affordance/enforcement
+distinction it rests on, and the two positions argued and abandoned on the way —
+is recorded in
+[`docs/evidence/plan_162_stage_16_origin_2026-09-04.md`](../evidence/plan_162_stage_16_origin_2026-09-04.md).
+
 **The exemption was reasoned, and its premise no longer holds.** [Plan 161
 question 3](plan_161_testing_contract.md#3-what-must-never-be-mocked) settled that
 paraphrase detection is judgement rather than mechanism, for one stated reason:
