@@ -26,6 +26,47 @@ Three things carry this contract, and they are meant to be the same contract:
 | For a coding agent | [`.claude/skills/public-surface-check/`](../.claude/skills/public-surface-check/SKILL.md) | Plan 138 / CAR-56 |
 | For the commit gate | [`scripts/public_surface_gate.py`](../scripts/public_surface_gate.py) | Plan 138 / CAR-56 |
 
+### What guards each published surface
+
+**Seven things reach a stranger, and they are not guarded the same way.**
+Written down by Stage 10 because the gate covers two of them and the previous
+version of gap P4 left the other five reading as though they were unowned.
+
+| # | Published surface | Guarded by | Kind |
+|---:|---|---|---|
+| 1 | `README.md` | `public_surface_gate.py` | **cannot be forgotten** |
+| 2 | `ops/templates/info.html` | `public_surface_gate.py` | **cannot be forgotten** |
+| 3 | a plan document's `## What this plan is for` | the `plan-draft` skill, which authors it | remembered |
+| 4 | a plan document's `## Public summary` | the `close-out` skill, which authors it | remembered |
+| 5 | a `docs/PLANS.md` row, and the archive Description | the `plans` skill, when `--check` says the artifact moved | remembered |
+| 6 | `project-updates.json` | its generator and `--check` | derived — cannot disagree with its source |
+| 7 | the generated recap pages | their generator and `--check` | derived — cannot disagree with its source |
+
+Three notes, each of which was learned rather than assumed:
+
+- **Surfaces 6 and 7 need no claim check.** They are projections; a claim in
+  them is a claim in `docs/PLANS.md` or `docs/recaps/`, and `--check` fails the
+  build if the projection drifts from its source. Guarding them would be
+  guarding the same sentence twice.
+- **Surfaces 3, 4 and 5 are guarded at the moment of authoring, not the moment
+  of commit**, and the trigger for 5 is that `build_public_roadmap.py --check`
+  reports the artifact stale. That is the only reliable signal an edit reached
+  the page: the published window's boundary moves on its own, so an insert that
+  renumbers can carry a plan across it with nobody editing that plan's row.
+- **A remembered check is weaker than the gate, and that is the residue gap P4
+  records.** It is affordable only because each of those three sections has
+  exactly one sanctioned author, and because `docs/PLAN_DOCUMENT.md` freezes
+  `## What this plan is for` against casual editing. A hand-edit that bypasses
+  the authoring skill is already a contract violation on its own terms.
+
+**Presence is enforced in CI; content is not.** `tests/test_planning_docs.py`
+holds both published windows to their sections with **no waiver permitted**, and
+`test_no_waiver_covers_a_published_plan` fails when a plan on a waiver list
+enters the published window — telling the author to write the section and drop
+the waiver. None of those assertions reads what the sentence says. That is what
+the authoring-time checks above are for, and why CI passing is not evidence a
+published claim is true.
+
 **There is no fourth row, and `docs/TESTING.md` has one.** No CI job asserts
 anything in this document. See [Specified here, not yet
 asserted](#specified-here-not-yet-asserted); it is the largest structural
@@ -261,7 +302,7 @@ entry, and no inbound link — in that order.
 | `/` | The explanation of the system, for someone who arrived with no context | page | README, external links |
 | `/recaps` | The long-form account of what happened, week by week | page (index) | **nothing** — [P2](#the-gap-list); Plan 138 Stage 1g gives it a door from `/` |
 | `/recaps/YYYY-MM-DD` | One week's record | page | its index |
-| The live stats block | What the system is doing right now | section of `/` | **nothing; it has no anchor id** — [P3](#the-gap-list) |
+| The live stats block | What the system is doing right now | section of `/`, anchored at `#live-stats` | the page it sits in; the anchor makes it linkable from elsewhere, added by Plan 138 Stage 4 |
 | `/dashboard` | The application a granted role grants | page, `viewer`+ | **nothing** — [P1](#the-gap-list) |
 | `/request-access` | The way to ask for a role | page, Google-authenticated | `/` hero and footer |
 | `/writings` | The author's own account of the work, in their own register | page (cards, linking out) | **not yet built** — Plan 138 Stage 1g gives it a door from `/` |
@@ -321,8 +362,7 @@ fixed elsewhere. An entry is deleted when it is repaired, not marked closed.
 |---|---|---|
 | P1 | **`/dashboard` is linked from no public surface.** `ops/templates/info.html` has no `<nav>` and mentions the route nowhere; its only calls to action are `/request-access`, at the hero and the footer. A visitor who requests access, is granted a role, and returns has no path to the thing they were granted | Plan 138, deferred navigation stage |
 | P2 | **`/recaps` has a canonical route, a sitemap entry, and no inbound link.** The landing page's only recap mention resolves to GitHub | Plan 138 Stage 3d / D1 |
-| P3 | **The live stats section carries no anchor id**, so nothing can link to it — including the roadmap section directly above it | Plan 138 Stage 4 |
-| P4 | **The commit gate covers two of five public surfaces.** `public_surface_gate.py` fires on `README.md` and `ops/templates/info.html`; the generated artifacts and the `docs/PLANS.md` build-order row are outside it. The row is covered instead by the `plans` skill, which knows it is publishing; the generated artifacts by their sources and their `--check`. **Stage 9 added a sixth thing to this list rather than removing one**: a planned row's published sentence is now a plan document's `## What this plan is for`, so a plan document is public copy and is outside the gate too — covered only by `tests/test_planning_docs.py`, which holds the published window to the section's presence and its cap but reads nothing in it | Plan 138 |
+| P4 | **Seven things are published; the commit gate holds two of them.** Narrowed by Stage 10 (2026-09-04) from an unowned "two of five" to a stated division of labour, because the gate was never going to cover all seven and pretending otherwise hid which ones had nothing. See [what guards each surface](#what-guards-each-published-surface) below. What remains, stated rather than closed: the four surfaces outside the gate are held by **remembered** checks in their authoring skills, not by a mechanism that cannot be forgotten — Stage 1c's own standard — and **the gate itself is a `PreToolUse` hook on `Bash`, so it holds an agent's commits and not one typed in a terminal.** Both are accepted, and both are why this entry stays open rather than being deleted | Plan 138 Stage 10 |
 | P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/writings` | Plan 138 Stage 1g |
 
 ---

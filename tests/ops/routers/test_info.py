@@ -52,6 +52,21 @@ class TestInfoEndpoint:
         assert "Last pipeline run" not in response.text
         assert "2026-08-18T17:00:00Z" in response.text
 
+    def test_the_live_stats_section_can_be_linked_to(self, mock_client, mocker):
+        """Gap P3: the section had no anchor id, so nothing could point at it.
+
+        An id is what makes it a destination rather than a passage of the page.
+        Whether anything links it is Plan 174 Stage E's exit, not this one's.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=_presentation({"active_listings": 500}),
+        )
+
+        response = mock_client.get("/")
+
+        assert '<section id="live-stats">' in response.text
+
     def test_partial_snapshot_returns_200_and_omits_missing_fields(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",

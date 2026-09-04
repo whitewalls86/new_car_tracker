@@ -129,12 +129,42 @@ as approved. Do not run `tests/test_planning_docs.py` or
 and after-every-operation checks; running a parallel copy here only invites the
 two to disagree.
 
+## Check the section you just published
+
+`## What this plan is for` is **a public surface**. Since Plan 138 Stage 9 the
+landing page's planned rows publish it verbatim, and Stage 7 means it reaches
+`https://cartracker.info/` on the next `git pull` — no deploy, no review step,
+nothing between this file and a stranger reading it.
+
+So after writing it, **run the `public-surface-check` skill against it** before
+reporting. One sentence, one question: is every claim it makes about the system
+true of the repository as it stands? A plan is drafted at the moment its author
+knows least about the work, which is exactly when a confident wrong sentence
+gets written.
+
+**This is a remembered check, not an enforced one, and that is a real
+weakening** worth stating rather than glossing. `scripts/public_surface_gate.py`
+holds `README.md` and `ops/templates/info.html` so they *cannot* be committed
+unread; it does not hold this section, and Plan 138 Stage 1c's own argument is
+that "a check you must remember is weaker than one you cannot forget". Two
+things make the trade affordable: this skill is the only sanctioned author of
+the section, and `docs/PLAN_DOCUMENT.md` freezes it against casual editing —
+it is not touched because work progressed, only when the plan's purpose changes.
+A hand-edit that bypasses this check is already a contract violation on its own
+terms.
+
+The cap and the section's *presence* are enforced in CI by
+`tests/test_planning_docs.py`, and a plan cannot enter the published window
+while on a waiver list. Neither of those reads what the sentence says. That is
+this step's job.
+
 ## After writing
 
 Report:
 
 - the plan number and filename;
 - the text of both sections, as written;
+- that `public-surface-check` read `## What this plan is for`, and what it found;
 - which of the three answers Phase 4 got, and the trigger sentence if backlog;
 - for a backlog landing, whether `plans` operation 6 completed and what row
   resulted — or that it is still waiting on approval;

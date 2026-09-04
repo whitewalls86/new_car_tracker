@@ -380,6 +380,22 @@ Regenerating is not authoring: the generator is deterministic and reads only
 values already placed and approved. It is the same kind of derived-state
 upkeep as the archive row count above.
 
+**A stale `--check` is also the signal that this operation changed published
+copy, so run the `public-surface-check` skill before regenerating.** That is
+what the check is worth here beyond staleness: it is the only reliable way to
+know whether an edit reached the page. A row's title, priority, effort, order
+and plan link publish verbatim, and the boundary moves on its own — an insert
+that renumbers can carry a plan into or out of the published window without
+anyone editing that plan's row at all. A window rule would miss that; this
+does not.
+
+Clean `--check`, nothing to do: the edit did not reach the page and the skill
+does not run. That is most slice repoints, since Stage 9 made a repoint on a
+conforming row inert, and it is why this costs almost nothing in practice.
+
+This does not make `plans` a skill that reads claims. It places values and then
+asks the skill that does, at the one moment something it placed became public.
+
 Only the first four rows of each side are published (`MAX_ITEMS = 4`), so not
 every edit moves the artifact — but do not try to reason about which do.
 **Archiving always does**, because the archive is prepended and a new row is
