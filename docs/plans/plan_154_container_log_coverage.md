@@ -2,10 +2,9 @@
 
 ## What this plan is for
 
-Eighteen of the twenty-eight services running in production send their logs
-nowhere a person can search, so when one misbehaves the only record is inside
-the container. This plan decides which of them are worth collecting centrally,
-and measures what that would cost in log volume before switching any of them on.
+Gets logs from the services that currently produce none into one searchable
+place, deciding service by service what is worth collecting before turning any
+of it on — so a failure in an unlogged component stops being invisible.
 
 ## Status
 

@@ -434,7 +434,7 @@ _CONTRACT_PLAN = 172
 #   exactly that transition, so a new entry means the skill was bypassed. This
 #   is the ceiling that gets tested first: all five entries are pre-172 plans
 #   still live, and more will reach closeout.
-MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 37
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 36
 MAX_THE_CHECKS_WAIVERS = 5
 
 
@@ -452,27 +452,33 @@ class SectionWaiver:
     since: date = _SECTION_MEASURED
 
 
-# 43 live plans, of which: 5 already carry '## What this plan is for'
-# (162/134/138 were backfilled landing Stage D, because the published
-# build-order window required it; 164 was backfilled when Plan 172 archived and
+# 44 live plans, of which: 7 already carry '## What this plan is for'
+# (162 and 134 were backfilled landing Stage D, because the published
+# build-order window required it; 164 followed when Plan 172 archived and
 # promoted it into that window, which is also what paid the ceiling above down
-# from 39; 154 was backfilled when Plan 164 left the build order for closeout
-# and promoted it into that window, which is the same mechanism again -- a
-# published-window boundary moves on its own when a row above it leaves);
-# 1, Plan 88, has no document at all and is named in
-# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 37 are waived below.
-# 5 + 1 + 37 = 43. Plan 172 itself is no longer counted here -- it archived
-# 2026-09-03 and left the live tables. Plans 117 and 163
-# are the two whose shape does not fit stages at all (an umbrella and a
-# register); the contract's own Design section names a waiver as the right
-# instrument for that too, not a permanent plan kind.
+# from 39; 154 and 151 followed on the same mechanism twice more on 2026-09-04,
+# as Plan 138 archived and Plan 164 left for closeout -- each departure moved
+# the published boundary one row further down and caught the plan beneath it.
+# 173 and 174 carry the section already and needed no backfill); 1, Plan 88,
+# has no document at all and is named in NO_DOCUMENT_LIVE_PLANS instead of
+# here; the remaining 36 are waived below. 7 + 1 + 36 = 44.
+#
+# **The mechanism is worth naming, because it has now fired three times.** A
+# plan is promoted into the published window by a row *above* it leaving, which
+# nobody edits and no reviewer of that change is looking at. Plans 172, 138 and
+# 175 are no longer counted here -- they archived and left the live tables, and
+# each departure is what put a fresh plan on the landing page.
+#
+# Plans 117 and 163 are the two whose shape does not fit stages at all (an
+# umbrella and a register); the contract's own Design section names a waiver as
+# the right instrument for that too, not a permanent plan kind.
 WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),
     SectionWaiver(79), SectionWaiver(94), SectionWaiver(108), SectionWaiver(112),
     SectionWaiver(113), SectionWaiver(117), SectionWaiver(119), SectionWaiver(121),
     SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
     SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
-    SectionWaiver(149), SectionWaiver(150), SectionWaiver(151), SectionWaiver(152),
+    SectionWaiver(149), SectionWaiver(150), SectionWaiver(152),
     SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
     SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
     SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),

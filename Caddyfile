@@ -116,8 +116,15 @@ https://cartracker.info {
         @fingerprinted query v=*
         header @fingerprinted Cache-Control "public, max-age=31536000, immutable"
 
+        # must-revalidate is not decoration: without it a cache is permitted to
+        # keep serving a stale copy past max-age when it cannot reach the
+        # origin, and the generated artifacts are exactly the content where
+        # that is wrong -- a published recap or a roadmap update that Stage 7
+        # put live with `git pull` would go on being withheld from a returning
+        # reader. Named in Stage 4 item 6 and found missing by Stage 6's
+        # external route matrix on 2026-09-04.
         @unversioned not query v=*
-        header @unversioned Cache-Control "public, max-age=300"
+        header @unversioned Cache-Control "public, max-age=300, must-revalidate"
 
         reverse_proxy ops:8060
     }

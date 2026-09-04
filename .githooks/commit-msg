@@ -1,0 +1,51 @@
+#!/bin/sh
+# The message half of the commit-attribution contract, run by git itself.
+#
+# scripts/commit_attribution_gate.py enforces that the skill was invoked; this
+# enforces that the message it produced actually carries attribution. It runs
+# inside `git commit`, so it holds a commit typed in a terminal, a bundled
+# `git add ... && git commit`, and a commit made by any tool at all.
+#
+# It also consumes the skill's stamp, so the next commit needs its own
+# invocation rather than riding this one's.
+set -e
+
+msg_file="$1"
+subject="$(head -n 1 "$msg_file")"
+
+# Git composes these itself, or they are addressed to a commit that already
+# carries attribution.
+case "$subject" in
+    Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *)
+        exit 0
+        ;;
+esac
+
+# `Plan 142 Stage 1.` / `Plans 139 and 142.` in the body, a `plan-152` scope in
+# the subject, or an explicit disclaimer. Any one of the three satisfies the
+# contract in .claude/skills/commit-plan-attribution/SKILL.md.
+if grep -Eqi '(^|[^a-z])plans?[ -][0-9]+|\(plan-[0-9]+\)|no plan[ ]*(--|—|-)' "$msg_file"; then
+    # Unconditional: `rm -f` succeeds on a missing file, whereas a `[ -f ] &&`
+    # test returns 1 when there is no stamp and `set -e` would turn that into a
+    # rejected commit.
+    rm -f "$(git rev-parse --git-dir)/commit-attribution-stamp"
+    exit 0
+fi
+
+cat >&2 <<'MSG'
+This commit message names no plan.
+
+Run the `commit-plan-attribution` skill: it resolves the work to a plan in
+docs/PLANS.md and writes the attribution into the message. `plan-week` reads
+the plan from the message alone -- not from the branch, not from the files --
+so a message without it is work that disappears from the record.
+
+One of these satisfies it:
+
+    Plan 142 Stage 1.                     (in the body)
+    docs(plan-152): define the lifecycle  (a scoped subject)
+    No plan -- <brief reason>.            (when it genuinely belongs to none)
+
+Merges, reverts and fixup!/squash! commits are exempt.
+MSG
+exit 1

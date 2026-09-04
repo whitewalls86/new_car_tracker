@@ -1,8 +1,19 @@
 """Plan 138 Stage 1c: hold a commit that edits a public surface until it is read.
 
-A ``PreToolUse`` hook on ``Bash``. It blocks a ``git commit`` that stages
+Two entry points into one check. It blocks a ``git commit`` that stages
 ``README.md`` or ``ops/templates/info.html`` until the ``public-surface-check``
 skill has run against exactly that staged content.
+
+**Plan 175 Stage A moved the enforcement into ``git commit`` itself.** As a
+``PreToolUse`` hook on ``Bash`` this script runs *before* the command does, so
+a commit that stages its own changes -- ``git add README.md && git commit``, or
+``git commit -am`` -- presented it with an empty index. It fired, found
+nothing, and returned 0, which is indistinguishable from a surface that was
+read and cleared. ``.githooks/pre-commit`` calls ``--pre-commit``, and git runs
+that after ``-a`` has staged, so the index it reads is the index being
+committed. The ``PreToolUse`` path keeps one job the git hook cannot do: a
+clone that never ran the install has no git hook and says nothing about it, so
+this refuses until ``core.hooksPath`` is set.
 
 **Why a hook and not a test.** Stage 1c first tried tests. Every drift this plan
 has actually caught -- "36 Flyway migrations" against 49, "971 tests" against
@@ -34,6 +45,21 @@ SURFACES = ("README.md", "ops/templates/info.html")
 
 STAMP_NAME = "public-surface-stamp"
 
+# Where the tracked hook lives. Git resolves a relative ``core.hooksPath``
+# against the working tree, so one value serves every worktree of a clone.
+HOOKS_PATH = ".githooks"
+
+INSTALL_MESSAGE = f"""Plan 175 Stage A: the commit gate is not installed in this clone.
+
+    git config core.hooksPath {HOOKS_PATH}
+
+That points git at the tracked `pre-commit` hook, which is what holds a commit
+that stages a public surface nobody has read. Until it is set, a bundled
+`git add ... && git commit` and a `git commit -am` reach an empty index and
+pass unchecked.
+
+One command per clone -- linked worktrees share it."""
+
 
 def _git(*args: str) -> str:
     return subprocess.run(
@@ -53,19 +79,33 @@ def stamp_path() -> pathlib.Path:
     return pathlib.Path(git_dir) / STAMP_NAME
 
 
-def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        # A hook that cannot parse its input must not block work. Failing open
-        # is right here: the cost of a missed check is a review catch, and the
-        # cost of failing closed is an unclearable gate on every commit.
-        return 0
+def hooks_installed() -> bool:
+    """Is the tracked ``pre-commit`` hook actually wired up in this clone?
 
-    command = payload.get("tool_input", {}).get("command", "")
-    if "git commit" not in command:
-        return 0
+    Compared as a resolved path, not as a string. ``git config`` stores
+    whatever spelling it was handed -- an absolute path, ``./.githooks``, a
+    trailing separator -- and every one of those runs the same hook. An exact
+    string match calls the working ones uninstalled and refuses every commit,
+    which is how a gate teaches people to route around it.
+    """
+    configured = _git("config", "--get", "core.hooksPath").strip()
+    if not configured:
+        return False
 
+    top = pathlib.Path(_git("rev-parse", "--show-toplevel").strip() or ".")
+    # Git resolves a relative hooks path against the working tree root, which
+    # is where it runs hooks from. An absolute one survives the join unchanged.
+    return (top / configured).resolve() == (top / HOOKS_PATH).resolve()
+
+
+def check_staged() -> int:
+    """The check itself, shared by both entry points.
+
+    Called with the index as it stands: before the command runs for the
+    ``PreToolUse`` hook, and after ``-a`` has staged for the git hook. Only the
+    second of those is the index that will be committed, which is why the git
+    hook exists.
+    """
     staged = _git("diff", "--cached", "--name-only").split()
     touched = [surface for surface in SURFACES if surface in staged]
     if not touched:
@@ -90,6 +130,38 @@ def main() -> int:
         file=sys.stderr,
     )
     return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
+    # Called by ``.githooks/pre-commit``, from inside ``git commit``. There is
+    # no payload to read and no install to verify: it is running, so it is
+    # installed.
+    if "--pre-commit" in argv:
+        return check_staged()
+
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        # A hook that cannot parse its input must not block work. Failing open
+        # is right here: the cost of a missed check is a review catch, and the
+        # cost of failing closed is an unclearable gate on every commit.
+        return 0
+
+    command = payload.get("tool_input", {}).get("command", "")
+    if "git commit" not in command:
+        return 0
+
+    # Deliberately before the staged-file check and not after it. A missing
+    # install is exactly the case where reading the index proves nothing --
+    # that is the defect Plan 175 closed -- so this cannot be conditional on
+    # what the index happens to hold.
+    if not hooks_installed():
+        print(INSTALL_MESSAGE, file=sys.stderr)
+        return 2
+
+    return check_staged()
 
 
 if __name__ == "__main__":

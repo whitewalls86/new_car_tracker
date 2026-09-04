@@ -302,26 +302,28 @@ the stages it measures, Stage J ahead of L, M and N: **a guard that lands first
 is one the later stages get for free rather than one that has to sweep what they
 wrote.**
 
-**Stage X is second** because it is also a point, nothing in it is invented, and
-it retires the scoping compromise Stage T was carrying.
-
-**Stage S is third because it holds the only measurement that expires.** Its
-capture baseline must be taken while DuckDB is still authoritative, and a
-baseline taken after [Plan 125 Gate
+**Stage X is second** because nothing in its original scope is invented and it
+retires the scoping compromise Stage T was carrying — and **since 2026-09-04 it
+also holds the only measurement that expires.** The execution recorder moved
+here from Stage S on that date: recording what text ran against which engine is
+repo-wide rather than dbt's, and X is already the stage that makes every
+statement live in a file and validates it against an engine. Its capture
+baseline must be taken while DuckDB is still authoritative — one taken after
+[Plan 125 Gate
 D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration) is not a
-baseline. Nothing else in the plan is lost by waiting. Plan 125 is build-order
-row 9 with Gate D two gates out, so two one-point stages ahead of S cost nothing
-— but that is room for U and X, not for V and R.
+baseline — and X sitting a position ahead of S serves that deadline better than
+S did. Plan 125 is build-order row 9 with Gate D two gates out, so one stage
+ahead of X costs nothing; that is room for U, not for V and R. **X's estimate
+predates the recorder and has not been revisited.**
 
-**S's own exit bundles that deadline with a dependency pulling the other way**,
-and the stage should not start before deciding which half lands when. Capture is
-engine-local and cheap. The aggregation it also promises — an artifact and a
-gate job — is why CAR-79 was filed blocked on CAR-78: Stages Q and R are what
-settle how those jobs are defined. Taking the baseline early and letting the
-aggregation land with or after Q loses nothing, and it probably splits the
-stage.
+**Stage S is third, and since the same date carries no deadline of its own.**
+The aggregation the recorder also needs — an artifact and a gate job — is why
+CAR-79 was filed blocked on CAR-78, and it travelled to X with the rest: Stages
+Q and R are what settle how those jobs are defined, so the aggregation half can
+land with or after Q wherever it lives. Nothing in what remains of S is lost by
+waiting.
 
-**Then T, which wants S's recorder**, and **W, which wants U's registry** — W's
+**Then T, which wants X's recorder**, and **W, which wants U's registry** — W's
 whole output is a declaration that something is deliberate, and U is what builds
 the shape such declarations take. **Then Q**, now holding U's skip mechanism.
 **Then V**, whose own issue warns it may turn production-gated: if a variable
@@ -364,8 +366,8 @@ moved it to the end without making it a different stage.
 | 13 | [**N**](#stage-n-the-dag-trees-sql-convention) | 9 | `airflow/dags` and the `.sql` convention | G12 | `done` | CAR-53 |
 | 14 | [**P**](#stage-p-dbt-builds-against-production-shaped-data) | 10 | dbt builds against production-shaped data | — | `done` | CAR-54 |
 | 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `next` | CAR-81 |
-| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either | — | `—` | CAR-83 |
-| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | The dbt testing contract, and what leaves the SQL census | G16 | `—` | CAR-79 |
+| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `—` | CAR-83 |
+| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `—` | CAR-79 |
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `—` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
 | 20 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
@@ -1374,90 +1376,134 @@ so it carries none of the four conditions above, and `docker-build` is the job
 
 **Legacy:** Stage 11 · **Issue:** CAR-79 · **State:** `—`
 
-**Added 2026-09-01.** [Plan 161](plan_161_testing_contract.md) asked what a
-*service* owes before it ships and keyed the answer to a Python package. The
-dbt project is not one: `dbt/` is a Dockerfile, SQL and YAML, `dbt_runner` —
-the service that invokes dbt — has the "enough" row, and the 22 models it
-builds have none. `test_every_service_directory_has_a_row_in_the_enough_table`
-asserts the table equals `service_packages()` in both directions, so **adding a
-`dbt` row today fails as a phantom.** The obligation is not unmet; it is
+**Added 2026-09-01. Rewritten 2026-09-04, against a measurement that
+contradicted its own premise.** [Plan 161](plan_161_testing_contract.md) asked
+what a *service* owes before it ships and keyed the answer to a Python package.
+The dbt project is not one: `dbt/` is a Dockerfile, SQL and YAML, `dbt_runner`
+— the service that invokes dbt — has the "enough" row, and the models it builds
+have none. `test_every_service_directory_has_a_row_in_the_enough_table` asserts
+the table equals `service_packages()` in both directions, so **adding a `dbt`
+row today fails as a phantom.** The obligation is not unmet; it is
 inexpressible.
 
-What that costs, measured: **17 of 22 models have a dbt unit test and five do
-not**, and no rule requires one. `tests/dbt/` asserts every model carries a
-cadence tag, so the only obligation this repository mechanically enforces on a
-model is a *scheduling* one. A new mart with no test ships green.
+**The stage's original answer was a headcount, and the headcount is the wrong
+instrument.** As written it measured 17 of 22 models with a dbt unit test and
+required the five without to gain one. Re-measured 2026-09-04:
 
-**Two things make this urgent rather than tidy.** The first is that
+| | |
+|---|---|
+| Models on disk | **23**, not 22 |
+| With at least one dbt unit test | 18 |
+| Directly asserted by a fixture-driven real build | 7 |
+| Asserted by **both** | 7 |
+| Asserted by neither | 5 |
+
+The fixture adds depth, not breadth — every model it asserts on already had a
+unit test. But the count fails in the other direction too. `stg_observations`
+has no unit test **and is not untested**:
+[`scripts/seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py)
+seeds `ARTIFACT_NULL_VIN` and `ARTIFACT_SHORT_VIN` deliberately, so both reject
+paths of its `vin17` guard and its accept path run against production-shaped
+Parquet on every real build. The headcount scores it zero.
+
+Set against branch counts the ranking inverts. Counting branch points in the
+model SQL — a regex proxy, not a parse, and low by construction —
+`int_listing_volatility_features` carries ~48 against 3 unit tests,
+`int_listing_observation_fingerprints` ~37 against 5, `mart_deal_scores` ~33
+against 4. **The models holding the most logic are the least proportionally
+covered, and every instrument in this repository reports them as covered.**
+
+**Three lists already claim to cover branches. None is derived from the models,
+and no two are checked against each other.**
+
+| List | Covers a branch with | Size |
+|---|---|---|
+| [`archiver/config/lake_snapshot_selectors.yml`](../../archiver/config/lake_snapshot_selectors.yml) | **real production rows** | 22 selectors, 18 SQL templates |
+| [`scripts/seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py) | **synthetic rows**, under the same scenario names | ~20 scenarios |
+| `dbt/models/*/unit_tests.yml` | **mocked inputs** | 66 tests across 18 models |
+
+The first is why this stage is a reconciliation rather than an invention. Its
+own header already states the contract:
+
+> Each entry names a dbt/PySpark branch or guard the snapshot must exercise,
+> the source table(s) and filters used to find candidate entities in
+> production, and the minimum representation required in the snapshot before it
+> can be published.
+
+The production snapshot is not a sample that happens to contain interesting
+rows. It is **generated branch-first**, from real data, with `min_entities` as a
+publication floor — `stable_state_run: 25`, `relisted_vin: 10`,
+`invalid_or_null_vin`, `detail_beats_srp`, `srp_fallback`, `price_drop`,
+`no_price_history`. The fixture mirrors those same scenario names
+synthetically. Both were built to cover dbt branches; both are curated by hand
+from somebody's reading of the models.
+
+**So what the dbt project owes is branch coverage, and the missing artifact is
+one: the branch list, derived from the model SQL itself.** With it in hand,
+everything this stage wants is a comparison:
+
+- **which branches no unit test covers** — against `unit_tests.yml`;
+- **which branches production data never takes** — against the selector
+  registry, and against which selectors actually fill `min_entities`. A branch
+  no production row reaches is either dead code or a state never seen;
+- **which constraints are decorative** — 161 column constraints are declared
+  across the 23 models, and nothing demonstrates that removing a guard fails
+  its constraint. A `not_null` is a claim about a branch guard, so the
+  enumerator that finds the branch finds the constraint's subject too;
+- **and the ratchet is free.** A derived list means a new model enters the
+  denominator the moment it exists, and shows up missing in three places at
+  once.
+
+Today the only obligation this repository mechanically enforces on a model is
+that it carries a cadence tag (`tests/dbt/test_cadence_tags.py`), which is a
+*scheduling* rule. A new mart with no test of any kind ships green.
+
+**G16 is untouched by the rewrite, and its argument is unchanged.**
 `_SQL_EXEMPT_ROOTS` exempts `dbt/` from the Layer 2 census by design — correct,
 because Layer 3 is dbt's instrument — so a `.sql` file whose logic moves into a
 mart leaves a counted surface for an uncounted one, and **the count drops for
 something that is not a repair.** That is the same failure as Stage F's
-substring bug: the list shrinking for free. The second is that
-[Plan 125](plan_125_duckdb_to_iceberg_migration.md) absorbed Plan 118 and moves
-the analytics layer onto Spark/Iceberg, so that migration is not hypothetical —
-it is the plan of record.
+substring bug: the list shrinking for free. What the rewrite adds is the reason
+the exemption is worth defending at all — it is only honest if the uncounted
+population has a floor of its own, and branch coverage is that floor.
 
-Stage S therefore owns three things:
+**One gap found while measuring, and small enough to close here.**
+`--require-non-empty` proves all six dbt sources seeded rows before a snapshot
+build, and its CI comment names the failure it prevents: *"left empty,
+`stg_search_configs` reads nothing, `int_active_make_models` inner-joins to
+nothing, and `mart_vehicle_snapshot` builds green over an empty world."* But the
+list it checks — `LAKE_TABLES` plus `POSTGRES_SNAPSHOT_TABLES` — is hardcoded in
+the seeder, and nothing asserts it agrees with `dbt/models/sources.yml`. A
+seventh source would go unchecked and the gate would pass over exactly the empty
+world it exists to catch. It is this plan's own recurring defect, sitting inside
+the instrument this stage now depends on.
 
-1. **What the dbt project owes**, and a mechanism that can hold it — the
-   "enough" table's derivation admits a non-package surface, or a second table
-   does.
-2. **G16: a `.sql` file may only leave `production_sql_files()` by naming the
-   dbt model that absorbed it.** The denominator may shrink; it may not shrink
-   silently.
-3. **The execution recorder, scoped here and built later.** Recording *what
-   text executed against which engine* is the only mechanism that closes the
-   remaining class at once: it kills the paraphrase, the weak name-match
-   reading, and a statement whose test executes it against an engine production
-   no longer uses. Two hard parts are already known — `.format()` templates
-   record rendered but are stored as templates, and the suites run in separate
-   CI jobs so aggregation needs an artifact and a gate job.
+**The execution recorder left this stage on 2026-09-04, for
+[Stage X](#stage-x-a-test-may-not-author-sql-either).** Recording what text ran
+against which engine is repo-wide and not dbt's: production reaches an engine
+through four client libraries — `psycopg2`, `asyncpg`, `duckdb` and
+`pyspark.sql` — and the fixture-keyed design this section used to carry would
+have recorded nothing for two of them, `scraper/sql/`'s statements included. X
+is the stage that already makes every statement live in a file and validates it
+against an engine, and it runs before this one, so the capture baseline's
+deadline is served earlier there than it was here.
 
-**The recorder splits along a seam worth respecting.** *Capture* is
-engine-local, cheap, and worth doing while DuckDB is still authoritative,
-because a baseline taken after [Plan 125 Gate D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
-is not a baseline. The *cross-engine assertion* — "this ran on the engine
-production uses for it" — needs two live engines to design honestly and belongs
-at that gate. Building both against one live engine and one hypothetical would
-fit the design to what exists today, which is the error recorded two sections
-above.
+**Exit.**
 
-**One exposure number here is conditional and should not be quoted flat.** 26
-`.sql` files are covered only by a DuckDB-bound test — every `dashboard/sql/*`
-plus both `dbt_runner/sql/*` snapshots. Whether they move engines at all is
-decided by Plan 125 Gate D2: under "serving extracts from Iceberg" they do,
-under "DuckDB as a non-authoritative Iceberg reader/cache" — which that plan
-currently calls the lower-risk first cut — they do not, and `duckdb_con`
-remains the correct fixture.
-
-**Exit.** Three clauses, one per thing this stage owns:
-
-1. **The dbt project's obligation is expressible and held.** The "enough"
-   table's derivation admits a non-package surface, or a second table does, so
-   the row no longer fails as a phantom. All 22 models have a dbt unit test —
-   the five that do not, gain one.
-2. **G16 is asserted.** `production_sql_files()` may shrink only when the change
+1. **The branch list is derived from the model SQL**, not maintained. A model
+   that gains a branch no unit test, no selector and no fixture scenario reaches
+   fails the suite. Demonstrated by adding one, not asserted.
+2. **The three lists are reconciled against it**, in both directions: every
+   branch is claimed by at least one, and every entry in each list names a
+   branch that exists.
+3. **Every declared column constraint is shown to be load-bearing** — removing
+   the guard that produces it fails its test. A constraint no mutation can
+   break is recorded as decorative rather than left standing as coverage.
+4. **G16 is asserted.** `production_sql_files()` may shrink only when the change
    names the dbt model that absorbed the statement; a silent shrink fails.
    Demonstrated by a silent shrink failing, not asserted.
-3. **The execution recorder captures, and the cross-engine assertion does not
-   land here.** Capture records what text executed against which engine, and its
-   baseline is taken while DuckDB is still authoritative. Both known hard parts
-   are solved rather than noted: `.format()` templates record rendered but are
-   stored as templates, and the suites run in separate CI jobs, so aggregation
-   needs an artifact and a gate job. The cross-engine assertion is explicitly
-   **not** in this exit — it needs two live engines to design honestly and
-   belongs to [Plan 125 Gate D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration).
-
-**Clause 3 resolves an ambiguity in this section rather than contradicting it,
-and the resolution is recorded so it is not re-litigated.** "Scoped here and
-built later" above and "worth doing while DuckDB is still authoritative" two
-paragraphs down cannot both govern capture. The second wins, because it names a
-deadline the first does not: a baseline taken after Plan 125 Gate D is not a
-baseline, so deferring the cheap half is the one choice that cannot be undone.
-The cost is a visibly larger stage — a mechanism with two hard parts, a CI
-artifact and a gate job, not a specification — and that is a sizing problem
-where the alternative is an unobtainable measurement.
+5. **The non-empty gate derives its source list from `sources.yml`**, so a
+   source added to the dbt project cannot go unchecked.
 
 ### Stage T exists because this plan grew the suite
 
@@ -1533,10 +1579,13 @@ helpers duplicate each other freely and should, because the plans that own them
 have archived.
 
 **The instrument this stage needs does not exist yet**, which is why it is
-scoped after Stage S rather than before it. "Two helpers do the same thing" is
-not a textual property -- `_seed` and `_insert_queue_row` may be identical in
-effect and share no token -- so unlike G5, G15 and G17 there is no cheap
-derived check waiting to be written. The stage should say plainly whether it
+scoped after [Stage X](#stage-x-a-test-may-not-author-sql-either) rather than
+before it. "Two helpers do the same thing" is not a textual property -- `_seed`
+and `_insert_queue_row` may be identical in effect and share no token -- so
+unlike G5, G15 and G17 there is no cheap derived check waiting to be written.
+The instrument that would answer it is the execution recorder, which records
+what text each helper actually executed; it was Stage S's until 2026-09-04 and
+is X's now, so this stage's dependency moved with it. The stage should say plainly whether it
 found one or whether it leaves prose behind, per success criterion 2.
 
 **Exit.** Scoped to the Python half; the SQL is Stage X's and is not re-measured
@@ -1787,6 +1836,85 @@ this plan's newest rule — a denominator fitted to what exists when it is writt
 will be wrong — so the detector is mutation-tested before it is trusted, not
 after.
 
+**The execution recorder arrived here on 2026-09-04, from
+[Stage S](#stage-s-answers-a-question-plan-161-did-not-ask).** It was scoped
+there because it reads SQL and dbt was the surface that stage was defending,
+and that was the wrong seam. Recording *what text executed against which
+engine* is a claim about every statement in the repository, not about the dbt
+project; this is the stage that already makes every statement live in a file
+and validates it against an engine, so the engine half belongs beside the file
+half.
+
+**Its first design was an enumeration, and the repository caught it before it
+was written.** Keying capture to the fixtures that hand out connections —
+`cur`, `viewer_cur`, `duckdb_con`, `duckdb_s3_con` — misses two of the four
+client libraries production actually reaches an engine through:
+
+| Client | Where | A fixture-keyed recorder sees it |
+|---|---|---|
+| `psycopg2` | every service's `queries.py` path | yes |
+| `duckdb` | `shared/duckdb_s3.py`, `dashboard`, `dbt_runner` | yes |
+| `asyncpg` | `scraper/db.py`, exercised unmocked since Stage M | **no** |
+| `pyspark.sql` | Plan 125's tooling | **no** |
+
+It would have shipped recording nothing for `scraper/sql/`'s statements, and
+gone on recording nothing when Spark arrives. That is `_SQL_CALL_NAMES` again,
+which [Stage N](#stage-n-the-dag-trees-sql-convention) deleted rather than
+lengthened.
+
+**So the recorder is keyed on the client, and the client set is derived.** A
+session-scoped plugin wraps each library at its entry point, so every
+connection any fixture opens is recorded and the fixture list stops existing.
+`production_db_clients()` — read from the imports across
+`production_python_files()`, Stage N's derivation reused — is compared against
+what the plugin instruments, equal in both directions, the same shape as
+`service_packages()` against the "enough" table. **A new engine is a new
+import, and a new import fails the suite until the recorder wraps it or the
+contract says in writing why not.** That is how a future engine is made to
+conform: not a rule someone remembers at Gate D, but a test that breaks when
+the import lands.
+
+dbt is the one execution surface that cannot be wrapped, running in a
+subprocess — and does not need to be. It already writes what it executed to
+`target/run/` beside `run_results.json`. A declared second mechanism, not a
+hole.
+
+**The `.format()` templates are the known hard part, and there are two ways
+out.** A statement stored as a template records rendered, so attributing a
+recorded string back to its `.sql` file is either a reverse match against the
+template turned into a pattern — test-only, approximate, brittle on multi-line
+placeholders — or a `str` subclass returned by `shared.query_loader.load_query()`
+carrying its origin and preserving it through `.format()`, which is exact and
+costs a production change made for a test instrument. All seven services load
+through that one function. Decide it at the top of the stage rather than in the
+middle of it.
+
+**Two things it will not do, recorded now rather than discovered at Gate D.**
+The recorder records *text*, so Spark's DataFrame API — not text at all, and a
+`selectExpr` fragment leading with no verb — is invisible to it, exactly as
+[G15](../TESTING.md#the-gap-list) already records for the static rule. And the
+**cross-engine assertion** — "this ran on the engine production uses for it" —
+is not in this stage: it needs two live engines to design honestly and belongs
+to [Plan 125 Gate
+D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration). Building it
+against one live engine and one hypothetical would fit the design to what
+exists today.
+
+**Capture has a deadline; aggregation does not.** A baseline taken after Gate D
+is not a baseline, and capture is engine-local and cheap. The aggregation the
+coverage upgrade needs — a per-job artifact and a gate job, because a statement
+may be executed in any of five CI jobs — is what CAR-79 was filed blocked on
+CAR-78 for, and Stages Q and R are what settle how those jobs are defined. The
+baseline can be taken here and the aggregation can land with or after Q.
+
+**What the aggregation buys, when it lands, is the weak reading this plan has
+carried since Stage L.** `test_every_production_sql_file_is_touched_by_a_layer_2_test`
+credits a file when a Layer 2 module *names* it as a whole word, which this
+document has called the weakest available reading from the day it was written.
+Replacing `_names(stem, text)` with "this file's text executed in this run"
+turns it into the strongest, in one edit — and it is the half that cannot run
+inside any single job, which is precisely why it waits for Q.
+
 **Ordering: it must precede Stage T's SQL half, and now does.** Under the
 numbering it ran after T, which would have built shared helpers that this stage
 then converted to files — the [Stage F/G collision](#why-this-order) exactly.
@@ -1796,19 +1924,35 @@ outright** — X is order 16 and T is order 18 — and the scoping split is kept
 anyway, because two stages that cannot collide are cheaper to reason about than
 two that merely do not.
 
-**Estimate: 1 point.** Unsized when the stage was opened, and settled by the
-paragraph above: nothing is invented here, five existing mechanisms are pointed
-at a second root. The census of SQL literals under `tests/` sets the waiver list
-this stage drains; it does not size the stage.
+**Estimate: 1 point, and it predates the recorder.** It was settled by the
+paragraph above — nothing invented, five existing mechanisms pointed at a second
+root — which held while this stage was only about where test SQL lives. The
+recorder arrived on 2026-09-04 and *is* invented rather than pointed, so the
+estimate is owed a revisit it has not had. The census of SQL literals under
+`tests/` sets the waiver list this stage drains; it does not size the stage.
 
-**Exit:** no SQL literal appears in any file under `tests/`; every statement they
-now hold lives under `tests/sql/`, loaded rather than typed, and is validated
-against a Flyway-migrated Postgres whether or not the test consuming it runs;
-the production census is unchanged in size by the move; judgement rule 4 is
-struck from `docs/TESTING.md` and from the reviewer skill, taking the split to
-8/3; test DDL has a recorded position; and the detector has been watched failing
-against a mutation of each shape it claims to catch. Demonstrated by an inline
-statement failing the suite, not asserted.
+**Exit.** Two halves, the second of which arrived on 2026-09-04.
+
+**Where test SQL lives:** no SQL literal appears in any file under `tests/`;
+every statement they now hold lives under `tests/sql/`, loaded rather than typed,
+and is validated against a Flyway-migrated Postgres whether or not the test
+consuming it runs; the production census is unchanged in size by the move;
+judgement rule 4 is struck from `docs/TESTING.md` and from the reviewer skill,
+taking the split to 8/3; test DDL has a recorded position; and the detector has
+been watched failing against a mutation of each shape it claims to catch.
+Demonstrated by an inline statement failing the suite, not asserted.
+
+**What ran against which engine:** capture records the text executed and the
+client it executed through, with its baseline taken while DuckDB is still
+authoritative; `production_db_clients()` is derived from production's imports
+and asserted equal in both directions against what the recorder instruments, so
+a new engine fails the suite until it is wrapped or exempted in writing;
+`.format()` provenance is solved rather than noted; and dbt's subprocess is
+captured from its own run artifacts rather than left uncovered. Two things are
+explicitly **not** in this exit: the cross-engine assertion, which belongs to
+Plan 125 Gate D, and the aggregation — a per-job artifact and a gate job — which
+lands with or after Stage Q and takes the replacement of the Layer 2 name-match
+reading with it.
 
 ## Success criteria
 

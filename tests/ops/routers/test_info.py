@@ -381,6 +381,46 @@ class TestLandingPageStructure:
         # canonical form.
         assert 'href="/recaps"' in body
 
+    def test_each_work_list_carries_its_no_javascript_fallback(
+        self, mock_client, mocker
+    ):
+        """Plan 138 Stage 5. The containers existing is not the same as the page
+        working with JavaScript off.
+
+        ``info.js`` renders the feed by clearing each list and appending, so the
+        authored ``<li>`` inside it *is* the fallback — for a reader with
+        JavaScript disabled, for a fetch that 404s, and for a malformed or
+        unsupported-schema artifact, all of which leave the loader returning
+        early. Emptying those list items would blank the section for every one
+        of those readers and still satisfy the container assertions above.
+
+        The loader's own branching is not asserted anywhere: this repository has
+        no JavaScript runtime in its test suite, and Stage 5 accepted that rather
+        than adding one. This is the half of that contract that lives in
+        server-rendered HTML, which is testable here.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=_presentation(_FULL_STATS),
+        )
+
+        body = mock_client.get("/").text
+
+        for list_id, fallback_href in (
+            ("work-planned", "/blob/master/docs/PLANS.md"),
+            ("work-completed", "/blob/master/docs/planning/completed_plans.md"),
+        ):
+            opening = body.index(f'id="{list_id}"')
+            closing = body.index("</ul>", opening)
+            rendered = body[opening:closing]
+            assert "<li>" in rendered, (
+                f"{list_id} has no authored list item, so the section is blank "
+                f"with JavaScript disabled"
+            )
+            assert fallback_href in rendered, (
+                f"{list_id}'s fallback no longer links to {fallback_href}"
+            )
+
     def test_no_barred_phrase_survives_on_the_page(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",

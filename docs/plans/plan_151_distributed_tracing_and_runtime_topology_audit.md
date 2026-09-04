@@ -1,5 +1,12 @@
 # Plan 151: Distributed Tracing and Runtime Topology Audit
 
+## What this plan is for
+
+Runs a bounded experiment in watching requests move between services, to answer
+two questions with evidence: whether seeing the live dependency graph reveals
+anything the hand-written one misses, and whether it costs less than it is
+worth. The experiment is allowed to conclude no.
+
 ## Status
 
 **BUILD ORDER, written 2026-08-25.** Priority **72 (medium)**. Effort **M plus

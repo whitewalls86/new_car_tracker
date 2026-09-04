@@ -404,11 +404,18 @@ class TestTheStaticAssetCachePolicy:
         body = _resolve(PUBLIC_ASSETS).body
         assert "@unversioned not query v=*" in body
         found = re.search(
-            r'header @unversioned Cache-Control "public, max-age=(\d+)"', body
+            r'header @unversioned Cache-Control "public, max-age=(\d+)([^"]*)"', body
         )
         assert found, "unversioned assets have no cache policy of their own"
         assert int(found.group(1)) <= 3600, (
             "a git-pull-published artifact would sit in browsers this long"
+        )
+        assert "must-revalidate" in found.group(2), (
+            "Stage 4 item 6 asks for must-revalidate on the generated artifacts, "
+            "and Stage 6's route matrix found it missing on 2026-09-04. Without "
+            "it a cache may keep serving a stale copy past max-age when it "
+            "cannot reach the origin -- which is exactly the content Stage 7 "
+            "publishes with `git pull` and expects to go live"
         )
 
     def test_the_two_matchers_cannot_both_apply(self):
