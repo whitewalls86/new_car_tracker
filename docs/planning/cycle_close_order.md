@@ -142,6 +142,30 @@ how a two-machine setup notices its own drift without a registry to maintain.
 Measured 2026-09-04 with all three off: 69 remote branches, 67 already merged,
 and no local branch anywhere that could read `gone`.
 
+**The remote half is enforced in CI.**
+`scripts/verify_git_ref_hygiene_contract.py` fails the build if
+`delete_branch_on_merge` is turned off, if squash or rebase merging is enabled,
+or if merged-but-undeleted branches climb past a dated ratchet. Its scope is the
+remote on purpose: that is the one piece of configuration both machines share,
+and local branch state cannot be checked from a fresh clone without producing a
+green that means nothing.
+
+## What enforces this order, and what cannot
+
+Steps here are performed by a person invoking a skill, so most of the sequence
+is a discipline rather than a mechanism. Two parts of it are held mechanically,
+and it is worth being exact about which:
+
+| Held by | What it catches |
+|---|---|
+| `verify_git_ref_hygiene_contract.py`, in CI | the remote being reconfigured to accrete refs, from any machine |
+| `test_the_recap_series_has_no_interior_gap` | a week that was skipped and never noticed |
+| `test_the_recap_series_is_not_more_than_a_week_behind` | the weekly habit stopping, with one week of grace before it goes red |
+
+Nothing mechanises steps 1 through 5 or step 7. They write Linear and `docs/`
+state from judgements no test can make, and a check that asserted they had "run"
+would be asserting that a file changed, which is not the same claim.
+
 ## What this file is not
 
 It is not a status surface. Which plans are live, which have closed out and what

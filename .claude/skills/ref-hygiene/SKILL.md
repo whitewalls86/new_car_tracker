@@ -57,6 +57,16 @@ propagation, it needs no coordination, and it beats a `post-checkout` hook,
 which fires on every rebase step and `worktree add`, needs network each time,
 and is not versioned with the repository.
 
+**These settings are enforced, not merely recommended.**
+`scripts/verify_git_ref_hygiene_contract.py` runs in its own CI job against the
+live remote and fails the build if `delete_branch_on_merge` is off, or if squash
+or rebase merging is allowed, or if merged-but-undeleted remote branches climb
+past a dated ratchet. It checks the remote and nothing else, because the remote
+is the half of the configuration both machines share. **Local branch state is
+deliberately unenforced**: a CI runner clones fresh and has one branch, so a
+test reading `git branch` would pass forever no matter what either developer
+machine looked like — a false green of exactly the kind `docs/TESTING.md` names.
+
 **If the audit's settings section is non-empty, fix that before deleting
 anything.** A sweep run against a repository still configured to accrete just
 schedules the next sweep.

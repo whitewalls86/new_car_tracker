@@ -38,7 +38,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -1301,6 +1301,15 @@ def _headings(text: str) -> set[str]:
     }
 
 
+def _recap_sundays() -> list[date]:
+    """Every recap's window-end date, sorted. Filenames are the source."""
+    return sorted(
+        date(*(int(part) for part in match.groups()))
+        for path in recap_files()
+        if (match := _RECAP_NAME.match(path.name))
+    )
+
+
 class TestWeeklyRecaps:
     """Plan 146 Stage 6's output, held to its shape rather than its content.
 
@@ -1396,6 +1405,67 @@ class TestWeeklyRecaps:
             "Stage 1 recovered a completion date it was never told. Reusing "
             "them as generic hedging makes 25 backfilled rows look like "
             "hedging too. Mark uncertainty in the recap's own words."
+        )
+
+    def test_the_recap_series_has_no_interior_gap(self):
+        """A skipped week that was never noticed is a week with no record.
+
+        Every other assertion here checks a recap that *exists*. This one
+        checks the set: Sundays run every seven days, so a missing one is
+        arithmetic, not judgement. It is the half of "did the ritual run" that
+        can be mechanised, and it is stable over time -- a gap that opens in
+        2026 is still a gap in 2027.
+        """
+        days = _recap_sundays()
+        assert days, "no recaps at all; the assertions below prove nothing"
+        present = set(days)
+        missing = []
+        cursor = days[0]
+        while cursor <= days[-1]:
+            if cursor not in present:
+                missing.append(cursor.isoformat())
+            cursor += timedelta(days=7)
+        assert not missing, (
+            "no recap exists for these Sundays, which sit between recaps that "
+            "do exist: " + ", ".join(missing) + ". A week with no recap is a "
+            "week whose work has no durable why. Write it with the plan-week "
+            "skill; the window is that Monday through that Sunday."
+        )
+
+    def test_the_recap_series_is_not_more_than_a_week_behind(self):
+        """The forcing function: this goes red if the weekly ritual stops.
+
+        **This test depends on the clock, deliberately**, which every other
+        assertion in this file avoids. ``docs/TESTING.md`` requires that a test
+        depending on something environmental declare it rather than let it
+        decide quietly, so: the dependency is today's date, the behaviour under
+        test is whether a habit is still being kept, and there is no way to
+        observe that without a clock. It is the one assertion here that cannot
+        be made time-independent without ceasing to test anything.
+
+        **The grace is one full week.** The window closing on Sunday N may be
+        recapped any time up to Sunday N+7, and the failure arrives on the
+        Monday after that. So an ordinary Monday morning is never red, and a
+        genuinely skipped week always is. A zero grace would put CI red every
+        Monday until the recap landed; that is a different tradeoff, and it is
+        rejected here on purpose rather than left unconsidered.
+        """
+        days = _recap_sundays()
+        assert days, "no recaps at all; the assertions below prove nothing"
+
+        today = date.today()
+        # The most recent Sunday strictly before today. A week ending today is
+        # not complete until today is over, so today never ends its own window.
+        last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
+        oldest_acceptable = last_complete - timedelta(days=7)
+
+        assert days[-1] >= oldest_acceptable, (
+            f"the newest recap is {days[-1].isoformat()}, and the last complete "
+            f"week ended {last_complete.isoformat()}. A recap is owed for every "
+            f"Sunday through {oldest_acceptable.isoformat()} at the latest. Run "
+            f"the plan-week skill. If a week is genuinely being skipped on "
+            f"purpose, that is a decision to write down in docs/recaps/, not a "
+            f"threshold to raise."
         )
 
     def test_the_recap_scan_actually_reads_recaps(self):
