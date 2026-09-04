@@ -1,13 +1,12 @@
 # Plan 162 — the CI cost census, 2026-09-04
 
-This records the measurements taken while scoping [Stage
-10c](../plans/plan_162_testing_census_and_restructure.md#stage-10c-ci-selection-and-the-instrument-that-has-to-precede-it),
-which moved it behind Stages 11–16. The stage was scoped in the plan's opening
-pass, before Stage 4 split the 267s dbt job and before Stage 10 added
+This records the measurements taken while scoping [Stage R](../plans/plan_162_testing_census_and_restructure.md#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it),
+which moved it behind Stages S–X. The stage was scoped in the plan's opening
+pass, before Stage E split the 267s dbt job and before Stage P added
 `snapshot-dbt`, so its premises were about a workflow that no longer exists.
 
 **This file holds the measurements; the rescope they produced is in the plan
-document.** Stage 10c keeps its number and its position in the table — the
+document.** Stage R keeps its number and its position in the table — the
 convention that stage numbers carry the order is a legacy defect [Plan
 172](../plans/plan_172_plan_authoring_skill.md) names and deliberately does not
 sweep, and reconciling this document with the contract is a separate pass.
@@ -124,7 +123,7 @@ would not have finished any sooner.
 
 1. **No wall clock to gain**, per the census above.
 2. **Narrowing an existing job suppresses evidence.** The asymmetry the plan
-   [records for `snapshot-dbt`](../plans/plan_162_testing_census_and_restructure.md#stage-10-dbt-builds-against-production-shaped-data)
+   [records for `snapshot-dbt`](../plans/plan_162_testing_census_and_restructure.md#stage-p-dbt-builds-against-production-shaped-data)
    — that a wrong trigger on a net-new job costs coverage never gained — does
    not hold here. `dbt-models` has history, so a missing trigger silently
    removes coverage that exists today.
@@ -187,9 +186,9 @@ carries none of the miss risk the trigger sets were declined for.
 
 ## testcontainers, asked and answered
 
-[The Stage 16 origin note](plan_162_stage_16_origin_2026-09-04.md) lists
-testcontainers-python as "directly addresses Layer 2's premise and Stage 10b's
-problem statement." It was evaluated here and declined for Stage 10b, on
+[The Stage X origin note](plan_162_stage_X_origin_2026-09-04.md) lists
+testcontainers-python as "directly addresses Layer 2's premise and Stage Q's
+problem statement." It was evaluated here and declined for Stage Q, on
 grounds specific to this repository rather than to the library:
 
 1. **It collides with the invocation instrument.** `service-integration` runs
@@ -210,9 +209,9 @@ grounds specific to this repository rather than to the library:
 3. **It does not remove the work.** It wraps `docker compose up`; it does not
    change what the compose file says. `docker-compose.ci.yml` — the external
    network and volume flips, the unset `${...}` variables, the MinIO OIDC
-   override — is Stage 10b, and is needed either way.
+   override — is Stage Q, and is needed either way.
 
-On Stage 10b's own thesis the two options tie: both source services from the
+On Stage Q's own thesis the two options tie: both source services from the
 same Compose definitions. Every tiebreaker after that is cost.
 
 **Where it would have been right**, recorded so the question is not reopened
@@ -221,7 +220,7 @@ no existing service contract. Its genuine wins here — automatic teardown and
 dynamic ports — are worth nothing on a runner that is destroyed anyway and on
 jobs that each own a VM.
 
-## What Stage 10b should take from this
+## What Stage Q should take from this
 
 One thing, and it is a strengthening rather than a rescope. `docker compose
 config --format json` resolves the whole merge chain — override files, `${VAR}`
@@ -243,29 +242,29 @@ names.
 **One cost**: it shells out to the `docker` CLI, and that parity suite opens by
 declaring "No live Docker required." A guard built this way must skip cleanly
 when `docker` is absent and be *required* in CI — which is
-[Stage 13](../plans/plan_162_testing_census_and_restructure.md#stage-13-every-skip-in-ci-is-declared-or-the-run-fails)'s
+[Stage U](../plans/plan_162_testing_census_and_restructure.md#stage-u-every-skip-in-ci-is-declared-or-the-run-fails)'s
 subject, and one more reason the two stages sequence the way they now do.
 
-## Why Stage 10c waits for 11–16
+## Why Stage R waits for 11–16
 
 Three specific mechanisms, not a general caution. Each is a reason the stage's
 final content is better decided after those stages than before them, which is
 why this file stops at what the measurements rule out.
 
-1. **Stage 13 may subsume the instrument fix.** It builds a
+1. **Stage U may subsume the instrument fix.** It builds a
    `pytest_terminal_summary` hook covering every job, reporting every skip with
    its declared reason. That is a *runtime* observation of what CI actually ran.
    The instrument fix as scoped is a *static* reimplementation — AST-parse
    `pytestmark`, parse `-m` expressions, simulate pytest's own selection — which
    is the same anti-pattern as transcribing Compose service definitions into
-   `services:` blocks. If Stage 13's hook is already running everywhere,
+   `services:` blocks. If Stage U's hook is already running everywhere,
    "collected and deselected" and "this directory contributed zero tests to any
    job" become observable facts, and the instrument may reduce to reading its
    output.
-2. **Stage 16 creates a new SQL root with its own census.** A tree of `.sql`
+2. **Stage X creates a new SQL root with its own census.** A tree of `.sql`
    files outside `shared/sql/` is a new path class that any invocation rule
    would have to know about, and it does not exist yet.
-3. **Stage 12 may move the suite boundaries.** It consolidates 96 ad-hoc
+3. **Stage T may move the suite boundaries.** It consolidates 96 ad-hoc
    `INSERT`s, 55 module-local seed helpers and 43 duplicated `SELECT`s into
    shared fixtures. The invocation rule's unit of analysis is the suite
    directory; consolidation across directories changes what that unit means.
