@@ -23,27 +23,35 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
-      "plan": "175",
-      "title": "Commit gate bundling hole",
-      "order": 3,
-      "priority": 90,
-      "effort": "XS",
-      "state": "planned",
-      "summary": "A check holds a commit that edits this project's public copy until that change has been read against the rest of the repository. It only sees edits staged by an earlier command, so a commit that stages its own changes passes unread. This plan closes that hole.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_175_commit_gate_bundling.md"
-    },
-    {
       "plan": "164",
       "title": "Cycle-close ritual",
-      "order": 4,
+      "order": 3,
       "priority": 70,
       "effort": "S",
       "state": "planned",
       "summary": "Three steps of the routine that closes a work cycle — recording how the cycle actually went, rolling unfinished work forward, and tidying the branches left behind — have no owner today, and each is only ever correct at the close. This plan gives all three a home.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
+    },
+    {
+      "plan": "154",
+      "title": "Container log coverage",
+      "order": 4,
+      "priority": 70,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Gets logs from the services that currently produce none into one searchable place, deciding service by service what is worth collecting before turning any of it on — so a failure in an unlogged component stops being invisible.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_154_container_log_coverage.md"
     }
   ],
   "completed": [
+    {
+      "plan": "175",
+      "title": "Commit gate bundling hole",
+      "date": "2026-09-04",
+      "state": "completed",
+      "summary": "A check that stops this project's public pages changing unread could be sidestepped by a common way of writing a commit, and reported success when it was. Moved the check inside the commit itself, so it now reads what is actually being committed and the shortcut no longer passes.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_175_commit_gate_bundling.md"
+    },
     {
       "plan": "138",
       "title": "Public surface refresh",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "Cut stored detail-page HTML to about 5% of its original size while preserving lossless, independently readable artifacts and compatibility with older captures.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md"
-    },
-    {
-      "plan": "161",
-      "title": "The testing contract",
-      "date": "2026-08-31",
-      "state": "completed",
-      "summary": "The rules for how this project tests itself used to be a paragraph of documentation that slowly went out of date. They are now a contract the suite checks on every change, so the description cannot quietly stop matching the code.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_161_testing_contract.md"
     }
   ]
 }

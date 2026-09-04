@@ -159,6 +159,13 @@ remains.
 |---:|---|---:|---|
 | 1 | A — Enforcement moves inside `git commit` | 1 | done |
 
+## Public summary
+
+**Commit gate bundling hole** — A check that stops this project's public pages
+changing unread could be sidestepped by a common way of writing a commit, and
+reported success when it was. Moved the check inside the commit itself, so it
+now reads what is actually being committed and the shortcut no longer passes.
+
 ## Record
 
 ### Stage A — Enforcement moves inside `git commit` — 2026-09-04
