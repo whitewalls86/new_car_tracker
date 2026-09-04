@@ -1354,8 +1354,10 @@ collision](#why-this-order) exactly. Resolved by scoping rather than
 renumbering: Stage 12 keeps the Python helpers, this stage takes the SQL, and
 neither waits on the other.
 
-**Estimate: not sized.** The first measurement is the census of SQL literals
-under `tests/`, and it sets the waiver list this stage drains.
+**Estimate: 1 point.** Unsized when the stage was opened, and settled by the
+paragraph above: nothing is invented here, five existing mechanisms are pointed
+at a second root. The census of SQL literals under `tests/` sets the waiver list
+this stage drains; it does not size the stage.
 
 **Exit:** no SQL literal appears in any file under `tests/`; every statement they
 now hold lives under `tests/sql/`, loaded rather than typed, and is validated
