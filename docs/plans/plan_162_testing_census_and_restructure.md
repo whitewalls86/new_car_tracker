@@ -1010,7 +1010,135 @@ mechanism that fails if a bare `services:` image returns; the greenfield
 measurement is recorded with its Plan 121 handoff; and the sqlite question has
 a decision with its reasoning.
 
+#### Four decisions taken while scoping this stage, 2026-09-04
+
+Reasoning in [the CI cost
+census](../evidence/plan_162_ci_cost_census_2026-09-04.md); these are what
+changes about what gets built.
+
+**1. It is five jobs, not four.** Stage 10 closed on 2026-09-04 and added
+`snapshot-dbt`, which declares its own `postgres:16`, its own
+`minio/minio:latest` and a sixth hand-transcribed Flyway argument list. The
+count above was taken before it existed.
+
+**2. The guard is a resolved-config diff, not a field-by-field parity test.**
+`docker compose config --format json` resolves the whole merge chain — override
+files, `${VAR}` interpolation, `extends`, `include` — and normalizes as it goes.
+Verified against this repository: `command:` returns as a list where the file
+holds a block scalar, `shm_size: 1gb` returns as `1073741824`, and it needs no
+daemon state, no `cartracker-net` and no `cartracker_pgdata`. So the guard
+resolves the base chain and the CI chain, **diffs the two documents**, and
+requires the difference to equal a declared, commented allowlist. No field can
+be missed for not having been thought of — which is the limitation
+[`tests/test_lakehouse_compose_config.py`](../../tests/test_lakehouse_compose_config.py)
+has, since it `yaml.safe_load`s single files and asserts only what it names.
+
+That also settles the shape of the honest claim: **the exit is not "CI's
+services are byte-identical to production's."** `cartracker-net` and
+`cartracker_pgdata` are both `external: true`, the base file reads a dozen
+unset `${...}` variables, and production's MinIO carries
+`MINIO_IDENTITY_OPENID_*` pointing at Google. The end state is production's
+definition plus a **declared and asserted** override set, which is what turns
+the residue from accidental into visible.
+
+**3. testcontainers is declined for this stage.** Raised by [the Stage 16 origin
+note](../evidence/plan_162_stage_16_origin_2026-09-04.md) as directly addressing
+this stage's problem statement, and evaluated properly rather than by taste. It
+collides with [Stage 10c](#stage-10c-ci-selection-and-the-instrument-that-has-to-precede-it):
+`service-integration` runs five pytest steps against one shared Postgres and
+each `run:` is its own session, so session-scoped containers mean five startups
+per job or one collapsed invocation — and collapsing destroys the named-step
+granularity the invocation rule reads. Every integration conftest also reads
+`TEST_DATABASE_URL` at **module import time**, with
+`tests/integration/archiver/conftest.py` stating the constraint outright
+("Must run before `shared.db` is imported"), so containers would have to start
+before conftest import in a root that the 2,212-test unit suite also loads. And
+it wraps `docker compose up` without changing what the compose file says, so
+`docker-compose.ci.yml` is needed either way. On this stage's own thesis the two
+options tie; every tiebreaker after that is cost.
+
+**4. The guard's own skip is Stage 13's.** A `docker compose config` guard
+shells out to the `docker` CLI, and the parity suite it is modelled on opens by
+declaring "No live Docker required." It must skip cleanly when `docker` is
+absent and be *required* in CI — which is exactly
+[Stage 13](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails)'s mechanism,
+and a dependency this stage should hand forward rather than solve locally.
+
+**Two questions this stage still owes an answer**, both to be settled while
+building rather than now: whether CI adopts production's `shared_buffers=2GB` /
+`shm_size: 1gb` wholesale or overrides them with a stated reason — a 7GB runner
+also hosting DuckDB, a dbt build and an Airflow venv is not the VM those numbers
+were chosen for — and whether the unset variables arrive through a committed
+`.env.ci` or through defaults in the override file.
+
 ### Stage 10c: CI selection, and the instrument that has to precede it
+
+**Rescoped 2026-09-04, and moved to run after Stage 16.** The selector this
+stage was built around is cut. [The CI cost
+census](../evidence/plan_162_ci_cost_census_2026-09-04.md) found that its
+premises describe a workflow that no longer exists: the wall clock is set by a
+single job (`schema-contracts`, 123s) and every other heavy job already
+finishes inside its shadow, so **skipping any subset that excludes that job
+saves exactly zero seconds**. Plan 139 Stage E requires "a benefit larger than
+runner variance" before a selector is promoted; the available benefit is 0–30s
+against ±10–20s of variance, so the rule cannot be satisfied at any precision
+the selector could reach. Runner minutes are not a second justification — the
+repository is public.
+
+**What the stage is now.** Three pieces, in order:
+
+1. **The instrument fix**, reduced to whatever [Stage
+   13](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails) has not already
+   supplied. The defect is real and unchanged —
+   `test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+   *directory* appears in a step's arguments, which is why 7 tests sat
+   deselected until a coverage number caught them. But the fix as scoped below
+   is a *static* reimplementation of pytest's own selection, and Stage 13 builds
+   a `pytest_terminal_summary` hook across every job that observes what actually
+   ran. Transcribing what a tool already knows is the same defect [Stage
+   10b](#stage-10b-cis-services-are-productions-in-definition-and-in-contents)
+   exists to remove from the services blocks. **This stage runs after 13 so it
+   can read 13's output instead of simulating it.**
+2. **Install caching, measured before adopted.** 98 of `schema-contracts`' 123
+   seconds is infrastructure and dependency installs; the tests are 6. That is
+   the compressible number, and unlike selection a cache miss costs time rather
+   than correctness. Two candidates need measuring **both ways** rather than
+   assuming: the 27s Airflow venv, where restoring several hundred MB may cost
+   what installing it costs, and `setup-python`'s `cache: pip`, which caches
+   downloads rather than installs. Having rejected the selector on measured
+   grounds, this stage may not adopt caching on projected ones.
+3. **`.claude/skills/**/*.md` joins the docs zone.** Prose edits of 12 and 14
+   files are pulling the full heavy workflow, three dbt builds included, because
+   `.claude/` is not in `DOCS_PREFIXES`. This is the fail-open direction and
+   carries none of the risk the trigger sets were declined for.
+   `.claude/settings.json` stays out: one such merge paired it with
+   `tests/scripts/test_build_public_roadmap.py`, and hooks can change what runs.
+
+**What it drops, each with the condition that would revive it.** A flat no
+ossifies; these expire on checkable events.
+
+| Dropped | Why | Revisit when |
+|---|---|---|
+| The advisory impact selector | 0s available under the `max()` ceiling | The ceiling falls far enough that job-level skipping beats runner variance |
+| A trigger set for `dbt-models` | 57% of heavy runs would skip it, saving 0s; and narrowing an *existing* job suppresses evidence, unlike `snapshot-dbt` | Caching has promoted it to the critical path **and** Plan 125 Gate E has retired the dual-run, so its surface is stable |
+| Incremental-diff classification | The plan's own four conditions, against ~2 minutes that the census shows is nearer zero | Not on current evidence |
+| Content-addressed `docker-build` skipping | Called "the cheaper first win"; measures at 0s, since 96s sits under a 123s ceiling | Caching promotes `docker-build` to the critical path — which piece 2 above would do |
+
+**Why it runs after 11–16.** Three mechanisms, not a general caution. Stage 13
+may subsume piece 1, as above. [Stage
+16](#stage-16-a-test-may-not-author-sql-either) creates a new SQL root with its
+own census — a path class no invocation rule can know about yet. [Stage
+12](#stage-12-exists-because-this-plan-grew-the-suite) may move the suite
+boundaries that piece 1's unit of analysis rests on.
+
+**Exit.** The invocation rule distinguishes a suite from a directory, built on
+Stage 13's observation rather than a second implementation of it; the caching
+candidates are measured both ways and only the winners adopted; the docs zone
+covers `.claude/skills/**/*.md`; and each of the four dropped items carries its
+revisit condition in the record.
+
+**What it was scoped as**, kept below because the reasoning that produced the
+four drops is worth reading against what replaced it.
 
 **What it is.** Plan 139 Stage E's advisory impact selector, the two questions
 Stage 5b raised and declined, and — first — the instrument both of them need.
