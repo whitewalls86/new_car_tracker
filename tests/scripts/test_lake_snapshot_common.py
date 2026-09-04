@@ -161,7 +161,7 @@ class TestProductionGuard:
 
 
 class TestPostgresGuard:
-    """Plan 162 Stage 10. Stricter than the MinIO guard above, deliberately:
+    """Plan 162 Stage P. Stricter than the MinIO guard above, deliberately:
     this half runs a DELETE against a live operational table."""
 
     @pytest.mark.parametrize("url", [

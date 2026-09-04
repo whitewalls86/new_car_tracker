@@ -4,7 +4,7 @@
 -- parallel text arrays, and the active states as a third. Multi-argument
 -- `unnest` zips the first two back into rows, so the pairs arrive as data.
 --
--- **Static on purpose (Plan 162 Stage 9).** This was an f-string building a
+-- **Static on purpose (Plan 162 Stage N).** This was an f-string building a
 -- VALUES list and an IN list, each sized to its arguments, and the contract's
 -- "structurally generated statements" exemption was claimed for it. It never
 -- qualified: only the *number* of values varied, never an identifier, and

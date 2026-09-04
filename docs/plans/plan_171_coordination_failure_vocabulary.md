@@ -18,7 +18,7 @@ choose them.
 
 ## The measurement
 
-Taken 2026-09-02, against the tree at Plan 162 Stage 6c.
+Taken 2026-09-02, against the tree at Plan 162 Stage K.
 
 **Two operator entry points drive one state machine.** `scripts/redeploy.sh`
 runs a deploy; `scripts/host_maintenance.py` runs a host window. Between them
@@ -80,13 +80,13 @@ Two production failures, one day apart, wearing the same face:
    returned `503 "Database unavailable."` Postgres was healthy throughout. The
    real cause was a `CHECK` constraint that no `(targets, scope)` pair from a
    surface-less service could satisfy.
-2. **2026-09-01, merging Plan 162 Stage 7.** The identical symptom on the
+2. **2026-09-01, merging Plan 162 Stage L.** The identical symptom on the
    identical endpoint, for an unrelated reason: psycopg2 counts placeholders
    inside comments, so a statement expected four parameters where the caller
    passed three. It was found by seven Layer 4 failures in CI and diagnosed from
    a log.
 
-Both are recorded in [Plan 162's Stage 6c
+Both are recorded in [Plan 162's Stage K
 section](plan_162_testing_census_and_restructure.md). **The second is the
 stronger evidence, because it arrived from outside the stage that predicted the
 first.** Two unrelated defects were indistinguishable at the response, in the
@@ -138,7 +138,7 @@ what the layer below it knew.*
 134 has already settled a shape for the answer:
 `HTTPException(500, detail=dict(result, failure_reason=reason))`, which
 `dbt_runner/app.py:214` was already using and which Plan 131 Stage 5 applied to
-three `/pack/bronze/*` routes. Plan 162 Stage 6c's `500` carrying the SQL cause
+three `/pack/bronze/*` routes. Plan 162 Stage K's `500` carrying the SQL cause
 landed on the same shape without knowing it.
 
 **So Stage 0 starts by reading 134's contract, not by drafting one.** A second
@@ -156,7 +156,7 @@ running.
 A contract nothing checks is the shortcut this plan exists to close, so the
 deliverable is not a paragraph in a runbook. The repository already has the
 shape twice: `SERVICE_CONTRACTS` is checked for exact coverage against
-`docker-compose.yml`, and Plan 162 Stage 3 gave the two health-sensor censuses
+`docker-compose.yml`, and Plan 162 Stage D gave the two health-sensor censuses
 one declared source.
 
 **The assertion is static, because both sides are literals.** Collect the status
@@ -269,7 +269,7 @@ path. Then the rest, which are on `host_maintenance.py`'s path only.
   reconcile. Nothing observed says they need one.
 - **Every other service.** See Plan 106 C1's inversion above.
 - **`shared/db.py`'s failure classification.** `UNREACHABLE_ERRORS`,
-  `db_failure_cause` and the `exc_info=True` logging landed in Plan 162 Stage 6c
+  `db_failure_cause` and the `exc_info=True` logging landed in Plan 162 Stage K
   and are this plan's input, not its work.
 - **Which transitions are legal.** Plan 142 owns the state machine's semantics.
   This plan changes only how a refusal or a failure is reported.

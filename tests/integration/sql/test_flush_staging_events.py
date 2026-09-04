@@ -282,7 +282,7 @@ class TestDeleteUpToMax:
 
 
 # ===========================================================================
-# Statements imported from archiver.queries — Plan 162 Stage 7
+# Statements imported from archiver.queries — Plan 162 Stage L
 # ===========================================================================
 
 # The parametrisation is _TABLE_CONFIGS itself, not a list of table names
@@ -296,7 +296,7 @@ class TestExtractedStagingFlushStatements:
     """The three statements of the flush, as ``_flush_one`` itself holds them.
 
     Everything above retypes SQL that resembles what the processor runs, table
-    by table. Until Plan 162 Stage 7 there was no alternative: all three
+    by table. Until Plan 162 Stage L there was no alternative: all three
     statements were f-strings at their ``cur.execute()`` call sites, so no test
     could import them. These execute ``archiver.queries``' constants — the same
     objects ``_flush_one`` executes — filled from the same ``_TABLE_CONFIGS``

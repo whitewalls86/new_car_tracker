@@ -7,7 +7,7 @@ Given a closed cohort (VINs, listing_ids, and explicit artifact row keys from
 source tables and writes a filtered, dbt-compatible fixture dataset to a
 fingerprint-addressed MinIO prefix.
 
-Plan 162 Stage 10 added a second, unfiltered half: the two Postgres dimension
+Plan 162 Stage P added a second, unfiltered half: the two Postgres dimension
 tables `dbt/models/sources.yml` resolves through `postgres_scan()`. They are not
 Parquet and not in the lake, so they travel as JSON under `postgres/` and are
 exported whole -- see `shared/lake_snapshot_postgres.py` for why whole is the

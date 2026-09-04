@@ -18,7 +18,7 @@ exclude = [
 # else. It owns `open` and `tempfile.NamedTemporaryFile`, where its type
 # inference is the right instrument; `read_text`/`write_text` are owned by
 # test_every_text_read_and_write_states_its_encoding, which sees the receiver
-# shapes ruff cannot. Plan 162 Stage 6b.
+# shapes ruff cannot. Plan 162 Stage J.
 select = ["E", "F", "I", "PLW1514"]
 preview = true
 explicit-preview-rules = true

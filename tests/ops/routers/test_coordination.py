@@ -153,7 +153,7 @@ def test_begin_drain_endpoint_maps_failures(mock_client, mocker, result, status_
 
 
 def test_status_route_is_registered(mock_client, mocker):
-    """G6, Plan 162 Stage 6. `test_status_serializes_timestamps` calls `_status`.
+    """G6, Plan 162 Stage H. `test_status_serializes_timestamps` calls `_status`.
 
     That covers the serialisation and says nothing about the URL -- and this is
     the route `scripts/host_maintenance.py` polls as `GET /coordination/status`
@@ -648,7 +648,7 @@ def test_a_refused_request_names_the_cause_instead_of_blaming_the_database(
 ):
     """`/coordination/request` masked its failures exactly as `/deploy/start`
     did, and expands the same contract, so `service_maintenance` on `dashboard`
-    hit the same constraint by the same route. Plan 162 Stage 6c.
+    hit the same constraint by the same route. Plan 162 Stage K.
     """
     violation = (
         'new row for relation "coordination_state" violates check constraint '

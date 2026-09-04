@@ -6,7 +6,7 @@ question — "endpoint behaviour against a real dependency" — is answered the 
 recorded from the real one, with the whole path left intact.
 
 **Nothing is mocked, and that is the entire point of this suite.** Until Plan
-162 Stage 8, neither fetch path had ever run unmocked in any layer:
+162 Stage M, neither fetch path had ever run unmocked in any layer:
 `tests/scraper/conftest.py` patches `shared.db.get_conn` and
 `shared.minio.write_html` for every test in that directory, autouse, so the
 half of the request path that writes — MinIO object, `ops.artifacts_queue` row,
@@ -41,7 +41,7 @@ and there should not be one — a CI job that fetched cars.com would be scraping
 from a datacentre IP, which is what the cooldown machinery exists to survive.
 The parser suites own markup drift instead, against these same captures.
 
-Plan 162 Stage 8.
+Plan 162 Stage M.
 """
 import gzip
 import os

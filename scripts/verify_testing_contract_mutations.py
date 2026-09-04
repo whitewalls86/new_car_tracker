@@ -157,7 +157,7 @@ MUTATIONS = [
     (
         "test_every_waiver_names_a_gap_entry_that_exists",
         "a gap entry a waiver depends on is renamed in the contract",
-        # Re-anchored from G6 to G5 by Plan 162 Stage 8. G6 was deleted by
+        # Re-anchored from G6 to G5 by Plan 162 Stage M. G6 was deleted by
         # Stage 6 when route coverage closed, and this anchor went with it --
         # so the harness aborted here and every mutation after it stopped
         # running, unnoticed, for two stages. That is the same failure Stage 1
@@ -198,7 +198,7 @@ MUTATIONS = [
     (
         "test_no_gap_entry_outlives_the_plan_that_owns_it",
         "a gap entry's owner plan is archived and the entry stays behind",
-        # Re-anchored twice by Plan 162 Stage 8. Stage 7 struck G14's text
+        # Re-anchored twice by Plan 162 Stage M. Stage 7 struck G14's text
         # through when it closed the gap, so the old anchor stopped matching;
         # and the row it renamed G14 to, G15, is a real entry Stage 7 added, so
         # the replacement would now write a duplicate. G99 is used precisely
@@ -215,7 +215,7 @@ MUTATIONS = [
     (
         "test_no_waiver_outlives_the_plan_that_owns_it",
         "a waiver's owner plan is archived and the waiver stays behind",
-        # Re-anchored from G6 to G5 by Plan 162 Stage 8, for the reason above:
+        # Re-anchored from G6 to G5 by Plan 162 Stage M, for the reason above:
         # ROUTE_WAIVERS is `()` since Stage 6, so no waiver names G6 any more.
         lambda: _edit(
             TEST,

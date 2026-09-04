@@ -2,7 +2,7 @@
 
 Not a test module. It exists because `test_incremental_models_real_build.py`
 and `test_observation_fingerprints_real_build.py` carried byte-identical
-`_dbt_env` / `_run_dbt` helpers, and because Plan 162 Stage 4 changed how that
+`_dbt_env` / `_run_dbt` helpers, and because Plan 162 Stage E changed how that
 invocation works and there should be one place it changed.
 
 **Why in-process rather than a subprocess.** Measured in CI on 2026-09-01

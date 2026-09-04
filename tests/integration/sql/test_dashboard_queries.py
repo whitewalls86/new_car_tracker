@@ -6,7 +6,7 @@ the dashboard imports — against the DuckDB file ``dbt build --target duckdb``
 produced earlier in the same job, and asserts each statement returns the
 columns the page reads.
 
-**Until Plan 162 Stage 8 this file was 25 tests and no assertions**, the only
+**Until Plan 162 Stage M this file was 25 tests and no assertions**, the only
 Layer 2 suite with none. Every test executed a statement and discarded the
 result, which satisfies Layer 2's first clause and not its second: the
 statements ran, and nothing checked that they *"return the columns the caller
@@ -33,7 +33,7 @@ What this suite deliberately does not assert is that the queries return
 *correct values*. That is Layer 3's shape — known inputs, known outputs — and
 ``duckdb_con`` is a read-only connection to whatever CI's seed produced, so
 there are no known inputs to assert against. The reasoning, and the one query
-it does not hold, are recorded in Plan 162 §"Stage 8 narrowed".
+it does not hold, are recorded in Plan 162 §"Stage M narrowed".
 
 Pipeline Health queries were removed in Plan 101.
 """

@@ -14,7 +14,7 @@ caught it for two reasons worth separating:
   exporter never emits.
 
 This is the missing half: the strings come from the two modules, not from here.
-It is the general shape Plan 162 Stage 10 names — **a DAG-side checker keyed on
+It is the general shape Plan 162 Stage P names — **a DAG-side checker keyed on
 a string a service returns needs one test that reads the string from the
 service.**
 

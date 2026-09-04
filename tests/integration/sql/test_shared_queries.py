@@ -2,7 +2,7 @@
 Layer 2 — SQL smoke tests for statements owned by the shared library.
 
 ``shared/`` is used by several services rather than being one, so its SQL has
-no service query module to live in and got its own in Plan 162 Stage 7. The
+no service query module to live in and got its own in Plan 162 Stage L. The
 statement here reads ``ops.compression_dictionaries``, which Plan 129 created
 and the decompression path depends on: a rename there breaks every service
 that reads a dictionary-compressed artifact, and until now nothing executed it.
@@ -41,7 +41,7 @@ class TestDictionaryRegistrationQueries:
     """The write half of ``ops.compression_dictionaries``.
 
     ``scripts/train_html_dictionary.py`` held both of these at its call sites
-    until Plan 162 Stage 7, which meant a second statement against a table
+    until Plan 162 Stage L, which meant a second statement against a table
     ``shared/compression.py`` already owned, in a file no rule scanned. They
     are executed here in the order the script runs them: the collision check
     refuses first, the insert registers second.
@@ -117,7 +117,7 @@ class TestDeployIntentPause:
 
 
 class TestPostgresSnapshotTableQueries:
-    """The two halves of the Plan 162 Stage 10 round trip, executed together.
+    """The two halves of the Plan 162 Stage P round trip, executed together.
 
     Neither statement is interesting alone: the export's value is that Postgres
     produces exactly the JSON its own rowtype reads back, so every cast --

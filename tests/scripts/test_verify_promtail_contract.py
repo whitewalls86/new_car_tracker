@@ -235,7 +235,7 @@ def test_a_complete_observation_stops_retrying(complete):
 
 
 # ---------------------------------------------------------------------------
-# Plan 162 Stage 6: the rest of the checker, which is also daemon-free
+# Plan 162 Stage H: the rest of the checker, which is also daemon-free
 # ---------------------------------------------------------------------------
 #
 # Everything above tests the verdict. What follows tests how the replay is set

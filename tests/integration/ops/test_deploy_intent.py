@@ -148,7 +148,7 @@ def test_a_release_refused_by_another_coordination_kind_says_who_holds_it(
     would pass just as happily if the statement's column order changed under it
     and the message started naming a phase as a kind.
 
-    Until Plan 162 Stage 6c this answered 503 "Database unavailable" -- for a
+    Until Plan 162 Stage K this answered 503 "Database unavailable" -- for a
     facade correctly declining to release a host window. Plan 171 owns the rest
     of that vocabulary.
     """
@@ -252,7 +252,7 @@ def test_deploy_status_reflects_running_count(api_client, verify_cur):
 
 
 # ---------------------------------------------------------------------------
-# Every service contract produces a row the database accepts (Plan 162 Stage 6c)
+# Every service contract produces a row the database accepts (Plan 162 Stage K)
 #
 # `ops/coordination_contract.py` decides the (targets, scope) pair; the CHECK
 # constraint added by V043 decides whether that pair can be stored. Both were

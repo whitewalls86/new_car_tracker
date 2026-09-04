@@ -588,7 +588,7 @@ class TestQueueIsEmpty:
 
 
 # ===========================================================================
-# Statements imported from processing.queries — Plan 162 Stage 7
+# Statements imported from processing.queries — Plan 162 Stage L
 # ===========================================================================
 
 class TestExtractedProcessingStatements:
@@ -619,7 +619,7 @@ class TestExtractedProcessingStatements:
 
 
 # ===========================================================================
-# Every remaining processing statement, executed — Plan 162 Stage 7
+# Every remaining processing statement, executed — Plan 162 Stage L
 # ===========================================================================
 
 class TestProcessingQueueStatements:
@@ -797,7 +797,7 @@ class TestDetailClaimAndCooldownStatements:
         assert cur.fetchone() is None
 
     def test_clear_blocked_cooldown_removes_an_existing_entry(self, cur):
-        """The clear that actually clears, moved here by Plan 162 Stage 8.
+        """The clear that actually clears, moved here by Plan 162 Stage M.
 
         It came from ``tests/integration/scraper/test_blocked_cooldown.py``,
         which was a Layer 2 suite living in a Layer 4 directory: it executed

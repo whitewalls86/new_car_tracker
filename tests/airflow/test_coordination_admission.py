@@ -123,7 +123,7 @@ def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
     )
     sensor_source = ast.get_source_segment(source, sensor)
     # The phase set is a Python literal in poke() and is asserted here. The
-    # statement it gates is not: Plan 162 Stage 9 moved it into
+    # statement it gates is not: Plan 162 Stage N moved it into
     # airflow/sql/deploy_intent_gate.sql, so the table names and the jsonb
     # operators are asserted against that file below and executed for real by
     # tests/integration/sql. Asserting "scope ? 'host'" against sensors.py's
@@ -144,7 +144,7 @@ def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
     assert "_record_observation(" in sensor_source
 
     # The statements themselves live in airflow/sql/ -- the observation since
-    # Plan 162 Stage 7, the gate since Stage 9 -- and both load through
+    # Plan 162 Stage L, the gate since Stage 9 -- and both load through
     # airflow/dags/dag_queries.py. So each half is asserted where its subject now
     # lives: sensors.py must name the right constants, and the files must hold
     # the statements. Asserting a table name against sensors.py's text passed
@@ -283,7 +283,7 @@ def test_the_gate_read_selects_the_columns_this_row_supplies():
     """_gate_row's positions are only meaningful if the real SELECT agrees.
 
     Read from the file rather than scraped out of ``sensors.py`` with ``ast``:
-    Plan 162 Stage 9 moved the statement into ``airflow/sql/``, which is what
+    Plan 162 Stage N moved the statement into ``airflow/sql/``, which is what
     the scrape was working around. This is the same guarantee against one more
     copy of the statement, without parsing Python to reach a string.
 

@@ -89,7 +89,7 @@ INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = (
 )
 
 # Search-config administration (admin.py). Held as `sql = """..."""` locals at
-# their call sites until Plan 162 Stage 7 -- importable in principle, in no
+# their call sites until Plan 162 Stage L -- importable in principle, in no
 # .sql file in practice, so the Layer 2 census could not count them and
 # test_ops_queries.py had to retype two of them to test anything.
 SELECT_SEARCH_CONFIGS = _q("select_search_configs")
@@ -100,7 +100,7 @@ TOGGLE_SEARCH_CONFIG_ENABLED = _q("toggle_search_config_enabled")
 RETIRE_SEARCH_CONFIG = _q("retire_search_config")
 
 # Read by the drain gate (coordination_drain.py). The last three took f-strings
-# sized to their arguments until Plan 162 Stage 9 made them static; the params
+# sized to their arguments until Plan 162 Stage N made them static; the params
 # each expects are documented in the .sql files and built by the query
 # functions in that module.
 SELECT_RUNNING_DETAIL_CLAIMS = _q("select_running_detail_claims")

@@ -1057,7 +1057,7 @@ class TestExportNonDryRun:
         self, mocker, tables=None, data_path="data/path", ok=True, postgres_tables=None,
     ):
         tables = tables if tables is not None else {}
-        # Plan 162 Stage 10: a real export always carries the two Postgres
+        # Plan 162 Stage P: a real export always carries the two Postgres
         # dimension tables, so the default here is the complete shape. A test
         # that wants the incomplete one passes it explicitly.
         if postgres_tables is None:
@@ -1137,7 +1137,7 @@ class TestExportNonDryRun:
         assert result.archive_cache_action == "computed"
 
     def test_the_export_hands_the_writer_a_postgres_connection_factory(self, mocker):
-        """Plan 162 Stage 10. `materialize_filtered_tables` writes the Postgres
+        """Plan 162 Stage P. `materialize_filtered_tables` writes the Postgres
         half only when it is given one, so an export that forgets it produces an
         archive whose seed leaves two dbt sources empty."""
         _mock_heavy_path(mocker)
