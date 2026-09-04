@@ -15,6 +15,7 @@ from scripts.lake_snapshot_common import (
     get_archive_meta,
     is_production_like_bucket,
     is_production_like_endpoint,
+    is_production_like_postgres_url,
     safe_extract_tar_zst,
     sha256_file,
     verify_archive_checksum,
@@ -157,3 +158,60 @@ class TestProductionGuard:
 
     def test_check_production_target_allows_local(self):
         check_production_target("http://localhost:9000", "bronze", False)
+
+
+class TestPostgresGuard:
+    """Plan 162 Stage 10. Stricter than the MinIO guard above, deliberately:
+    this half runs a DELETE against a live operational table."""
+
+    @pytest.mark.parametrize("url", [
+        "postgresql://u:p@localhost:5432/cartracker",
+        "postgresql://u:p@127.0.0.1:5432/cartracker",
+        "postgresql://u:p@10.0.0.5:5432/cartracker",
+        "postgresql://u:p@172.16.0.5:5432/cartracker",
+    ])
+    def test_loopback_and_private_addresses_pass(self, url):
+        assert is_production_like_postgres_url(url) is False
+
+    @pytest.mark.parametrize("url", [
+        "postgresql://u:p@cartracker.info:5432/cartracker",
+        "postgresql://u:p@147.224.199.86:5432/cartracker",
+        "postgresql://u:p@db.example.com:5432/cartracker",
+        "",
+        "not-a-url",
+    ])
+    def test_everything_else_is_production_like(self, url):
+        assert is_production_like_postgres_url(url) is True
+
+    def test_a_compose_service_name_does_not_pass_here_though_minio_does(self):
+        """The one asymmetry between the two guards, asserted so it cannot be
+        tidied away as an inconsistency.
+
+        `http://minio:9000` is treated as dev-shaped because the MinIO half
+        writes fixture objects under known prefixes. `postgres:5432` is not,
+        because from inside the production Compose network that name *is*
+        production, and the Postgres half deletes rows.
+        """
+        assert is_production_like_endpoint("http://minio:9000") is False
+        assert is_production_like_postgres_url(
+            "postgresql://u:p@postgres:5432/cartracker"
+        ) is True
+
+    def test_check_production_target_reads_the_url_alongside_the_others(self):
+        with pytest.raises(ProductionTargetError):
+            check_production_target(
+                "http://localhost:9000", "bronze", False,
+                postgres_url="postgresql://u:p@postgres:5432/cartracker",
+            )
+
+    def test_an_omitted_url_is_not_checked(self):
+        """Seeding MinIO alone is a supported local workflow, and an empty
+        default must not turn into a refusal for callers that never asked for
+        the Postgres half."""
+        check_production_target("http://localhost:9000", "bronze", False)
+
+    def test_the_override_covers_the_postgres_half_too(self):
+        check_production_target(
+            "http://localhost:9000", "bronze", True,
+            postgres_url="postgresql://u:p@cartracker.info:5432/cartracker",
+        )

@@ -21,6 +21,7 @@ from ops.queries import (
     CLAIM_DETAIL_SCRAPE_BATCH,
     CLEAR_DEPLOY_INTENT,
     COMPLETE_COORDINATION_STATE,
+    COUNT_BLOCKED_COOLDOWN_LISTINGS,
     DELETE_AUTHORIZED_USER,
     DELETE_DETAIL_SCRAPE_CLAIMS,
     DENY_ACCESS_REQUEST,
@@ -1182,3 +1183,54 @@ class TestDrainGateStatement:
         # MIN is what separates "busy" from "stuck", so it must come back even
         # when there is nothing running.
         assert count == 0 or oldest is not None
+
+
+class TestBlockedCooldownReconcileStatement:
+    """The one ops statement that runs against DuckDB rather than Postgres.
+
+    `POST /maintenance/reconcile-cooldown-cohorts` reads the blocked-cooldown
+    lifecycle log straight from the ops_normalized Parquet, because the
+    persisted analytics.duckdb view over the same files would contend with dbt's
+    write lock. It sat in a Python literal with nothing executing it until Plan
+    162 -- and it is the statement that decides which listings get a 'cleared'
+    event written for them, so a drift in its arg_max columns would emit events
+    for the wrong cohort rather than failing.
+    """
+
+    def test_returns_listings_whose_latest_event_is_still_blocking(
+        self, duckdb_s3_con, blocked_cooldown_parquet,
+    ):
+        rows = duckdb_s3_con.execute(
+            COUNT_BLOCKED_COOLDOWN_LISTINGS, [blocked_cooldown_parquet],
+        ).fetchall()
+
+        # The caller builds `{str(listing_id): attempts}` from these two
+        # positionally, so the projection is the contract.
+        for listing_id, attempts in rows:
+            assert listing_id is not None
+            assert attempts is None or isinstance(attempts, int)
+
+    def test_a_cleared_listing_is_excluded(
+        self, duckdb_s3_con, blocked_cooldown_parquet,
+    ):
+        """arg_max over event_at is the whole statement: a listing blocked and
+        later cleared must not come back, or the reconcile emits a second
+        'cleared' event for a listing that already has one."""
+        counted = {
+            str(listing_id)
+            for listing_id, _ in duckdb_s3_con.execute(
+                COUNT_BLOCKED_COOLDOWN_LISTINGS, [blocked_cooldown_parquet],
+            ).fetchall()
+        }
+        cleared = {
+            str(row[0])
+            for row in duckdb_s3_con.execute(
+                "SELECT listing_id FROM ("
+                "  SELECT listing_id, arg_max(event_type, event_at) AS latest"
+                "  FROM read_parquet(?, hive_partitioning=true)"
+                "  GROUP BY listing_id"
+                ") WHERE latest = 'cleared'",
+                [blocked_cooldown_parquet],
+            ).fetchall()
+        }
+        assert not (counted & cleared)

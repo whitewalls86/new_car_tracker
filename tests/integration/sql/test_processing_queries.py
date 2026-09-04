@@ -6,6 +6,7 @@ with Flyway migrations applied. Does not invoke MinIO or the parsers — those
 are tested elsewhere. Goal: catch schema breakage before it hits production.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -22,6 +23,7 @@ from processing.queries import (
     INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     INSERT_PRICE_OBSERVATION_EVENT,
+    INSERT_SILVER_OBSERVATIONS,
     INSERT_TRACKED_MODEL_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
     LOOKUP_VIN_COLLISION,
@@ -834,3 +836,55 @@ class TestDetailClaimAndCooldownStatements:
             "num_of_attempts": 3,
         })
         assert cur.rowcount == 1
+
+
+class TestSilverObservationWrite:
+    """The batch insert into `staging.silver_observations` — Plan 162.
+
+    The head of the whole silver pipeline: what this writes, the archiver
+    flushes to Parquet, dbt reads and every mart is built on. It carries 37
+    columns in a fixed order that positional tuples are built against, and it
+    lived in a Python literal with nothing executing it until now — so a column
+    a migration added in the middle would have shifted every value one place to
+    the right, silently, in production.
+    """
+
+    def test_the_column_list_matches_the_order_the_rows_are_built_in(self, cur):
+        """Not a parse check. `execute_values` binds tuples positionally, so the
+        statement's column list and `_POSTGRES_COLS` are one contract in two
+        files, and this is the only place they meet."""
+        from psycopg2.extras import execute_values
+
+        from processing.writers.silver_writer import _POSTGRES_COLS
+
+        row = {col: None for col in _POSTGRES_COLS}
+        row["artifact_id"] = 987_654_321
+        row["listing_id"] = _random_listing_id()
+        row["vin"] = "VIN00000000000001"
+        row["source"] = "detail"
+        row["listing_state"] = "active"
+        row["fetched_at"] = datetime.now(timezone.utc)
+        row["price"] = 31_500
+        row["make"] = "toyota"
+        row["model"] = "camry"
+        row["year"] = 2026
+
+        execute_values(
+            cur, INSERT_SILVER_OBSERVATIONS,
+            [tuple(row[col] for col in _POSTGRES_COLS)],
+        )
+        assert cur.rowcount == 1
+
+        cur.execute(
+            "SELECT vin, source, price, make, year FROM staging.silver_observations "
+            "WHERE artifact_id = %s",
+            (row["artifact_id"],),
+        )
+        written = cur.fetchone()
+        # Read back by name: a shifted column list inserts successfully and puts
+        # the year in the price, which only a value comparison catches.
+        assert written["vin"] == "VIN00000000000001"
+        assert written["source"] == "detail"
+        assert written["price"] == 31_500
+        assert written["make"] == "toyota"
+        assert written["year"] == 2026

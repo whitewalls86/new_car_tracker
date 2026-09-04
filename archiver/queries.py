@@ -36,3 +36,47 @@ DELETE_SILVER_OBSERVATIONS_UP_TO_ID = _q("delete_silver_observations_up_to_id")
 SELECT_STAGING_MAX_PK = _q("select_staging_max_pk")
 SELECT_STAGING_ROWS_UP_TO_PK = _q("select_staging_rows_up_to_pk")
 DELETE_STAGING_ROWS_UP_TO_PK = _q("delete_staging_rows_up_to_pk")
+
+# ---------------------------------------------------------------------------
+# Plan 120 lake snapshot pipeline — DuckDB over Parquet, not Postgres.
+# ---------------------------------------------------------------------------
+# These are the audit, selector-wrapping, cohort-closure and materialization
+# statements. They sit in their own subdirectory because there are eleven of
+# them and they belong to one pipeline, not to the archiver's Postgres flush
+# paths above.
+#
+# Every one is a template, and the interpolated part is never a value. Three
+# kinds occur: a Parquet path inside `read_parquet('...')`, which is a relation
+# and not a column reference; a projection or column name; and a WHERE fragment
+# whose *clause structure* varies by table -- blocked_cooldown_events has no
+# vin, and only silver_observations admits exact artifact row keys outside the
+# time window. Every value inside those fragments is still bound: the builders
+# in the processors return `(sql, params)` and the params are passed through.
+#
+# `candidate_sql` in the two wrappers is the loudest case: it is another
+# statement, itself loaded from archiver/sql/lake_snapshot_selectors/.
+_LAKE_SNAPSHOT_SQL_DIR = _SQL_DIR / "lake_snapshot"
+
+
+def _lake_q(name: str) -> str:
+    return load_query(_LAKE_SNAPSHOT_SQL_DIR, name)
+
+
+# lake_source_audit.py
+SELECT_SOURCE_TABLE_STATS = _lake_q("select_source_table_stats")
+
+# lake_snapshot_selectors.py
+WRAP_AGGREGATE_QUERY = _lake_q("wrap_aggregate_query")
+
+# lake_snapshot_cohort.py
+WRAP_CANDIDATE_QUERY = _lake_q("wrap_candidate_query")
+SELECT_ROW_KEYS_FOR_CANDIDATES = _lake_q("select_row_keys_for_candidates")
+SELECT_SEED_VINS_BY_HASH = _lake_q("select_seed_vins_by_hash")
+SELECT_VINS_RANKED_WITHIN_MAKE_MODEL = _lake_q("select_vins_ranked_within_make_model")
+SELECT_LISTING_IDS_FOR_VINS = _lake_q("select_listing_ids_for_vins")
+SELECT_VINS_FOR_LISTING_IDS = _lake_q("select_vins_for_listing_ids")
+SELECT_PREVIOUS_LISTING_IDS = _lake_q("select_previous_listing_ids")
+SELECT_ARTIFACT_IDS = _lake_q("select_artifact_ids")
+
+# lake_snapshot_export.py
+SELECT_FILTERED_TABLE_ROWS = _lake_q("select_filtered_table_rows")

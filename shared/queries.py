@@ -46,3 +46,17 @@ INSERT_COMPRESSION_DICTIONARY = _q("insert_compression_dictionary")
 MARK_ARTIFACT_STATUS = _q("mark_artifact_status")
 INSERT_ARTIFACT_EVENT = _q("insert_artifact_event")
 INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = _q("insert_blocked_cooldown_cleared_event")
+
+# Plan 162 Stage 10: the two Postgres dimension tables that travel inside a
+# Plan 120 lake snapshot. Templates over a schema-qualified relation, filled
+# only from shared.lake_snapshot_postgres.POSTGRES_SNAPSHOT_TABLES -- the
+# producer (archiver's exporter) and the consumer (scripts/seed_lake_snapshot)
+# are two halves of one round trip, so both statements live in one place for
+# the same reason the artifact pair above does.
+SELECT_POSTGRES_SNAPSHOT_TABLE = _q("select_postgres_snapshot_table")
+REPLACE_POSTGRES_SNAPSHOT_TABLE = _q("replace_postgres_snapshot_table")
+
+# Plan 131 Stage 5 D3b: the cooperative pause long-running jobs check at their
+# boundaries. In shared/ because shared/deploy_intent.py is the only caller and
+# is a library the archiver and pack-worker both use, not a service of its own.
+SELECT_DEPLOY_INTENT_PAUSE = _q("select_deploy_intent_pause")

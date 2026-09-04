@@ -23,11 +23,16 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
+from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
 from shared.minio import read_json, write_json
 
 logger = logging.getLogger("archiver")
 
-EXPORT_CACHE_SCHEMA_VERSION = 2
+# 3 since Plan 162 Stage 10: every export now also carries the two Postgres
+# dimension tables, so a manifest written before that describes an archive a
+# dbt build cannot use. Bumping the schema version is what makes every one of
+# them a cache miss rather than a silently short archive.
+EXPORT_CACHE_SCHEMA_VERSION = 3
 EXPORT_ALGORITHM_VERSION = 1
 OUTPUT_SCHEMA_VERSION = 1
 PARTITION_LAYOUT_VERSION = 1
@@ -44,6 +49,13 @@ INCLUDED_TABLES: Tuple[str, ...] = (
     "price_observation_events",
     "vin_to_listing_events",
     "blocked_cooldown_events",
+)
+
+# The Postgres half, named the same way and for the same reason: what the writer
+# includes has to be in the fingerprint, so growing the list re-keys the cache
+# instead of reusing an archive that predates the new table.
+INCLUDED_POSTGRES_TABLES: Tuple[str, ...] = tuple(
+    f"{schema}.{table}" for schema, table in POSTGRES_SNAPSHOT_TABLES
 )
 
 
@@ -65,6 +77,7 @@ def compute_export_fingerprint(planning_fingerprint: str) -> Tuple[str, Dict[str
         "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
         "planning_fingerprint": planning_fingerprint,
         "included_tables": list(INCLUDED_TABLES),
+        "included_postgres_tables": list(INCLUDED_POSTGRES_TABLES),
         "export_algorithm_version": EXPORT_ALGORITHM_VERSION,
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "partition_layout_version": PARTITION_LAYOUT_VERSION,
@@ -88,6 +101,7 @@ def build_export_manifest(
     counts: Dict[str, int],
     coverage: Dict[str, Any],
     tables: Dict[str, Any],
+    postgres_tables: Dict[str, Any],
     data_path: str,
     generation_id: str,
 ) -> Dict[str, Any]:
@@ -111,6 +125,7 @@ def build_export_manifest(
         "counts": counts,
         "coverage": coverage,
         "tables": tables,
+        "postgres_tables": postgres_tables,
         "data_path": data_path,
         "generation_id": generation_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -145,6 +160,18 @@ def _manifest_incompleteness_reason(
     errored = [name for name in INCLUDED_TABLES if tables[name].get("error")]
     if errored:
         return f"tables with recorded errors: {errored}"
+    postgres_tables = manifest.get("postgres_tables") or {}
+    missing_postgres = [
+        name for name in INCLUDED_POSTGRES_TABLES if name not in postgres_tables
+    ]
+    if missing_postgres:
+        return f"missing postgres tables: {missing_postgres}"
+    errored_postgres = [
+        name for name in INCLUDED_POSTGRES_TABLES
+        if postgres_tables[name].get("error")
+    ]
+    if errored_postgres:
+        return f"postgres tables with recorded errors: {errored_postgres}"
     return None
 
 
