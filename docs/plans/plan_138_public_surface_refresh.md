@@ -23,13 +23,13 @@ not started" a day after Stage 2 was deployed.
 | **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started, unblocked 2026-09-02 and redesigned 2026-09-03** — it now builds `/writings` as its own page of cards rather than a list inline on `/`, which makes it a route rather than a template section. Gate 1g's demonstration half is owed until Article D is written, and is recorded as such rather than closed |
 | **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
 | **3** | **3b and 3c complete and deployed (CAR-68, PR #346)** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **The deploy was confirmed on 2026-09-03 against the live site**: `/` answers 200 with zero `cdn.` references in the markup and serves the full header set, including `img-src 'self' data:` — which is the constraint 1g's preview images now have to live inside. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
-| **4** | **Built 2026-09-04 (CAR-63), soaking on one owed clause.** Items 1–5 were already satisfied in `master` when the stage was opened — the "not started" this row used to read was itself the drift this plan is about. Gap P3 repaired with an anchor id; item 3 decided as met by the stale label. **Gate 4 is five clauses of six**: verifying the sixth against production found the stale threshold (900s) shorter than the producer's hourly cadence, so the page called a healthy snapshot stale for 45 of every 60 minutes. Fixed by deriving it — 3600 + 300 — and **that fix is unproven in production until `ops` deploys**, recorded as owed rather than closed |
-| **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
+| **4** | **Complete, and Gate 4 met in production 2026-09-04 (CAR-63).** Items 1–5 were already satisfied in `master` when the stage was opened — the "not started" this row used to read was itself the drift this plan is about. Gap P3 repaired with an anchor id; item 3 decided as met by the stale label. **Verifying the gate against production found two defects in the same field**: the stale threshold (900s) was shorter than the producer's hourly cadence, so the page called a healthy snapshot stale for 45 of every 60 minutes; and with that noise removed, the timestamp beside it proved to be a bucket *label* rendered as an end, understating freshness by an hour. Both fixed and deployed — measured live at 15:48Z (no `(stale)` on a 46.7-minute-old snapshot) and at 16:07:02Z (`datetime="2026-09-04T16:00:00Z"`, the bucket end) |
+| **5** | **Complete 2026-09-04, after an audit that rescoped its last two bullets.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The audit found exactly two bullets unheld: the README's link and production-versus-experimental contract, now `tests/test_readme_contract.py`; and the project-updates loader's branching, **accepted as untested** rather than adding a JavaScript runtime to CI for one `fetch` with four early returns. What was testable there — the no-JavaScript fallback, which is server-rendered — is now held, and the container assertions that preceded it passed against an emptied list |
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
 | **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
-| **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
-| **10** | **Built 2026-09-04**, raised at this plan's closeout from gap P4. Stage 9 made a plan document into published copy and nothing read what it said; `## Public summary` is a seventh surface and this plan's own closeout would have been the first unchecked instance. Three skills — `plan-draft`, `close-out`, `plans` — now run `public-surface-check` at the point each authors published copy, triggered for `plans` by the `--check` it already runs. A content-sensitive commit-gate matcher was designed and rejected as machinery whose whole job would be suppressing false fires. The commit gate got its first tests. **P4 stays open**, recording that four of seven surfaces are held by remembered rather than unforgettable checks |
+| **8** | **Complete 2026-09-02 (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), which is now the authority the commit gate, the review skill and this plan all cite |
 | **9** | **Built 2026-09-03 (CAR-74).** The planned projection reads `## What this plan is for`, the slice cell is the fallback, and all four published summaries changed. **Re-measured on the same day: the slice-only class goes 20 → 0** over the commits whose window carries the section. Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depended on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads; **Plan 172 Stage A landed 2026-09-02 and all four rows in the published planned window now carry `## What this plan is for`**, so the dependency is discharged. Sequenced first on 2026-09-03: the slice cell is published copy, so keeping the public page current means chasing stale internal pointers by hand, and the page was publishing a closed issue's identifier when the decision was taken |
+| **10** | **Built 2026-09-04**, raised at this plan's closeout from gap P4. Stage 9 made a plan document into published copy and nothing read what it said; `## Public summary` is a seventh surface and this plan's own closeout would have been the first unchecked instance. Three skills — `plan-draft`, `close-out`, `plans` — now run `public-surface-check` at the point each authors published copy, triggered for `plans` by the `--check` it already runs. A content-sensitive commit-gate matcher was designed and rejected as machinery whose whole job would be suppressing false fires. The commit gate got its first tests. **P4 stays open**, recording that four of seven surfaces are held by remembered rather than unforgettable checks |
 
 **The navigation pane is deliberately unstarted and unticketed**, deferred
 behind Stage 8's destination inventory. Its one carve-out — `/dashboard` is
@@ -2682,6 +2682,56 @@ Run a manual Lighthouse pass against the deployed page at mobile width. Targets:
 - no console errors and no failed asset requests.
 
 These scores are release evidence, not a new CI dependency in the first pass.
+
+#### Rescoped 2026-09-04: two bullets, one delivered and one accepted untested
+
+**Audited at closeout**, because the plan could not enter closeout while it
+owed code — `PLANS.md` says no row there owes any. Of the list above, every
+bullet was already held by tests each slice landed, except two.
+
+**Delivered: the README's links and the production-versus-experimental
+contract.** `tests/test_readme_contract.py` asserts that every repository-relative
+link in `README.md` resolves, that both halves of the split exist and are in
+order, that no name from the migration track appears under *"Running in
+production and serving users"*, that those names are still disclaimed by name
+under the other heading, and that DuckDB is still named as what actually serves.
+
+The two stack assertions are deliberately a pair, because either alone is
+satisfiable the wrong way: deleting the migration-track names passes the
+"nothing promoted" check, and promoting one passes the "still disclaimed"
+check. Both were watched failing — Iceberg moved into the production list, and
+a local link repointed at a path that does not exist. This is the README's half
+of `test_iceberg_is_labeled_a_migration_track_and_not_a_capability`, which
+already held the landing page.
+
+**Accepted untested: the project-updates loader's own branching.** The bullet
+asks for progressive enhancement across valid, unavailable, malformed, empty and
+unsupported-schema JSON. That behaviour lives in `ops/static_ops/info.js`, and
+**this repository has no JavaScript runtime in its test suite** — no
+`package.json`, no jest, no vitest, no jsdom. Testing it means adding one to CI.
+
+**Decided 2026-09-04: not worth a JavaScript runtime.** The scope is one
+`fetch` with four early returns, and the cost is a second test toolchain in CI
+for the rest of the repository's life. The gap is recorded here rather than
+left implied.
+
+**What was testable was tested instead.** The loader clears each list and
+appends, so the authored `<li>` inside it *is* the fallback — for a reader with
+JavaScript disabled, for a fetch that 404s, and for a malformed or
+unsupported-schema artifact, all of which leave the loader returning early. That
+fallback is server-rendered HTML, and
+`test_each_work_list_carries_its_no_javascript_fallback` now holds it. The
+container assertions that existed before this
+(`test_recent_work_carries_both_lists_and_the_recap_pointer`) pass against an
+emptied list — verified by emptying it — so the section could have gone blank
+for every one of those readers with the suite green.
+
+**One discrepancy found in the audit, and the tree is right.** Stage 4's item 5
+says a failed fetch should "log at most one concise console warning". The
+shipped loader logs nothing, and says why: the authored fallback is already on
+the page, so there is nothing to do and nothing to report. Recorded rather than
+changed — a console warning on a public page tells a visitor nothing and the
+maintainer nothing they would see.
 
 **Gate 5:** automated route/template tests pass and the manual accessibility,
 mobile, and performance checklist is attached to the implementation PR.
