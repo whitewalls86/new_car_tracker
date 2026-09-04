@@ -2,7 +2,7 @@
 
 **Owner:** [Plan 164](../plans/plan_164_cycle_close_ritual.md) Stage 0.
 
-Closing a cycle is eight steps owned by six skills and two gaps, and the order is
+Closing a cycle is eight steps owned by eight skills, and the order is
 not a preference. Two of the steps are only ever *correct* at the close, one of
 them destroys the evidence another one reads, and one of them has to happen
 before a deadline that passes whether anyone is looking or not.
@@ -58,8 +58,8 @@ budget and into two skills before anyone caught it.
 
 | # | Step | Owner | Must be preceded by | Must not run before |
 |---|---|---|---|---|
-| 2 | Record Plan 149's cycle measures | *unbuilt — Plan 164 Stage 1* | the boundary | anything that changes a `cycleId`, which is step 3 |
-| 3 | Roll the unfinished issues that Linear did not move | *unbuilt — Plan 164 Stage 2* | step 2 | the boundary |
+| 2 | Record Plan 149's cycle measures | [`cycle-measures`](../../.claude/skills/cycle-measures/SKILL.md) | the boundary | anything that changes a `cycleId`, which is step 3 |
+| 3 | Roll the unfinished issues that Linear did not move | [`roll-cycle`](../../.claude/skills/roll-cycle/SKILL.md) | step 2 | the boundary |
 | 4 | Close out plans whose gates closed | [`close-out`](../../.claude/skills/close-out/SKILL.md) | step 1, for the stages those plans carry | — |
 | 5 | Move the rows step 4 proposed | [`plans`](../../.claude/skills/plans/SKILL.md) | step 4 | — |
 | 6 | Write the week's recap | [`plan-week`](../../.claude/skills/plan-week/SKILL.md) | steps 4 and 5 | — |
@@ -106,16 +106,20 @@ The thing that *would* cost the recap its fallback is enabling **squash
 merging**, which leaves no merge commit and therefore no permanent record of the
 branch name. That is a repository setting, not an ordering.
 
-## Two steps are unbuilt, and this file says so on purpose
+## Every step has an owner
 
-Steps 2 and 3 have no owner today. Plan 164 Stages 1 and 2 are where they get
-one, and both need a *closed* cycle to develop against, so they could not be
-built at the same time as this file.
+Steps 2 and 3 were unowned when this file was first written, on the stated
+grounds that both "need a *closed* cycle to develop against". **That was wrong,
+and the correction is worth keeping.** Building a skill and recording an
+authoritative number are different acts, and only the second needs a closed
+cycle. Both skills now carry a **provisional** mode that reads an open cycle,
+labels every number provisional and refuses to write — which is how you develop
+them, and also how you see where a running cycle stands on any day of the week.
 
-Until they exist, those steps are done by hand, in that position, with the same
-constraints: read the measures before touching any `cycleId`, record a partial
-measure as partial, and confirm what Linear already moved before moving
-anything.
+The rules those two steps must hold are unchanged, and are now in the skills
+rather than in this paragraph: never record a final measure from an open cycle,
+never touch a `cycleId` before `endsAt`, confirm what Linear already moved
+before moving anything, and record a partial measure as partial.
 
 **A partial measure is recorded as partial.** Cycle 1's "state corrections" row
 is three known occurrences with no exhaustive count, and says so. A total that

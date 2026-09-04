@@ -74,18 +74,38 @@ as a projection. Git refs are not a projection of anything.
 never Y" boundary — `docs/` prose, `docs/` state, or Linear. Git refs are a
 fourth kind of state, and nothing currently claims it.
 
-## The ordering is the point, and it is why this is a package
+## The ordering, and why this is a package
 
-`plan-week` already anticipates the deletion:
+`plan-week` already anticipates the deletion. **As it read when this plan was
+written**, and it has since been corrected — see below:
 
 > The containing branch is a hint, never a source. `git branch --contains`
 > answers only while the branch still exists, and merging is supposed to delete
 > it. On the measured week the branch layer rescued 18 commits over 30 days.
 
-So the recap is *robust* to deleted branches and still *helped* by live ones —
-18 commits over 30 days. That fixes a sequence rather than merging a tool:
-**recap first, then clean.** A package with a fixed order is the artifact; one
-skill that does both is the thing Plan 146 forbids.
+So the recap is *robust* to deleted branches and still *helped* by live ones.
+That fixes a sequence rather than merging a tool: **recap first, then clean.** A
+package with a fixed order is the artifact; one skill that does both is the
+thing Plan 146 forbids.
+
+**Corrected 2026-09-04, by measuring it.** The paragraph above used to claim
+the branch layer "rescued 18 commits over 30 days" — the quotation above, kept
+as it stood — and this section used to be titled *"The ordering is the point"*.
+Both overstated it, and `plan-week` now carries the corrected text. Over 2026-08-24..30,
+200 of 209 non-merge commits attributed from their own subject or body; for the
+9 that did not, `git branch --contains` returned **75 refs each** and
+discriminated nothing, while the enclosing merge commit answered all 9 — and a
+merge commit's subject is permanent history that no branch deletion touches.
+`--contains` is informative only for commits *not* on `origin/master` (24, at
+1-2 refs each), and those sit on branches Stage 3 refuses to delete because they
+carry unlanded commits.
+
+So the ordering is **defence in depth, not the load-bearing constraint**. It is
+kept — it costs nothing and the risk is one-sided — and the package is still a
+package, but for the reason in the section above rather than this one: the three
+steps share a *time*, not a dependency. The thing that would genuinely cost the
+recap its fallback is enabling squash or rebase merging, which leaves no merge
+commit at all; that is a repository setting, and Stage 3 now holds it in CI.
 
 ## Stages
 
@@ -98,9 +118,16 @@ package a package rather than three skills that happen to run on Sunday.
 
 ### Stage 1 — Record Plan 149's cycle measures
 
-A skill that reads Linear's closed-cycle history and the repository, proposes
-the six measures, and writes them into Plan 149's *Cycle measures* table on
-approval. Writes one plan document's evidence table and nothing else.
+A skill that reads Linear's cycle history and the repository, proposes the six
+measures, and writes them into Plan 149's *Cycle measures* table on approval.
+Writes one plan document's evidence table and nothing else.
+
+**Amended 2026-09-04.** This stage was scheduled behind a closed cycle on the
+grounds that it could not be developed without one. That conflated two acts:
+recording a final measure needs a closed cycle, building the skill does not. The
+skill carries a **provisional** mode that reads an open cycle, labels every
+number provisional and refuses to write — which is how it was developed, and is
+independently useful for seeing where a running cycle stands.
 
 Two rules Cycle 1 supplies directly:
 
@@ -118,7 +145,9 @@ actually left to do: propose the rollover set, confirm what the platform already
 moved, and act only on the remainder.
 
 The standing rule holds — nothing touches a `cycleId` until the cycle has
-actually ended.
+actually ended. **Amended 2026-09-04** on the same grounds as Stage 1: the rule
+governs the write, not the read, so this stage also carries a provisional mode
+that reports what *would* roll and changes nothing.
 
 ### Stage 3 — Git ref and worktree hygiene
 
@@ -243,3 +272,41 @@ reason to keep Stage 3 independently shippable.
 Unrelated despite the vocabulary overlap: Plan 142's "worktree" is a checkout on
 the production VM, not a `git worktree` on a developer machine. Named here so
 the next reader does not have to check.
+
+## Record
+
+### Stage 0 — 2026-09-04
+
+The close sequence is written to
+[`docs/planning/cycle_close_order.md`](../planning/cycle_close_order.md): eight
+steps across six skills and two gaps, split around the cycle's `endsAt`
+boundary, each naming what must precede it and what it must not run before.
+
+The order is presented as a consequence of two rules rather than as a list, so
+a step's position is explicable rather than remembered: a read comes before any
+write that would perturb it, and the one step that destroys evidence runs after
+every step that reads it. A third rule decides which side of the boundary a
+step sits on — nothing touches a `cycleId` until the cycle has ended.
+
+Steps 2 and 3 have no owner. Stages 1 and 2 of this plan are where they get
+one, and the document says so and states their by-hand constraints rather than
+implying coverage it does not have.
+
+**One claim this stage was built on did not survive being checked.** Measured
+2026-09-04 over the window 2026-08-24..30: 200 of 209 non-merge commits
+attributed from their own subject or body. For the 9 that did not,
+`git branch --contains` returned **75 refs each** and discriminated nothing,
+while the enclosing merge commit answered all 9 — and a merge commit's subject
+is permanent history that no branch deletion touches. `--contains` is
+informative only for commits *not* on `origin/master` (24, at 1–2 refs each),
+and those sit on branches `ref-hygiene` refuses to delete because they carry
+unlanded commits. So recap-before-clean is **defence in depth, not the
+load-bearing constraint** this plan claims above. It is kept — it costs nothing
+and the risk is one-sided — and both `cycle_close_order.md` and the skill
+record it that way.
+
+Verified by `pytest tests/test_planning_docs.py --noconftest`, 52 passed,
+which includes the dangling-link check over all of `docs/`.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
