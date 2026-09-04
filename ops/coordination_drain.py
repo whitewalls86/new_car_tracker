@@ -85,7 +85,7 @@ def _processing_artifacts() -> dict[str, Any]:
 # resolve at all -- `_database_count` turns that into `unknown`, and unknown
 # fails closed, so the drain hung instead of reporting an error.
 #
-# The three functions below build *parameters* only. Until Plan 162 Stage 9
+# The three functions below build *parameters* only. Until Plan 162 Stage N
 # two of them built SQL as well, with f-strings sized to their arguments, and
 # claimed the contract's "structurally generated statements" exemption. They
 # never qualified for it: only the number of values varied, never an

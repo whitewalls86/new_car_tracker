@@ -28,7 +28,7 @@ from shared.minio import read_json, write_json
 
 logger = logging.getLogger("archiver")
 
-# 3 since Plan 162 Stage 10: every export now also carries the two Postgres
+# 3 since Plan 162 Stage P: every export now also carries the two Postgres
 # dimension tables, so a manifest written before that describes an archive a
 # dbt build cannot use. Bumping the schema version is what makes every one of
 # them a cache miss rather than a silently short archive.

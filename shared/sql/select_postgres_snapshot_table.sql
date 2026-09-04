@@ -1,5 +1,5 @@
 -- Read one whole Postgres dimension table as a single JSON array, for the
--- Plan 120 lake snapshot (Plan 162 Stage 10).
+-- Plan 120 lake snapshot (Plan 162 Stage P).
 --
 -- The relation is filled in from POSTGRES_SNAPSHOT_TABLES; a schema-qualified
 -- relation name cannot be bound as a parameter, and the caller only ever

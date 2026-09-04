@@ -2004,7 +2004,7 @@ forbids for any non-`none` phase; a bare `except Exception` then renders the
 constraint violation as a database outage. **Deploying both together —
 `bash scripts/redeploy.sh ops dashboard` — makes the union non-empty and
 succeeds**, which is how this deploy completed. Filed as
-[Plan 162](plan_162_testing_census_and_restructure.md) Stage 6c (CAR-66); it is
+[Plan 162](plan_162_testing_census_and_restructure.md) Stage K (CAR-66); it is
 a testing-composition gap, not a Plan 138 defect.
 
 **Verified after the recreate**, rather than inferred from `redeploy.sh`'s exit

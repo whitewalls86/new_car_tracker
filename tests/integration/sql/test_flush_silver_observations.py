@@ -157,14 +157,14 @@ class TestDeleteUpToMax:
 
 
 # ===========================================================================
-# Statements imported from archiver.queries — Plan 162 Stage 7
+# Statements imported from archiver.queries — Plan 162 Stage L
 # ===========================================================================
 
 class TestExtractedSilverFlushStatements:
     """The three statements of the flush, as the flush itself holds them.
 
     Everything above retypes SQL that resembles what the processor runs. Until
-    Plan 162 Stage 7 there was no alternative: the statements were written at
+    Plan 162 Stage L there was no alternative: the statements were written at
     their ``cur.execute()`` call sites, so no test could import them, and a
     retyped statement passes forever while the original rots. These execute
     ``archiver.queries``' constants — the same objects

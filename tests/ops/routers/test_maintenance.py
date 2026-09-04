@@ -119,7 +119,7 @@ class TestEvictDelistedCooldowns:
         assert _executed(cursor, INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT) == []
 
     def test_route_registered(self, mock_client, mocker):
-        """G6, Plan 162 Stage 6. The two tests above call the helper directly.
+        """G6, Plan 162 Stage H. The two tests above call the helper directly.
 
         That proves the eviction logic and nothing about the URL -- which is
         the distinction `container_health` paid eleven hours of production 404
@@ -178,7 +178,7 @@ class TestReconcileCooldownCohorts:
         }
 
     def test_route_registered(self, mock_client, mocker):
-        """G6, Plan 162 Stage 6. Reached through the router, not the helper."""
+        """G6, Plan 162 Stage H. Reached through the router, not the helper."""
         mocker.patch(
             "ops.routers.maintenance._reconcile_cooldown_cohorts",
             return_value={

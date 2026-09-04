@@ -49,7 +49,7 @@ jobs:
           docs_tests=false
           unit=true
           heavy=true
-          # Plan 162 Stage 10. Reads true here for the same fail-open reason
+          # Plan 162 Stage P. Reads true here for the same fail-open reason
           # as the two above, even though the group it gates is an allowlist
           # rather than a complement: a run that could not classify anything
           # is not a run that gets to skip a gate.
@@ -132,7 +132,7 @@ jobs:
       # content is wrong -- markup the flattener left in a summary, a link that
       # resolves to nothing, a planned field the landing page does not read --
       # and those are properties of `docs/`, so a docs-only changeset is the
-      # exact path that introduces them. Stage 9 put
+      # exact path that introduces them. Plan 138 Stage 9 put
       # `ops/static_ops/generated/` in the docs zone, which is what made this
       # path reachable without the unit job; these two suites are the assertions
       # the unit job would otherwise have run.
@@ -245,16 +245,16 @@ jobs:
             -r dashboard/requirements.txt \
             -r dbt_runner/requirements.txt
       # --cov-fail-under is what makes the number mean something: before Plan
-      # 162 Stage 2 this step measured coverage and threw it away, over six of
+      # 162 Stage C this step measured coverage and threw it away, over six of
       # the ten production directories. The floor is a ratchet, not a target --
       # raise it when a stage raises the number, never lower it to fit a
       # regression.
       #
-      # 74 -> 75 at Stage 5b, which did not improve any coverage: it removed
+      # 74 -> 75 at Stage G, which did not improve any coverage: it removed
       # `scripts/oneoff/` from the denominator, 19,733 statements -> 13,585,
       # and the reported number went 75.91% -> 77.65% for that reason alone.
       # The floor moves with it or it stops being a floor. Two points of
-      # headroom is the Stage 2 convention -- seven statements read differently
+      # headroom is the Stage C convention -- seven statements read differently
       # on Linux and Windows, and the rest is ordinary churn, which a smaller
       # denominator now amplifies rather than damps.
       - run: >-
@@ -285,7 +285,7 @@ jobs:
       - run: docker compose build
 
   # ---------------------------------------------------------------------------
-  # Plan 162 Stage 4 (Plan 139 Stages B and C) replaced one `dbt build + test`
+  # Plan 162 Stage E (Plan 139 Stages B and C) replaced one `dbt build + test`
   # job with the four below.
   #
   # What that job was: eight pytest suites run one after another on a single
@@ -382,7 +382,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -471,7 +471,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes, lint]
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.snapshot_dbt == 'true') && needs.lint.result == 'success'
-    # Plan 162 Stage 10. The only instrument here that can see a production row.
+    # Plan 162 Stage P. The only instrument here that can see a production row.
     # dbt unit tests run on inputs their author chose and the Plan 120 synthetic
     # fixture seeds authored business-state scenarios, so neither can surface a
     # `unique` violation, a `not_null` violation, a cast failure or a duplicate
@@ -708,7 +708,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -902,7 +902,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -918,7 +918,7 @@ jobs:
         # prometheus_fastapi_instrumentator, psycopg2, pyarrow, s3fs,
         # boto3 and zstandard.
         #
-        # The scraper suite left this job in Plan 162 Stage 8 -- its Layer 4
+        # The scraper suite left this job in Plan 162 Stage M -- its Layer 4
         # half writes to MinIO, which only `lake-integration` has. The note
         # that used to stand here, that the suite reached neither curl_cffi
         # nor asyncpg, was true of a suite that only executed SQL constants
@@ -938,7 +938,7 @@ jobs:
           LOG_PATH: /tmp/ops_test.log
 
       - name: Run container_health integration tests (Layer 4)
-        # Plan 162 Stage 6. Needs no service: the suite stands up a strict fake
+        # Plan 162 Stage H. Needs no service: the suite stands up a strict fake
         # of docker-socket-proxy on loopback and serves the recorded corpus, so
         # the whole request path runs with nothing mocked and no daemon. The
         # real proxy is exercised once, in `container-health-contract`.
@@ -958,7 +958,7 @@ jobs:
           LOG_PATH: /tmp/scripts_test.log
 
       - name: Run Processing integration tests
-        # Plan 162 Stage 1. These 58 tests had never appeared in this file in
+        # Plan 162 Stage B. These 58 tests had never appeared in this file in
         # its history -- written, reviewed and merged against a step that did
         # not exist. Two defects had been sitting in them the whole time: six
         # cleanups named `staging.artifact_events`, a table no migration has
@@ -1047,7 +1047,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -1062,7 +1062,7 @@ jobs:
         # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
         # zstandard -- all of which archiver/requirements.txt supplies.
         #
-        # scraper/requirements.txt joined it in Plan 162 Stage 8, when the
+        # scraper/requirements.txt joined it in Plan 162 Stage M, when the
         # scraper suite moved here and stopped being two imports of pure
         # load_query modules. Its Layer 4 half imports `scraper.app`, so it
         # needs what the app needs: curl_cffi for the real fetch, asyncpg for
@@ -1088,7 +1088,7 @@ jobs:
           MINIO_BUCKET: bronze
 
       - name: Run Shared integration tests
-        # Plan 162 Stage 1. Plan 131's pack fallback end-to-end against real
+        # Plan 162 Stage B. Plan 131's pack fallback end-to-end against real
         # MinIO -- the property Stage 4 deletes source objects on the strength
         # of. INTEGRATION_HTML_DICT_ID is deliberately unset: the dictionary
         # case declares its own skip rather than asserting against a
@@ -1113,7 +1113,7 @@ jobs:
           MINIO_BUCKET: bronze
 
       - name: Run Scraper integration tests (Layer 4)
-        # Moved here from `service-integration` by Plan 162 Stage 8. The suite
+        # Moved here from `service-integration` by Plan 162 Stage M. The suite
         # used to be the blocked-cooldown statements against Postgres alone;
         # it now runs `POST /scrape_detail` end to end, and that path writes
         # the page to MinIO before it writes the queue row, so it needs both

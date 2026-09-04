@@ -194,7 +194,7 @@ def is_production_like_postgres_url(postgres_url: str) -> bool:
     """Return True unless *postgres_url* points at a loopback or private-IP host.
 
     **Deliberately stricter than the MinIO guard above**, which treats a bare
-    Compose service name (``minio``) as dev-shaped. Plan 162 Stage 10 gave the
+    Compose service name (``minio``) as dev-shaped. Plan 162 Stage P gave the
     seeder a Postgres write path, and a tool that can ``INSERT`` into any
     connection string it is handed is a different risk class from one that can
     only upload Parquet: the MinIO half writes fixture objects under known

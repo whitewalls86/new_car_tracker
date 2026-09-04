@@ -29,7 +29,7 @@ every field the collector reads is still present and still typed the way the
 corpus recorded it. Values are the Layer 4 suite's business, where they are
 fixed by the recording and therefore assertable.
 
-Plan 162 Stage 6.
+Plan 162 Stage H.
 """
 from __future__ import annotations
 

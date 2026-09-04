@@ -1610,7 +1610,7 @@ VM tests:
 
 ### What Plan 162's testing contract adds to this gate list
 
-**Added 2026-09-01 by Plan 162 Stage 7.** This plan's testing strategy predates
+**Added 2026-09-01 by Plan 162 Stage L.** This plan's testing strategy predates
 [Plan 161's contract](plan_161_testing_contract.md) and [Plan
 162](plan_162_testing_census_and_restructure.md), so the four items below are
 recorded here rather than left to be rediscovered at each gate. None of them

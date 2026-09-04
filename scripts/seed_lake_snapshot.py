@@ -17,7 +17,7 @@ their archive-relative paths (the same prefixes dbt sources already read):
     ops_normalized/blocked_cooldown_events/...
     expected/...
 
-Plan 162 Stage 10 added a second destination. `dbt/models/sources.yml` declares
+Plan 162 Stage P added a second destination. `dbt/models/sources.yml` declares
 six source tables; the two that resolve through `postgres_scan()` cannot be
 objects in a bucket, so they travel as JSON under `postgres/` and are written
 into a database instead. That half runs only when --postgres-url is given, and

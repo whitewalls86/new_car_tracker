@@ -5,7 +5,7 @@ it needs no MinIO, no Postgres and no dbt, and the property it protects is
 worth knowing about before a 118-second job starts. `docs/TESTING.md` settles
 that a file's location does not decide where it runs -- the marker does.
 
-This exists because Plan 162 Stage 4 replaced a mechanism with a different
+This exists because Plan 162 Stage E replaced a mechanism with a different
 mechanism. `read_only=True` on the connection used to make it impossible for
 an assertion to mutate the warehouse it was inspecting; in-process dbt holds
 the file open read-write, so that is no longer available and

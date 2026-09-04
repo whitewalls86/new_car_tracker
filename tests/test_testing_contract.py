@@ -367,7 +367,7 @@ def test_every_integration_suite_is_invoked_by_a_ci_step():
     -- 58 of them -- had never appeared in ``ci.yml`` in its history. Nothing
     failed. No mechanism existed that could notice.
 
-    Plan 162 Stage 1 ran them. 66 of the 73 passed; the 7 that did not were two
+    Plan 162 Stage B ran them. 66 of the 73 passed; the 7 that did not were two
     defects in the tests themselves, both of the kind only running finds -- a
     cleanup naming a table that no migration has ever created, and a fixture
     seeding a timestamp that made the behaviour under test a no-op. Both are
@@ -425,7 +425,7 @@ def test_no_dormant_suite_is_quietly_running():
 # ---------------------------------------------------------------------------
 # Rule 2 -- patching is ``mocker``.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 5 (CAR-49) converted all 34 on 2026-09-01 -- the
+# Empty since Plan 162 Stage F (CAR-49) converted all 34 on 2026-09-01 -- the
 # 17 that imported ``unittest.mock.patch``, the 17 that reached for
 # ``monkeypatch.setattr``, and the two that did both. The venv carve-out this
 # rule's docstring argues against went with them: ``ci.yml`` now installs
@@ -850,7 +850,7 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 # ---------------------------------------------------------------------------
 # Rule 5 -- every .sql file is executed by a Layer 2 test.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 7 (CAR-51). Every production .sql file is
+# Empty since Plan 162 Stage L (CAR-51). Every production .sql file is
 # executed by a Layer 2 test that imports the constant production imports.
 #
 # The last entry came off by deletion rather than by a test, which is allowed
@@ -1094,7 +1094,7 @@ def test_no_layer_2_test_executes_a_statement_without_asserting_on_the_result():
     statement and discards the result satisfies it while checking nothing, and
     nothing could tell the difference.
 
-    That is not hypothetical. Until Plan 162 Stage 8,
+    That is not hypothetical. Until Plan 162 Stage M,
     ``tests/integration/sql/test_dashboard_queries.py`` was 25 tests and zero
     assertions -- the only Layer 2 suite with none -- and the rule this
     docstring belongs to found four more hiding in suites whose *other* tests
@@ -1314,7 +1314,7 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
     )
 )
 
-# ``_SQL_CALL_NAMES`` lived here until Plan 162 Stage 9 (2026-09-02) and is
+# ``_SQL_CALL_NAMES`` lived here until Plan 162 Stage N (2026-09-02) and is
 # deliberately not replaced. It was an inventory of database-client method
 # names -- execute, executemany, spark.sql, read_sql and their kin -- and the
 # rule that read it could be escaped by calling anything the list had not
@@ -1589,7 +1589,7 @@ def test_no_production_module_holds_a_sql_statement():
 # ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 5 (CAR-49) swept all 16 on 2026-09-01. The rule
+# Empty since Plan 162 Stage F (CAR-49) swept all 16 on 2026-09-01. The rule
 # below is the whole of G11 now: it is what stops Plan 84's numbering coming
 # back the next time someone copies a docstring header from an older file.
 LAYER_NUMBER_WAIVERS: tuple[Waiver, ...] = ()
@@ -1978,7 +1978,7 @@ def test_every_script_directory_is_classified():
     tree, and the path is the only thing that says which. A subdirectory the
     contract does not classify is read one way by ``[tool.coverage.run]``,
     another by ``scripts/ci_change_scope.py``, and a third by whoever opens it
-    -- and nothing makes them agree. Plan 162 Stage 5b split the tree; this is
+    -- and nothing makes them agree. Plan 162 Stage G split the tree; this is
     what stops the next bucket arriving undeclared.
     """
     on_disk = {
@@ -2027,7 +2027,7 @@ def test_every_unmeasured_script_bucket_is_omitted_from_coverage():
 def test_every_service_directory_is_measured_by_coverage():
     """G10's first half: a service coverage cannot see reads as covered.
 
-    Until Plan 162 Stage 2 this list named six packages and omitted
+    Until Plan 162 Stage C this list named six packages and omitted
     ``container_health``, ``dashboard``, ``scripts`` and ``airflow/dags`` --
     so the two services the "enough" table puts furthest below the floor were
     the two the instrument was blind to, and the 88% it reported was 88% of

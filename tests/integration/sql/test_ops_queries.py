@@ -82,7 +82,7 @@ pytestmark = pytest.mark.integration
 # The sensor's own statement, read from the file the sensor reads.
 #
 # This was an AST scrape of a module-level constant in sensors.py until Plan
-# 162 Stage 7 moved the statement into airflow/sql/, which is what the scrape
+# 162 Stage L moved the statement into airflow/sql/, which is what the scrape
 # was working around: this suite runs in the main venv and cannot import
 # Airflow. Reading the .sql file is the same guarantee -- one copy, executed
 # here -- without parsing Python to get at a string.
@@ -520,7 +520,7 @@ class TestCoordinationDrainQueries:
     def test_an_empty_scope_counts_zero_rather_than_being_special_cased(
         self, cur, airflow_metadata
     ):
-        """Plan 162 Stage 9 deleted the branch that used to answer this.
+        """Plan 162 Stage N deleted the branch that used to answer this.
 
         Both statements were f-strings building a VALUES list, and a VALUES
         list with no rows is a syntax error -- so the builders returned None on
@@ -612,7 +612,7 @@ class TestCoordinationDrainQueries:
 
 
 # ===========================================================================
-# Statements imported from ops.queries — Plan 162 Stage 7
+# Statements imported from ops.queries — Plan 162 Stage L
 # ===========================================================================
 
 class TestExtractedOpsStatements:
@@ -649,7 +649,7 @@ class TestExtractedOpsStatements:
 
 
 # ===========================================================================
-# ops/routers/*.py — Plan 162 Stage 7
+# ops/routers/*.py — Plan 162 Stage L
 #
 # The four routers held 49 statements at their .execute() call sites, which no
 # test could import and so no test could execute. They are .sql files now, and
@@ -682,7 +682,7 @@ def _open_coordination_request(cur, kind: str = "host_maintenance") -> int:
             json.dumps(["host"]),
             json.dumps(["host"]),
             "layer-2-test",
-            "Plan 162 Stage 7 smoke test",
+            "Plan 162 Stage L smoke test",
             json.dumps([]),
             None,
             None,
@@ -1056,7 +1056,7 @@ class TestScrapeStatements:
 
 
 # ===========================================================================
-# The maintenance statements, executed — Plan 162 Stage 7
+# The maintenance statements, executed — Plan 162 Stage L
 # ===========================================================================
 
 class TestMaintenanceStatements:
@@ -1126,7 +1126,7 @@ class TestMaintenanceStatements:
 
 
 class TestSearchConfigAdminStatements:
-    """admin.py's writes, which nothing executed until Plan 162 Stage 7.
+    """admin.py's writes, which nothing executed until Plan 162 Stage L.
 
     All six were ``sql = \"\"\"...\"\"\"`` locals -- importable in principle and in
     no .sql file in practice, so the Layer 2 census could not count them and

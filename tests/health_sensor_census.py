@@ -1,4 +1,4 @@
-"""Plan 162 Stage 3 (Plan 139 Stage H): the health-sensor census, declared once.
+"""Plan 162 Stage D (Plan 139 Stage H): the health-sensor census, declared once.
 
 Two tests count the same invariant from opposite ends and neither could see the
 other's number. `tests/airflow/test_health_sensor_demotion.py` read DAG source

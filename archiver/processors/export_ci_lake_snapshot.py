@@ -814,7 +814,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 [f"{name}: {err}" for name, err in table_errors.items()], export_cache_action,
             )
 
-        # Plan 162 Stage 10. A snapshot missing a Postgres dimension still
+        # Plan 162 Stage P. A snapshot missing a Postgres dimension still
         # produces a green dbt build over an empty world, which is exactly what
         # the job consuming it exists to disprove — so the absence has to be an
         # export failure here, not a quiet gap discovered in CI six weeks later.

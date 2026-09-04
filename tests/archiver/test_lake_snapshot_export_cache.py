@@ -102,7 +102,7 @@ class TestBuildExportManifest:
 
 
 class TestPostgresTablesGateTheCache:
-    """Plan 162 Stage 10. A manifest that predates the Postgres half describes
+    """Plan 162 Stage P. A manifest that predates the Postgres half describes
     an archive whose seed leaves two dbt sources empty, and the build reading it
     is green over an empty world -- so it has to be a miss, not a hit."""
 

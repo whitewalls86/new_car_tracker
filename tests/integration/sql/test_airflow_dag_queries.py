@@ -2,7 +2,7 @@
 Layer 2 — SQL smoke tests for the statements the DAG tree owns.
 
 ``airflow/dags/`` does not import ``shared`` -- a decided exemption, not a gap,
-since Plan 162 Stage 9 -- so the tree loads its statements through its own
+since Plan 162 Stage N -- so the tree loads its statements through its own
 ``airflow/dags/dag_queries.py``, which reads the same ``airflow/sql/`` directory
 every other service's ``queries.py`` mirrors. These tests read those files the
 same way and execute them against Postgres with Flyway's migrations applied.
@@ -30,7 +30,7 @@ def _sql(name: str) -> str:
 
 
 class TestGateObservationStatement:
-    """Plan 162 Stage 7 pulled this out of ``sensors.py``'s module scope.
+    """Plan 162 Stage L pulled this out of ``sensors.py``'s module scope.
 
     It was a module-level constant, so no rule saw it: not at an ``.execute()``
     call site, and in no ``.sql`` file for the Layer 2 census to count.
@@ -66,7 +66,7 @@ class TestStaleEmailCleanup:
 
 
 class TestDeployIntentGate:
-    """Plan 162 Stage 9 pulled this out of ``sensors.py``'s ``poke()``.
+    """Plan 162 Stage N pulled this out of ``sensors.py``'s ``poke()``.
 
     It was the DAG tree's one inline statement and the last thing forcing an
     ``ast`` read of production source: ``test_coordination_admission.py``

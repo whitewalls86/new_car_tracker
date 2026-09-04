@@ -9,7 +9,7 @@ cannot fail is the thing this plan exists to stop shipping.
 The sibling `tests/scripts/test_verify_promtail_contract.py` draws the line in
 the same place, for the same reason.
 
-Plan 162 Stage 6.
+Plan 162 Stage H.
 """
 from __future__ import annotations
 

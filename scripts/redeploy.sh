@@ -136,7 +136,7 @@
 #    deploy failure.
 #
 # ---------------------------------------------------------------------------
-# Plan 162 Stage 6c — the eighth decision, added 2026-09-02 after a deploy
+# Plan 162 Stage K — the eighth decision, added 2026-09-02 after a deploy
 # failed without saying why.
 #
 # 8. A failing POST to the ops API prints what the API said. `curl -sf`
@@ -145,7 +145,7 @@
 #    phase and nothing else. On 2026-09-01 `redeploy.sh dashboard` failed
 #    exactly that way: the cause was a CHECK constraint the deploy intent row
 #    could not satisfy, and every word of that was in the body being thrown
-#    away. The ops API is fixed to name the cause (Plan 162 Stage 6c); this is
+#    away. The ops API is fixed to name the cause (Plan 162 Stage K); this is
 #    the half that lets the operator read it. Same family as decision 7 — a
 #    failure that costs the wait and the diagnosis is two failures.
 # ---------------------------------------------------------------------------

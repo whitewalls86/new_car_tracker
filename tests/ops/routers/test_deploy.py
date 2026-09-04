@@ -170,7 +170,7 @@ def test_intent_release_no_return(mock_cursor_context):
 
 
 # ---------------------------------------------------------------------------
-# Which failure it was (Plan 162 Stage 6c)
+# Which failure it was (Plan 162 Stage K)
 #
 # Every one of these returned the bare string "error" and rendered as 503
 # "Database unavailable". Only the first of the three is about an unavailable

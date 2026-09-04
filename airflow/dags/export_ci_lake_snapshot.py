@@ -84,7 +84,7 @@ def check_snapshot_result(result: Dict[str, Any], payload: Dict[str, Any]) -> No
     # returns "exported" on a successful non-dry-run; this checker accepted only
     # "created" until 2026-09-03, so a DAG-triggered export would have published
     # its archive and both pointers and then failed the task. Nothing caught it
-    # because the DAG had never run -- see Plan 162 Stage 10's record.
+    # because the DAG had never run -- see Plan 162 Stage P's record.
     if audit_sources:
         acceptable = {"audited"}
     elif dry_run:

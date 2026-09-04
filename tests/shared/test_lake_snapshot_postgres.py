@@ -1,4 +1,4 @@
-"""Unit tests for shared/lake_snapshot_postgres.py (Plan 162 Stage 10)."""
+"""Unit tests for shared/lake_snapshot_postgres.py (Plan 162 Stage P)."""
 from __future__ import annotations
 
 import json

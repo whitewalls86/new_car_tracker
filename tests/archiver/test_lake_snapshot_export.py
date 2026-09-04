@@ -352,7 +352,7 @@ class TestMaterializeFilteredTables:
 
 
 class TestPostgresHalf:
-    """Plan 162 Stage 10: the two dimension tables that travel as JSON, whole.
+    """Plan 162 Stage P: the two dimension tables that travel as JSON, whole.
 
     Local `base_path` mode has no database, so the connection is a mock -- what
     is under test is the writer's routing, naming and failure handling, not

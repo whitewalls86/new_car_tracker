@@ -311,7 +311,7 @@ class TestSeedLakeSnapshot:
 
 
 class TestPostgresHalf:
-    """Plan 162 Stage 10: the two dbt sources that resolve through
+    """Plan 162 Stage P: the two dbt sources that resolve through
     postgres_scan() and so cannot be objects in a bucket."""
 
     def test_postgres_members_go_to_postgres_and_never_to_minio(self, tmp_path):

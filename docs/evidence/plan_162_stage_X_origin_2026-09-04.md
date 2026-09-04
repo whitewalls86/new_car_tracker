@@ -1,7 +1,7 @@
-# Plan 162 Stage 16 — how the stage was arrived at, 2026-09-04
+# Plan 162 Stage X — how the stage was arrived at, 2026-09-04
 
 Nothing here is a production measurement. This records the reasoning that
-produced [Stage 16](../plans/plan_162_testing_census_and_restructure.md#stage-16-a-test-may-not-author-sql-either),
+produced [Stage X](../plans/plan_162_testing_census_and_restructure.md#stage-x-a-test-may-not-author-sql-either),
 including the two positions argued and abandoned on the way, because the stage
 was not found by an incident or a census sweep and would otherwise have no
 provenance. The prior-art readings below were taken by web search on 2026-09-04
@@ -30,7 +30,7 @@ files rot silently and this one fails on a stale entry.
 | Tool | What it is | Status against this repository |
 |---|---|---|
 | [aiosql](https://nackjicholson.github.io/aiosql/) | SQL in `.sql` files, named by `-- name:` comment, loaded as Python methods. PEP 249 and asyncio drivers, PostgreSQL **and** DuckDB | Substantially `shared.query_loader` plus the `queries.py` exposure layer, as a maintained library |
-| [testcontainers-python](https://github.com/testcontainers/testcontainers-python) | Real service containers per test. v4.14.2, pytest-integrated, [PostgreSQL module](https://testcontainers.com/modules/postgresql/) | Directly addresses Layer 2's premise and [Stage 10b](../plans/plan_162_testing_census_and_restructure.md#stage-10b-cis-services-are-productions-in-definition-and-in-contents)'s problem statement |
+| [testcontainers-python](https://github.com/testcontainers/testcontainers-python) | Real service containers per test. v4.14.2, pytest-integrated, [PostgreSQL module](https://testcontainers.com/modules/postgresql/) | Directly addresses Layer 2's premise and [Stage Q](../plans/plan_162_testing_census_and_restructure.md#stage-q-cis-services-are-productions-in-definition-and-in-contents)'s problem statement |
 | sqlc | Generates typed code from SQL, validated against a real schema at build time | Go-first; Python support less mature. A maybe |
 | sqlfluff | A SQL linter | The honest answer to "is there a linter", which flake8 is not |
 | pgTAP | Unit tests written in SQL, run inside Postgres | Unexamined |
@@ -58,7 +58,7 @@ answered by search, not recall. Answering it from memory mid-build is the
 failure mode, and it is worse than volunteering nothing, because the question
 was asked and came back answered.
 
-## The distinction that resolved it, and is Stage 16's whole basis
+## The distinction that resolved it, and is Stage X's whole basis
 
 The prior art above is **affordance**. aiosql is a way to load SQL from a file;
 it forbids nothing, and `cur.execute("SELECT ...")` on the next line stays green.
@@ -96,10 +96,10 @@ split.
 
 **It stops applying if no SQL literal appears under `tests/` at all.** The
 ambiguity has nothing left to live in, and the rule becomes static. That is why
-Stage 16 removes a judgement rule rather than adding a mechanical one, taking
+Stage X removes a judgement rule rather than adding a mechanical one, taking
 the contract's split from 7/4 to 8/3.
 
-[Stage 15](../plans/plan_162_testing_census_and_restructure.md#stage-15-a-test-may-not-supply-both-halves-of-a-contract)
+[Stage W](../plans/plan_162_testing_census_and_restructure.md#stage-w-a-test-may-not-supply-both-halves-of-a-contract)
 was already circling this. It names the class — production authors both halves
 of a contract and a test restates one — and cites the `.sql` convention as
 having solved that class for statements. It solved it for *production*
@@ -114,13 +114,13 @@ The first was that Plan 162's non-goal — *"Deciding the standard. That was Pla
 161, and it is archived"* — put a contract change outside the plan. Misread. The
 paired clause is *"rewriting the contract to match the repository"*, whose
 example is arguing about which mock library is correct; it forbids **weakening a
-rule to fit the code**. Stage 16 strengthens a rule because an exemption's
+rule to fit the code**. Stage X strengthens a rule because an exemption's
 premise turned out false, which is the opposite direction, and the same clause
 names the required form — an explicit decision in `docs/TESTING.md` with the
 reasoning recorded.
 
 The second was that seeding ~96–160 new waivers makes success criterion 1 ("the
-waiver list is empty") unreachable. Answered before it was raised: Stage 7 took
+waiver list is empty") unreachable. Answered before it was raised: Stage L took
 its own column from 56 to 66 + 23 across two new rules, and the plan's own words
 are that *"a stage discovering more than it was scoped for is the instrument
 working, not the arithmetic failing."* The list has already grown mid-plan and
@@ -132,11 +132,11 @@ adapts to what implementing 162 discovers. The record supports it. G14 did not
 exist when Plan 161 answered its nine questions — it was created by mechanising
 what 161 had measured by eye (G6 4→12, G4 20→34, G14 unmeasured→54 of 76, later
 56). And Plan 161's *"The question this document did not ask"* section was added
-on 2026-09-01 **from Plan 162 Stage 7, after Plan 161 had archived**. The
+on 2026-09-01 **from Plan 162 Stage L, after Plan 161 had archived**. The
 contract has been following the census throughout.
 
 **That the stage would be numbered 15.** It was proposed as 15, then 16, from a
-checkout two commits behind `origin/master`. Stage 15 had landed the same day in
+checkout two commits behind `origin/master`. Stage W had landed the same day in
 `71f6b1d` / PR #361. Minor, and recorded because it is an instance of the class
 this plan is about: reasoning from a record that had moved, with nothing in the
 reading able to notice. The fix was `git fetch` before proposing a number, which
@@ -144,18 +144,18 @@ is the same shape as every derived-rather-than-listed rule this plan has built.
 
 ## What was decided
 
-- **Stage 16**, in Plan 162, appending rather than inserting, so a plain integer
+- **Stage X**, in Plan 162, appending rather than inserting, so a plain integer
   needs no letter.
-- **Stage 12 scoped to its Python half** — 55 module-local seed helpers, `_seed`
+- **Stage T scoped to its Python half** — 55 module-local seed helpers, `_seed`
   in three archiver modules, `_make_tar_zst` in three script modules. Its *"these
   must not become `.sql` files"* paragraph is struck rather than deleted: the
   mechanism it names is correct and only the conclusion was wrong, since a
   separate root under `tests/sql/` answers the circularity without keeping the
-  exemption. Its 96 `INSERT`s and 161 read-backs become Stage 16's denominator.
+  exemption. Its 96 `INSERT`s and 161 read-backs become Stage X's denominator.
 - **The ordering collision resolved by scoping rather than renumbering.** Stage
   numbers carry order in this plan, so 16 runs after 12 and would otherwise build
-  shared helpers that 16 converts to files — the Stage 5/5b collision again.
-- **Stage 15 gains a pointer** at its precedent sentence. Its own repair is
+  shared helpers that 16 converts to files — the Stage F/G collision again.
+- **Stage W gains a pointer** at its precedent sentence. Its own repair is
   unaffected and does not wait.
 - **`PREPARE` recorded as the likely instrument**, with its limits stated: it
   parses and plans against a Flyway-migrated catalogue with no rows written, but

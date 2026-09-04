@@ -1,5 +1,5 @@
 -- Replace one Postgres dimension table's contents from a lake snapshot's JSON
--- array (Plan 162 Stage 10). The consuming half of
+-- array (Plan 162 Stage P). The consuming half of
 -- select_postgres_snapshot_table.sql.
 --
 -- The DELETE is here rather than at the call site because "load the snapshot's

@@ -10,7 +10,7 @@ on it.
 
 ## The case
 
-**Raised 2026-09-04**, while wiring Plan 162 Stage 10's CI snapshot download.
+**Raised 2026-09-04**, while wiring Plan 162 Stage P's CI snapshot download.
 That work needed a bearer token in CI for the first time, which turned a
 single shared string into a question about three callers, and the question kept
 producing better answers than the one it started with.
