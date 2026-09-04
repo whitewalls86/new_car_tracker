@@ -3617,3 +3617,22 @@ Plan 138 is complete only when:
 - a mobile Lighthouse report and screenshots are recorded in the closing PR;
 - `docs/PLANS.md` and `docs/planning/completed_plans.md` record the final deployment date
   and measured before/after results.
+
+**Six of these did not land, and the list is left standing rather than edited.**
+Four moved to [Plan 174](plan_174_public_site_shape.md) with the work: the
+recaps being reachable from the landing page, the published writing being linked
+with dates, the article commit gate, and keyboard and screen-reader semantics
+for the interactive content. Two were simply not produced — the mobile
+Lighthouse report, and measured before/after results in the archive.
+
+Striking them would make this plan look complete against a list it was rescoped
+away from, and a criteria list quietly trimmed to fit what shipped is the same
+defect as a surface quietly trimmed to fit the tree. The archive description
+says which ones, so the record and the index agree.
+
+## Public summary
+
+**Public surface refresh** — Rewrote the public site and its README from one
+checked contract, made the landing page the site's front door, and built
+generators that publish the roadmap and weekly recaps straight from source
+control, so the page follows the work instead of being updated by hand.

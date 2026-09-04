@@ -1,5 +1,11 @@
 # Plan 154: Container Log Coverage
 
+## What this plan is for
+
+Gets logs from the services that currently produce none into one searchable
+place, deciding service by service what is worth collecting before turning any
+of it on — so a failure in an unlogged component stops being invisible.
+
 ## Status
 
 **BUILD ORDER, written 2026-08-25.** Priority **70 (medium)**. Effort **S plus a

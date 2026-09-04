@@ -434,7 +434,7 @@ _CONTRACT_PLAN = 172
 #   exactly that transition, so a new entry means the skill was bypassed. This
 #   is the ceiling that gets tested first: all five entries are pre-172 plans
 #   still live, and more will reach closeout.
-MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 38
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 37
 MAX_THE_CHECKS_WAIVERS = 5
 
 
@@ -470,7 +470,7 @@ WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
     SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
     SectionWaiver(149), SectionWaiver(150), SectionWaiver(151), SectionWaiver(152),
-    SectionWaiver(154), SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
+    SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
     SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
     SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
     SectionWaiver(169), SectionWaiver(170), SectionWaiver(171),
