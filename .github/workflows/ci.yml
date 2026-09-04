@@ -624,6 +624,24 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
 
+      # TEMPORARY — Plan 162 Stage 10's exit requires this gate be *shown*
+      # failing on a production row, not asserted to. A green build proves the
+      # instrument runs; it does not prove it can fail.
+      #
+      # Drops the `makes` array from one real search config, which makes
+      # `stg_search_configs.make_slug` null for that row and should fail
+      # `not_null_stg_search_configs_make_slug` and nothing else. Chosen because
+      # it travels through the Postgres half specifically: a violation dbt
+      # catches here is also proof those two sources are load-bearing rather
+      # than decorative.
+      #
+      # Removed by the commit that records the evidence.
+      - name: TEMPORARY — inject a data-test violation
+        run: |
+          psql "postgresql://cartracker:cartracker@localhost:5432/cartracker" -c \
+            "UPDATE public.search_configs SET params = params - 'makes'
+             WHERE search_key = (SELECT min(search_key) FROM public.search_configs);"
+
       - name: dbt build (DuckDB — production-shaped data)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
