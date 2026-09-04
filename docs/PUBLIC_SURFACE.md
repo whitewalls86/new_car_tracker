@@ -25,6 +25,7 @@ Three things carry this contract, and they are meant to be the same contract:
 | For a person | this document | Plan 138 / CAR-67 |
 | For a coding agent | [`.claude/skills/public-surface-check/`](../.claude/skills/public-surface-check/SKILL.md) | Plan 138 / CAR-56 |
 | For the commit gate | [`scripts/public_surface_gate.py`](../scripts/public_surface_gate.py) | Plan 138 / CAR-56 |
+| For `git commit` itself | [`.githooks/pre-commit`](../.githooks/pre-commit), installed with `git config core.hooksPath .githooks` | Plan 175 / CAR-89 |
 
 ### What guards each published surface
 
@@ -34,8 +35,8 @@ version of gap P4 left the other five reading as though they were unowned.
 
 | # | Published surface | Guarded by | Kind |
 |---:|---|---|---|
-| 1 | `README.md` | `public_surface_gate.py` | **cannot be forgotten** |
-| 2 | `ops/templates/info.html` | `public_surface_gate.py` | **cannot be forgotten** |
+| 1 | `README.md` | `.githooks/pre-commit`, running `public_surface_gate.py` inside `git commit` | **cannot be forgotten** |
+| 2 | `ops/templates/info.html` | `.githooks/pre-commit`, running `public_surface_gate.py` inside `git commit` | **cannot be forgotten** |
 | 3 | a plan document's `## What this plan is for` | the `plan-draft` skill, which authors it | remembered |
 | 4 | a plan document's `## Public summary` | the `close-out` skill, which authors it | remembered |
 | 5 | a `docs/PLANS.md` row, and the archive Description | the `plans` skill, when `--check` says the artifact moved | remembered |
@@ -58,6 +59,15 @@ Three notes, each of which was learned rather than assumed:
   exactly one sanctioned author, and because `docs/PLAN_DOCUMENT.md` freezes
   `## What this plan is for` against casual editing. A hand-edit that bypasses
   the authoring skill is already a contract violation on its own terms.
+- **The gate runs inside `git commit`, and no longer only before an agent's
+  `Bash` call.** Plan 175 Stage A found that the `PreToolUse` hook reads the
+  index *before* the command runs, so a commit that staged its own changes --
+  `git add README.md && git commit`, or `git commit -am` -- showed it an empty
+  index and passed while reading nothing. `.githooks/pre-commit` runs after
+  `-a` has staged, whoever typed the command, which closed that hole and the
+  agent-only limit together. What the `PreToolUse` hook now adds is the one
+  thing a git hook cannot do for itself: refuse until `core.hooksPath` is
+  installed, since git does not track hooks and an uninstalled one is silent.
 
 **Presence is enforced in CI; content is not.** `tests/test_planning_docs.py`
 holds both published windows to their sections with **no waiver permitted**, and
@@ -362,7 +372,7 @@ fixed elsewhere. An entry is deleted when it is repaired, not marked closed.
 |---|---|---|
 | P1 | **`/dashboard` is linked from no public surface.** `ops/templates/info.html` has no `<nav>` and mentions the route nowhere; its only calls to action are `/request-access`, at the hero and the footer. A visitor who requests access, is granted a role, and returns has no path to the thing they were granted | Plan 138, deferred navigation stage |
 | P2 | **`/recaps` has a canonical route, a sitemap entry, and no inbound link.** The landing page's only recap mention resolves to GitHub | Plan 138 Stage 3d / D1 |
-| P4 | **Seven things are published; the commit gate holds two of them.** Narrowed by Stage 10 (2026-09-04) from an unowned "two of five" to a stated division of labour, because the gate was never going to cover all seven and pretending otherwise hid which ones had nothing. See [what guards each surface](#what-guards-each-published-surface) below. What remains, stated rather than closed: the four surfaces outside the gate are held by **remembered** checks in their authoring skills, not by a mechanism that cannot be forgotten — Stage 1c's own standard — and **the gate itself is a `PreToolUse` hook on `Bash`, so it holds an agent's commits and not one typed in a terminal.** Both are accepted, and both are why this entry stays open rather than being deleted | Plan 138 Stage 10 |
+| P4 | **Seven things are published; the commit gate holds two of them.** Narrowed by Stage 10 (2026-09-04) from an unowned "two of five" to a stated division of labour, because the gate was never going to cover all seven and pretending otherwise hid which ones had nothing. See [what guards each surface](#what-guards-each-published-surface) below. What remains, stated rather than closed: the four surfaces outside the gate are held by **remembered** checks in their authoring skills, not by a mechanism that cannot be forgotten — Stage 1c's own standard — and two narrow bypasses of the gate itself: **`git commit --no-verify`**, and **a clone where `git config core.hooksPath .githooks` was never run and the committer is a person at a terminal** rather than an agent, whose `PreToolUse` hook refuses until it is. Narrowed again by [Plan 175](plans/plan_175_commit_gate_bundling.md) Stage A (2026-09-04), which moved enforcement inside `git commit` and so removed the larger residue this entry used to record -- that the gate held an agent's commits and not one typed in a terminal, and that a commit staging its own changes passed it unread. All three remaining are accepted, and are why this entry stays open rather than being deleted | Plan 138 Stage 10, Plan 175 Stage A |
 | P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/writings` | Plan 138 Stage 1g |
 
 ---
