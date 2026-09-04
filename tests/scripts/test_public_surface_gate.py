@@ -38,6 +38,7 @@ def harness(mocker, tmp_path):
 
     state = {"staged": [], "diff": "diff --git a/README.md b/README.md\n+one"}
     state["hooks_path"] = gate.HOOKS_PATH
+    state["top"] = tmp_path
     stamp = tmp_path / "public-surface-stamp"
 
     def fake_git(*args: str) -> str:
@@ -170,6 +171,25 @@ class TestTheInstallIsNotOptional:
         harness["staged"] = []
 
         assert harness["run"]() == 2
+
+    def test_an_absolute_hooks_path_is_installed(self, harness):
+        """The spelling that actually broke it, hours after the stage merged.
+
+        `git config` stores whatever it was handed. Something rewrote the value
+        to an absolute path pointing at the same directory; git kept running
+        the hook, and an exact string match called it uninstalled and refused
+        every commit.
+        """
+        harness["hooks_path"] = str(harness["top"] / gate.HOOKS_PATH)
+        harness["staged"] = []
+
+        assert harness["run"]() == 0
+
+    def test_a_dot_slash_spelling_is_installed(self, harness):
+        harness["hooks_path"] = "./" + gate.HOOKS_PATH
+        harness["staged"] = []
+
+        assert harness["run"]() == 0
 
     def test_a_command_that_is_not_a_commit_is_never_asked_to_install(
         self, harness
