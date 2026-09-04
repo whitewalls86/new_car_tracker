@@ -122,7 +122,6 @@ gate's glob has a cost and it is a decision, not a typo.
 
 ## §2 Proven but not production-serving
 
-- Production-shaped CI lake snapshots.
 - Iceberg tables registered through Lakekeeper and exercised through Spark.
 - dbt-Spark parity work and MLflow experiment provenance.
 - Adaptive-refresh feature and backtesting foundations.

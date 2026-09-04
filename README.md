@@ -303,7 +303,6 @@ rather than finished.
 **Proven but not production-serving.** Each of these is exercised and evidenced,
 and none of them is in the path of anything a user sees today:
 
-- Production-shaped CI lake snapshots.
 - Iceberg tables registered through Lakekeeper and exercised through Spark.
 - dbt-Spark parity work and MLflow experiment provenance.
 - Adaptive-refresh feature and backtesting foundations.
