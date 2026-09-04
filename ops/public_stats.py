@@ -18,7 +18,17 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 DEFAULT_SNAPSHOT_PATH = "/data/analytics_snapshot/analytics_snapshot.json"
-DEFAULT_STALE_SECONDS = 900
+# Derived from the producer's cadence, not chosen. ``hourly_analytics_refresh``
+# writes this snapshot on ``0 * * * *``, so successive successes are 3600s apart
+# and anything shorter than that labels a healthy snapshot stale. It was 900,
+# which meant the public page read "(stale)" for 45 of every 60 minutes -- a
+# signal that is on three quarters of the time teaches a reader to ignore the one
+# word that matters during a real outage. The 300s of slack absorbs queueing;
+# past it, a run is genuinely late. ``tests/ops/test_public_stats.py`` fails if
+# the DAG's schedule and this constant stop agreeing.
+DAG_REFRESH_INTERVAL_SECONDS = 3600
+STALE_GRACE_SECONDS = 300
+DEFAULT_STALE_SECONDS = DAG_REFRESH_INTERVAL_SECONDS + STALE_GRACE_SECONDS
 PUBLIC_STAT_NAMES = frozenset(
     {
         "active_listings",

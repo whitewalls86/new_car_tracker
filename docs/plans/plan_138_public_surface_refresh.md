@@ -23,11 +23,12 @@ not started" a day after Stage 2 was deployed.
 | **1** | **1a–1f and 1h merged; 1b, 1d, 1e, 1f deployed 2026-09-01 and soaking.** 1c shipped as a skill and commit hook rather than the tests it specifies; **1g not started, unblocked 2026-09-02 and redesigned 2026-09-03** — it now builds `/writings` as its own page of cards rather than a list inline on `/`, which makes it a route rather than a template section. Gate 1g's demonstration half is owed until Article D is written, and is recorded as such rather than closed |
 | **2** | **Complete and deployed 2026-09-02, Gate 2 met** at `6d08b0a` — after a first attempt the same night was deployed and reverted. `/` is the public root, `/info` 308s to it, and the recap routes serve |
 | **3** | **3b and 3c complete and deployed (CAR-68, PR #346)** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **The deploy was confirmed on 2026-09-03 against the live site**: `/` answers 200 with zero `cdn.` references in the markup and serves the full header set, including `img-src 'self' data:` — which is the constraint 1g's preview images now have to live inside. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
-| **4** | **Not started.** Unblocked since Plan 143 completed 2026-08-20 |
+| **4** | **Built 2026-09-04 (CAR-63), soaking on one owed clause.** Items 1–5 were already satisfied in `master` when the stage was opened — the "not started" this row used to read was itself the drift this plan is about. Gap P3 repaired with an anchor id; item 3 decided as met by the stale label. **Gate 4 is five clauses of six**: verifying the sixth against production found the stale threshold (900s) shorter than the producer's hourly cadence, so the page called a healthy snapshot stale for 45 of every 60 minutes. Fixed by deriving it — 3600 + 300 — and **that fix is unproven in production until `ops` deploys**, recorded as owed rather than closed |
 | **5** | **Partial.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The remainder is open |
 | **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
 | **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
 | **8** | **In progress (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md) |
+| **10** | **Built 2026-09-04**, raised at this plan's closeout from gap P4. Stage 9 made a plan document into published copy and nothing read what it said; `## Public summary` is a seventh surface and this plan's own closeout would have been the first unchecked instance. Three skills — `plan-draft`, `close-out`, `plans` — now run `public-surface-check` at the point each authors published copy, triggered for `plans` by the `--check` it already runs. A content-sensitive commit-gate matcher was designed and rejected as machinery whose whole job would be suppressing false fires. The commit gate got its first tests. **P4 stays open**, recording that four of seven surfaces are held by remembered rather than unforgettable checks |
 | **9** | **Built 2026-09-03 (CAR-74).** The planned projection reads `## What this plan is for`, the slice cell is the fallback, and all four published summaries changed. **Re-measured on the same day: the slice-only class goes 20 → 0** over the commits whose window carries the section. Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depended on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads; **Plan 172 Stage A landed 2026-09-02 and all four rows in the published planned window now carry `## What this plan is for`**, so the dependency is discharged. Sequenced first on 2026-09-03: the slice cell is published copy, so keeping the public page current means chasing stale internal pointers by hand, and the page was publishing a closed issue's identifier when the decision was taken |
 
 **The navigation pane is deliberately unstarted and unticketed**, deferred
@@ -2467,6 +2468,91 @@ to `/` and see the same dynamically loaded section there.
 during a dbt write lock and Postgres outage, clearly distinguishes stale cached
 stats from fresh ones, and loads recent work without a runtime repository call.
 
+#### Stage 4 evidence — 2026-09-04 (CAR-63)
+
+**Most of this stage was already built when it was opened, and the status table
+said otherwise.** Items 1 through 5 of the presentation contract were satisfied
+in `master` before any code was written here: `ops/routers/info.py:55` reads the
+Plan 143 presentation cache, which `ops/app.py:34` refreshes on a background
+thread, so the request opens nothing; the template labels the mart timestamp
+"Analytics data through"; the whole block is `{% if stats %}`, so an empty
+snapshot drops it and leaves the narrative standing. `TestInfoEndpoint` already
+covered full, partial, stale and empty, plus
+`test_request_path_does_not_touch_storage_or_upstream`. The project-updates half
+landed as Stage 1d. **The row reading "Not started" was itself an instance of
+what this plan is about** — a record standing still while the tree moved
+underneath it.
+
+**Gap P3 is repaired.** The live stats section carries `id="live-stats"`
+(`ops/templates/info.html:89`), held by
+`test_the_live_stats_section_can_be_linked_to`, watched failing with the id
+removed. P3 is deleted from [`PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md)'s gap
+list rather than marked closed, per that file's own rule, and the destination
+inventory row records the anchor. **The inbound-link half is not this stage's**
+— it is [Plan 174](plan_174_public_site_shape.md) Stage E's exit.
+
+**Item 3 is met by the stale label, decided 2026-09-04.** The item asks for "a
+subtle 'temporarily unavailable' *or* stale state where appropriate", and the
+disjunction is satisfied. `PublicStatsCache` distinguishes `unavailable` from
+`not_ready` internally and the template reads only `.stale`; that is accepted
+rather than built.
+
+**The gate found a defect, which is the argument for having one.** Verifying
+Gate 4 against production rather than against the tree:
+
+| Measured 2026-09-04 | Value |
+|---|---|
+| Snapshot `status` | `ok` |
+| `last_success_at` | `2026-09-04T14:01:29Z` |
+| Producer cadence | `0 * * * *` — `airflow/dags/hourly_analytics_refresh.py:106` |
+| `DEFAULT_STALE_SECONDS` | `900`, with `ANALYTICS_SNAPSHOT_STALE_SECONDS` set nowhere |
+| `https://cartracker.info/` at ~14:58Z | `Analytics data through (stale)` |
+
+The snapshot was healthy and freshly written. The threshold was shorter than the
+interval that produces it, so **the page told visitors the stats were stale for
+45 of every 60 minutes** on a working system. Gate 4 asks that `/` "clearly
+distinguishes stale cached stats from fresh ones"; a signal that is on three
+quarters of the time distinguishes nothing, and it is the worst kind of false
+alarm — it teaches a reader to ignore the one word that would matter during a
+real outage.
+
+The threshold is now derived rather than chosen:
+`DAG_REFRESH_INTERVAL_SECONDS` (3600) plus `STALE_GRACE_SECONDS` (300).
+`test_the_stale_threshold_tracks_the_producer_dag_schedule` reads the DAG file
+as text — this suite cannot import a DAG module, because `apache-airflow` lives
+in its own image and its own CI venv — and fails if the cadence and the constant
+stop agreeing, with a message naming the fix rather than inviting the assertion
+to be relaxed. Both new assertions were watched failing against deliberate
+mutations: the DAG cadence changed to `0 */2 * * *`, and the grace reverted to an
+effective 900.
+
+**Gate 4, clause by clause.** Four are met and asserted: no database or upstream
+call in the request path; full, partial, stale and empty all render; missing
+analytics never breaks the narrative; recent work loads without a runtime
+repository call. "Remains responsive during a dbt write lock and Postgres
+outage" holds by construction — the handler reads an in-memory snapshot under a
+lock and touches no connection — and the live page answered 200 in 0.26 s, but
+**neither outage was induced to prove it**.
+
+**"Clearly distinguishes stale from fresh" is fixed in the tree and unproven in
+production.** The live page keeps reading "(stale)" until `ops` is deployed.
+Recorded as owed, in the same shape as Gate 7's runtime half and Gate 1g's
+demonstration half, and for the same reason: a clause closed on a change that has
+not reached the surface it is about would be a check nobody ran.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. Worth one line anyway — the freshness paragraph on `/`
+already said the marts "refresh hourly", which is the cadence the new threshold
+derives from. The copy was right and the constant was wrong; they agree now.
+
+**Cost:** estimate 2 → actual 1 (−1). The stage was sized as an implementation
+and turned out to be an audit: five of six exit clauses were already met, and
+what the work actually consisted of was measuring the sixth against production
+and repairing what that measurement found.
+
+**Checks:** `3626 passed, 662 deselected` (`-m "not integration"`); `467 passed`
+in `tests/ops`; `ruff` clean.
+
 ## Stage 5 — Regression coverage
 
 Add tests for:
@@ -3117,6 +3203,89 @@ new one.** That is the stage's result.
 by replaying the original window: 80/60/33 against the recorded 79/59/35. The
 comparison that carries weight is old against new under one recipe, not this
 recipe against the earlier number.
+
+---
+
+## Stage 10 — Cover the surfaces Stage 9 created
+
+**Raised 2026-09-04, at this plan's closeout**, from gap P4 — which named
+"two of five public surfaces" and pointed at Plan 138 with no stage behind it.
+Two facts made it a stage rather than a note.
+
+**Stage 9 made a plan document into published copy, and nothing checks what it
+says.** The generator has two readers — `purpose_summary()` takes
+`## What this plan is for` for the planned window, `authored_summary()` takes
+`## Public summary` for the completed one. `tests/test_planning_docs.py` holds
+both windows to those sections with no waiver permitted and caps their length,
+and `test_no_waiver_covers_a_published_plan` fails when a waived plan enters the
+window. **None of those assertions reads the sentence.** A plan document can
+publish a false claim about this system to `cartracker.info` and pass CI.
+
+**This plan's own closeout is an instance of it.** `## Public summary` is the
+seventh surface, it is written at archive, and the archive's top rows are
+published immediately. Closing Plan 138 without this stage would mean its last
+act was an unchecked published claim, produced by the plan whose subject is
+unchecked published claims.
+
+### The design, and the one it replaced
+
+**Rejected: extending the commit gate to plan documents.** The first design was
+a content-sensitive matcher — diff the staged plan documents, compute which
+lines fall inside the two published sections, fire on overlap. It is buildable
+and it would have been *enforced* rather than remembered, which is the stronger
+kind. It was rejected as too much machinery for the coverage: 44+ live plans
+whose ordinary edits — a stage, a record entry, a slice repoint — touch neither
+section, so the matcher's whole job is suppressing false fires, and the gate's
+own docstring warns that "a gate that fires on every commit and cannot be
+cleared is one you learn to route around."
+
+**Taken instead: the skill that writes the sentence checks the sentence.** Each
+published section has exactly one sanctioned author, so the check goes where
+the authoring happens and costs nothing when no authoring happens.
+
+| Skill | Checks | When |
+|---|---|---|
+| `plan-draft` | `## What this plan is for` | after writing it, before reporting |
+| `close-out` | `## Public summary` | after writing it, **before `plans` moves the row** |
+| `plans` | the row and archive Description it just placed | when `build_public_roadmap.py --check` reports the artifact stale |
+
+**The trigger for `plans` is the check it already runs**, and that is the part
+worth keeping. A stale `--check` means this operation changed something the page
+publishes; a clean one means it did not. A "top four rows" rule would have been
+wrong in both directions — it misses an insert that renumbers a plan across the
+boundary without touching that plan's row, and it fires on slice repoints that
+Stage 9 already made inert.
+
+**What this costs, stated rather than glossed.** These are *remembered* checks.
+Stage 1c's argument was that "a check you must remember is weaker than one you
+cannot forget", and this stage accepts the weaker kind for four of seven
+surfaces. It is affordable only because each section has one sanctioned author
+and because `docs/PLAN_DOCUMENT.md` freezes `## What this plan is for` against
+casual editing, making a bypassing hand-edit a contract violation on its own
+terms. **Gap P4 stays open recording exactly that**, rather than being deleted
+as repaired.
+
+**A second limit, never previously written down:** the gate is a `PreToolUse`
+hook on `Bash`, so it holds an agent's commits and not one typed in a terminal.
+True since Stage 1c; P4 now says so.
+
+### The gate had no tests, and now does
+
+`scripts/public_surface_gate.py` has held the two authored surfaces since Stage
+1c with nothing asserting it. That is the wrong shape for a mechanism whose
+value is that it cannot be forgotten: it fails open on unparseable input by
+design, fires only on `git commit`, and clears on a stamp — so a bug in any of
+the three reads exactly like a commit with no public surface in it.
+`tests/scripts/test_public_surface_gate.py` pins all three, and pins the stamp
+hardest: it is keyed on the staged diff's digest so that passing once buys
+nothing for content nobody read, and a stamp that survived a re-stage would
+leave the gate looking healthy while checking nothing.
+
+**Exit:** the three skills each run `public-surface-check` at the point named
+above; `PUBLIC_SURFACE.md` carries a per-surface table of what guards each of
+the seven and of what kind; gap P4 records the remembered-check residue and the
+agent-commit limit rather than being deleted; and the commit gate has tests that
+fail against a gate ignoring its stamp digest.
 
 ---
 

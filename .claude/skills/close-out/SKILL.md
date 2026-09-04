@@ -216,6 +216,30 @@ reason to touch it.
 Nothing here changes `completed_plans.md`. That file is Plan 146's and gains no
 column; a plan's own document is the plan's to write in.
 
+**`## Public summary` is a public surface, and this skill is its only author.**
+The archive's top rows are published, so the sentence written here reaches
+`https://cartracker.info/` on the next `git pull` — Stage 7 left no deploy
+between the file and a stranger. **After writing it, run the
+`public-surface-check` skill against it**, before the row moves. The order
+matters: a claim caught here is a sentence rewritten, and the same claim caught
+after `plans` has archived the row is a correction to something already
+published.
+
+Two things make this worth a step of its own rather than trust in careful
+writing. A public summary is written at the moment the author is most invested
+in the work having gone well, which is when an overstated claim is easiest to
+write and hardest to see. And it is the **last** sentence a plan ever
+publishes — nothing downstream re-reads it, so an error here is permanent in a
+way an error in a stage description is not.
+
+**This is a remembered check, not an enforced one.**
+`scripts/public_surface_gate.py` holds `README.md` and
+`ops/templates/info.html` so they cannot be committed unread; it does not hold
+this section. Plan 138 Stage 1c's own argument is that "a check you must
+remember is weaker than one you cannot forget", and the trade is affordable
+only because this skill is the section's sole sanctioned author. Skipping the
+step is not a shortcut — it is the whole of the coverage.
+
 ## Phase 3 — Write, in this order
 
 Only after approval, and only what was approved.
@@ -224,7 +248,8 @@ Only after approval, and only what was approved.
    `## Superseded`, at the ratchet's position for it. Additive: do not rewrite
    the plan's problem statement, design, stages or record because the work
    turned out differently. A plan that needs redesigning is a separate
-   conversation.
+   conversation. **For `## Public summary`, run `public-surface-check` against
+   the written section before step 2 moves the row.**
 2. **`docs/PLANS.md`, via the `plans` skill** — for a transition *or* a
    slice-pointer update, whichever phase 2 proposed and the user approved. Pass
    the approved values through and tell that skill they were approved in the
