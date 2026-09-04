@@ -25,8 +25,8 @@ not started" a day after Stage 2 was deployed.
 | **3** | **3b and 3c complete and deployed (CAR-68, PR #346)** — the hero media is gone from the markup, Pico and the icons are self-hosted, the CSS and JavaScript are extracted, and the public handlers carry the CSP, caching and compression policy. **The deploy was confirmed on 2026-09-03 against the live site**: `/` answers 200 with zero `cdn.` references in the markup and serves the full header set, including `img-src 'self' data:` — which is the constraint 1g's preview images now have to live inside. **3a partly settled inside 1b** — the heading outline and the diagram's non-colour encoding are held by tests, and 3b retired its reduced-motion defect. **3d not started**, and every decision Stage 3 carried is made (2026-09-02). Nothing in Stage 3 is blocked on a question; what is open is 3a's remaining items (CAR-64), 3d, and 3c's route-matrix re-run, which needs the deploy |
 | **4** | **Complete, and Gate 4 met in production 2026-09-04 (CAR-63).** Items 1–5 were already satisfied in `master` when the stage was opened — the "not started" this row used to read was itself the drift this plan is about. Gap P3 repaired with an anchor id; item 3 decided as met by the stale label. **Verifying the gate against production found two defects in the same field**: the stale threshold (900s) was shorter than the producer's hourly cadence, so the page called a healthy snapshot stale for 45 of every 60 minutes; and with that noise removed, the timestamp beside it proved to be a bucket *label* rendered as an end, understating freshness by an hour. Both fixed and deployed — measured live at 15:48Z (no `(stale)` on a 46.7-minute-old snapshot) and at 16:07:02Z (`datetime="2026-09-04T16:00:00Z"`, the bucket end) |
 | **5** | **Complete 2026-09-04, after an audit that rescoped its last two bullets.** Each slice landed its own tests, and Stage 2 carried the Streamlit-coupling assertion as required. The audit found exactly two bullets unheld: the README's link and production-versus-experimental contract, now `tests/test_readme_contract.py`; and the project-updates loader's branching, **accepted as untested** rather than adding a JavaScript runtime to CI for one `fetch` with four early returns. What was testable there — the no-JavaScript fallback, which is server-rendered — is now held, and the container assertions that preceded it passed against an emptied list |
-| **6** | **Route half done** — the 2026-09-02 deploy ran the external matrix. Final verification is open |
-| **7** | **Built 2026-09-01, six of seven exit checks met.** Gate 7's runtime half — a recap going live on `git pull` alone — **is still owed and is not recorded as verified**, though the 2026-09-02 `ops` recreate is when the mount would have taken effect |
+| **6** | **Complete 2026-09-04**, and it earned its keep. The full external matrix — which 3c also owed a re-run of, the same run — found two defects nothing else had: **HEAD answered 405 on every public route**, and `must-revalidate` was missing from the generated artifacts' cache policy against Stage 4 item 6. Both fixed and asserted. The role audit (step 6) was run and confirmed by the maintainer, including the `viewer` dashboard check a status code cannot see. **Step 8's soak is deliberately not run** — public-stats age is now asserted by a test rather than watched |
+| **7** | **Complete. Gate 7 met, confirmed by the maintainer 2026-09-04** from having watched a regenerated recap go live on `git pull` in production. The mount was independently verified live the same day — `docker inspect` shows a **bind** from `/opt/cartracker/ops/static_ops/generated`, `Mode: ro`, `RW: false`, and a **directory** rather than the single-file mount that would pin the inode. The timestamps alone could not close this: every generated file predates the last image build, so nothing distinguished the mount from the image layer, and the maintainer's observation is what closed it |
 | **8** | **Complete 2026-09-02 (CAR-67).** This document's contract sections moved to [`docs/PUBLIC_SURFACE.md`](../PUBLIC_SURFACE.md), which is now the authority the commit gate, the review skill and this plan all cite |
 | **9** | **Built 2026-09-03 (CAR-74).** The planned projection reads `## What this plan is for`, the slice cell is the fallback, and all four published summaries changed. **Re-measured on the same day: the slice-only class goes 20 → 0** over the commits whose window carries the section. Publish what a plan is *for* rather than which stage is next. Raised from a measurement: 75% of `PLANS.md` commits changed published copy over 60 days, and 35 of the 59 were a slice-cell rewrite with the same four plans in the window. Depended on [Plan 172](plan_172_plan_authoring_skill.md) for the section it reads; **Plan 172 Stage A landed 2026-09-02 and all four rows in the published planned window now carry `## What this plan is for`**, so the dependency is discharged. Sequenced first on 2026-09-03: the slice cell is published copy, so keeping the public page current means chasing stale internal pointers by hand, and the page was publishing a closed issue's identifier when the decision was taken |
 | **10** | **Built 2026-09-04**, raised at this plan's closeout from gap P4. Stage 9 made a plan document into published copy and nothing read what it said; `## Public summary` is a seventh surface and this plan's own closeout would have been the first unchecked instance. Three skills — `plan-draft`, `close-out`, `plans` — now run `public-surface-check` at the point each authors published copy, triggered for `plans` by the `--check` it already runs. A content-sensitive commit-gate matcher was designed and rejected as machinery whose whole job would be suppressing false fires. The commit gate got its first tests. **P4 stays open**, recording that four of seven surfaces are held by remembered rather than unforgettable checks |
@@ -2761,6 +2761,59 @@ Deploy `ops` and Caddy together because the root route depends on both.
 Rollback is the previous Caddyfile plus previous ops image. No database migration
 is required, and `/dashboard` remains the stable explicit application path during
 both rollout and rollback.
+
+#### Stage 6 evidence — 2026-09-04: the matrix, run in full at last
+
+**Step 5's external matrix had never been run end to end.** 3c owed a re-run
+after its headers deployed, and Stage 6's final verification was open on the same
+work; both are the same run, taken from outside the VM on 2026-09-04.
+
+| Route | Result |
+|---|---|
+| `/` | 200, full header set — CSP with `img-src 'self' data:`, `Permissions-Policy`, `Referrer-Policy`, `X-Content-Type-Options` |
+| `/info` | 308 → `https://cartracker.info/` |
+| `/recaps` | 200, `text/html` |
+| `/robots.txt` | 200 — allows `/`, disallows the ten authenticated and infrastructure prefixes, names the sitemap |
+| `/sitemap.xml` | 200 — exactly `/`, `/recaps` and 20 recap pages, matching the 20 generated files; no `/writings`, no protected route |
+| `/dashboard`, `/admin`, `/request-access` | 302 → `oauth2/sign_in` |
+| `/writings` | 302 — correct; the route is specified and not built |
+| fingerprinted asset | `public, max-age=31536000, immutable` |
+| `og-preview.png` | 200, `image/png`, 39 KB |
+
+**The role audit — step 6 — was run by the maintainer and confirmed**, including
+the `viewer` dashboard check that a status code on `/dashboard` cannot see.
+**Step 8's soak is deliberately not run**: watching public-stats age across a
+refresh cycle was judged not worth a wait, and the age itself is now asserted by
+`test_the_stale_threshold_tracks_the_producer_dag_schedule` rather than watched.
+
+**The matrix found two defects, and finding them is the argument for running it
+rather than trusting the status codes each stage checked as it landed.**
+
+**HEAD answered 405 on every public route.** FastAPI's `@router.get` registers
+GET alone and Starlette does not add HEAD for an `APIRoute`, so `/`, `/info`,
+`/recaps`, `/recaps/{slug}`, `/robots.txt` and `/sitemap.xml` all refused it —
+returning `application/json`, FastAPI's error body, on routes whose GET is HTML.
+No browser does a bare HEAD on a page, which is why it survived from Stage 2
+through Stage 10; uptime monitors and link checkers do, and to them a 405 reads
+as the site being down. Every public route now answers both, asserted on status
+*and* content type, since a fix answering HEAD with the wrong type would pass a
+status check.
+
+**`must-revalidate` was missing from the generated artifacts' cache policy.**
+Stage 4 item 6 names `public, max-age=300, must-revalidate` and the deployed
+Caddyfile carried only `public, max-age=300`. Without it a cache may keep
+serving a stale copy past `max-age` when it cannot reach the origin — and those
+artifacts are exactly the content Stage 7 publishes with `git pull` and expects
+to go live. The existing assertion had pinned the old value with a regex ending
+at the digits, so it was strengthened rather than loosened.
+
+**One test-shape lesson worth keeping.** The first version of the HEAD tests used
+`pytest.mark.parametrize` over a path tuple, and
+`test_every_route_is_reached_through_the_apps_routing_table` rejected it: that
+assertion reads **request literals** out of the source, and a computed path is
+invisible to it. It also caught that `HEAD /recaps/{slug}` had no test at all.
+The tests name their paths literally now, with a guard on the hand-named recap
+slug so the literal cannot rot silently.
 
 ---
 
