@@ -821,6 +821,89 @@ production-derived snapshot with all six sources populated, and fails on a
 production row that violates a dbt data test. Demonstrated by a deliberate
 violation, not asserted.
 
+#### Stage 10 ships in two parts, and the reason is a cycle
+
+**Split 2026-09-03, on the way to opening the PR.** The stage's own gate cannot
+land in the change that introduces it. The job builds against a snapshot; that
+snapshot can only be produced by an exporter carrying the two Postgres dimension
+tables; and that exporter has to be merged and deployed before it can produce
+one. Introduced together, the job is red on its own PR and stays red on master
+until a pin bump lands — for two reasons that are both the job working exactly
+as designed: no `CARTRACKER_SNAPSHOT_TOKEN` secret existed yet, and a
+placeholder pin necessarily names a snapshot exported before the Postgres half,
+which the seeder's `--require-non-empty` correctly refuses.
+
+The alternatives were worse in the way this plan cares about. Merging one
+known-red check leaves master red on a schedule nobody owns. Gating the job on
+the secret's presence makes it skip silently the day that secret is rotated or
+removed — a job that disappears when its credential does is the failure class
+Stage 1 spent its budget making impossible, and it would have needed a
+waiver-shaped justification to sit beside `DORMANT_SUITES`.
+
+So:
+
+* **Part 1** — what a production export needs: the exporter's two dimension
+  tables, `shared/lake_snapshot_postgres.py` and its round-trip SQL pair, the
+  export cache schema bump, and the seeder's Postgres write path with its
+  stricter `POSTGRES_URL` guard. Merged as
+  [#357](https://github.com/whitewalls86/new_car_tracker/pull/357) on
+  2026-09-04, every job green.
+* **Part 2** — the gate, arriving with a pin that resolves: the `snapshot-dbt`
+  job, the `snapshot_dbt` classifier group and its trigger set,
+  `.github/ci_lake_snapshot_pin.json` with a real snapshot id, and the
+  deliberate violation the exit above demands.
+
+**The pin travels with the job, not ahead of it.** A pin file in master naming
+a snapshot no job reads, and which would fail if one did, is a file that lies
+about which snapshot is authoritative — and the change that adds the job is
+where it gets a real value anyway. The same reasoning moved the trigger set:
+`SNAPSHOT_DBT_TRIGGERS` with no job consuming it is dead config in
+`ci_change_scope.py`, the one file in this stage whose blast radius is every job
+in the workflow.
+
+#### The export DAG fails on a successful export
+
+**Found 2026-09-03, pre-flighting the first `ci`-tier run.**
+[`check_snapshot_result`](../../airflow/dags/export_ci_lake_snapshot.py) accepts
+only `{"created"}` as a non-dry-run success status. The exporter returns
+`"exported"`. A DAG-triggered export therefore publishes its archive and both
+pointers, and then fails the task.
+
+**Nothing caught it because the DAG has never run** — `airflow.dag_run` holds
+zero rows for `export_ci_lake_snapshot`, and both snapshots in production before
+this stage came from the `snapshot-worker` invocation `docker-compose.yml`
+documents. The stage's own pre-flight is the only reason it is not still waiting
+for whoever triggered the DAG first.
+
+**It is a Layer 1 instance of the rule this plan keeps rediscovering.**
+`tests/integration/airflow/test_export_ci_lake_snapshot_dag.py` seeds
+`{"status": "created"}` and asserts the checker accepts it — a status string the
+test author chose and the exporter never emits. Both halves of the contract are
+written in the same file, so the test passes forever and proves nothing. It
+belongs in *[a run that succeeds has done the work its success
+implies](../TESTING.md#specified-here-not-yet-asserted)*, and the general shape
+is worth naming: **a DAG-side checker keyed on a string a service returns needs
+one test that reads the string from the service**, not from the test.
+
+The repair is two lines and its test correction, and it is Part 2's rather than
+a stage of its own — Part 2 is already the change that makes the export routine
+instead of hand-run, so the DAG is the surface it lands on. Until it ships,
+exports run through `snapshot-worker` directly.
+
+#### The CI credential became Plan 173, not a stage here
+
+Wiring Part 1's download needed a bearer token in CI for the first time, which
+turned one shared string into a question about three callers — CI, a
+developer's laptop, and the Plan 112 MLflow rehearsal. The *format* half landed
+alongside this stage, because a credential format is cheapest to change while
+nothing automated depends on it. The *storage* half became
+[Plan 173](plan_173_machine_credential_lifecycle.md), which also records why
+OAuth2's `client_credentials` and GitHub Actions OIDC were rejected and
+deferred respectively.
+
+Recorded here only so the trail from this stage to that plan is not lost. The
+reasoning lives there and is deliberately not repeated.
+
 ### Stage 10b: CI's services are production's, in definition and in contents
 
 **What it is.** Three questions with one thesis — CI's services are not
