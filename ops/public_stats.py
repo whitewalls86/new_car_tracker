@@ -8,7 +8,7 @@ import math
 import os
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from numbers import Number
 from pathlib import Path
 from types import MappingProxyType
@@ -29,6 +29,23 @@ DEFAULT_SNAPSHOT_PATH = "/data/analytics_snapshot/analytics_snapshot.json"
 DAG_REFRESH_INTERVAL_SECONDS = 3600
 STALE_GRACE_SECONDS = 300
 DEFAULT_STALE_SECONDS = DAG_REFRESH_INTERVAL_SECONDS + STALE_GRACE_SECONDS
+
+# ``data_through`` is a bucket *label*, not an end timestamp.
+# ``mart_scrape_volume`` buckets on ``date_trunc('hour', fetched_at)``, and
+# Plan 136 filters the snapshot query to ``hour < date_trunc('hour', now())``
+# so only complete hours are published. So a snapshot naming 14:00 describes
+# the 14:00-15:00 bucket, and the data it summarises is complete through 15:00.
+#
+# Rendering the label under the words "Analytics data through" understated the
+# page's own freshness by a full hour -- at 15:48 it read 14:00, when the data
+# really did run to 15:00. Nobody reads a dashboard freshness stamp as a bucket
+# label, so the page adds the bucket width and shows the end.
+#
+# This is presentation only. The snapshot file and the Prometheus gauges keep
+# the bucket label, which is right for them: it names the hour the counts
+# describe, and the page never shows the counts' hour beside them.
+# ``tests/ops/test_public_stats.py`` fails if the mart stops bucketing hourly.
+MART_BUCKET_SECONDS = 3600
 PUBLIC_STAT_NAMES = frozenset(
     {
         "active_listings",
@@ -103,9 +120,9 @@ def _parse_snapshot(
 
     data_through = document.get("data_through")
     if data_through is not None:
-        stats["analytics_data_through_iso"] = _timestamp(data_through).isoformat().replace(
-            "+00:00", "Z"
-        )
+        # The bucket's end, not its label -- see MART_BUCKET_SECONDS above.
+        bucket_end = _timestamp(data_through) + timedelta(seconds=MART_BUCKET_SECONDS)
+        stats["analytics_data_through_iso"] = bucket_end.isoformat().replace("+00:00", "Z")
 
     return PresentationSnapshot(
         stats=MappingProxyType(stats),

@@ -2545,10 +2545,41 @@ changed by this work. Worth one line anyway — the freshness paragraph on `/`
 already said the marts "refresh hourly", which is the cadence the new threshold
 derives from. The copy was right and the constant was wrong; they agree now.
 
+**The deploy found a second defect, in the same field, from the other
+direction.** With the stale label no longer permanently lit, the timestamp
+beside it became readable — and it was an hour behind. At 15:48Z the page said
+"Analytics data through 9:00 AM" local, while the data was complete through
+15:00Z.
+
+`data_through` is a bucket **label**, not an end timestamp.
+`mart_scrape_volume` buckets on `date_trunc('hour', fetched_at)`, and Plan 136
+Stage 2 added `WHERE hour < date_trunc('hour', now())` so only complete hours
+publish. A snapshot naming 14:00 therefore describes the 14:00–15:00 bucket and
+summarises data that runs to 15:00. **The page was understating its own
+freshness by exactly one bucket.**
+
+**Shifting the DAG would not have fixed it**, which is worth recording because
+it was the first thing tried. The filter is keyed to the hour boundary rather
+than the run time: at 15:01 and at 15:06 alike, `hour < 15:00` yields 14:00. Any
+run minute inside the hour produces the same value.
+
+The fix is presentation-only — `ops/public_stats.py` adds `MART_BUCKET_SECONDS`
+before rendering, so the page shows the bucket's end. **The snapshot file and
+the Prometheus gauges keep the label**, which is correct for them: Plan 136's
+comment says the field "should name the hour the counts actually describe", and
+that reasoning is untouched. It does not apply to the page, because the page
+never shows the counts' hour beside them — `Pages fetched / hr` and
+`Observations processed / hr` render as bare rates.
+
+`test_the_bucket_width_tracks_the_mart_that_produces_it` reads the mart's SQL
+and fails if it stops bucketing hourly. That guards the *quieter* direction of
+this defect: a page that overstates freshness invites no complaint.
+
 **Cost:** estimate 2 → actual 1 (−1). The stage was sized as an implementation
 and turned out to be an audit: five of six exit clauses were already met, and
-what the work actually consisted of was measuring the sixth against production
-and repairing what that measurement found.
+what the work actually consisted of was measuring the sixth against production,
+repairing what that measurement found, and then repairing what the repair made
+visible.
 
 **Checks:** `3626 passed, 662 deselected` (`-m "not integration"`); `467 passed`
 in `tests/ops`; `ruff` clean.
