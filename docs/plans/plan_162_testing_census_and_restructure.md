@@ -122,11 +122,12 @@ order:
 | **7** | `done` | SQL execution, from both directions | G14; G5 to 15 | CAR-51, 2026-09-01 | 56 |
 | **8** | `done` | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | CAR-52, 2026-09-02 | -- |
 | **9** | `done` | `airflow/dags` and the `.sql` convention | G12 | CAR-53, 2026-09-02 | -- |
-| **10** | `next` | [dbt builds against production-shaped data](#stage-10-dbt-builds-against-production-shaped-data) | — | CAR-54 | -- |
-| **10b** | `—` | [CI's services are production's, in definition and in contents](#stage-10b-cis-services-are-productions-in-definition-and-in-contents) | — | — | -- |
+| **10** | `done` | [dbt builds against production-shaped data](#stage-10-dbt-builds-against-production-shaped-data) | — | CAR-54, 2026-09-04 | -- |
+| **10b** | `next` | [CI's services are production's, in definition and in contents](#stage-10b-cis-services-are-productions-in-definition-and-in-contents) | — | — | -- |
 | **10c** | `—` | [CI selection, and the instrument that has to precede it](#stage-10c-ci-selection-and-the-instrument-that-has-to-precede-it) | Plan 139 Stage E | — | -- |
 | **11** | `—` | The dbt testing contract, and what leaves the SQL census | G16 | — | -- |
 | **12** | `—` | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | — | -- |
+| **13** | `—` | [Every skip in CI is declared, or the run fails](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails) | — | — | -- |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -1061,6 +1062,41 @@ added reactively in `33b275e` is documentation, not a mechanism, and will drift
 again. Plan 139 scoped this as XS and warned that an XL plan should not hold a
 two-file fix hostage; giving it a numbered stage near the front settles that
 permanently.
+
+### Stage 13: every skip in CI is declared, or the run fails
+
+**Found 2026-09-04, closing Stage 10.** The run that proved the snapshot gate
+works reported `3622 passed, 1 skipped`, and the skip took a paragraph to
+explain — which is a paragraph nobody would have written if the number had not
+been quoted in a record entry.
+
+Measured across the whole run: **two skips, two jobs, two reasons, zero
+mechanisms.** `test_every_sha_a_recap_names_is_a_real_commit` skips because
+`actions/checkout@v4` clones at depth 1 and it needs real git history.
+`test_dictionary_compressed_objects_and_packed_members_are_both_readable` skips
+because `INTEGRATION_HTML_DICT_ID` is deliberately unset. Both are correct
+decisions. Both are held in place by prose — a docstring and a `ci.yml` comment
+— and a third would arrive the same way, silently.
+
+**`REQUIRE_LAYER_2_EXECUTION` is narrower than its name.** It fails a run on any
+skip in `tests/integration/sql/`, which is one suite in one job. The dictionary
+skip is in `tests/integration/shared/` and the recap skip is a Layer 0 test in
+the unit job; neither is in its reach. Its `pytest_terminal_summary` hook is the
+right mechanism sitting at the wrong scope.
+
+**The shape is `DORMANT_SUITES`, one level down.** That tuple made a deliberately
+unrun *suite* declare itself, with an assertion that fails when an undeclared one
+appears and a second that fails when a declared one starts running. The same two
+directions apply to a deliberately skipped *test*, and the second direction is
+the one that matters most here: a skip whose reason has stopped being true is
+exactly the drift this plan exists against.
+
+**Estimate: 1 point.**
+
+**Exit:** every skip observed in a CI run is named in a declared-skips registry
+with its reason and its condition; an undeclared skip fails the run; a declared
+skip that stops skipping fails too; and the hook covers every job rather than
+one suite. Demonstrated by an undeclared skip failing a run, not asserted.
 
 ## Success criteria
 
