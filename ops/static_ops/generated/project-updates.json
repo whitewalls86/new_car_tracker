@@ -23,27 +23,35 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
-      "plan": "138",
-      "title": "Public surface refresh",
-      "order": 3,
-      "priority": 84,
-      "effort": "L",
-      "state": "planned",
-      "summary": "Keeps the public-facing site — the landing page and what it claims about the platform — honest against what the repository actually contains, and builds the generator that publishes the roadmap and recent work from that source instead of by hand.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
-    },
-    {
       "plan": "164",
       "title": "Cycle-close ritual",
-      "order": 4,
+      "order": 3,
       "priority": 70,
       "effort": "S",
       "state": "planned",
       "summary": "Three steps of the routine that closes a work cycle — recording how the cycle actually went, rolling unfinished work forward, and tidying the branches left behind — have no owner today, and each is only ever correct at the close. This plan gives all three a home.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
+    },
+    {
+      "plan": "154",
+      "title": "Container log coverage",
+      "order": 4,
+      "priority": 70,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Gets logs from the services that currently produce none into one searchable place, deciding service by service what is worth collecting before turning any of it on — so a failure in an unlogged component stops being invisible.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_154_container_log_coverage.md"
     }
   ],
   "completed": [
+    {
+      "plan": "138",
+      "title": "Public surface refresh",
+      "date": "2026-09-04",
+      "state": "completed",
+      "summary": "Rewrote the public site and its README from one checked contract, made the landing page the site's front door, and built generators that publish the roadmap and weekly recaps straight from source control, so the page follows the work instead of being updated by hand.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
+    },
     {
       "plan": "172",
       "title": "The plan document contract",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "The rules for how this project tests itself used to be a paragraph of documentation that slowly went out of date. They are now a contract the suite checks on every change, so the description cannot quietly stop matching the code.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_161_testing_contract.md"
-    },
-    {
-      "plan": "139",
-      "title": "Test suite maintenance",
-      "date": "2026-08-31",
-      "state": "completed",
-      "summary": "Made test coverage visible on every change instead of measured and thrown away, and fixed a test database that did not match the shape of the real one.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_139_test_suite_maintenance.md"
     }
   ]
 }
