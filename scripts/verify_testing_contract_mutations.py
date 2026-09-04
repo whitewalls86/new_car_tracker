@@ -315,6 +315,76 @@ MUTATIONS = [
         ["pyproject.toml"],
         [],
     ),
+    # Plan 162 Stage U. The runtime half of this rule is a hook, and a hook
+    # that stopped noticing would leave every job green -- so the four checks
+    # standing behind it are the ones that most need to have been watched fail.
+    (
+        "test_every_declared_skip_names_a_test_that_exists",
+        "a declared skip goes on naming a test that has been renamed away",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "::test_every_sha_a_recap_names_is_a_real_commit",
+            "::test_every_sha_a_recap_names_is_a_real_commit_renamed",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "test_no_declared_skip_sits_at_a_layer_that_admits_none",
+        "a Layer 2 skip is declared instead of the fixture being fixed",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "DECLARED_SKIPS = (",
+            "DECLARED_SKIPS = (\n"
+            "    DeclaredSkip(\n"
+            '        "tests/integration/sql/test_dashboard_queries.py::test_widgets",\n'
+            '        reason="the widget table is not seeded in CI",\n'
+            '        condition="no widgets",\n'
+            "        since=date(2026, 9, 4),\n"
+            "    ),",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "test_every_pytest_step_runs_under_the_declared_skip_gate",
+        "the workflow-level gate is removed, as one unguarded line once was",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            'env:\n  REQUIRE_DECLARED_SKIPS: "1"\n',
+            "",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_pytest_step_runs_under_the_declared_skip_gate",
+        "the plugin registration is dropped, leaving the gate set and unread",
+        lambda: _edit(
+            "pyproject.toml",
+            'addopts = "-p tests.plugins.declared_skips"\n',
+            "",
+        ),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "test_the_declared_skip_registry_only_ratchets_down",
+        "a third skip is declared without the ceiling moving with it",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "DECLARED_SKIPS = (",
+            "DECLARED_SKIPS = (\n"
+            "    DeclaredSkip(\n"
+            '        "tests/scripts/test_audit_git_refs.py::test_divergence",\n'
+            '        reason="git behaves differently on the runner",\n'
+            '        condition="no git",\n'
+            "        since=date(2026, 9, 4),\n"
+            "    ),",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
 ]
 
 

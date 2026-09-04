@@ -17,6 +17,15 @@ on:
   # run.
   workflow_dispatch:
 
+# Plan 162 Stage U. Workflow level rather than per step, and that is the whole
+# point: a skip subtracts from what a run proves in whatever job it happens in,
+# so the gate belongs where every job -- including one nobody has written yet
+# -- inherits it. `tests/plugins/declared_skips.py` reads it; a step that opts
+# out by shadowing the key fails
+# `test_every_pytest_step_runs_under_the_declared_skip_gate`.
+env:
+  REQUIRE_DECLARED_SKIPS: "1"
+
 jobs:
 
   changes:
@@ -856,10 +865,16 @@ jobs:
           # Same reasoning one fixture over. 55 of this suite's tests read the
           # DuckDB file the dbt build above produced; if it were missing they
           # would skip and this step would still pass, hiding a quarter of
-          # Layer 2. REQUIRE_LAYER_2_EXECUTION is the general form: any skip in
-          # this suite is a broken job, not a local convenience.
+          # Layer 2.
+          #
+          # REQUIRE_LAYER_2_EXECUTION stood here as the general form and was
+          # retired by Plan 162 Stage U, which made it general in fact: the
+          # workflow-level REQUIRE_DECLARED_SKIPS fails any undeclared skip in
+          # any job, and no declaration is admissible for a Layer 2 test at
+          # all. That last rule is derived from the contract's layer table
+          # rather than from this suite's path, so a second Layer 2 root
+          # inherits it on the day the contract declares it.
           REQUIRE_DUCKDB: "1"
-          REQUIRE_LAYER_2_EXECUTION: "1"
           # Plan 162: the one ops statement that reads MinIO Parquet directly
           # rather than Postgres or the analytics file -- the blocked-cooldown
           # reconcile. This job already runs a MinIO service and seeds the lake

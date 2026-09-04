@@ -24,6 +24,15 @@ preview = true
 explicit-preview-rules = true
 
 [tool.pytest.ini_options]
+# Plan 162 Stage U. The declared-skips gate has to reach every job, and one of
+# them -- `docs-tests` -- runs with `--noconftest`, so a conftest hook is
+# structurally unable to. `-p` loads through `--noconftest`; `pythonpath` is
+# what makes the module importable at plugin-registration time, which happens
+# before the collection that would otherwise put the repo root on sys.path.
+# Registering here rather than per step is also what makes a job nobody has
+# written yet covered by default.
+pythonpath = ["."]
+addopts = "-p tests.plugins.declared_skips"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
