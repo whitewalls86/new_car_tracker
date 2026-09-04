@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
+import subprocess
 
 import pytest
 
@@ -216,3 +218,25 @@ class TestTheGitHookEntryPoint:
         mocker.patch("sys.stdin", io.StringIO(""))
 
         assert gate.main(["--pre-commit"]) == 0
+
+
+class TestTheHookIsRunnableWhereItIsCheckedOut:
+    def test_the_pre_commit_hook_is_executable_in_the_index(self):
+        """Git silently declines to run a hook without the execute bit.
+
+        Found by Plan 175 Stage A's own first commit: `chmod +x` on Windows
+        does not reach the index, so the hook landed as 100644 and would have
+        been checked out unrunnable on macOS -- installed, configured, and
+        never firing. That is the silent absence this plan exists to remove,
+        so it is asserted rather than remembered.
+        """
+        entry = subprocess.run(
+            ["git", "ls-files", "--stage", ".githooks/pre-commit"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+            cwd=pathlib.Path(gate.__file__).resolve().parent.parent,
+        ).stdout
+
+        assert entry.startswith("100755 "), entry or "hook is not tracked at all"
