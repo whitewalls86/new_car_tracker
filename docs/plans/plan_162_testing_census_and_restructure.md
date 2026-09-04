@@ -128,6 +128,7 @@ order:
 | **11** | `—` | The dbt testing contract, and what leaves the SQL census | G16 | — | -- |
 | **12** | `—` | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | — | -- |
 | **13** | `—` | [Every skip in CI is declared, or the run fails](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails) | — | — | -- |
+| **14** | `—` | [A variable the environment documents reaches the service that reads it](#stage-14-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | — | — | -- |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -1097,6 +1098,62 @@ exactly the drift this plan exists against.
 with its reason and its condition; an undeclared skip fails the run; a declared
 skip that stops skipping fails too; and the hook covers every job rather than
 one suite. Demonstrated by an undeclared skip failing a run, not asserted.
+
+### Stage 14: a variable the environment documents reaches the service that reads it
+
+**Found 2026-09-04, deploying this plan's own change.** Stage 10's credential
+work added `SNAPSHOT_DOWNLOAD_TOKENS` to `.env.example` and to
+`ops/routers/snapshots.py`, and never added it to `docker-compose.yml`. A
+variable in `.env` reaches a container only if the service names it, so the new
+one was inert: the router fell back to the legacy single token, the deploy
+reported healthy, the route answered 200, and **a working rotation and a failed
+one were indistinguishable from outside.** It surfaced only because the
+container was asked what it had loaded rather than whether it was up. A `git
+pull` is not a deploy, a healthy container is not a correct one, and neither the
+deploy script's health gate nor the route's own 200 could tell the difference
+here.
+
+`.env.example` is the file that tells an operator what to set. A key it
+documents that no service consumes is a lie in the one place someone reads
+before touching production.
+
+**Measured across the whole file: 37 keys, four never referenced by any
+`docker-compose*.yml`.** One was the defect above. The other three are
+pre-existing and are the reason this stage is an investigation before it is a
+rule:
+
+| Key | What has to be established |
+|---|---|
+| `FASTAPI_ADMIN_KEY` | whether anything still reads it, or it is dead and leaves `.env.example` |
+| `MLFLOW_TRACKING_URI` | Plan 112's, and plausibly script-only — a variable a developer exports, never a container variable |
+| `PROVENANCE_ENV` | same shape, same question |
+
+**Waiving all three to make a new assertion pass is the move this stage exists
+to refuse.** Each has a different correct answer — wire it, delete it, or
+declare it script-only — and a ledger that absorbs three unexamined entries on
+the day it is created is decoration. Nine stages of this plan have gone into
+making waivers mean something.
+
+**Then the rule.** Every key in `.env.example` is either referenced by a
+`docker-compose*.yml`, or declared script-only with the consumer that reads it
+named. The declaration carries the same two directions as `DORMANT_SUITES`: an
+undeclared unwired key fails, and a key declared script-only that later appears
+in compose fails too.
+
+Not folded into [Stage 13](#stage-13-every-skip-in-ci-is-declared-or-the-run-fails):
+different subject, same class. That one is about a test that does not run; this
+is about a variable that does not arrive. Sharing a stage would make the pair
+read as one mechanism when they are two.
+
+**Estimate: not sized.** The investigation is what sizes it — three keys with
+three possibly different answers, and the rule is small only if none of them
+turns out to be a real undelivered variable.
+
+**Exit:** each of the three keys has an established answer and has been wired,
+deleted, or declared; every remaining `.env.example` key is referenced by a
+compose file or declared script-only with its consumer; an undeclared unwired
+key fails; and a script-only declaration that stops being true fails.
+Demonstrated by an unwired key failing, not asserted.
 
 ## Success criteria
 
