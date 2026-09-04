@@ -39,7 +39,13 @@ templates.env.filters["fmt_stat"] = _fmt_stat
 templates.env.globals["asset_url"] = asset_url
 
 
-@router.get("/info")
+# GET and HEAD, not GET alone: FastAPI does not add HEAD for you, and a monitor
+# or link checker that uses it got a 405 on every public route until Stage 6's
+# route matrix caught it on 2026-09-04.
+_PUBLIC_METHODS = ["GET", "HEAD"]
+
+
+@router.api_route("/info", methods=_PUBLIC_METHODS)
 def info_redirect() -> RedirectResponse:
     """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
 
@@ -50,7 +56,7 @@ def info_redirect() -> RedirectResponse:
     return RedirectResponse(url="/", status_code=308)
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.api_route("/", methods=_PUBLIC_METHODS, response_class=HTMLResponse)
 def info_page(request: Request):
     snapshot = public_stats_cache.get()
 
