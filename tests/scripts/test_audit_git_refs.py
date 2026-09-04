@@ -28,7 +28,9 @@ from scripts.audit_git_refs import (
     UNPUSHED,
     audit,
     divergence,
+    local_branches,
     render,
+    settings_drift,
     to_dict,
 )
 
@@ -128,6 +130,23 @@ def constructed(tmp_path_factory) -> Path:
     _git(work, "checkout", "-b", "owed", "origin/master")
     _commit(work, "owed.txt", "owed")
     _git(work, "push", "origin", "owed")
+
+    # The cross-machine signal: an upstream the remote no longer has. Built the
+    # way it happens for real -- pushed, merged, then deleted on the remote --
+    # so `fetch --prune` is what turns it into `gone`.
+    _git(work, "checkout", "-b", "gone-and-landed", "origin/master")
+    _commit(work, "gone-landed.txt", "gone and landed")
+    _git(work, "push", "-u", "origin", "gone-and-landed")
+    _git(work, "push", "origin", "gone-and-landed:master")
+    _git(work, "push", "origin", "--delete", "gone-and-landed")
+
+    # The same ref state with the opposite content state: the remote copy was
+    # deleted and the content never landed, so this local ref is the only copy.
+    _git(work, "checkout", "-b", "gone-and-unlanded", "origin/master")
+    _commit(work, "gone-unlanded.txt", "gone and unlanded")
+    _git(work, "push", "-u", "origin", "gone-and-unlanded")
+    _git(work, "push", "origin", "--delete", "gone-and-unlanded")
+    _git(work, "fetch", "--prune", "origin")
 
     # A branch with no commits of its own: deletable, and the control for
     # finding 6 below, which protects an identical branch for a different reason.
@@ -278,6 +297,78 @@ class TestFinding6ProtectedRefs:
         blind = audit(constructed, pr_heads=None)
         assert blind.deletable == []
         assert _verdict(blind, "landed-on-remote-trunk-only") == UNKNOWN
+
+
+class TestTheGoneUpstreamSignal:
+    """The one signal that propagates between machines without a hook.
+
+    The remote is the shared state, so a branch cleaned up from one checkout
+    reads `gone` on the other at its next fetch. It is a fact about the *ref*,
+    never about the content, and these two cases have identical ref state and
+    opposite content state.
+    """
+
+    def test_the_fixture_really_produces_a_gone_upstream(self, constructed):
+        # The premise. Without `fetch --prune` having run, `gone` never appears
+        # and both assertions below would pass for the wrong reason.
+        tracked = dict((name, gone) for name, _upstream, gone in local_branches(constructed))
+        assert tracked["gone-and-landed"] is True
+        assert tracked["gone-and-unlanded"] is True
+
+    def test_gone_plus_landed_content_is_deletable_and_says_so(self, report):
+        finding = _finding(report, "gone-and-landed")
+        assert finding.verdict == DELETABLE
+        assert "gone" in finding.reason
+
+    def test_gone_plus_unlanded_content_is_the_only_copy(self, report):
+        finding = _finding(report, "gone-and-unlanded")
+        assert finding.verdict == UNPUSHED
+        assert "only copy" in finding.reason
+
+    def test_a_deleted_upstream_reads_differently_from_never_pushed(self, report):
+        # Both have no remote ref, and conflating them buries the worse one:
+        # `only-copy` is ordinary work in progress, `gone-and-unlanded` is work
+        # somebody already thought they were finished with.
+        deleted = _finding(report, "gone-and-unlanded").reason
+        never = _finding(report, "only-copy").reason
+        assert "DELETED" in deleted
+        assert "DELETED" not in never
+
+
+class TestSettingsDrift:
+    """Prevention, reported per machine because that is where it drifts.
+
+    These set the values in the repository's own config, which overrides the
+    global one. That is deliberate: the developer machine running this suite
+    has `fetch.prune` set globally, and a test that read it would pass or fail
+    on whose machine it ran rather than on the code.
+
+    The `gh` half of `settings_drift` is not asserted here -- a temporary
+    repository with a file:// remote has no GitHub repo to query, so that
+    branch is exercised only against a real remote.
+    """
+
+    def test_it_reports_both_git_settings_when_they_are_off(self, tmp_path):
+        repo = _init_pair(tmp_path)
+        _git(repo, "config", "fetch.prune", "false")
+        _git(repo, "config", "push.autoSetupRemote", "false")
+        notes = " ".join(settings_drift(repo))
+        assert "fetch.prune" in notes
+        assert "push.autoSetupRemote" in notes
+
+    def test_it_says_nothing_when_they_are_on(self, tmp_path):
+        repo = _init_pair(tmp_path)
+        _git(repo, "config", "fetch.prune", "true")
+        _git(repo, "config", "push.autoSetupRemote", "true")
+        notes = [n for n in settings_drift(repo) if "fetch.prune" in n or "autoSetupRemote" in n]
+        assert notes == []
+
+    def test_each_note_names_the_command_that_fixes_it(self, tmp_path):
+        repo = _init_pair(tmp_path)
+        _git(repo, "config", "fetch.prune", "false")
+        _git(repo, "config", "push.autoSetupRemote", "false")
+        for note in settings_drift(repo):
+            assert "git config --global" in note
 
 
 class TestAStaleTrunkAuthorisesNothing:

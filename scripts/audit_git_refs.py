@@ -105,6 +105,7 @@ class Report:
     branches: list[BranchFinding]
     stashes: list[str]
     worktrees: list[dict]
+    settings: list[str] = field(default_factory=list)
 
     @property
     def deletable(self) -> list[BranchFinding]:
@@ -159,6 +160,62 @@ def open_pr_heads_from_gh(repo: Path) -> list[str] | None:
     return [entry["headRefName"] for entry in payload if entry.get("headRefName")]
 
 
+def settings_drift(repo: Path) -> list[str]:
+    """Settings that decide whether refs accrete at all, checked where they live.
+
+    This is prevention rather than cleanup, and it is the part that has to work
+    on more than one machine. `delete_branch_on_merge` lives on the remote and
+    is therefore shared; `fetch.prune` and `push.autoSetupRemote` are per
+    checkout and drift silently, so each machine has to report its own. Running
+    the audit anywhere surfaces that machine's gap, which is why this lives here
+    and not in a setup script somebody runs once and forgets.
+
+    Measured 2026-09-04, with all three off: 69 remote branches, 67 of them
+    already merged, and no local branch could ever read `gone`.
+    """
+    notes = []
+    if git(repo, "config", "--get", "fetch.prune", check=False).strip() != "true":
+        notes.append(
+            "`fetch.prune` is not true on this machine, so deleted remote branches "
+            "leave their tracking refs behind and no branch here can read `gone`. "
+            "Fix: `git config --global fetch.prune true`"
+        )
+    if git(repo, "config", "--get", "push.autoSetupRemote", check=False).strip() != "true":
+        notes.append(
+            "`push.autoSetupRemote` is not true on this machine, so a pushed branch "
+            "may carry no upstream -- and a branch with no upstream can never read "
+            "`gone`. Fix: `git config --global push.autoSetupRemote true`"
+        )
+    if shutil.which("gh") is not None:
+        completed = subprocess.run(
+            ["gh", "repo", "view", "--json", "deleteBranchOnMerge,squashMergeAllowed"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode == 0:
+            try:
+                payload = json.loads(completed.stdout or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            if payload.get("deleteBranchOnMerge") is False:
+                notes.append(
+                    "`delete_branch_on_merge` is off on the remote, which is where "
+                    "the accretion actually happens: every merged PR leaves its head "
+                    "branch behind forever."
+                )
+            if payload.get("squashMergeAllowed") is True:
+                notes.append(
+                    "Squash merging is allowed. A squash leaves no merge commit, and "
+                    "the merge commit's subject is where a branch name survives "
+                    "deletion -- it is what lets `plan-week` attribute a commit whose "
+                    "own text names no plan."
+                )
+    return notes
+
+
 def current_branch(repo: Path) -> str | None:
     """The checked-out branch, or ``None`` when HEAD is detached."""
     completed = subprocess.run(
@@ -201,13 +258,28 @@ def stashes(repo: Path) -> list[str]:
     return _lines(git(repo, "stash", "list", "--format=%gd %h %gs"))
 
 
-def local_branches(repo: Path) -> list[tuple[str, str | None]]:
-    """``(name, configured upstream)`` for every local branch."""
-    fmt = "%(refname:short)%09%(upstream:short)"
+def local_branches(repo: Path) -> list[tuple[str, str | None, bool]]:
+    """``(name, configured upstream, upstream is gone)`` for every local branch.
+
+    ``gone`` is git's own word for it: an upstream this branch is configured to
+    track that no longer exists on the remote, which `fetch --prune` is what
+    notices. It is the cheapest true signal in this whole script and the only
+    one that **propagates between machines** — the remote is the shared state,
+    so a branch cleaned up from one checkout reads `gone` on the other at its
+    next fetch, with no hook and no coordination.
+
+    It is a signal about the *ref*, never about the *content*. A remote branch
+    can be deleted without merging, and telling those two apart is still the
+    landedness check's job.
+    """
+    fmt = "%(refname:short)%09%(upstream:short)%09%(upstream:track)"
     out = []
     for line in _lines(git(repo, "for-each-ref", f"--format={fmt}", "refs/heads/")):
-        name, _, upstream = line.partition("\t")
-        out.append((name, upstream or None))
+        fields = line.split("\t")
+        name = fields[0]
+        upstream = fields[1] if len(fields) > 1 and fields[1] else None
+        track = fields[2] if len(fields) > 2 else ""
+        out.append((name, upstream, "gone" in track))
     return out
 
 
@@ -253,6 +325,7 @@ def classify_branch(
     repo: Path,
     name: str,
     upstream: str | None,
+    upstream_gone: bool = False,
     *,
     trunk_ref: str,
     remote: str,
@@ -274,22 +347,36 @@ def classify_branch(
     has_remote = ref_exists(repo, remote_ref)
 
     if not unlanded:
+        # `git cherry` is empty whenever the branch is an ancestor of the trunk,
+        # so a non-empty all-landed list means specifically the replayed-patch
+        # case. The gone upstream is orthogonal to both and worth saying either
+        # way: it is the fact that travelled here from the other machine.
         reason = (
             f"every commit is on {trunk_ref} by patch identity"
             if commits
             else f"no commits of its own relative to {trunk_ref}"
         )
+        if upstream_gone:
+            reason += f", and its upstream {upstream} is gone"
         return BranchFinding(name, DELETABLE, reason, upstream, remote_ref if has_remote else None)
 
     if not has_remote:
-        return BranchFinding(
-            name,
-            UNPUSHED,
-            f"{len(unlanded)} unlanded commit(s) and no {remote_ref}: this may be the only copy",
-            upstream,
-            None,
-            unlanded=unlanded,
-        )
+        # Two very different situations that both read "no remote ref", and
+        # conflating them buries the worse one. A branch that was *never*
+        # pushed is ordinary work in progress. A branch whose upstream is
+        # `gone` was pushed, the remote copy was deleted, and its content is
+        # still not on the trunk -- so the local ref is now the only copy of
+        # work somebody already thought was finished with.
+        if upstream_gone:
+            reason = (
+                f"{len(unlanded)} unlanded commit(s) and its upstream {upstream} was DELETED: "
+                "this local ref is now the only copy"
+            )
+        else:
+            reason = (
+                f"{len(unlanded)} unlanded commit(s) and no {remote_ref}: this may be the only copy"
+            )
+        return BranchFinding(name, UNPUSHED, reason, upstream, None, unlanded=unlanded)
 
     ahead, behind = divergence(repo, name, remote_ref)
     if ahead:
@@ -378,7 +465,7 @@ def audit(
     protected_names.update({name: "the trunk" for name in (trunk, "main", "master")})
 
     branches = []
-    for name, upstream in local_branches(repo):
+    for name, upstream, upstream_gone in local_branches(repo):
         if not fetched:
             branches.append(
                 BranchFinding(name, UNKNOWN, fetch_error or "the trunk was not refreshed", upstream)
@@ -389,6 +476,7 @@ def audit(
                 repo,
                 name,
                 upstream,
+                upstream_gone,
                 trunk_ref=trunk_ref,
                 remote=remote,
                 protected_names=protected_names,
@@ -404,6 +492,7 @@ def audit(
         branches=branches,
         stashes=stashes(repo),
         worktrees=trees,
+        settings=settings_drift(repo),
     )
 
 
@@ -430,6 +519,7 @@ def to_dict(report: Report) -> dict:
         ],
         "stashes": report.stashes,
         "worktrees": report.worktrees,
+        "settings": report.settings,
     }
 
 
@@ -448,6 +538,18 @@ def render(report: Report) -> str:
             "deleting the head of an open PR closes it."
         )
     out.append("")
+
+    if report.settings:
+        out.append("## Settings that let refs accrete in the first place")
+        out.append("")
+        out.append(
+            "Cleanup is the expensive way to solve this. Each line below is a "
+            "setting that, left alone, guarantees the next sweep is needed."
+        )
+        out.append("")
+        for note in report.settings:
+            out.append(f"- {note}")
+        out.append("")
 
     out.append("## Safe to delete")
     out.append("")

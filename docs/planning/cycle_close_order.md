@@ -2,7 +2,7 @@
 
 **Owner:** [Plan 164](../plans/plan_164_cycle_close_ritual.md) Stage 0.
 
-Closing a cycle is nine steps owned by six different skills, and the order is
+Closing a cycle is eight steps owned by six skills and two gaps, and the order is
 not a preference. Two of the steps are only ever *correct* at the close, one of
 them destroys the evidence another one reads, and one of them has to happen
 before a deadline that passes whether anyone is looking or not.
@@ -84,16 +84,27 @@ record — the wrong version of it is the one that survives.
 [`PLANS.md`](../PLANS.md). Seeding from an index whose rows have not moved yet
 selects work that is already finished.
 
-**6 before 8, and 8 last of everything.** This is rule 2, and it is the one
-constraint in this file that is not recoverable if it is broken. `plan-week`
-uses `git branch --contains` as a hint about which plan a commit belongs to; on
-the measured week that layer attributed 18 commits over 30 days that nothing
-else would have. Deleting branches first does not make the recap fail — it makes
-it quietly thinner, and a recap that is missing eighteen commits reads exactly
-like one that is not.
+**6 before 8, and 8 last of everything.** This is rule 2. Step 8 destroys
+evidence by design, so everything that reads git history goes ahead of it.
 
-Step 8 destroys evidence by design. Everything that reads git history goes ahead
-of it.
+**How much this ordering is worth was measured on 2026-09-04, and it is less
+than it first appeared.** Over 2026-08-24..30, 200 of 209 non-merge commits
+attributed from their own subject or body. For the 9 that did not,
+`git branch --contains` returned **75 refs each** and discriminated nothing;
+what answered all 9 was the enclosing merge commit, whose subject carries the
+branch name in `master`'s history permanently and survives any branch deletion.
+`--contains` is only informative for commits *not* on `origin/master` — 24 of
+them, 1-2 refs each — and those sit on branches `ref-hygiene` refuses to delete,
+because they carry unlanded commits.
+
+So the ordering is **defence in depth rather than the load-bearing constraint**.
+It is kept because it costs nothing and the risk is one-sided, and it is
+recorded honestly because a rationale that does not survive being checked is
+worse than no rationale.
+
+The thing that *would* cost the recap its fallback is enabling **squash
+merging**, which leaves no merge commit and therefore no permanent record of the
+branch name. That is a repository setting, not an ordering.
 
 ## Two steps are unbuilt, and this file says so on purpose
 
@@ -109,6 +120,27 @@ anything.
 **A partial measure is recorded as partial.** Cycle 1's "state corrections" row
 is three known occurrences with no exhaustive count, and says so. A total that
 is not one is worse than an admitted gap.
+
+## Prevention sits outside this order
+
+Step 8 exists because refs accrete. Three settings decide whether they accrete
+at all, and none of them is a step in this sequence — they are configured once
+and then hold:
+
+| Setting | Where it lives |
+|---|---|
+| `delete_branch_on_merge` | the remote, so it is shared by every machine |
+| `fetch.prune = true` | each machine's `~/.gitconfig` |
+| `push.autoSetupRemote = true` | each machine's `~/.gitconfig` |
+
+With all three on, a branch merged and deleted from one checkout reads `gone` on
+every other checkout at its next fetch. That is git's own propagation between
+machines; it needs no hook and no coordination.
+
+`scripts/audit_git_refs.py` reports on all three from wherever it runs, which is
+how a two-machine setup notices its own drift without a registry to maintain.
+Measured 2026-09-04 with all three off: 69 remote branches, 67 already merged,
+and no local branch anywhere that could read `gone`.
 
 ## What this file is not
 

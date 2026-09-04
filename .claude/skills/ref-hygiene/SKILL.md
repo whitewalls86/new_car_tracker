@@ -33,14 +33,55 @@ in that plan: a tool that both reads history to write prose and deletes refs can
 destroy the evidence for the claim it just made, and the prose would still read
 as consistent.
 
+## Prevention first: this skill is the expensive way to solve the problem
+
+**Cleanup is what you do about refs that already accreted. It is not how you
+stop them accreting**, and reaching for it first is how a 69-branch remote
+becomes normal. Measured 2026-09-04, before any of the settings below were on:
+69 remote branches, **67 of them already merged**, 0 open PRs -- against 9 local
+branches, 7 of which a worktree held. The volume was never local.
+
+Three settings do the work this skill would otherwise do by hand, and the audit
+reports on all three, on whichever machine it runs:
+
+| Setting | Where | What it stops |
+|---|---|---|
+| `delete_branch_on_merge` | the remote, so it is shared | 13 merged head branches a day surviving forever |
+| `fetch.prune = true` | per machine, `~/.gitconfig` | tracking refs outliving the branches they track |
+| `push.autoSetupRemote = true` | per machine, `~/.gitconfig` | branches with no upstream, which can never read `gone` |
+
+Those three together are the whole cross-machine story, and **no hook is
+involved**. The remote is the shared state: a branch merged and deleted there
+reads `gone` on every other checkout at its next fetch. That is git's own
+propagation, it needs no coordination, and it beats a `post-checkout` hook,
+which fires on every rebase step and `worktree add`, needs network each time,
+and is not versioned with the repository.
+
+**If the audit's settings section is non-empty, fix that before deleting
+anything.** A sweep run against a repository still configured to accrete just
+schedules the next sweep.
+
 ## Do not run this before the recap
 
-`plan-week` uses `git branch --contains` as a hint about which plan a commit
-belongs to. It is robust to deleted branches and **helped** by live ones — on
-the measured week that layer attributed 18 commits over 30 days that nothing
-else would have.
+`plan-week` attributes a commit from its own subject and body, and reaches for
+`git branch --contains` when neither answers.
 
-So the order is fixed and it is not a preference:
+**Measured 2026-09-04, that fallback is worth less than the skill claims and
+this ordering is worth less than Plan 164 claimed.** Over 2026-08-24..30, 200 of
+209 non-merge commits attributed from their own text; for the 9 that did not,
+`--contains` returned **75 refs each** and discriminated nothing, while the
+enclosing merge commit answered all 9 — and a merge commit's subject
+(`Merge pull request #296 from whitewalls86/docs/recap-backfill-to-repo-start`)
+is permanent history that no branch deletion touches.
+
+Where `--contains` *is* informative is commits that are **not** on
+`origin/master` — 24 of them, 1-2 refs each. This skill can never delete those
+branches: a branch carrying unlanded commits is refused. So the ordering is
+**defence in depth, not the load-bearing constraint**, and it is recorded that
+way rather than left overstated.
+
+It still costs nothing, and the direction of the risk is one-sided, so the order
+is fixed:
 
 1. `plan-week` writes `docs/recaps/<sunday>.md`.
 2. *Then* this skill runs.
@@ -60,14 +101,17 @@ python scripts/audit_git_refs.py --json     # if you want to work with the field
 ```
 
 The script fetches with `--prune` first and compares against `origin/master`.
-Every branch lands in one of five verdicts, and **only `landed` authorises
-anything**:
+It opens with the settings section above; **read that before the branch tables.**
+Every branch then lands in one of five verdicts — two of which have a sharper
+form when the upstream is gone — and **only `landed` authorises anything**:
 
 | Verdict | What it means | What you do |
 |---|---|---|
 | `landed` | every commit is on `origin/master` **by patch identity** | propose it for deletion |
+| `landed`, *and its upstream is gone* | the remote deleted the branch **and** the content is on the trunk | propose it; this is the steady-state case once the settings above are on |
 | `protected` | the trunk, the current branch, held by a worktree, or the head of an open PR | leave it, and say why |
 | `unpushed` | unlanded commits with no verified remote copy | report it; the fix is a push, and the push is the user's call |
+| `unpushed`, *and its upstream was DELETED* | it was pushed, the remote copy is gone, and the content never landed | **the loudest thing in the report.** This local ref is the only copy of work somebody thought was finished |
 | `owed` | pushed and verified, and still not on the trunk | report it per commit; the decision is the user's |
 | `unknown` | the fetch failed, or open PRs could not be listed | **the run is over.** Fix the cause and re-audit |
 
