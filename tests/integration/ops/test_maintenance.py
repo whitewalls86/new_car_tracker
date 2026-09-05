@@ -8,6 +8,9 @@ import uuid
 import pytest
 
 from ops.queries import EXPIRE_ORPHAN_DETAIL_CLAIMS, SELECT_STUCK_PROCESSING_ARTIFACTS
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -21,10 +24,7 @@ def _insert_detail_claim(cur, *, stale=False):
     run_id = str(uuid.uuid4())
     claimed_at = "now() - interval '3 hours'" if stale else "now()"
     cur.execute(
-        f"""
-        INSERT INTO detail_scrape_claims (listing_id, claimed_by, status, claimed_at)
-        VALUES (%s, %s, 'running', {claimed_at})
-        """,
+        SQL("insert_detail_scrape_claims").format(claimed_at=claimed_at),
         (listing_id, run_id),
     )
     return listing_id
@@ -50,7 +50,7 @@ class TestExpireOrphanDetailClaims:
     def test_claim_actually_removed_from_table(self, cur):
         listing_id = _insert_detail_claim(cur, stale=True)
         self._run_query(cur)
-        cur.execute("SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,))
+        cur.execute(SQL("select_1_from_detail_scrape_claims"), (listing_id,))
         assert cur.fetchone() is None
 
 
@@ -61,22 +61,13 @@ class TestExpireOrphanDetailClaims:
 def _insert_artifact(cur, *, status="processing", created_hours_ago=0, proc_event_hours_ago=None):
     """Insert an artifacts_queue row; optionally a 'processing' event row."""
     cur.execute(
-        f"""
-        INSERT INTO ops.artifacts_queue (minio_path, artifact_type, fetched_at, status, created_at)
-        VALUES (%s, 'detail_page', now(), %s, now() - interval '{created_hours_ago} hours')
-        RETURNING artifact_id
-        """,
+        SQL("insert_ops_artifacts_queue").format(created_hours_ago=created_hours_ago),
         (f"s3://bronze/x/{uuid.uuid4()}.zst", status),
     )
     artifact_id = cur.fetchone()["artifact_id"]
     if proc_event_hours_ago is not None:
         cur.execute(
-            f"""
-            INSERT INTO staging.artifacts_queue_events
-                (artifact_id, status, artifact_type, event_at)
-            VALUES (%s, 'processing', 'detail_page',
-                    now() - interval '{proc_event_hours_ago} hours')
-            """,
+            SQL("insert_staging_artifacts_queue_events").format(proc_event_hours_ago=proc_event_hours_ago),
             (artifact_id,),
         )
     return artifact_id

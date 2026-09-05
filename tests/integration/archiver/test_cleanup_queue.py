@@ -16,6 +16,9 @@ import uuid
 import pytest
 
 from archiver.queries import GET_QUEUE_CLEANUP_CANDIDATES
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -31,8 +34,7 @@ def _insert_queue_row(cur, status: str = "pending") -> int:
         f"artifact_type=results_page/{uuid.uuid4()}.html.zst"
     )
     cur.execute(
-        """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
-           VALUES (%s, 'results_page', now(), %s) RETURNING artifact_id""",
+        SQL("insert_artifacts_queue"),
         (minio_path, status),
     )
     return cur.fetchone()["artifact_id"]
@@ -104,9 +106,7 @@ class TestQueueDeleteSql:
     def test_delete_complete_row_returns_id(self, cur):
         aid = _insert_queue_row(cur, status="complete")
         cur.execute(
-            """DELETE FROM artifacts_queue
-               WHERE artifact_id = ANY(%s) AND status IN ('complete', 'skip')
-               RETURNING artifact_id""",
+            SQL("delete_artifacts_queue"),
             ([aid],),
         )
         returned = {row["artifact_id"] for row in cur.fetchall()}
@@ -115,9 +115,7 @@ class TestQueueDeleteSql:
     def test_delete_skip_row_returns_id(self, cur):
         aid = _insert_queue_row(cur, status="skip")
         cur.execute(
-            """DELETE FROM artifacts_queue
-               WHERE artifact_id = ANY(%s) AND status IN ('complete', 'skip')
-               RETURNING artifact_id""",
+            SQL("delete_artifacts_queue"),
             ([aid],),
         )
         returned = {row["artifact_id"] for row in cur.fetchall()}
@@ -126,9 +124,7 @@ class TestQueueDeleteSql:
     def test_delete_pending_row_returns_nothing(self, cur):
         aid = _insert_queue_row(cur, status="pending")
         cur.execute(
-            """DELETE FROM artifacts_queue
-               WHERE artifact_id = ANY(%s) AND status IN ('complete', 'skip')
-               RETURNING artifact_id""",
+            SQL("delete_artifacts_queue"),
             ([aid],),
         )
         returned = {row["artifact_id"] for row in cur.fetchall()}
@@ -137,9 +133,7 @@ class TestQueueDeleteSql:
     def test_delete_retry_row_returns_nothing(self, cur):
         aid = _insert_queue_row(cur, status="retry")
         cur.execute(
-            """DELETE FROM artifacts_queue
-               WHERE artifact_id = ANY(%s) AND status IN ('complete', 'skip')
-               RETURNING artifact_id""",
+            SQL("delete_artifacts_queue"),
             ([aid],),
         )
         returned = {row["artifact_id"] for row in cur.fetchall()}
@@ -150,9 +144,7 @@ class TestQueueDeleteSql:
         aid_pending = _insert_queue_row(cur, status="pending")
 
         cur.execute(
-            """DELETE FROM artifacts_queue
-               WHERE artifact_id = ANY(%s) AND status IN ('complete', 'skip')
-               RETURNING artifact_id""",
+            SQL("delete_artifacts_queue"),
             ([aid_complete, aid_pending],),
         )
         returned = {row["artifact_id"] for row in cur.fetchall()}

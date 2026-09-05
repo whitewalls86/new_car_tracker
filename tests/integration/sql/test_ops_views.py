@@ -28,6 +28,10 @@ import uuid
 
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 pytestmark = pytest.mark.integration
 
 
@@ -45,12 +49,7 @@ def _insert_artifact(cur, artifact_type="results_page") -> int:
         f"/artifact_type={artifact_type}/{uuid.uuid4()}.html.zst"
     )
     cur.execute(
-        """
-        INSERT INTO ops.artifacts_queue
-            (minio_path, artifact_type, fetched_at, status)
-        VALUES (%s, %s, now(), 'pending')
-        RETURNING artifact_id
-        """,
+        SQL("insert_ops_artifacts_queue"),
         (minio_path, artifact_type),
     )
     return cur.fetchone()["artifact_id"]
@@ -98,24 +97,16 @@ def _insert_price_obs(
             params.append(str(hours_ago))
 
     cur.execute(
-        f"INSERT INTO ops.price_observations ({', '.join(columns)})"
-        f" VALUES ({', '.join(values)})",
+        SQL("insert_ops_price_observations").format(
+            columns=", ".join(columns), values=", ".join(values)
+        ),
         params,
     )
 
 
 def _insert_cooldown(cur, listing_id: str, num_of_attempts: int, last_attempted_hours_ago: float):
     cur.execute(
-        """
-        INSERT INTO ops.blocked_cooldown
-            (listing_id, first_attempted_at, last_attempted_at, num_of_attempts)
-        VALUES (
-            %s::uuid,
-            now() - interval '7 days',
-            now() - (%s || ' hours')::interval,
-            %s
-        )
-        """,
+        SQL("insert_ops_blocked_cooldown"),
         (listing_id, str(last_attempted_hours_ago), num_of_attempts),
     )
 
@@ -133,8 +124,7 @@ class TestOpsVehicleStaleness:
         _insert_price_obs(cur, artifact_id, lid, customer_id="cust-1", age_hours=1)
 
         cur.execute(
-            "SELECT is_price_stale, is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_is_price_stale_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()
@@ -151,8 +141,7 @@ class TestOpsVehicleStaleness:
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
 
         cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_is_full_details_stale_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()
@@ -166,8 +155,7 @@ class TestOpsVehicleStaleness:
         _insert_price_obs(cur, artifact_id, lid, customer_id="cust-2", age_hours=25)
 
         cur.execute(
-            "SELECT is_price_stale, is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_is_price_stale_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()
@@ -182,7 +170,7 @@ class TestOpsVehicleStaleness:
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=48)
 
         cur.execute(
-            "SELECT stale_reason FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_stale_reason_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         assert cur.fetchone()["stale_reason"] == "dealer_unenriched"
@@ -193,7 +181,7 @@ class TestOpsVehicleStaleness:
         _insert_price_obs(cur, artifact_id, lid, customer_id="c")
 
         cur.execute(
-            "SELECT current_listing_url FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_current_listing_url_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         url = cur.fetchone()["current_listing_url"]
@@ -211,8 +199,7 @@ class TestOpsVehicleStaleness:
                           last_detail_enriched_at_hours_ago=0.1)
 
         cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_is_full_details_stale_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()
@@ -227,8 +214,7 @@ class TestOpsVehicleStaleness:
                           last_detail_enriched_at_hours_ago=8 * 24)
 
         cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_is_full_details_stale_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()
@@ -249,8 +235,7 @@ class TestOpsDetailScrapeQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id="cust-q1", age_hours=25)
 
         cur.execute(
-            "SELECT listing_id, priority FROM ops.ops_detail_scrape_queue"
-            " WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_priority_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         row = cur.fetchone()
@@ -264,7 +249,7 @@ class TestOpsDetailScrapeQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id="cust-fresh", age_hours=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -277,7 +262,7 @@ class TestOpsDetailScrapeQueue:
         _insert_cooldown(cur, lid, num_of_attempts=5, last_attempted_hours_ago=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -290,7 +275,7 @@ class TestOpsDetailScrapeQueue:
         _insert_cooldown(cur, lid, num_of_attempts=2, last_attempted_hours_ago=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -303,7 +288,7 @@ class TestOpsDetailScrapeQueue:
         _insert_cooldown(cur, lid, num_of_attempts=1, last_attempted_hours_ago=13)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None
@@ -318,12 +303,7 @@ class TestOpsDetailScrapeQueue:
         _insert_price_obs(cur, artifact_id, lid2, customer_id="shared-dealer", age_hours=30)
 
         cur.execute(
-            """
-            SELECT listing_id, priority
-            FROM ops.ops_detail_scrape_queue
-            WHERE listing_id IN (%s::uuid, %s::uuid)
-            ORDER BY priority
-            """,
+            SQL("select_listing_id_priority_from_ops_ops_detail_scrape_queue_2"),
             (lid1, lid2),
         )
         rows = cur.fetchall()
@@ -338,7 +318,7 @@ class TestOpsDetailScrapeQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=2)
 
         cur.execute(
-            "SELECT priority FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_priority_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         row = cur.fetchone()
@@ -354,12 +334,7 @@ class TestOpsDetailScrapeQueue:
         _insert_price_obs(cur, artifact_id, lid2, customer_id="dealer-x", age_hours=40)
 
         cur.execute(
-            """
-            SELECT listing_id, priority
-            FROM ops.ops_detail_scrape_queue
-            WHERE listing_id IN (%s::uuid, %s::uuid)
-            ORDER BY priority
-            """,
+            SQL("select_listing_id_priority_from_ops_ops_detail_scrape_queue_2"),
             (lid1, lid2),
         )
         rows = cur.fetchall()
@@ -381,7 +356,7 @@ class TestCircuitBreakerQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None
@@ -394,7 +369,7 @@ class TestCircuitBreakerQueue:
                           last_detail_enriched_at_hours_ago=0.25)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -407,7 +382,7 @@ class TestCircuitBreakerQueue:
                           last_detail_enriched_at_hours_ago=8 * 24)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None
@@ -419,7 +394,7 @@ class TestCircuitBreakerQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id="cust-1", age_hours=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -431,8 +406,7 @@ class TestCircuitBreakerQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id="cust-2", age_hours=25)
 
         cur.execute(
-            "SELECT listing_id, stale_reason FROM ops.ops_detail_scrape_queue"
-            " WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_stale_reason_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         row = cur.fetchone()
@@ -451,21 +425,20 @@ class TestCircuitBreakerQueue:
         # First cycle: no last_detail_enriched_at yet → in queue
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None, "listing should be queued before first scrape"
 
         # First cycle completes: set last_detail_enriched_at to now
         cur.execute(
-            "UPDATE ops.price_observations SET last_detail_enriched_at = now()"
-            " WHERE listing_id = %s::uuid",
+            SQL("update_ops_price_observations_last_detail_enriched_at"),
             (lid,),
         )
 
         # Second cycle: listing must not be in queue immediately
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None, "listing must be suppressed after first detail scrape"
@@ -492,7 +465,7 @@ class TestFetchBackoffQueue:
                           last_detail_fetched_at_hours_ago=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -509,7 +482,7 @@ class TestFetchBackoffQueue:
                           last_detail_fetched_at_hours_ago=7)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None
@@ -530,8 +503,7 @@ class TestFetchBackoffQueue:
         _insert_price_obs(cur, artifact_id, fresh, customer_id="cust-b", age_hours=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue"
-            " WHERE listing_id = ANY(%s::uuid[])",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue_2"),
             ([unenriched, price_stale, fresh],),
         )
         queued = {str(r["listing_id"]) for r in cur.fetchall()}
@@ -547,7 +519,7 @@ class TestFetchBackoffQueue:
                           last_detail_fetched_at_hours_ago=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None
@@ -564,7 +536,7 @@ class TestFetchBackoffQueue:
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None, "listing should be queued before any fetch"
@@ -572,25 +544,22 @@ class TestFetchBackoffQueue:
         # release_claims stamps the fetch; processing is down, so nothing else
         # is written.
         cur.execute(
-            "UPDATE ops.price_observations SET last_detail_fetched_at = now()"
-            " WHERE listing_id = %s::uuid",
+            SQL("update_ops_price_observations_last_detail_fetched_at"),
             (lid,),
         )
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is None, "listing must not be re-claimed inside the backoff"
 
         # Six hours later, with processing still down, it is retried.
         cur.execute(
-            "UPDATE ops.price_observations"
-            " SET last_detail_fetched_at = now() - interval '7 hours'"
-            " WHERE listing_id = %s::uuid",
+            SQL("update_ops_price_observations_last_detail_fetched_at_2"),
             (lid,),
         )
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (lid,),
         )
         assert cur.fetchone() is not None, "backoff is a delay, not a deletion"
@@ -621,8 +590,7 @@ class TestFetchAndEnrichmentAreSeparateFacts:
                           last_detail_fetched_at_hours_ago=7)
 
         cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_is_full_details_stale_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()
@@ -639,8 +607,7 @@ class TestFetchAndEnrichmentAreSeparateFacts:
                           last_detail_enriched_at_hours_ago=3)
 
         cur.execute(
-            "SELECT last_detail_fetched_at, last_detail_enriched_at"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            SQL("select_last_detail_fetched_at_from_ops_ops_vehicle_staleness"),
             (lid,),
         )
         row = cur.fetchone()

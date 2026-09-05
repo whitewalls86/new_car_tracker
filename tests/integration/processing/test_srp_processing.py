@@ -13,6 +13,9 @@ from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -73,24 +76,21 @@ class TestSrpArtifact:
 
         # Verify price_observations
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations"
-            " WHERE last_artifact_id = %s",
+            SQL("select_cnt_from_ops_price_observations"),
             (artifact_id,),
         )
         assert cur.fetchone()["cnt"] == 3
 
         # Verify vin populated
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations"
-            " WHERE last_artifact_id = %s AND vin IS NOT NULL",
+            SQL("select_cnt_from_ops_price_observations_2"),
             (artifact_id,),
         )
         assert cur.fetchone()["cnt"] == 2
 
         # Verify vin_to_listing
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.vin_to_listing"
-            " WHERE artifact_id = %s",
+            SQL("select_cnt_from_ops_vin_to_listing"),
             (artifact_id,),
         )
         assert cur.fetchone()["cnt"] == 2
@@ -129,7 +129,7 @@ class TestSrpVinRecencyGuard:
         })
 
         # Verify mapped_at is still T+10
-        cur.execute("SELECT mapped_at FROM ops.vin_to_listing WHERE vin = %s", (vin,))
+        cur.execute(SQL("select_mapped_at_from_ops_vin_to_listing"), (vin,))
         row = cur.fetchone()
         assert row["mapped_at"] == t_plus_10
 
@@ -157,8 +157,7 @@ class TestSrpScrapeStateOwnership:
         })
 
         cur.execute(
-            "SELECT price, last_detail_fetched_at, last_detail_enriched_at"
-            " FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_price_last_detail_fetched_at_from_ops_price_observations"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -191,8 +190,7 @@ class TestSrpScrapeStateOwnership:
         })
 
         cur.execute(
-            "SELECT price, customer_id, last_detail_enriched_at"
-            " FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_price_customer_id_from_ops_price_observations"),
             (listing_id,),
         )
         row = cur.fetchone()

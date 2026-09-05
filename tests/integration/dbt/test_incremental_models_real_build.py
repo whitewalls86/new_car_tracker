@@ -42,8 +42,11 @@ import os
 import pytest
 
 from scripts import seed_lake_snapshot_fixture as fx
+from tests.sql_loader import queries
 
 from .real_build import analytics_con, dbt_is_installed, run_dbt
+
+SQL = queries(__file__)
 
 pytestmark = [
     pytest.mark.integration,
@@ -67,8 +70,7 @@ def _fingerprint_rows():
     con = _con()
     try:
         return con.execute(
-            "select artifact_id, price, parsed_fingerprint "
-            "from main.int_listing_state_fingerprints order by artifact_id"
+            SQL("select_artifact_id_price_from_main_int_listing_state_fingerprints")
         ).fetchall()
     finally:
         con.close()
@@ -123,10 +125,7 @@ def _price_history_rows():
     con = _con()
     try:
         return con.execute(
-            "select vin, current_price, first_price, min_price, max_price, "
-            "total_price_observations, price_drop_count, price_increase_count, "
-            "first_seen_at, last_seen_at "
-            "from main.int_price_history order by vin"
+            SQL("select_vin_current_price_first_price_from_main_int_price_history")
         ).fetchall()
     finally:
         con.close()
@@ -137,8 +136,7 @@ def _price_history_columns():
     try:
         return {
             r[0] for r in con.execute(
-                "select column_name from information_schema.columns "
-                "where table_name = 'int_price_history'"
+                SQL("column_types_of_int_price_history")
             ).fetchall()
         }
     finally:
@@ -199,9 +197,7 @@ def _runs_rows(vin17: str):
     con = _con()
     try:
         return con.execute(
-            "select vin17, listing_id, parsed_fingerprint, run_started_at, run_ended_at, "
-            "artifact_count, hours_until_change, is_open_run "
-            "from main.int_listing_state_runs where vin17 = ? order by run_started_at",
+            SQL("select_vin17_listing_id_from_main_int_listing_state_runs"),
             [vin17],
         ).fetchall()
     finally:
@@ -263,9 +259,7 @@ def _scrape_volume_row(hour, source):
     con = _con()
     try:
         return con.execute(
-            "select hour, source, artifact_count, observation_count, "
-            "unique_listings, valid_vin_count, vin_extraction_pct "
-            "from main.mart_scrape_volume where hour = ? and source = ?",
+            SQL("select_hour_source_artifact_count_from_main_mart_scrape_volume"),
             [hour, source],
         ).fetchone()
     finally:
@@ -276,7 +270,7 @@ def _scrape_volume_key_count():
     con = _con()
     try:
         return con.execute(
-            "select count(*), count(distinct scrape_volume_key) from main.mart_scrape_volume"
+            SQL("select_count_from_main_mart_scrape_volume")
         ).fetchone()
     finally:
         con.close()
@@ -286,9 +280,7 @@ def _all_scrape_volume_rows():
     con = _con()
     try:
         return con.execute(
-            "select hour, source, artifact_count, observation_count, "
-            "unique_listings, valid_vin_count, vin_extraction_pct "
-            "from main.mart_scrape_volume order by hour, source"
+            SQL("select_hour_source_artifact_count_from_main_mart_scrape_volume_2")
         ).fetchall()
     finally:
         con.close()
@@ -350,8 +342,7 @@ def _latest_observation_row(vin17: str):
     con = _con()
     try:
         return con.execute(
-            "select vin17, source, make, fetched_at "
-            "from main.int_latest_observation where vin17 = ?",
+            SQL("select_vin17_source_make_from_main_int_latest_observation"),
             [vin17],
         ).fetchone()
     finally:
@@ -362,7 +353,7 @@ def _latest_observation_vin_count():
     con = _con()
     try:
         return con.execute(
-            "select count(*), count(distinct vin17) from main.int_latest_observation"
+            SQL("select_count_from_main_int_latest_observation")
         ).fetchone()
     finally:
         con.close()
@@ -442,10 +433,7 @@ def _observation_runs_rows(listing_id: str):
     con = _con()
     try:
         return con.execute(
-            "select listing_id, price, run_started_at, run_ended_at, observation_count, "
-            "detail_observation_count, srp_observation_count, carousel_observation_count, "
-            "distinct_source_count, is_open_run "
-            "from main.int_listing_observation_runs where listing_id = ? order by run_started_at",
+            SQL("select_listing_id_price_from_main_int_listing_observation_runs"),
             [listing_id],
         ).fetchall()
     finally:

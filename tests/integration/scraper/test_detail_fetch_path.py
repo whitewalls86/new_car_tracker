@@ -24,6 +24,9 @@ import pytest
 
 from shared.compression import decompress_frame
 from shared.minio import object_exists, read_bytes
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -54,15 +57,15 @@ def scrape_ids(verify_cur):
     listing_id, run_id = str(uuid.uuid4()), str(uuid.uuid4())
     yield listing_id, run_id
     verify_cur.execute(
-        "DELETE FROM staging.artifacts_queue_events WHERE run_id = %s", (run_id,)
+        SQL("delete_staging_artifacts_queue_events"), (run_id,)
     )
-    verify_cur.execute("DELETE FROM ops.artifacts_queue WHERE run_id = %s", (run_id,))
+    verify_cur.execute(SQL("delete_ops_artifacts_queue"), (run_id,))
     verify_cur.execute(
-        "DELETE FROM staging.blocked_cooldown_events WHERE listing_id = %s::uuid",
+        SQL("delete_staging_blocked_cooldown_events"),
         (listing_id,),
     )
     verify_cur.execute(
-        "DELETE FROM ops.blocked_cooldown WHERE listing_id = %s::uuid", (listing_id,)
+        SQL("delete_ops_blocked_cooldown"), (listing_id,)
     )
 
 
@@ -113,8 +116,7 @@ class TestSuccessfulFetch:
         assert artifact_id is not None
 
         verify_cur.execute(
-            "SELECT artifact_type, status, listing_id, minio_path "
-            "FROM ops.artifacts_queue WHERE artifact_id = %s",
+            SQL("select_artifact_type_status_listing_id_from_ops_artifacts_queue"),
             (artifact_id,),
         )
         row = verify_cur.fetchone()
@@ -123,8 +125,7 @@ class TestSuccessfulFetch:
         assert row["listing_id"] == listing_id
 
         verify_cur.execute(
-            "SELECT status, artifact_type, minio_path "
-            "FROM staging.artifacts_queue_events WHERE artifact_id = %s",
+            SQL("select_status_artifact_type_from_staging_artifacts_queue_events"),
             (artifact_id,),
         )
         event = verify_cur.fetchone()
@@ -158,8 +159,7 @@ class TestBlockedFetch:
         assert first.json()["artifacts"][0]["http_status"] == 403
 
         verify_cur.execute(
-            "SELECT num_of_attempts FROM ops.blocked_cooldown "
-            "WHERE listing_id = %s::uuid",
+            SQL("select_num_of_attempts_from_ops_blocked_cooldown"),
             (listing_id,),
         )
         assert verify_cur.fetchone()["num_of_attempts"] == 1
@@ -169,15 +169,13 @@ class TestBlockedFetch:
             listing_id=listing_id, run_id=run_id,
         )
         verify_cur.execute(
-            "SELECT num_of_attempts FROM ops.blocked_cooldown "
-            "WHERE listing_id = %s::uuid",
+            SQL("select_num_of_attempts_from_ops_blocked_cooldown"),
             (listing_id,),
         )
         assert verify_cur.fetchone()["num_of_attempts"] == 2
 
         verify_cur.execute(
-            "SELECT event_type, num_of_attempts FROM staging.blocked_cooldown_events "
-            "WHERE listing_id = %s::uuid ORDER BY num_of_attempts",
+            SQL("select_event_type_num_of_attempts_from_staging_blocked_cooldown_events"),
             (listing_id,),
         )
         assert [
@@ -200,7 +198,7 @@ class TestBlockedFetch:
             listing_id=listing_id, run_id=run_id,
         )
         verify_cur.execute(
-            "SELECT status FROM ops.artifacts_queue WHERE run_id = %s", (run_id,)
+            SQL("select_status_from_ops_artifacts_queue"), (run_id,)
         )
         assert [row["status"] for row in verify_cur.fetchall()] == ["pending"]
 
@@ -253,7 +251,7 @@ class TestRejectedRequest:
         assert response.json()["error"] == "payload.listing_id is required"
 
         verify_cur.execute(
-            "SELECT count(*) AS n FROM ops.artifacts_queue WHERE run_id = %s",
+            SQL("select_n_from_ops_artifacts_queue"),
             (run_id,),
         )
         assert verify_cur.fetchone()["n"] == 0

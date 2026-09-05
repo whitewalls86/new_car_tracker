@@ -22,6 +22,9 @@ import pytest
 
 from shared.compression import decompress_frame
 from shared.minio import object_exists, read_bytes
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -81,9 +84,9 @@ def srp_job(scraper_client, verify_cur):
     yield run_id, search_key, job
 
     verify_cur.execute(
-        "DELETE FROM staging.artifacts_queue_events WHERE run_id = %s", (run_id,)
+        SQL("delete_staging_artifacts_queue_events"), (run_id,)
     )
-    verify_cur.execute("DELETE FROM ops.artifacts_queue WHERE run_id = %s", (run_id,))
+    verify_cur.execute(SQL("delete_ops_artifacts_queue"), (run_id,))
     scraper_client.post(f"/scrape_results/jobs/{job['job_id']}/fetched")
 
 
@@ -136,8 +139,7 @@ class TestResultsFetch:
         run_id, search_key, _ = srp_job
 
         verify_cur.execute(
-            "SELECT artifact_id, artifact_type, status, minio_path "
-            "FROM ops.artifacts_queue WHERE run_id = %s",
+            SQL("select_artifact_id_artifact_type_status_from_ops_artifacts_queue"),
             (run_id,),
         )
         rows = verify_cur.fetchall()
@@ -147,8 +149,7 @@ class TestResultsFetch:
         assert row["status"] == "pending"
 
         verify_cur.execute(
-            "SELECT status, artifact_type, minio_path "
-            "FROM staging.artifacts_queue_events WHERE artifact_id = %s",
+            SQL("select_status_artifact_type_from_staging_artifacts_queue_events"),
             (row["artifact_id"],),
         )
         event = verify_cur.fetchone()
@@ -169,7 +170,7 @@ class TestResultsFetch:
         """
         _, search_key, _ = srp_job
         verify_cur.execute(
-            "SELECT search_key FROM ops.artifacts_queue WHERE search_key = %s",
+            SQL("select_search_key_from_ops_artifacts_queue"),
             (search_key,),
         )
         assert verify_cur.fetchone() is not None
@@ -218,8 +219,8 @@ class TestJobLifecycle:
         ).status_code == 404
 
         verify_cur.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE run_id = %s", (run_id,)
+            SQL("delete_staging_artifacts_queue_events"), (run_id,)
         )
         verify_cur.execute(
-            "DELETE FROM ops.artifacts_queue WHERE run_id = %s", (run_id,)
+            SQL("delete_ops_artifacts_queue"), (run_id,)
         )

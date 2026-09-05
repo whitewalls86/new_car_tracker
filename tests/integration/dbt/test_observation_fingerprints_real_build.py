@@ -38,8 +38,11 @@ import os
 import pytest
 
 from scripts import seed_lake_snapshot_fixture as fx
+from tests.sql_loader import queries
 
 from .real_build import analytics_con, dbt_is_installed, run_dbt
+
+SQL = queries(__file__)
 
 pytestmark = [
     pytest.mark.integration,
@@ -55,10 +58,7 @@ def _observation_rows():
     con = analytics_con()
     try:
         return con.execute(
-            "select observation_id, artifact_id, listing_id, vin17, source, price, "
-            "parsed_fingerprint "
-            "from main.int_listing_observation_fingerprints "
-            "order by artifact_id, listing_id"
+            SQL("select_observation_id_from_main_int_listing_observation_fingerprints")
         ).fetchall()
     finally:
         con.close()

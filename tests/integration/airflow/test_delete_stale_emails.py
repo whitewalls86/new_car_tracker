@@ -12,6 +12,10 @@ import psycopg2
 import pytest
 from psycopg2.extras import RealDictCursor
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
 _SQL = (
@@ -46,20 +50,14 @@ def seeded_rows(db):
     Cleans up both rows after the test regardless of outcome.
     """
     db.execute(
-        """
-        INSERT INTO access_requests (email_hash, requested_role, notification_email, requested_at)
-        VALUES
-            ('test-stale-hash', 'viewer', 'stale@example.com', now() - interval '3 days'),
-            ('test-recent-hash', 'viewer', 'recent@example.com', now())
-        RETURNING id, email_hash
-        """,
+        SQL("insert_access_requests"),
     )
     rows = db.fetchall()
     ids = [r["id"] for r in rows]
 
     yield ids
 
-    db.execute("DELETE FROM access_requests WHERE id = ANY(%s)", (ids,))
+    db.execute(SQL("delete_access_requests"), (ids,))
 
 
 @pytest.mark.integration
@@ -67,7 +65,7 @@ def test_stale_email_is_nulled(db, seeded_rows):
     db.execute(_SQL)
 
     db.execute(
-        "SELECT notification_email FROM access_requests WHERE email_hash = 'test-stale-hash'",
+        SQL("select_notification_email_from_access_requests"),
     )
     assert db.fetchone()["notification_email"] is None
 
@@ -77,6 +75,6 @@ def test_recent_email_is_preserved(db, seeded_rows):
     db.execute(_SQL)
 
     db.execute(
-        "SELECT notification_email FROM access_requests WHERE email_hash = 'test-recent-hash'",
+        SQL("select_notification_email_from_access_requests_2"),
     )
     assert db.fetchone()["notification_email"] == "recent@example.com"

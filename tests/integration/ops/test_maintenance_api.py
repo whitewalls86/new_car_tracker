@@ -9,6 +9,10 @@ import uuid
 
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 pytestmark = pytest.mark.integration
 
 
@@ -21,10 +25,7 @@ def _insert_detail_claim(cur, *, stale=False):
     run_id = str(uuid.uuid4())
     claimed_at = "now() - interval '3 hours'" if stale else "now()"
     cur.execute(
-        f"""
-        INSERT INTO detail_scrape_claims (listing_id, claimed_by, status, claimed_at)
-        VALUES (%s, %s, 'running', {claimed_at})
-        """,
+        SQL("insert_detail_scrape_claims").format(claimed_at=claimed_at),
         (listing_id, run_id),
     )
     return listing_id
@@ -45,7 +46,7 @@ class TestExpireOrphanDetailClaimsApi:
         assert resp.json()["affected"] >= 1
 
         verify_cur.execute(
-            "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
+            SQL("select_1_from_detail_scrape_claims"), (listing_id,)
         )
         assert verify_cur.fetchone() is None
 
@@ -56,10 +57,10 @@ class TestExpireOrphanDetailClaimsApi:
 
         assert resp.status_code == 200
         verify_cur.execute(
-            "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
+            SQL("select_1_from_detail_scrape_claims"), (listing_id,)
         )
         assert verify_cur.fetchone() is not None
 
         verify_cur.execute(
-            "DELETE FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
+            SQL("delete_detail_scrape_claims"), (listing_id,)
         )

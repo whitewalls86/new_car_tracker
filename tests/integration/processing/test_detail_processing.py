@@ -18,6 +18,9 @@ from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -68,8 +71,7 @@ class TestDetailActive:
 
         # Verify price_observations
         cur.execute(
-            "SELECT vin, price, make, model FROM ops.price_observations"
-            " WHERE listing_id = %s::uuid",
+            SQL("select_vin_price_make_from_ops_price_observations"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -78,21 +80,20 @@ class TestDetailActive:
         assert row["make"] == "Honda"
 
         # Verify vin_to_listing
-        cur.execute("SELECT listing_id FROM ops.vin_to_listing WHERE vin = %s", (vin,))
+        cur.execute(SQL("select_listing_id_from_ops_vin_to_listing"), (vin,))
         row = cur.fetchone()
         assert str(row["listing_id"]) == listing_id
 
         # Verify claim released
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.detail_scrape_claims WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_detail_scrape_claims"),
             (listing_id,),
         )
         assert cur.fetchone()["cnt"] == 0
 
         # Verify claim event recorded
         cur.execute(
-            "SELECT status FROM staging.detail_scrape_claim_events"
-            " WHERE listing_id = %s::uuid ORDER BY event_id DESC LIMIT 1",
+            SQL("select_status_from_staging_detail_scrape_claim_events"),
             (listing_id,),
         )
         assert cur.fetchone()["status"] == "processed"
@@ -113,7 +114,7 @@ class TestDetailUnlisted:
 
         # Verify row exists
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (listing_id,),
         )
         assert cur.fetchone()["cnt"] == 1
@@ -123,7 +124,7 @@ class TestDetailUnlisted:
 
         # Verify deleted
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (listing_id,),
         )
         assert cur.fetchone()["cnt"] == 0
@@ -195,20 +196,20 @@ class TestVinRelisting:
 
         # Verify old row gone
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (old_listing_id,),
         )
         assert cur.fetchone()["cnt"] == 0
 
         # Verify new row has VIN
         cur.execute(
-            "SELECT vin FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_vin_from_ops_price_observations"),
             (new_listing_id,),
         )
         assert cur.fetchone()["vin"] == vin
 
         # Verify vin_to_listing updated
-        cur.execute("SELECT listing_id FROM ops.vin_to_listing WHERE vin = %s", (vin,))
+        cur.execute(SQL("select_listing_id_from_ops_vin_to_listing"), (vin,))
         assert str(cur.fetchone()["listing_id"]) == new_listing_id
 
 
@@ -237,9 +238,7 @@ class TestScrapeStateOwnership:
 
     def _observation(self, cur, listing_id: str) -> dict:
         cur.execute(
-            "SELECT price, last_seen_at, customer_id, last_detail_fetched_at,"
-            "       last_detail_enriched_at"
-            " FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_price_last_seen_at_customer_id_from_ops_price_observations"),
             (listing_id,),
         )
         return cur.fetchone()
@@ -317,8 +316,7 @@ class TestScrapeStateOwnership:
         })
 
         cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue"
-            " WHERE listing_id = %s::uuid",
+            SQL("select_listing_id_from_ops_ops_detail_scrape_queue"),
             (listing_id,),
         )
         assert cur.fetchone() is not None

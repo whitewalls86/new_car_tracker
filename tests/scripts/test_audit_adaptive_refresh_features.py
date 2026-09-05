@@ -28,6 +28,9 @@ from scripts.audit_adaptive_refresh_features import (
     run_audit,
     value_distribution,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 
 @pytest.fixture
@@ -50,13 +53,7 @@ def _make_fingerprints_table(con):
         """
     )
     con.execute(
-        """
-        INSERT INTO int_listing_state_fingerprints VALUES
-            ('VIN0000000000001', 'L1', 'A1', '2026-01-01 00:00:00', 'fp1'),
-            ('VIN0000000000001', 'L1', 'A2', '2026-01-02 00:00:00', 'fp2'),
-            ('VIN0000000000002', 'L2', 'A3', '2026-01-03 00:00:00', 'fp3'),
-            (NULL,               'L3', 'A4', '2026-01-04 00:00:00', 'fp4')
-        """
+        SQL("insert_int_listing_state_fingerprints")
     )
 
 
@@ -83,8 +80,7 @@ class TestCheckHelpers:
     def test_duplicate_group_count_detects_repeats(self, con):
         _make_fingerprints_table(con)
         con.execute(
-            "INSERT INTO int_listing_state_fingerprints VALUES "
-            "('VIN0000000000001', 'L1', 'A1', '2026-01-05 00:00:00', 'fp5')"
+            SQL("insert_int_listing_state_fingerprints_2")
         )
         assert duplicate_group_count(con, "int_listing_state_fingerprints", ["artifact_id"]) == 1
 
@@ -106,7 +102,7 @@ class TestCheckHelpers:
 
     def test_negative_duration_counts(self, con):
         con.execute("CREATE TABLE int_listing_state_runs (run_duration_hours INTEGER)")
-        con.execute("INSERT INTO int_listing_state_runs VALUES (5), (-1), (0)")
+        con.execute(SQL("insert_int_listing_state_runs"))
         result = negative_duration_counts(con, "int_listing_state_runs", ["run_duration_hours"])
         assert result == {"run_duration_hours": 1}
 
@@ -141,8 +137,7 @@ class TestAuditTablePresent:
     def test_source_distribution_included_when_configured(self, con):
         con.execute("CREATE TABLE int_listing_observation_fingerprints (source VARCHAR)")
         con.execute(
-            "INSERT INTO int_listing_observation_fingerprints "
-            "VALUES ('detail'), ('srp'), ('detail')"
+            SQL("insert_int_listing_observation_fingerprints")
         )
         spec = TableSpec(
             name="int_listing_observation_fingerprints",
@@ -156,7 +151,7 @@ class TestAuditTablePresent:
 
     def test_negative_durations_included_when_configured(self, con):
         con.execute("CREATE TABLE int_listing_state_runs (run_duration_hours INTEGER)")
-        con.execute("INSERT INTO int_listing_state_runs VALUES (5), (-2)")
+        con.execute(SQL("insert_int_listing_state_runs_2"))
         spec = TableSpec(
             name="int_listing_state_runs",
             grain="vin17/run",
