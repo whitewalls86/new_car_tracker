@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import tarfile
 from unittest.mock import MagicMock, PropertyMock
 
@@ -21,6 +20,7 @@ from shared.lake_snapshot_postgres import (
     POSTGRES_SNAPSHOT_TABLES,
     UnknownSnapshotTableError,
 )
+from shared.queries import REPLACE_POSTGRES_SNAPSHOT_TABLE
 
 LOCAL_POSTGRES_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
@@ -350,12 +350,14 @@ class TestPostgresHalf:
             postgres_url=LOCAL_POSTGRES_URL, client=_mock_client(), conn=conn,
         )
 
-        relations = [
-            re.search(r"DELETE FROM (\S+);", call.args[0]).group(1)
-            for call in cur.execute.call_args_list
-        ]
-        assert relations == [
-            f"{schema}.{table}" for schema, table in POSTGRES_SNAPSHOT_TABLES
+        # Compared against production's own template rather than a regex over
+        # its text: reading the relation back out with `DELETE FROM (\S+);`
+        # asserted the seeder's *order* while checking almost nothing about the
+        # statements themselves, and it was the last SQL-shaped literal in this
+        # file. Rendering the template per table checks both at once.
+        assert [call.args[0] for call in cur.execute.call_args_list] == [
+            REPLACE_POSTGRES_SNAPSHOT_TABLE.format(schema=schema, table=table)
+            for schema, table in POSTGRES_SNAPSHOT_TABLES
         ]
 
     def test_the_json_payload_is_bound_not_formatted(self, tmp_path):

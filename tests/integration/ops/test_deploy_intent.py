@@ -12,26 +12,23 @@ import uuid
 import pytest
 
 from ops.coordination_contract import SERVICE_CONTRACTS, expand_targets
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 
 @pytest.fixture(autouse=True)
 def reset_deploy_intent(verify_cur):
     """Reset both sides of the dual-signal compatibility contract."""
-    reset_coordination = (
-        "UPDATE coordination_state SET kind=NULL, phase='none', "
-        "targets='[]'::jsonb, scope='[]'::jsonb WHERE id=1"
-    )
     verify_cur.execute(
-        "UPDATE deploy_intent SET intent='none', requested_at=NULL, "
-        "requested_by=NULL, pause_long_jobs=true WHERE id=1"
+        SQL("update_deploy_intent_intent")
     )
-    verify_cur.execute(reset_coordination)
+    verify_cur.execute(SQL("reset_coordination_state"))
     yield
     verify_cur.execute(
-        "UPDATE deploy_intent SET intent='none', requested_at=NULL, "
-        "requested_by=NULL, pause_long_jobs=true WHERE id=1"
+        SQL("update_deploy_intent_intent")
     )
-    verify_cur.execute(reset_coordination)
+    verify_cur.execute(SQL("reset_coordination_state"))
 
 
 # ---------------------------------------------------------------------------
@@ -60,15 +57,14 @@ def test_deploy_start_sets_intent(api_client, verify_cur):
     assert response.json() is True
 
     verify_cur.execute(
-        "SELECT intent, requested_by FROM deploy_intent WHERE id=1"
+        SQL("select_intent_requested_by_from_deploy_intent")
     )
     row = verify_cur.fetchone()
     assert row["intent"] == "pending"
     assert row["requested_by"] == "Deploy Declared"
 
     verify_cur.execute(
-        "SELECT kind, phase, generation, targets, scope "
-        "FROM coordination_state WHERE id=1"
+        SQL("select_kind_phase_generation_from_coordination_state")
     )
     coordination = verify_cur.fetchone()
     assert coordination["kind"] == "deploy"
@@ -111,7 +107,7 @@ def test_deploy_complete_releases_intent(api_client, verify_cur):
     assert response.json() is True
 
     verify_cur.execute(
-        "SELECT intent, requested_at FROM deploy_intent WHERE id=1"
+        SQL("select_intent_requested_at_from_deploy_intent")
     )
     row = verify_cur.fetchone()
     assert row["intent"] == "none"
@@ -153,8 +149,7 @@ def test_a_release_refused_by_another_coordination_kind_says_who_holds_it(
     of that vocabulary.
     """
     verify_cur.execute(
-        "UPDATE coordination_state SET kind='host_maintenance', phase='active', "
-        """targets='["host"]'::jsonb, scope='["database"]'::jsonb WHERE id=1"""
+        SQL("update_coordination_state_kind")
     )
 
     response = api_client.post("/deploy/complete")
@@ -178,7 +173,7 @@ def test_a_release_refused_by_another_coordination_kind_says_who_holds_it(
 def test_deploy_start_defaults_to_pausing_long_jobs(api_client, verify_cur):
     api_client.post("/deploy/start")
 
-    verify_cur.execute("SELECT pause_long_jobs FROM deploy_intent WHERE id=1")
+    verify_cur.execute(SQL("select_pause_long_jobs_from_deploy_intent"))
     assert verify_cur.fetchone()["pause_long_jobs"] is True
 
 
@@ -186,7 +181,7 @@ def test_deploy_start_defaults_to_pausing_long_jobs(api_client, verify_cur):
 def test_deploy_start_can_opt_out_of_pausing(api_client, verify_cur):
     api_client.post("/deploy/start", json={"pause_long_jobs": False})
 
-    verify_cur.execute("SELECT pause_long_jobs FROM deploy_intent WHERE id=1")
+    verify_cur.execute(SQL("select_pause_long_jobs_from_deploy_intent"))
     assert verify_cur.fetchone()["pause_long_jobs"] is False
 
 
@@ -239,8 +234,7 @@ def test_scraper_user_can_read_deploy_intent(verify_cur):
 def test_deploy_status_reflects_running_count(api_client, verify_cur):
     listing_id = str(uuid.uuid4())
     verify_cur.execute(
-        "INSERT INTO detail_scrape_claims (listing_id, claimed_by, status)"
-        " VALUES (%s, %s, 'running')",
+        SQL("insert_detail_scrape_claims"),
         (listing_id, str(uuid.uuid4())),
     )
     try:
@@ -248,7 +242,7 @@ def test_deploy_status_reflects_running_count(api_client, verify_cur):
         assert response.status_code == 200
         assert response.json()["number_running"] >= 1
     finally:
-        verify_cur.execute("DELETE FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,))
+        verify_cur.execute(SQL("delete_detail_scrape_claims"), (listing_id,))
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +280,7 @@ def test_every_service_contract_yields_an_intent_row_the_database_accepts(
     )
 
     verify_cur.execute(
-        "SELECT kind, phase, targets, scope FROM coordination_state WHERE id=1"
+        SQL("select_kind_phase_targets_from_coordination_state")
     )
     row = verify_cur.fetchone()
     expected_targets, expected_scope = expand_targets({service})
@@ -314,7 +308,7 @@ def test_a_deploy_that_pauses_no_surface_is_stored_and_drains(
         "/deploy/start", json={"targets": [service]}
     ).status_code == 200
 
-    verify_cur.execute("SELECT scope FROM coordination_state WHERE id=1")
+    verify_cur.execute(SQL("select_scope_from_coordination_state"))
     assert verify_cur.fetchone()["scope"] == []
 
     assert api_client.post("/coordination/begin-drain").status_code == 200
@@ -325,5 +319,5 @@ def test_a_deploy_that_pauses_no_surface_is_stored_and_drains(
 
     assert api_client.post("/coordination/authorize").status_code == 200
 
-    verify_cur.execute("SELECT phase FROM coordination_state WHERE id=1")
+    verify_cur.execute(SQL("select_phase_from_coordination_state"))
     assert verify_cur.fetchone()["phase"] == "active"

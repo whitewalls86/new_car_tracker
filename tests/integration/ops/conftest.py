@@ -32,6 +32,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from psycopg2.extras import RealDictCursor  # noqa: E402
 
 from ops.app import app  # noqa: E402
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 _DATABASE_URL = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
@@ -123,9 +126,7 @@ def seed_user_committed():
     def _seed(email_hash: str, role: str, display_name: str = "Test User"):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """INSERT INTO authorized_users (email_hash, role, display_name)
-                   VALUES (%s, %s, %s)
-                   RETURNING id""",
+                SQL("insert_authorized_users"),
                 (email_hash, role, display_name),
             )
             user_id = cur.fetchone()["id"]
@@ -137,7 +138,7 @@ def seed_user_committed():
     with conn.cursor() as cur:
         for email_hash in inserted_hashes:
             cur.execute(
-                "DELETE FROM authorized_users WHERE email_hash = %s",
+                SQL("delete_authorized_users"),
                 (email_hash,),
             )
     conn.close()

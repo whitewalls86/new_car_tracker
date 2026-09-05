@@ -17,6 +17,10 @@ import psycopg2
 import pytest
 from psycopg2.extras import RealDictCursor
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 # ---------------------------------------------------------------------------
 # Ensure shared.db connects to the test database, not the Docker hostname.
 # Set env vars before any service imports so DB_KWARGS is built correctly.
@@ -106,12 +110,7 @@ def seed_artifact_c(vc):
         listing_id = listing_id or str(uuid.uuid4())
         run_id = run_id or str(uuid.uuid4())
         vc.execute(
-            """
-            INSERT INTO ops.artifacts_queue
-                (minio_path, artifact_type, listing_id, run_id, fetched_at, status, search_key)
-            VALUES (%s, %s, %s, %s, now(), %s, %s)
-            RETURNING artifact_id
-            """,
+            SQL("insert_ops_artifacts_queue"),
             (minio_path, artifact_type, listing_id, run_id, status, search_key),
         )
         artifact_id = vc.fetchone()["artifact_id"]
@@ -129,7 +128,7 @@ def seed_artifact_c(vc):
 
     if inserted_ids:
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = ANY(%s)",
+            SQL("delete_ops_artifacts_queue"),
             (inserted_ids,),
         )
 
@@ -145,11 +144,7 @@ def seed_price_observation_c(vc):
     ):
         listing_id = listing_id or str(uuid.uuid4())
         vc.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            """,
+            SQL("insert_ops_price_observations"),
             (listing_id, vin, price, make, model, customer_id, artifact_id),
         )
         inserted_ids.append(listing_id)
@@ -159,7 +154,7 @@ def seed_price_observation_c(vc):
 
     if inserted_ids:
         vc.execute(
-            "DELETE FROM ops.price_observations WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_ops_price_observations"),
             (inserted_ids,),
         )
 
@@ -171,10 +166,7 @@ def seed_vin_to_listing_c(vc):
 
     def _factory(vin, listing_id, artifact_id=1, mapped_at=None):
         vc.execute(
-            """
-            INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)
-            VALUES (%s, %s::uuid, COALESCE(%s, now()), %s)
-            """,
+            SQL("insert_ops_vin_to_listing"),
             (vin, listing_id, mapped_at, artifact_id),
         )
         inserted_vins.append(vin)
@@ -183,7 +175,7 @@ def seed_vin_to_listing_c(vc):
 
     if inserted_vins:
         vc.execute(
-            "DELETE FROM ops.vin_to_listing WHERE vin = ANY(%s)",
+            SQL("delete_ops_vin_to_listing"),
             (inserted_vins,),
         )
 
@@ -196,10 +188,7 @@ def seed_detail_claim_c(vc):
     def _factory(listing_id, run_id=None):
         run_id = run_id or str(uuid.uuid4())
         vc.execute(
-            """
-            INSERT INTO ops.detail_scrape_claims (listing_id, claimed_by, status)
-            VALUES (%s::uuid, %s, 'running')
-            """,
+            SQL("insert_ops_detail_scrape_claims"),
             (listing_id, run_id),
         )
         inserted_ids.append(listing_id)
@@ -209,7 +198,7 @@ def seed_detail_claim_c(vc):
 
     if inserted_ids:
         vc.execute(
-            "DELETE FROM ops.detail_scrape_claims WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_ops_detail_scrape_claims"),
             (inserted_ids,),
         )
 
@@ -227,20 +216,11 @@ def seed_tracked_model_c(vc):
     def _factory(make: str, model: str, search_key: str | None = None):
         key = search_key or f"test-{make.lower()}-{uuid.uuid4().hex[:8]}"
         vc.execute(
-            """
-            INSERT INTO search_configs
-                (search_key, enabled, params, rotation_order, created_at, updated_at)
-            VALUES (%s, true, '{}'::jsonb, 99, now(), now())
-            ON CONFLICT (search_key) DO NOTHING
-            """,
+            SQL("insert_search_configs_2"),
             (key,),
         )
         vc.execute(
-            """
-            INSERT INTO ops.tracked_models (search_key, make, model)
-            VALUES (%s, %s, %s)
-            ON CONFLICT DO NOTHING
-            """,
+            SQL("insert_ops_tracked_models"),
             (key, make.lower(), model.lower()),
         )
         inserted_keys.append(key)
@@ -250,11 +230,11 @@ def seed_tracked_model_c(vc):
 
     if inserted_keys:
         vc.execute(
-            "DELETE FROM ops.tracked_models WHERE search_key = ANY(%s)",
+            SQL("delete_ops_tracked_models"),
             (inserted_keys,),
         )
         vc.execute(
-            "DELETE FROM search_configs WHERE search_key = ANY(%s)",
+            SQL("delete_search_configs"),
             (inserted_keys,),
         )
 
@@ -290,12 +270,7 @@ def seed_artifact(cur):
         listing_id = listing_id or str(uuid.uuid4())
         run_id = run_id or str(uuid.uuid4())
         cur.execute(
-            """
-            INSERT INTO ops.artifacts_queue
-                (minio_path, artifact_type, listing_id, run_id, fetched_at, status)
-            VALUES (%s, %s, %s, %s, now(), %s)
-            RETURNING artifact_id
-            """,
+            SQL("insert_ops_artifacts_queue_2"),
             (minio_path, artifact_type, listing_id, run_id, status),
         )
         artifact_id_val = cur.fetchone()["artifact_id"]
@@ -318,11 +293,7 @@ def seed_price_observation(cur):
                  customer_id=None, artifact_id=1):
         listing_id = listing_id or str(uuid.uuid4())
         cur.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            """,
+            SQL("insert_ops_price_observations"),
             (listing_id, vin, price, make, model, customer_id, artifact_id),
         )
         return listing_id
@@ -335,10 +306,7 @@ def seed_vin_to_listing(cur):
     """Factory: insert a vin_to_listing row."""
     def _factory(vin, listing_id, artifact_id=1, mapped_at=None):
         cur.execute(
-            """
-            INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)
-            VALUES (%s, %s::uuid, COALESCE(%s, now()), %s)
-            """,
+            SQL("insert_ops_vin_to_listing"),
             (vin, listing_id, mapped_at, artifact_id),
         )
 
@@ -351,10 +319,7 @@ def seed_detail_claim(cur):
     def _factory(listing_id, run_id=None):
         run_id = run_id or str(uuid.uuid4())
         cur.execute(
-            """
-            INSERT INTO ops.detail_scrape_claims (listing_id, claimed_by, status)
-            VALUES (%s::uuid, %s, 'running')
-            """,
+            SQL("insert_ops_detail_scrape_claims"),
             (listing_id, run_id),
         )
         return run_id
@@ -367,11 +332,7 @@ def seed_honda_search_config(cur):
     """Insert a search_config for Honda that carousel filtering can match against."""
     key = f"test-honda-{uuid.uuid4().hex[:8]}"
     cur.execute(
-        """
-        INSERT INTO search_configs
-            (search_key, enabled, params, rotation_order, created_at, updated_at)
-        VALUES (%s, true, '{"makes": ["honda"], "models": ["honda-cr_v"]}'::jsonb, 1, now(), now())
-        """,
+        SQL("insert_search_configs"),
         (key,),
     )
     return key

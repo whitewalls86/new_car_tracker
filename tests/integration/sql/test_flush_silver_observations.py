@@ -17,6 +17,9 @@ from archiver.queries import (
     SELECT_MAX_SILVER_OBSERVATION_ID,
     SELECT_SILVER_OBSERVATIONS_UP_TO_ID,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -33,10 +36,7 @@ _REQUIRED_COLS = ("artifact_id", "listing_id", "source", "listing_state", "fetch
 def _insert_observation(cur, source="detail") -> int:
     """Insert a minimal staging.silver_observations row. Returns id."""
     cur.execute(
-        """INSERT INTO staging.silver_observations
-               (artifact_id, listing_id, source, listing_state, fetched_at)
-           VALUES (999999, 'listing-smoke-test', %s, 'active', %s)
-           RETURNING id""",
+        SQL("insert_staging_silver_observations"),
         (source, _NOW),
     )
     return cur.fetchone()["id"]
@@ -48,18 +48,18 @@ def _insert_observation(cur, source="detail") -> int:
 
 class TestSelectMaxId:
     def test_returns_none_when_empty(self, cur):
-        cur.execute("SELECT MAX(id) FROM staging.silver_observations")
+        cur.execute(SQL("select_max_from_staging_silver_observations"))
         assert cur.fetchone()["max"] is None
 
     def test_returns_inserted_id(self, cur):
         row_id = _insert_observation(cur)
-        cur.execute("SELECT MAX(id) FROM staging.silver_observations")
+        cur.execute(SQL("select_max_from_staging_silver_observations"))
         assert cur.fetchone()["max"] == row_id
 
     def test_returns_highest_id_when_multiple_rows(self, cur):
         _insert_observation(cur)
         id2 = _insert_observation(cur)
-        cur.execute("SELECT MAX(id) FROM staging.silver_observations")
+        cur.execute(SQL("select_max_from_staging_silver_observations"))
         assert cur.fetchone()["max"] == id2
 
 
@@ -71,19 +71,7 @@ class TestSelectRowsUpToMax:
     def test_all_processor_columns_present(self, cur):
         _insert_observation(cur)
         cur.execute(
-            """SELECT id,
-                      artifact_id, listing_id, vin, canonical_detail_url,
-                      source, listing_state, fetched_at,
-                      price, make, model, trim, year, mileage, msrp,
-                      stock_type, fuel_type, body_style,
-                      dealer_name, dealer_zip, customer_id, seller_id,
-                      dealer_street, dealer_city, dealer_state, dealer_phone,
-                      dealer_website, dealer_cars_com_url, dealer_rating,
-                      financing_type, seller_zip, seller_customer_id,
-                      page_number, position_on_page, trid, isa_context,
-                      body, condition
-               FROM staging.silver_observations
-               WHERE id <= (SELECT MAX(id) FROM staging.silver_observations)"""
+            SQL("select_id_artifact_id_listing_id_from_staging_silver_observations")
         )
         row = cur.fetchone()
         assert row is not None
@@ -91,8 +79,7 @@ class TestSelectRowsUpToMax:
     def test_source_value_round_trips(self, cur):
         _insert_observation(cur, source="srp")
         cur.execute(
-            "SELECT source FROM staging.silver_observations"
-            " WHERE id <= (SELECT MAX(id) FROM staging.silver_observations)"
+            SQL("select_source_from_staging_silver_observations")
         )
         row = cur.fetchone()
         assert row["source"] == "srp"
@@ -101,7 +88,7 @@ class TestSelectRowsUpToMax:
         id1 = _insert_observation(cur)
         id2 = _insert_observation(cur)
         cur.execute(
-            "SELECT id FROM staging.silver_observations WHERE id <= %s", (id1,)
+            SQL("select_id_from_staging_silver_observations"), (id1,)
         )
         returned = {r["id"] for r in cur.fetchall()}
         assert id1 in returned
@@ -111,7 +98,7 @@ class TestSelectRowsUpToMax:
         """Columns like vin, price, make, model must be nullable (no NOT NULL)."""
         row_id = _insert_observation(cur)
         cur.execute(
-            "SELECT vin, price, make, model FROM staging.silver_observations WHERE id = %s",
+            SQL("select_vin_price_make_from_staging_silver_observations"),
             (row_id,),
         )
         row = cur.fetchone()
@@ -129,10 +116,10 @@ class TestDeleteUpToMax:
     def test_row_deleted_after_flush(self, cur):
         row_id = _insert_observation(cur)
         cur.execute(
-            "DELETE FROM staging.silver_observations WHERE id <= %s", (row_id,)
+            SQL("delete_staging_silver_observations"), (row_id,)
         )
         cur.execute(
-            "SELECT id FROM staging.silver_observations WHERE id = %s", (row_id,)
+            SQL("select_id_from_staging_silver_observations_2"), (row_id,)
         )
         assert cur.fetchone() is None
 
@@ -140,10 +127,10 @@ class TestDeleteUpToMax:
         id1 = _insert_observation(cur)
         id2 = _insert_observation(cur)
         cur.execute(
-            "DELETE FROM staging.silver_observations WHERE id <= %s", (id1,)
+            SQL("delete_staging_silver_observations"), (id1,)
         )
         cur.execute(
-            "SELECT id FROM staging.silver_observations WHERE id = %s", (id2,)
+            SQL("select_id_from_staging_silver_observations_2"), (id2,)
         )
         assert cur.fetchone() is not None
 
@@ -151,7 +138,7 @@ class TestDeleteUpToMax:
         _insert_observation(cur)
         id2 = _insert_observation(cur)
         cur.execute(
-            "DELETE FROM staging.silver_observations WHERE id <= %s", (id2,)
+            SQL("delete_staging_silver_observations"), (id2,)
         )
         assert cur.rowcount == 2
 

@@ -17,6 +17,9 @@ from processing.writers.detail_writer import (
     write_detail_active,
     write_detail_unlisted,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -79,20 +82,20 @@ def _carousel_hint(listing_id, price=20000, body="New 2026 Honda CR-V EX"):
 
 def _get_price_obs(vc, listing_id):
     vc.execute(
-        "SELECT * FROM ops.price_observations WHERE listing_id = %s::uuid",
+        SQL("select_all_from_ops_price_observations"),
         (listing_id,),
     )
     return vc.fetchone()
 
 
 def _get_vin_mapping(vc, vin):
-    vc.execute("SELECT * FROM ops.vin_to_listing WHERE vin = %s", (vin,))
+    vc.execute(SQL("select_all_from_ops_vin_to_listing"), (vin,))
     return vc.fetchone()
 
 
 def _count_silver(vc, artifact_id):
     vc.execute(
-        "SELECT COUNT(*) AS cnt FROM staging.silver_observations WHERE artifact_id = %s",
+        SQL("select_cnt_from_staging_silver_observations"),
         (artifact_id,),
     )
     return vc.fetchone()["cnt"]
@@ -100,7 +103,7 @@ def _count_silver(vc, artifact_id):
 
 def _claim_exists(vc, listing_id):
     vc.execute(
-        "SELECT COUNT(*) AS cnt FROM ops.detail_scrape_claims WHERE listing_id = %s::uuid",
+        SQL("select_cnt_from_ops_detail_scrape_claims"),
         (listing_id,),
     )
     return vc.fetchone()["cnt"] > 0
@@ -108,7 +111,7 @@ def _claim_exists(vc, listing_id):
 
 def _blocked_cooldown_row(vc, listing_id):
     vc.execute(
-        "SELECT * FROM ops.blocked_cooldown WHERE listing_id = %s::uuid",
+        SQL("select_all_from_ops_blocked_cooldown"),
         (listing_id,),
     )
     return vc.fetchone()
@@ -118,37 +121,37 @@ def _cleanup(vc, listing_ids=None, vins=None, artifact_id=None):
     """Helper to delete all rows created by writer functions for given identifiers."""
     if listing_ids:
         vc.execute(
-            "DELETE FROM ops.price_observations WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_ops_price_observations"),
             (listing_ids,),
         )
         vc.execute(
-            "DELETE FROM ops.detail_scrape_claims WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_ops_detail_scrape_claims"),
             (listing_ids,),
         )
         vc.execute(
-            "DELETE FROM ops.blocked_cooldown WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_ops_blocked_cooldown"),
             (listing_ids,),
         )
         vc.execute(
-            "DELETE FROM staging.price_observation_events WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_staging_price_observation_events"),
             (listing_ids,),
         )
         vc.execute(
-            "DELETE FROM staging.detail_scrape_claim_events WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_staging_detail_scrape_claim_events"),
             (listing_ids,),
         )
         vc.execute(
-            "DELETE FROM staging.blocked_cooldown_events WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_staging_blocked_cooldown_events"),
             (listing_ids,),
         )
     if vins:
-        vc.execute("DELETE FROM ops.vin_to_listing WHERE vin = ANY(%s)", (vins,))
+        vc.execute(SQL("delete_ops_vin_to_listing"), (vins,))
         vc.execute(
-            "DELETE FROM staging.vin_to_listing_events WHERE vin = ANY(%s)", (vins,),
+            SQL("delete_staging_vin_to_listing_events"), (vins,),
         )
     if artifact_id:
         vc.execute(
-            "DELETE FROM staging.silver_observations WHERE artifact_id = %s",
+            SQL("delete_staging_silver_observations"),
             (artifact_id,),
         )
 
@@ -217,8 +220,7 @@ class TestWriteDetailActive:
         )
 
         vc.execute(
-            "SELECT status FROM staging.detail_scrape_claim_events"
-            " WHERE listing_id = %s::uuid ORDER BY event_id DESC LIMIT 1",
+            SQL("select_status_from_staging_detail_scrape_claim_events"),
             (lid,),
         )
         row = vc.fetchone()
@@ -234,8 +236,7 @@ class TestWriteDetailActive:
 
         # Seed a blocked_cooldown entry
         vc.execute(
-            "INSERT INTO ops.blocked_cooldown (listing_id, num_of_attempts)"
-            " VALUES (%s::uuid, 1)",
+            SQL("insert_ops_blocked_cooldown"),
             (lid,),
         )
 
@@ -247,8 +248,7 @@ class TestWriteDetailActive:
 
         # A 'cleared' lifecycle event is emitted so mart_cooldown_cohorts drops it.
         vc.execute(
-            "SELECT event_type, num_of_attempts FROM staging.blocked_cooldown_events"
-            " WHERE listing_id = %s::uuid ORDER BY event_id DESC LIMIT 1",
+            SQL("select_event_type_num_of_attempts_from_staging_blocked_cooldown_events"),
             (lid,),
         )
         row = vc.fetchone()
@@ -282,7 +282,7 @@ class TestWriteDetailActive:
         )
 
         vc.execute(
-            "SELECT event_type FROM staging.vin_to_listing_events WHERE vin = %s",
+            SQL("select_event_type_from_staging_vin_to_listing_events"),
             (vin,),
         )
         row = vc.fetchone()
@@ -301,8 +301,7 @@ class TestWriteDetailActive:
 
         # Pre-seed vin_to_listing so the batch lookup finds it
         vc.execute(
-            "INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)"
-            " VALUES (%s, %s::uuid, now(), %s)",
+            SQL("insert_ops_vin_to_listing"),
             (vin, lid, artifact["artifact_id"]),
         )
 
@@ -329,14 +328,11 @@ class TestWriteDetailVinCollision:
 
         # Seed old price_observation with the VIN
         vc.execute(
-            "INSERT INTO ops.price_observations"
-            " (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)"
-            " VALUES (%s::uuid, %s, 25000, 'Honda', 'CR-V', now(), %s)",
+            SQL("insert_ops_price_observations"),
             (old_lid, vin, artifact["artifact_id"]),
         )
         vc.execute(
-            "INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)"
-            " VALUES (%s, %s::uuid, now(), %s)",
+            SQL("insert_ops_vin_to_listing"),
             (vin, old_lid, artifact["artifact_id"]),
         )
 
@@ -348,7 +344,7 @@ class TestWriteDetailVinCollision:
 
         # Old row gone
         vc.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (old_lid,),
         )
         assert vc.fetchone()["cnt"] == 0
@@ -475,15 +471,12 @@ class TestWriteDetailCarousel:
 
         # Seed the stale price_observation under the old carousel listing
         vc.execute(
-            "INSERT INTO ops.price_observations"
-            " (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)"
-            " VALUES (%s::uuid, %s, 22000, 'Honda', 'CR-V', now(), %s)",
+            SQL("insert_ops_price_observations_2"),
             (old_carousel_lid, vin, artifact["artifact_id"]),
         )
         # vin_to_listing already knows the VIN now belongs to the new carousel listing
         vc.execute(
-            "INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)"
-            " VALUES (%s, %s::uuid, now(), %s)",
+            SQL("insert_ops_vin_to_listing"),
             (vin, carousel_lid, artifact["artifact_id"]),
         )
 
@@ -496,7 +489,7 @@ class TestWriteDetailCarousel:
 
         # Old row gone
         vc.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (old_carousel_lid,),
         )
         assert vc.fetchone()["cnt"] == 0, "Stale carousel price_observation should be deleted"
@@ -550,7 +543,7 @@ class TestWriteDetailUnlisted:
         lid = seed_price_observation_c(price=30000, artifact_id=artifact["artifact_id"])
 
         vc.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (lid,),
         )
         assert vc.fetchone()["cnt"] == 1
@@ -561,7 +554,7 @@ class TestWriteDetailUnlisted:
         )
 
         vc.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (lid,),
         )
         assert vc.fetchone()["cnt"] == 0, "price_observations should be deleted for unlisted"
@@ -594,7 +587,7 @@ class TestWriteDetailUnlisted:
         assert result["silver_written"] == 1
 
         vc.execute(
-            "SELECT listing_state FROM staging.silver_observations WHERE artifact_id = %s",
+            SQL("select_listing_state_from_staging_silver_observations"),
             (artifact["artifact_id"],),
         )
         row = vc.fetchone()
@@ -613,8 +606,7 @@ class TestWriteDetailUnlisted:
         )
 
         vc.execute(
-            "SELECT event_type FROM staging.price_observation_events"
-            " WHERE listing_id = %s::uuid",
+            SQL("select_event_type_from_staging_price_observation_events"),
             (lid,),
         )
         row = vc.fetchone()
@@ -629,8 +621,7 @@ class TestWriteDetailUnlisted:
 
         # Seed blocked_cooldown entry
         vc.execute(
-            "INSERT INTO ops.blocked_cooldown (listing_id, num_of_attempts)"
-            " VALUES (%s::uuid, 2)",
+            SQL("insert_ops_blocked_cooldown_2"),
             (lid,),
         )
 

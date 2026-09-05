@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ops.app import app
+from ops.queries import DELETE_DETAIL_SCRAPE_CLAIMS
 
 client = TestClient(app)
 
@@ -255,7 +256,7 @@ class TestReleaseClaims:
         })
 
         sql_calls = [c[0][0] for c in cursor.execute.call_args_list]
-        assert any("DELETE FROM detail_scrape_claims" in sql for sql in sql_calls)
+        assert DELETE_DETAIL_SCRAPE_CLAIMS in sql_calls
 
 
 class TestReleaseRecordsFetch:
@@ -341,7 +342,7 @@ class TestReleaseRecordsFetch:
 
         delete = [
             c for c in cursor.execute.call_args_list
-            if "DELETE FROM detail_scrape_claims" in c[0][0]
+            if c[0][0] == DELETE_DETAIL_SCRAPE_CLAIMS
         ]
         assert len(delete) == 1
         assert delete[0][0][1][0] == ["listing-ccc"]

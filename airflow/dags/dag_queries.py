@@ -38,8 +38,34 @@ from pathlib import Path
 _SQL_DIR = Path(__file__).parent.parent / "sql"
 
 
-def load_query(name: str) -> str:
-    return (_SQL_DIR / f"{name}.sql").read_text(encoding="utf-8")
+class SqlText(str):
+    """``shared.query_loader.SqlText``, duplicated here for the same reason
+    :func:`load_query` is: this module may not import ``shared``.
+
+    **Plan 162 Stage X, and the recorder is what found it.** The execution
+    recorder attributes a statement to its file through this attribute, and
+    these three were the only statements in the repository reaching an engine
+    with no origin on them -- nine executions in one suite, invisible to every
+    coverage reading that will be built on the record. The duplication is the
+    cost already accepted for this module existing at all; carrying it here is
+    cheaper than mounting ``shared/`` into the Airflow image, which is the
+    trade [G12](../../docs/TESTING.md#the-gap-list) settled.
+    """
+
+    origin: Path
+
+    def __new__(cls, text: str, origin: Path) -> "SqlText":
+        instance = super().__new__(cls, text)
+        instance.origin = origin
+        return instance
+
+    def format(self, *args: object, **kwargs: object) -> "SqlText":
+        return SqlText(str.format(self, *args, **kwargs), self.origin)
+
+
+def load_query(name: str) -> SqlText:
+    path = _SQL_DIR / f"{name}.sql"
+    return SqlText(path.read_text(encoding="utf-8"), path)
 
 
 DEPLOY_INTENT_GATE_SQL = load_query("deploy_intent_gate")
