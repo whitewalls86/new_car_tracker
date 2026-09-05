@@ -2133,6 +2133,130 @@ def test_every_dbt_model_declares_an_enforced_contract():
 
 
 # ---------------------------------------------------------------------------
+# Rule 5k -- the recorder wraps every client production reaches an engine
+# through, and the client set is derived rather than kept.
+#
+# **This is the rule the recorder's first design would have failed.** Keying
+# capture to the fixtures that hand out connections sees ``psycopg2`` and
+# ``duckdb`` and misses ``asyncpg`` and ``pyspark``; it would have shipped
+# recording nothing for ``scraper/sql/`` and gone on recording nothing when
+# Spark lands. The fix is not a longer list of clients -- that is
+# ``_SQL_CALL_NAMES`` with a different noun. It is to derive the *imports* and
+# make anything unclassified fail.
+#
+# So the surface is every third-party top-level import across production
+# Python, and the contract classifies each one as reaching an engine or not.
+# **A new engine is a new import**, and a new import fails here until somebody
+# decides which it is. That is the property a maintained client list cannot
+# have, and it is why this reads imports rather than clients.
+# ---------------------------------------------------------------------------
+_CLIENT_ROW = re.compile(r"^\| ((?:`\w+`(?:, )?)+) \| (\*\*yes\*\*|no) \|", re.M)
+
+
+@lru_cache(maxsize=None)
+def classified_imports() -> dict[str, bool]:
+    """``{import name: reaches an engine}``, from the contract's own table."""
+    section = _read(CONTRACT).split("### How production reaches an engine")[1]
+    section = section.split("### Mocking")[0]
+    classified: dict[str, bool] = {}
+    for names, verdict in _CLIENT_ROW.findall(section):
+        for name in re.findall(r"`(\w+)`", names):
+            classified[name] = verdict == "**yes**"
+    assert classified, (
+        f"{CONTRACT}'s 'How production reaches an engine' table no longer "
+        f"parses into rows"
+    )
+    return classified
+
+
+@lru_cache(maxsize=None)
+def production_imports() -> frozenset[str]:
+    """Every third-party top-level import across production Python.
+
+    The standard library and this repository's own packages are dropped
+    because neither can be a database client somebody forgot to wrap. The
+    local set includes the bare module names the dashboard and the DAG tree
+    import flat -- ``db``, ``queries``, ``sensors`` and their kin -- which are
+    this repository's modules reached through the dual import identity
+    ``docs/TESTING.md`` records as G18, not third-party packages.
+    """
+    local = set(service_packages()) | {
+        "tests", "scripts", "airflow", "dbt", "lakehouse", "dags",
+        "db", "queries", "pages", "sensors", "dag_queries", "notifications",
+        "pools", "coordination_contract",
+    }
+    found: set[str] = set()
+    for path in production_python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [(node.module or "").split(".")[0]]
+            else:
+                continue
+            found.update(
+                name for name in names
+                if name and name not in sys.stdlib_module_names and name not in local
+            )
+    return frozenset(found)
+
+
+def production_db_clients() -> frozenset[str]:
+    """The imports the contract says production reaches an engine through."""
+    return frozenset(name for name, reaches in classified_imports().items() if reaches)
+
+
+def test_every_production_import_is_classified():
+    """Both directions, and the second one is what keeps the table honest.
+
+    An unclassified import is the failure that matters: it is how a new engine
+    arrives, and the whole recorder rests on there being no such thing. A row
+    for an import nothing imports any more is the mirror -- a table describing
+    a tree that has moved on, which is `ARCHITECTURE.md:179` in miniature.
+    """
+    classified = set(classified_imports())
+    imported = set(production_imports())
+    assert not imported - classified, (
+        "these third-party imports are not classified in "
+        f"{CONTRACT}'s 'How production reaches an engine':\n  "
+        + "\n  ".join(sorted(imported - classified))
+        + "\n\nSay whether production reaches a database engine through each. "
+        "If it does, the recorder must wrap it; if not, the row says so."
+    )
+    assert not classified - imported, (
+        f"{CONTRACT} classifies imports that no production module imports any "
+        "more, so the table describes a tree that has moved on:\n  "
+        + "\n  ".join(sorted(classified - imported))
+    )
+
+
+def test_the_recorder_instruments_every_client_production_reaches():
+    """The contract and the plugin, compared rather than assumed to agree.
+
+    Declared rather than probed at runtime on both sides: what a job happens to
+    have installed must not decide what the contract says is owed. A job
+    without Spark records nothing for Spark and reports that it did not wrap
+    it -- which reads differently from Spark executing nothing, and has to.
+    """
+    from tests.plugins.sql_execution_recorder import INSTRUMENTED_CLIENTS
+
+    declared = production_db_clients()
+    unwrapped = sorted(declared - INSTRUMENTED_CLIENTS)
+    assert not unwrapped, (
+        "the contract says production reaches an engine through these, and the "
+        "execution recorder does not wrap them, so every statement they carry "
+        f"is invisible to the record: {unwrapped}"
+    )
+    phantom = sorted(INSTRUMENTED_CLIENTS - declared)
+    assert not phantom, (
+        "the execution recorder wraps clients the contract does not list as "
+        f"reaching an engine: {phantom}. Either the table is stale or the "
+        "recorder is wrapping something it should not."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------
 # Empty since Plan 162 Stage F (CAR-49) swept all 16 on 2026-09-01. The rule

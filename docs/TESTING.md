@@ -234,6 +234,40 @@ and a binding reference or an import from production wins over both.
 
 ## One convention per concern
 
+### How production reaches an engine
+
+**Every third-party import across production Python is classified here, and a
+new one fails the suite until it is.** That is the whole mechanism: the
+execution recorder has to wrap every library a statement can reach an engine
+through, and the way to be sure it does is not a list of clients somebody
+maintains — it is a list of *imports*, derived from the tree, where anything
+unclassified is a failure rather than a silence.
+
+The first design keyed capture to the fixtures handing out connections. That
+set sees `psycopg2` and `duckdb` and misses `asyncpg` in `scraper/db.py` —
+exercised unmocked since Stage M — and `pyspark` entirely. It would have
+shipped recording nothing for `scraper/sql/`, and gone on recording nothing
+when Spark arrives. That is `_SQL_CALL_NAMES` again, which Stage N deleted
+rather than lengthened.
+
+| Import | Reaches an engine | Recorded through |
+|---|---|---|
+| `psycopg2` | **yes** | `connect` → connection → cursor |
+| `duckdb` | **yes** | `connect` → connection |
+| `asyncpg` | **yes** | `connect` |
+| `pyspark` | **yes** | `SparkSession.sql`. Text only — the DataFrame API is not text and is invisible to a recorder that records text, exactly as [G15](#the-gap-list) records for the static rule |
+| `boto3`, `botocore`, `s3fs`, `pyarrow` | no | Object storage and columnar files. They move bytes a query later reads; they issue no statement |
+| `mlflow` | no | Tracking server over HTTP |
+| `bs4`, `curl_cffi`, `requests`, `httpx` | no | HTTP and HTML |
+| `fastapi`, `pydantic`, `jinja2`, `streamlit`, `plotly`, `pandas` | no | Serving, validation, rendering, in-memory frames |
+| `prometheus_client`, `prometheus_fastapi_instrumentator` | no | Metrics |
+| `pendulum`, `yaml`, `zstandard`, `markdown_it`, `resend` | no | Time, config, compression, markdown, mail |
+
+**dbt is not in this table because it is not an import.** It runs in a
+subprocess, cannot be wrapped, and does not need to be: it already writes every
+compiled statement it executed to `dbt/target/run/` beside `run_results.json`.
+A declared second mechanism, not a hole.
+
 ### Mocking: `mocker`, everywhere, no exemptions
 
 **Patching is `mocker` (pytest-mock). There is no layer, directory, or venv
@@ -582,6 +616,7 @@ the suite does not implement:
 | Every test statement plans against the migrated schema, whether or not its test runs | `test_every_test_statement_plans_against_the_migrated_schema`, `test_there_is_something_to_check`, `test_every_test_statement_that_holds_a_template_is_waived` | `PREPARE stmt AS <sql>` against a Flyway-migrated Postgres, in `tests/integration/sql/test_fixture_statements.py` — it parses and plans without executing, so a renamed column fails loudly with no rows written and nothing to clean up. **The unconditional half is the point**: today a seed is checked only if its own test happens to run, which is the conditional coverage [G14](#the-gap-list) found on the production side. It covers no DDL and catches no constraint violation, so the suites that own these statements still execute them. The engine is derived from the path, not declared: a statement under a `duckdb/` or `airflow/` segment names the engine or schema that owns it, and **the default is Postgres**, so a statement for an engine nobody anticipated fails here until it is filed. Templates are [G19](#the-gap-list) |
 | No test invents the shape of a relation production defines | `test_no_test_invents_the_shape_of_a_relation_production_defines` | Production's relations are derived from dbt's model files and Flyway's `CREATE TABLE`s; a test's are the `CREATE TABLE` literals under `tests/`. Where the two meet, the fixture's columns must be **a subset of** the columns `schema.yml` declares for that model. The rule is not *a test may not create a table* — a scratch table standing for nothing is legitimate scaffolding, and forbidding it would fail on correct code. **Subset rather than equality is the design**: a rename or a drop removes the column from the model's declaration and takes the fixture with it, while a narrow one-column stand-in stays legal and an added column correctly does not fire. The name match is the signature rather than a heuristic — a test stands up production's relation name *so the code under test finds it*, so renaming the fixture to dodge this stops the test testing anything. Added by Plan 162 Stage X after three fixtures were found already drifted from their models (5 columns against 8, 1 against 11, 1 against 10) with nothing comparing them. **It does not catch a retype**, and cannot while `schema.yml` carries no `data_type` — see the row below and [G20](#the-gap-list) |
 | Every dbt model declares an enforced contract | `test_every_dbt_model_declares_an_enforced_contract` | Read `contract: {enforced: true}` from each model's own `config()` or its `schema.yml`. **Seeded fully waived at 23 of 23** — this is the rule that makes the row above trustworthy, because until dbt enforces a contract, `schema.yml` is documentation that a checker happens to read. `int_latest_observation.sql` already says so in its own prose: *"a column added to stg_observations must be added here too, or it silently stops appearing downstream. Nothing currently catches that drift automatically."* [G20](#the-gap-list), owned by Plan 162 Stage S |
+| Every import production reaches an engine through is recorded, and every third-party import is classified | `test_every_production_import_is_classified`, `test_the_recorder_instruments_every_client_production_reaches` | AST-walk the imports across `production_python_files()`, drop the standard library and this repository's own packages, and compare what is left to *How production reaches an engine* **in both directions** — an unclassified import fails, and a row naming an import nothing imports fails too. Then compare the table's `yes` rows to `INSTRUMENTED_CLIENTS` in [`tests/plugins/sql_execution_recorder.py`](../tests/plugins/sql_execution_recorder.py), again both ways. **A new engine is a new import**, so it fails the suite until the recorder wraps it or this table says in writing why not — which is the property a maintained list of clients cannot have. Added by Plan 162 Stage X |
 | Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops Plan 84's numbering coming back |
 | Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps. One of two mechanically checkable clauses of *the harness must not decide the outcome*; the rest of that rule is judgement, and the row below says so |
 | Every text read and write names its encoding | `test_every_text_read_and_write_states_its_encoding`, `test_the_encoding_rule_sees_the_shape_ruff_cannot` | AST-walk every `read_text`/`write_text` call and require `encoding=`. The second clause of the same rule, added by Plan 162 Stage J after a missing `encoding=` made a fixture read UTF-8 on Linux and cp1252 on Windows. `open` and `NamedTemporaryFile` are ruff's `PLW1514` instead, which reads them by type; this rule reads the two `pathlib` methods by name, because ruff resolves a receiver by type and is blind to `(tmp_path / "a.md").write_text(...)` |

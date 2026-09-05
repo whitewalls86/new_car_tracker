@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from shared.query_loader import load_query
 from tests.sql_loader import queries
 
 SQL = queries(__file__)
@@ -29,8 +30,19 @@ pytestmark = pytest.mark.integration
 _SQL_DIR = Path(__file__).resolve().parents[3] / "airflow" / "sql"
 
 
-def _sql(name: str) -> str:
-    return (_SQL_DIR / f"{name}.sql").read_text(encoding="utf-8")
+def _sql(name: str):
+    """Read through ``shared.query_loader``, which the DAG tree cannot.
+
+    This module may import ``shared`` even though ``airflow/dags/`` may not, so
+    it does -- and that is not a detail. Plan 162 Stage X's execution recorder
+    attributes a statement to its file through the origin
+    ``shared.query_loader.SqlText`` carries, and a ``read_text()`` here returned
+    a plain ``str``: these three files were executing against a real Postgres
+    with nothing able to say which file the text came from. The recorder found
+    it -- nine unattributed executions in one suite -- which is the instrument
+    working on its first run.
+    """
+    return load_query(_SQL_DIR, name)
 
 
 class TestGateObservationStatement:

@@ -58,6 +58,23 @@ def _write(relative: str, text: str) -> None:
 
 # (assertion that should notice, what changed, how to change it, files to
 # snapshot before changing, files that only exist during the mutation)
+_TEST_SQL = REPO_ROOT / "tests" / "sql" / "integration" / "sql" / "test_ops_views"
+
+
+def _statement(name: str) -> str:
+    """A real statement, read from the file that owns it.
+
+    **This harness may not type SQL either**, and the rule it exists to verify
+    is what said so: ``scripts/`` is production Python, so a mutation payload
+    written as a SQL literal here fails
+    ``test_no_production_module_holds_a_sql_statement``. Reading the statement
+    out of the file it already lives in is both the fix and the better
+    mutation -- what gets inlined is the *real* text, not a plausible-looking
+    stand-in for it.
+    """
+    return (_TEST_SQL / f"{name}.sql").read_text(encoding="utf-8")
+
+
 MUTATIONS = [
     (
         "test_every_integration_suite_is_invoked_by_a_ci_step",
@@ -362,7 +379,8 @@ MUTATIONS = [
         "the plugin registration is dropped, leaving the gate set and unread",
         lambda: _edit(
             "pyproject.toml",
-            'addopts = "-p tests.plugins.declared_skips"\n',
+            'addopts = "-p tests.plugins.declared_skips'
+            ' -p tests.plugins.sql_execution_recorder"\n',
             "",
         ),
         ["pyproject.toml"],
@@ -383,6 +401,88 @@ MUTATIONS = [
             "    ),",
         ),
         ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    # ----------------------------------------------------------------------
+    # Plan 162 Stage X. Seven rules arrived at once, and the stage's own
+    # argument is that a denominator fitted to what exists when it is written
+    # will be wrong -- so each is mutated in the direction it exists to catch.
+    # ----------------------------------------------------------------------
+    (
+        "test_no_test_module_holds_a_sql_statement",
+        "a test goes back to typing its statement inline",
+        lambda: _edit(
+            "tests/integration/sql/test_ops_views.py",
+            'SQL("insert_ops_blocked_cooldown"),',
+            repr(_statement("insert_ops_blocked_cooldown")) + ",",
+        ),
+        ["tests/integration/sql/test_ops_views.py"],
+        [],
+    ),
+    (
+        "test_every_test_sql_file_is_named_by_the_module_it_mirrors",
+        "a test statement is left behind with nothing loading it",
+        lambda: _write(
+            "tests/sql/integration/sql/test_ops_views/select_orphaned.sql",
+            _statement("insert_ops_blocked_cooldown"),
+        ),
+        [],
+        ["tests/sql/integration/sql/test_ops_views/select_orphaned.sql"],
+    ),
+    (
+        "test_every_test_statement_that_holds_a_template_is_waived",
+        "a statement becomes a template without joining the G19 ledger",
+        lambda: _edit(
+            "tests/sql/integration/sql/test_ops_views/insert_ops_blocked_cooldown.sql",
+            "ops.blocked_cooldown",
+            "{schema}.blocked_cooldown",
+        ),
+        ["tests/sql/integration/sql/test_ops_views/insert_ops_blocked_cooldown.sql"],
+        [],
+    ),
+    (
+        "test_no_test_invents_the_shape_of_a_relation_production_defines",
+        "a fixture declares a column its dbt model does not",
+        lambda: _edit(
+            "tests/scripts/test_audit_adaptive_refresh_features.py",
+            "CREATE TABLE int_listing_state_runs (run_duration_hours INTEGER)",
+            "CREATE TABLE int_listing_state_runs (run_hours INTEGER)",
+        ),
+        ["tests/scripts/test_audit_adaptive_refresh_features.py"],
+        [],
+    ),
+    (
+        "test_every_dbt_model_declares_an_enforced_contract",
+        "a model gains an enforced contract and its G20 waiver goes stale",
+        lambda: _edit(
+            "dbt/models/staging/stg_dealers.schema.yml",
+            '    config:\n      tags: ["hourly_core"]',
+            '    config:\n      tags: ["hourly_core"]\n'
+            "      contract:\n        enforced: true",
+        ),
+        ["dbt/models/staging/stg_dealers.schema.yml"],
+        [],
+    ),
+    (
+        "test_every_production_import_is_classified",
+        "a new engine arrives as an unclassified import",
+        lambda: _edit(
+            "shared/db.py",
+            "import psycopg2",
+            "import psycopg2\nimport sqlalchemy",
+        ),
+        ["shared/db.py"],
+        [],
+    ),
+    (
+        "test_the_recorder_instruments_every_client_production_reaches",
+        "the recorder stops wrapping a client the contract says reaches an engine",
+        lambda: _edit(
+            "tests/plugins/sql_execution_recorder.py",
+            '"psycopg2", "duckdb", "asyncpg", "pyspark"',
+            '"psycopg2", "duckdb", "asyncpg"',
+        ),
+        ["tests/plugins/sql_execution_recorder.py"],
         [],
     ),
 ]
