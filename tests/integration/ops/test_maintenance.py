@@ -22,10 +22,10 @@ pytestmark = pytest.mark.integration
 def _insert_detail_claim(cur, *, stale=False):
     listing_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
-    claimed_at = "now() - interval '3 hours'" if stale else "now()"
+    claimed_hours_ago = 3 if stale else 0
     cur.execute(
-        SQL("insert_detail_scrape_claims").format(claimed_at=claimed_at),
-        (listing_id, run_id),
+        SQL("insert_detail_scrape_claims"),
+        (listing_id, run_id, str(claimed_hours_ago)),
     )
     return listing_id
 
@@ -61,14 +61,14 @@ class TestExpireOrphanDetailClaims:
 def _insert_artifact(cur, *, status="processing", created_hours_ago=0, proc_event_hours_ago=None):
     """Insert an artifacts_queue row; optionally a 'processing' event row."""
     cur.execute(
-        SQL("insert_ops_artifacts_queue").format(created_hours_ago=created_hours_ago),
-        (f"s3://bronze/x/{uuid.uuid4()}.zst", status),
+        SQL("insert_ops_artifacts_queue"),
+        (f"s3://bronze/x/{uuid.uuid4()}.zst", status, str(created_hours_ago)),
     )
     artifact_id = cur.fetchone()["artifact_id"]
     if proc_event_hours_ago is not None:
         cur.execute(
-            SQL("insert_staging_artifacts_queue_events").format(proc_event_hours_ago=proc_event_hours_ago),
-            (artifact_id,),
+            SQL("insert_staging_artifacts_queue_events"),
+            (artifact_id, str(proc_event_hours_ago)),
         )
     return artifact_id
 

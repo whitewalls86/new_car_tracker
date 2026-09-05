@@ -58,7 +58,7 @@ def _observation_rows():
     con = analytics_con()
     try:
         return con.execute(
-            SQL("select_observation_id_from_main_int_listing_observation_fingerprints")
+            SQL("duckdb/select_observation_id_from_main_int_listing_observation_fingerprints")
         ).fetchall()
     finally:
         con.close()

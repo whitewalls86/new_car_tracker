@@ -79,7 +79,7 @@ class TestStateChangeRunAgainstRealDbtModel:
         con = _dbt_con()
         try:
             rows = con.execute(
-                SQL("select_vin17_run_count_from_main_int_listing_state_runs"),
+                SQL("duckdb/select_vin17_run_count_from_main_int_listing_state_runs"),
                 [VIN_IDENT, VIN_PRICE, VIN_STATECHG, VIN_RELIST2, VIN_ABA],
             ).fetchall()
         finally:
@@ -136,7 +136,7 @@ class TestSourcePriorityAgainstRealDbtModel:
         con = _dbt_con()
         try:
             row = con.execute(
-                SQL("select_source_from_main_int_latest_observation"), [vin]
+                SQL("duckdb/select_source_from_main_int_latest_observation"), [vin]
             ).fetchone()
         finally:
             con.close()

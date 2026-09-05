@@ -16,6 +16,7 @@ from shared.lake_snapshot_postgres import (
     row_count,
     snapshot_object_name,
 )
+from shared.queries import REPLACE_POSTGRES_SNAPSHOT_TABLE
 
 
 class TestObjectNames:
@@ -102,5 +103,6 @@ class TestDumpAndLoad:
         load_table(cur, "public", "search_configs", "[]")
 
         sql = cur.execute.call_args[0][0]
-        assert "DELETE FROM public.search_configs" in sql
-        assert "INSERT INTO public.search_configs" in sql
+        assert sql == REPLACE_POSTGRES_SNAPSHOT_TABLE.format(
+            schema="public", table="search_configs"
+        )

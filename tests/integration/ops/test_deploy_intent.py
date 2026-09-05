@@ -20,19 +20,15 @@ SQL = queries(__file__)
 @pytest.fixture(autouse=True)
 def reset_deploy_intent(verify_cur):
     """Reset both sides of the dual-signal compatibility contract."""
-    reset_coordination = (
-        "UPDATE coordination_state SET kind=NULL, phase='none', "
-        "targets='[]'::jsonb, scope='[]'::jsonb WHERE id=1"
-    )
     verify_cur.execute(
         SQL("update_deploy_intent_intent")
     )
-    verify_cur.execute(reset_coordination)
+    verify_cur.execute(SQL("reset_coordination_state"))
     yield
     verify_cur.execute(
         SQL("update_deploy_intent_intent")
     )
-    verify_cur.execute(reset_coordination)
+    verify_cur.execute(SQL("reset_coordination_state"))
 
 
 # ---------------------------------------------------------------------------

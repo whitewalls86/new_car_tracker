@@ -418,7 +418,7 @@ def _insert_dag_run(cur, dag_id: str, run_id: str) -> None:
     this fixture now catches: these columns are Airflow's to change.
     """
     cur.execute(
-        SQL("insert_airflow_dag_run"),
+        SQL("airflow/insert_airflow_dag_run"),
         (dag_id, run_id),
     )
 
@@ -1157,7 +1157,7 @@ class TestBlockedCooldownReconcileStatement:
         cleared = {
             str(row[0])
             for row in duckdb_s3_con.execute(
-                SQL("select_listing_id_from_select_listing_id_latest_from_read_parquet"),
+                SQL("duckdb/select_listing_id_from_select_listing_id_latest_from_read_parquet"),
                 [blocked_cooldown_parquet],
             ).fetchall()
         }

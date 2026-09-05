@@ -70,7 +70,7 @@ def _fingerprint_rows():
     con = _con()
     try:
         return con.execute(
-            SQL("select_artifact_id_price_from_main_int_listing_state_fingerprints")
+            SQL("duckdb/select_artifact_id_price_from_main_int_listing_state_fingerprints")
         ).fetchall()
     finally:
         con.close()
@@ -125,7 +125,7 @@ def _price_history_rows():
     con = _con()
     try:
         return con.execute(
-            SQL("select_vin_current_price_first_price_from_main_int_price_history")
+            SQL("duckdb/select_vin_current_price_first_price_from_main_int_price_history")
         ).fetchall()
     finally:
         con.close()
@@ -136,7 +136,7 @@ def _price_history_columns():
     try:
         return {
             r[0] for r in con.execute(
-                SQL("column_types_of_int_price_history")
+                SQL("duckdb/column_types_of_int_price_history")
             ).fetchall()
         }
     finally:
@@ -197,7 +197,7 @@ def _runs_rows(vin17: str):
     con = _con()
     try:
         return con.execute(
-            SQL("select_vin17_listing_id_from_main_int_listing_state_runs"),
+            SQL("duckdb/select_vin17_listing_id_from_main_int_listing_state_runs"),
             [vin17],
         ).fetchall()
     finally:
@@ -259,7 +259,7 @@ def _scrape_volume_row(hour, source):
     con = _con()
     try:
         return con.execute(
-            SQL("select_hour_source_artifact_count_from_main_mart_scrape_volume"),
+            SQL("duckdb/select_hour_source_artifact_count_from_main_mart_scrape_volume"),
             [hour, source],
         ).fetchone()
     finally:
@@ -270,7 +270,7 @@ def _scrape_volume_key_count():
     con = _con()
     try:
         return con.execute(
-            SQL("select_count_from_main_mart_scrape_volume")
+            SQL("duckdb/select_count_from_main_mart_scrape_volume")
         ).fetchone()
     finally:
         con.close()
@@ -280,7 +280,7 @@ def _all_scrape_volume_rows():
     con = _con()
     try:
         return con.execute(
-            SQL("select_hour_source_artifact_count_from_main_mart_scrape_volume_2")
+            SQL("duckdb/select_hour_source_artifact_count_from_main_mart_scrape_volume_2")
         ).fetchall()
     finally:
         con.close()
@@ -342,7 +342,7 @@ def _latest_observation_row(vin17: str):
     con = _con()
     try:
         return con.execute(
-            SQL("select_vin17_source_make_from_main_int_latest_observation"),
+            SQL("duckdb/select_vin17_source_make_from_main_int_latest_observation"),
             [vin17],
         ).fetchone()
     finally:
@@ -353,7 +353,7 @@ def _latest_observation_vin_count():
     con = _con()
     try:
         return con.execute(
-            SQL("select_count_from_main_int_latest_observation")
+            SQL("duckdb/select_count_from_main_int_latest_observation")
         ).fetchone()
     finally:
         con.close()
@@ -433,7 +433,7 @@ def _observation_runs_rows(listing_id: str):
     con = _con()
     try:
         return con.execute(
-            SQL("select_listing_id_price_from_main_int_listing_observation_runs"),
+            SQL("duckdb/select_listing_id_price_from_main_int_listing_observation_runs"),
             [listing_id],
         ).fetchall()
     finally:

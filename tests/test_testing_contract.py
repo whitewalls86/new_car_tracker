@@ -18,13 +18,25 @@ directions, so a waiver that no longer describes a violation fails just as
 loudly as an unwaived violation does. That is what "the list only shrinks"
 means when a test says it rather than a document.
 
-Eight rules are mechanical and are asserted here, matching the table in
-`docs/TESTING.md` under *What CI asserts*. Four more are judgement -- whether
+The mechanical rules are asserted here, matching the table in
+`docs/TESTING.md` under *What CI asserts*. **Three** are judgement -- whether
 the thing under test is the thing being mocked, whether a failure branch
-matters to another service, whether an assertion is meaningful, and whether a
-``SELECT`` in a test file paraphrases production or seeds a fixture. Those
+matters to another service, and whether an assertion is meaningful. Those
 belong to ``.claude/skills/testing-contract/``, which flags them and refuses to
 certify them. **Nothing in this file should grow to imply it checks them.**
+
+There were four until Plan 162 Stage X, and the fourth left by being
+mechanised: *whether a ``SELECT`` in a test file paraphrases production or
+seeds a fixture*. It was judgement for an exact reason -- fixture seeds are SQL
+in test files too, and a checker that cannot tell them apart fails on correct
+code -- and that reason stopped applying when no SQL literal was left under
+``tests/`` for the ambiguity to live in. See Rule 5g.
+
+This docstring used to open "Eight rules are mechanical", which was already
+false: the table it points at had eleven rows. Counts in prose drift, which is
+the whole subject of this file, so the mechanical half is no longer stated as a
+number here -- the table is the count, and
+``test_every_asserted_rule_names_a_real_test`` is what keeps it honest.
 
 One further check faces the other way. Every rule above compares the contract
 to the repository; ``test_every_asserted_rule_names_a_real_test`` compares the
@@ -1439,12 +1451,43 @@ _SQL_CLAUSE = re.compile(
 )
 
 
+# ``MERGE`` has exactly one form in SQL -- ``MERGE INTO target USING source``
+# -- so the ``INTO`` is adjacent to the verb, not merely somewhere after it.
+# Requiring that is grammar rather than a carve-out, and it is what stops the
+# rule reading git's own vocabulary as SQL: "Merge origin/master into
+# a-branch" and "Merge pull request #371 from whitewalls86/some-branch" are
+# both a MERGE verb followed at a distance by a clause keyword, and both are
+# commit subjects in ``tests/scripts/test_commit_msg_hook.py``'s exemption
+# list. Found 2026-09-05 by pointing this rule at ``tests/`` for the first
+# time, which is the hostile surface Stage X predicted it would meet.
+_MERGE_INTO = re.compile(r"\s*INTO\b", re.I)
+
+# DDL that *materialises a query* is not the DDL ``_DDL_VERBS`` exempts.
+# ``CREATE TABLE u AS SELECT ...`` names the columns it reads, so it drifts
+# from a schema exactly as a bare ``SELECT`` does -- the exemption's stated
+# reason ("there is no production schema for it to drift from") does not reach
+# it. Without this, a paraphrase can be written by putting ``CREATE TABLE x AS``
+# in front of it, which is a hole in a rule whose whole claim is that it keys
+# on the statement rather than its shape.
+#
+# Measured 2026-09-05 when Stage X first pointed this rule at ``tests/``:
+# **zero** production sites and one test site, ``test_analytics_connection_
+# guard``'s DuckDB scaffold. So this costs nothing today and closes the hole
+# before something walks through it.
+_MATERIALISING = re.compile(r"\bAS\s+(?:\(\s*)?(?:WITH|SELECT)\b", re.I)
+
+
 def _is_sql_statement(text: str) -> bool:
     """Is *text* a SQL statement, judged only on its own content?"""
     match = _SQL_VERB.match(text)
-    if not match or match.group(1).upper() in _EXEMPT_VERBS:
+    verb = match.group(1).upper() if match else ""
+    if not match:
         return False
     rest = text[match.end():]
+    if verb in _EXEMPT_VERBS and not (verb in _DDL_VERBS and _MATERIALISING.search(rest)):
+        return False
+    if verb == "MERGE" and not _MERGE_INTO.match(rest):
+        return False
     return bool(rest.strip()) and bool(_SQL_CLAUSE.search(rest))
 
 
@@ -1534,8 +1577,10 @@ def test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement():
         '_count("x", "SELECT COUNT(*) FROM t")\n'                 # 7  local helper
         'def g():\n    return ("SELECT a FROM t", params)\n'      # 8  tuple return
         'CHOICES = ["DELETE FROM t WHERE id = %s"]\n'             # 9  list element
+        'cur.execute("MERGE INTO t USING s ON t.id = s.id")\n'    # 10 merge
+        'cur.execute("CREATE TABLE u AS SELECT a FROM t")\n'      # 11 DDL over a query
     )
-    assert caught == {1, 2, 4, 5, 6, 7, 8, 10, 11}, (
+    assert caught == {1, 2, 4, 5, 6, 7, 8, 10, 11, 12, 13}, (
         f"the SQL-in-Python rule no longer sees every shape: {sorted(caught)}"
     )
 
@@ -1546,6 +1591,10 @@ def test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement():
         'con.execute("INSTALL httpfs")\n'            # session setup, exempt
         'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
         'def h():\n    """Example: SELECT a FROM t."""\n    return 1\n'  # docstring
+        'SUBJECTS = ["Merge origin/master into a-branch"]\n'  # git, not SQL
+        'SUBJECTS = ["Merge pull request #371 from whitewalls86/b"]\n'  # git, not SQL
+        'raw.execute("CREATE TABLE u (a int)")\n'     # scaffolding DDL, exempt
+        'assert "CREATE TABLE public.gate_observations" in migration\n'  # migration text
     )
     assert not clean, (
         f"the SQL-in-Python rule fires on code that is already correct: {sorted(clean)}"
@@ -1589,6 +1638,219 @@ def test_no_production_module_holds_a_sql_statement():
         INLINE_SQL_WAIVERS + SQL_LITERAL_WAIVERS,
         "these production modules hold a SQL statement in Python, so it is in "
         "no .sql file and the Layer 2 census cannot count it:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5g -- no test module holds a SQL statement either.
+#
+# **This rule removes a judgement rule rather than adding a mechanical one**,
+# which is the whole shape of Plan 162 Stage X.
+#
+# ``tests/`` was exempt from the rule above, and the exemption was reasoned.
+# Plan 161 question 3 settled that telling a *paraphrase of production* from a
+# *legitimate fixture seed* is judgement, for one stated reason: fixture seeds
+# are SQL in test files too, and a checker that cannot tell them apart fails on
+# correct code. That is true, and it was load-bearing for the whole
+# judgement/mechanical split.
+#
+# **It stops applying once no SQL literal appears under ``tests/`` at all.**
+# The ambiguity has nothing left to live in: any SQL-shaped literal here is a
+# violation whichever kind it is, so the rule needs no judgement and the
+# contract's split moves 7 mechanical / 4 judgement -> 8 / 3.
+#
+# It is deliberately :func:`_is_sql_statement` -- the *same* predicate the
+# production rule uses, not a variant. A second copy of the grammar would be
+# two rules that can disagree, which is the defect this file exists to catch.
+# Pointing the one predicate at a second file set is what made it better: the
+# hostile surface here found the two holes recorded at ``_MERGE_INTO`` and
+# ``_MATERIALISING``, and both fixes apply to production too.
+#
+# Where the statements went is ``tests/sql/``, mirroring the test tree down to
+# the module -- see :mod:`tests.sql_loader`. That root is **not** in
+# :func:`production_sql_files`, so it inflates no production denominator and
+# owes no Layer 2 test. A read-back assertion is still not a production
+# statement; it is simply no longer a literal typed inside a test.
+# ---------------------------------------------------------------------------
+TEST_SQL_WAIVERS: tuple[Waiver, ...] = ()
+
+SQL_ROOT = TESTS_DIR / "sql"
+
+
+def all_test_modules() -> list[Path]:
+    """Every ``.py`` under ``tests/``, which is this rule's whole surface.
+
+    No package filter and no ``test_*`` filter: ``conftest.py`` held 17 of the
+    statements this stage moved, and a rule that skipped it would have left the
+    seeds most tests share behind.
+    """
+    return [
+        path
+        for path in sorted(TESTS_DIR.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    ]
+
+
+def test_no_test_module_holds_a_sql_statement():
+    """505 sites on 2026-09-05, and the count is not what sized the stage.
+
+    Stage T measured the same surface as *duplication* -- 96 ad-hoc ``INSERT``s
+    and 161 distinct read-back ``SELECT``s, 43 of them written more than once
+    for 145 total retypings, one of them seventeen times -- and reached for a
+    shared Python helper. A helper removes the retyping and leaves the drift:
+    one definition that still has to agree with a schema, with nothing
+    asserting that it does. A file under ``tests/sql/`` is checked against the
+    schema by ``PREPARE`` whether or not the test consuming it runs.
+
+    **What this does not claim.** It says nothing about whether a mock is
+    mocking the thing under test, or whether an assertion is meaningful. Those
+    two stay judgement, they stay in ``docs/TESTING.md``'s judgement section,
+    and the reviewer skill goes on refusing to certify them.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in all_test_modules()
+        for line in _sql_statements_in_python(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        TEST_SQL_WAIVERS,
+        "these test modules hold a SQL statement in Python. Move it to "
+        "tests/sql/ -- mirroring the module's own path -- and load it with "
+        "`SQL(\"name\")`, so that PREPARE checks it against the schema whether "
+        "or not this test runs. See tests/sql_loader.",
+    )
+
+
+def test_every_test_sql_file_is_named_by_the_module_it_mirrors():
+    """The other direction: a statement nothing loads is a statement nobody reads.
+
+    ``tests/sql/`` mirrors the test tree, so this needs no registry -- the
+    module a file belongs to *is* its path. Two ways to fail, and the second is
+    the one that bites over time: a directory whose module has been renamed or
+    deleted, and a file whose module no longer names it. Without this, deleting
+    a test leaves its statements behind to be PREPAREd forever against a schema
+    nothing reads.
+    """
+    orphaned_directories, unnamed = [], []
+    for path in sorted(SQL_ROOT.rglob("*.sql")):
+        relative = path.relative_to(SQL_ROOT)
+        parts = list(relative.parts)
+        if parts[-2] in _ENGINE_DIRECTORIES:
+            del parts[-2]
+        module = TESTS_DIR.joinpath(*parts[:-1]).with_suffix(".py")
+        if not module.is_file():
+            orphaned_directories.append(
+                f"{_relative(path)} mirrors {_relative(module)}, which does not exist"
+            )
+        elif not _names(path.stem, module.read_text(encoding="utf-8")):
+            unnamed.append(f"{_relative(path)} is named by no line of {_relative(module)}")
+    assert not orphaned_directories, (
+        "these statements mirror a test module that is gone:\n  "
+        + "\n  ".join(orphaned_directories)
+    )
+    assert not unnamed, (
+        "these statements are loaded by nothing:\n  " + "\n  ".join(unnamed)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5h -- every test statement is schema-checked, whether or not it runs.
+#
+# The engine is **derived from the path**, not declared in a table: a statement
+# sitting directly under its module's directory is Postgres's, and one under a
+# ``duckdb/`` or ``airflow/`` segment names the engine that owns it instead.
+#
+# The default is what gives the rule its failure direction, and it is the whole
+# reason there is no list. A statement for an engine nobody has thought about
+# lands in the default bucket, is handed to ``PREPARE`` against a
+# Flyway-migrated Postgres, and fails there until somebody files it. A table of
+# engines would have to be remembered; a default that fails does not.
+#
+# ``airflow/`` is a second *Postgres* schema rather than a second engine:
+# ``airflow.dag_run`` is created by ``airflow db migrate``, not by Flyway, so a
+# Flyway-only database cannot plan it. It is named here rather than waived
+# because it is a fact about where the schema comes from.
+# ---------------------------------------------------------------------------
+_ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
+
+# 25 statements hold a ``{placeholder}`` that only their call site can fill --
+# a relation name, or a column list built per case. ``PREPARE`` cannot plan a
+# template, so these are the one part of ``tests/sql/`` no schema check reaches.
+#
+# The repair is named rather than left open: the bindings are derivable, since
+# every one of them is a module-level constant or an element of a literal tuple
+# the module iterates (``RECEIPT_TABLE``, ``PROTECTED_TABLES``, and the two
+# ``for table in (...)`` loops). Reading those out of the call site and
+# PREPARE-ing each rendering is what drains this list.
+#
+# Four more were here on 2026-09-05 and are not waivers, because they were
+# repaired instead: ``{claimed_at}``, ``{created_hours_ago}`` and
+# ``{proc_event_hours_ago}`` interpolated a *value* into a statement where the
+# driver would have bound one, which is interpolation wearing an identifier's
+# clothes. They are ``now() - (%s || ' hours')::interval`` now, and they
+# PREPARE.
+TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
+    for subject in (
+        "tests/sql/integration/conftest/insert_search_configs.sql",
+        "tests/sql/integration/ops/test_scrape/insert_search_configs.sql",
+        "tests/sql/integration/processing/conftest/insert_search_configs.sql",
+        "tests/sql/integration/processing/conftest/insert_search_configs_2.sql",
+        "tests/sql/integration/processing/test_write_srp/insert_search_configs.sql",
+        "tests/sql/integration/scripts/test_plan145_canary_commit/delete_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_canary_commit/select_all_from_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_canary_commit/select_committed_at_from_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_canary_commit/select_h_from_table.sql",
+        "tests/sql/integration/scripts/test_plan145_canary_commit/select_n_from_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_canary_commit/select_n_from_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/delete_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/delete_receipt_table_2.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/delete_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/insert_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/insert_receipt_table_2.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_all_from_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_h_from_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_manifest_sha256_from_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_n_from_receipt_table.sql",
+        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_n_from_table.sql",
+        "tests/sql/integration/sql/test_ops_queries/insert_search_configs_2.sql",
+        "tests/sql/integration/sql/test_ops_queries/insert_search_configs_3.sql",
+        "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
+        "tests/sql/integration/sql/test_shared_queries/delete_schema_table.sql",
+    )
+)
+
+
+def postgres_test_statements() -> list[Path]:
+    """Every ``tests/sql/`` statement a Flyway-migrated Postgres should plan."""
+    return [
+        path
+        for path in sorted(SQL_ROOT.rglob("*.sql"))
+        if not _ENGINE_DIRECTORIES & set(path.relative_to(SQL_ROOT).parts)
+    ]
+
+
+def test_every_test_statement_that_holds_a_template_is_waived():
+    """The template ledger describes reality, in both directions.
+
+    ``PREPARE`` is run by ``tests/integration/sql/test_fixture_statements.py``,
+    which needs an engine and therefore cannot say which files it *declined* to
+    check in a job that has no Postgres. This can, at Layer 0, with nothing:
+    a statement that stops being a template must leave the ledger, and one that
+    becomes a template must join it.
+    """
+    templated = {
+        _relative(path)
+        for path in postgres_test_statements()
+        if "{" in path.read_text(encoding="utf-8")
+    }
+    _assert_exactly(
+        templated,
+        TEST_SQL_TEMPLATE_WAIVERS,
+        "a tests/sql statement holding a {placeholder} cannot be PREPAREd, so "
+        "nothing checks it against the schema. Bind the value as a parameter "
+        "if it is a value; waive it against G19 if it is a relation name.",
     )
 
 
@@ -2312,9 +2574,23 @@ def test_every_asserted_rule_names_a_real_test():
         f"expected a markdown separator row, got '{separator.strip()}'"
     )
 
+    # **Every test module, not just this one.** Until Plan 162 Stage X this
+    # read only this file, which made the rules table unable to name a check
+    # living anywhere else -- and the first rule that legitimately does arrived
+    # with that stage: `PREPARE`-ing every `tests/sql/` statement needs an
+    # engine, so it belongs in a Layer 2 suite, not in this Layer 0 file. The
+    # narrow reading would have forced the choice between a row that lies about
+    # where its check is and no row at all.
+    #
+    # Widening it is derived rather than listed -- a second hardcoded filename
+    # would be the inventory this file refuses to keep -- and it costs only
+    # that a name could be satisfied by a same-named test in another module,
+    # which is a weaker guard than the original for a claim nobody makes by
+    # accident.
     defined = {
         node.name
-        for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+        for path in all_test_modules()
+        for node in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body
         if isinstance(node, ast.FunctionDef)
     }
 
@@ -2350,6 +2626,8 @@ ALL_WAIVERS = (
     + DUPLICATE_SQL_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
+    + TEST_SQL_WAIVERS
+    + TEST_SQL_TEMPLATE_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -2452,6 +2730,8 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("duplicate SQL", DUPLICATE_SQL_WAIVERS),
         ("inline SQL", INLINE_SQL_WAIVERS),
         ("SQL literal", SQL_LITERAL_WAIVERS),
+        ("test SQL", TEST_SQL_WAIVERS),
+        ("test SQL template", TEST_SQL_TEMPLATE_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )
