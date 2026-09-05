@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -200,6 +201,39 @@ def _install() -> None:
     except ImportError:
         pass
 
+    # ``execute_values`` is the one call in the tree that **composes a new
+    # statement**: psycopg2 expands ``VALUES %s`` into ``VALUES (...),(...)``
+    # internally and hands the cursor a plain ``str``, so the cursor proxy sees
+    # a statement with no origin and the file reads as never executed.
+    # `processing/sql/insert_silver_observations.sql` was exactly that.
+    #
+    # **It is wrapped here rather than added to a list of helpers**, and the
+    # difference matters. Measured 2026-09-05: seven callees other than
+    # ``.execute`` receive a loaded SQL constant across 27 sites, and five of
+    # them are project-local helpers -- ``run_duckdb_query`` (19 sites),
+    # ``_database_count``, ``_run_maintenance_query`` -- which no library entry
+    # point can reach. Every one of those passes the constant *through* to
+    # ``.execute`` unchanged, so the origin survives and there is nothing to
+    # wrap. Only a composer breaks attribution, and there is one.
+    #
+    # What stops this becoming an inventory is not this wrapper but
+    # ``no_execution_is_unattributable`` in the coverage gate: an unattributed
+    # execution whose text matches a ``.sql`` file fails, whatever caused it.
+    try:
+        from psycopg2 import extras
+
+        original_values = extras.execute_values
+        if not getattr(original_values, "_records_sql", False):
+
+            def execute_values(cur, sql, argslist, *args, **kwargs):
+                record("psycopg2", sql)
+                return original_values(cur, sql, argslist, *args, **kwargs)
+
+            execute_values._records_sql = True  # type: ignore[attr-defined]
+            extras.execute_values = execute_values
+    except ImportError:
+        pass
+
     try:
         from pyspark.sql import SparkSession
 
@@ -256,8 +290,18 @@ def pytest_unconfigure(config) -> None:  # noqa: ARG001 - pytest hook signature
     payload = {
         "wrapped": sorted(_WRAPPED),
         "declared": sorted(INSTRUMENTED_CLIENTS),
+        "invocation": " ".join(sys.argv[1:]),
         "executions": _RECORDED + _dbt_executions(),
     }
     path = Path(destination)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix != ".json":
+        # **A directory, because a job runs pytest more than once.** The
+        # `service-integration` job alone has five invocations; pointed at one
+        # filename they would overwrite each other and the job would report its
+        # last suite as its whole record. A file path is still honoured, which
+        # is what the Stage X baseline recipe uses.
+        path.mkdir(parents=True, exist_ok=True)
+        path = path / f"record-{os.getpid()}-{len(_RECORDED)}.json"
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

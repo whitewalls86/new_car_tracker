@@ -25,6 +25,16 @@ on:
 # `test_every_pytest_step_runs_under_the_declared_skip_gate`.
 env:
   REQUIRE_DECLARED_SKIPS: "1"
+  # Plan 162 Stage X, and workflow level for the same reason as the line above.
+  # `tests/plugins/sql_execution_recorder.py` records what text executed against
+  # which client; it writes an artifact only when this names somewhere to put
+  # it, and until this existed every job recorded faithfully and threw the
+  # record away at exit.
+  #
+  # A **directory**, not a file: `service-integration` runs pytest five times
+  # and `schema-contracts` twice, so one filename would leave each job
+  # reporting its last suite as its whole record.
+  SQL_EXECUTION_RECORD: sql-execution
 
 jobs:
 
@@ -162,6 +172,19 @@ jobs:
           # fails. Every other pytest step here already sets this.
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-docs-tests
+          path: sql-execution/
+          if-no-files-found: warn
 
   lint:
     name: Lint (ruff)
@@ -312,6 +335,19 @@ jobs:
           name: coverage-xml
           path: coverage.xml
           if-no-files-found: error
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-unit-tests
+          path: sql-execution/
+          if-no-files-found: warn
 
   docker-build:
     name: Docker build (all services)
@@ -504,6 +540,19 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-dbt-models
+          path: sql-execution/
+          if-no-files-found: warn
+
   snapshot-dbt:
     name: dbt build against a production snapshot
     runs-on: ubuntu-latest
@@ -672,6 +721,19 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-snapshot-dbt
+          path: sql-execution/
+          if-no-files-found: warn
 
   schema-contracts:
     name: SQL + Airflow metadata contracts
@@ -895,6 +957,19 @@ jobs:
           AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow.db
           AIRFLOW__CORE__LOAD_EXAMPLES: "false"
 
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-schema-contracts
+          path: sql-execution/
+          if-no-files-found: warn
+
   service-integration:
     name: Service integration tests (Postgres)
     runs-on: ubuntu-latest
@@ -1025,6 +1100,19 @@ jobs:
           DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
           POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/dbt_runner_test.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-service-integration
+          path: sql-execution/
+          if-no-files-found: warn
 
   lake-integration:
     name: Lake integration tests (MinIO)
@@ -1179,3 +1267,16 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
           LOG_PATH: /tmp/scraper_test.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-lake-integration
+          path: sql-execution/
+          if-no-files-found: warn

@@ -28,8 +28,9 @@ read-back assertion is still not a production statement -- it is simply no
 longer a literal typed inside a test.
 
 What every file here *does* owe is
-``test_every_test_sql_file_is_valid_against_the_schema``, which ``PREPARE``s it
-against a Flyway-migrated Postgres whether or not the test consuming it runs.
+``test_every_test_statement_plans_against_the_migrated_schema``, which
+``PREPARE``s it against a Flyway-migrated Postgres whether or not the test
+consuming it runs.
 """
 from pathlib import Path
 from typing import Callable
