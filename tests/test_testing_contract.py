@@ -1855,6 +1855,284 @@ def test_every_test_statement_that_holds_a_template_is_waived():
 
 
 # ---------------------------------------------------------------------------
+# Rule 5i -- a test may not invent the shape of a relation production defines.
+#
+# **The rule is not "a test may not create a table."** A scratch table standing
+# for nothing is legitimate scaffolding -- ``create table t as select 1`` is how
+# `test_analytics_connection_guard` gets something for its guard to refuse, and
+# forbidding it would fail on correct code. What a test may not do is declare a
+# schema for a relation *production already defines*, because that is a copy,
+# and a copy drifts.
+#
+# **The name match is the signature, not a heuristic.** A test stands up
+# ``int_listing_state_fingerprints`` precisely so that the code under test finds
+# it -- `audit_adaptive_refresh_features` looks the relation up by the name in
+# its own ``TABLE_SPECS``. Renaming the fixture to dodge this rule would stop
+# the production code finding it, so the test would stop testing anything. The
+# escape that does exist is a test passing an arbitrary relation name *into* the
+# code under test; that is a weaker test to begin with, and it is recorded here
+# rather than defended against.
+#
+# **Measured 2026-09-05, and the drift had already happened.** Three fixtures
+# hand-declare stand-ins for real dbt models: `int_listing_state_fingerprints`
+# declares 5 columns against the model's 8, `int_listing_state_runs` 1 against
+# 11, `int_listing_observation_fingerprints` 1 against 10. Nothing noticed,
+# because nothing compared them.
+#
+# **Subset, not equality, and that is the whole design.** Requiring equality
+# would force an 11-column fixture where the test needs one column, which is
+# ceremony. Subset catches the two failures that matter -- a renamed column and
+# a dropped one both remove it from the model's declaration -- and lets a narrow
+# fixture stay narrow. An *added* column does not fire, correctly: it cannot
+# break a fixture that never mentioned it.
+#
+# **What this does not catch is a retype**, and it cannot: ``schema.yml``
+# carries column names and no ``data_type`` -- 0 of 187 on 2026-09-05. The
+# fixture says ``run_duration_hours INTEGER`` and nothing in the repository
+# declares what the model's ``datediff_hours()`` actually returns. Stated in
+# ``docs/TESTING.md`` as a limit rather than counted as coverage; CAR-90 -> the
+# Stage S contract work closes it.
+# ---------------------------------------------------------------------------
+_CREATE_TABLE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP\w*\s+|UNLOGGED\s+)*TABLE\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w.\"]*)\s*\(",
+    re.I,
+)
+_NOT_A_COLUMN = frozenset(
+    {"primary", "foreign", "unique", "check", "constraint", "exclude", "like"}
+)
+
+
+@lru_cache(maxsize=None)
+def dbt_model_columns() -> dict[str, frozenset[str]]:
+    """``{model name: declared columns}``, read from dbt's own schema files.
+
+    dbt's ``schema.yml`` is the only place in the repository that declares what
+    a model's columns are without executing it, which is why it is the
+    authority here rather than the model's final ``SELECT``. It is an
+    incomplete authority -- 17 of 23 models document every column and 6 do not
+    -- and that is handled by the rule below failing rather than by this
+    function guessing: a fixture naming an undocumented column is told to
+    document it.
+    """
+    columns: dict[str, frozenset[str]] = {}
+    for path in sorted((REPO_ROOT / "dbt" / "models").rglob("*.yml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for model in document.get("models") or ():
+            columns[model["name"]] = frozenset(
+                column["name"] for column in model.get("columns") or ()
+            )
+    assert columns, "no dbt models parsed out of dbt/models/**/*.yml"
+    return columns
+
+
+@lru_cache(maxsize=None)
+def production_relations() -> frozenset[str]:
+    """Every relation production defines: dbt's models and Flyway's tables."""
+    models = {path.stem for path in (REPO_ROOT / "dbt" / "models").rglob("*.sql")}
+    flyway = {
+        _bare_relation(match)
+        for path in (REPO_ROOT / "db" / "migrations").glob("*.sql")
+        for match in _CREATE_TABLE.findall(path.read_text(encoding="utf-8"))
+    }
+    return frozenset(models | flyway)
+
+
+def _bare_relation(name: str) -> str:
+    """``ops.artifacts_queue`` -> ``artifacts_queue``. Fixtures are unqualified."""
+    return name.replace('"', "").rsplit(".", 1)[-1]
+
+
+def _declared_columns(text: str, start: int) -> list[str]:
+    """The column names in the parenthesised definition beginning at *start*."""
+    depth, body, index = 0, [], start
+    while index < len(text):
+        character = text[index]
+        if character == "(":
+            depth += 1
+            if depth == 1:
+                index += 1
+                continue
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        body.append(character)
+        index += 1
+    items, depth, current = [], 0, ""
+    for character in "".join(body):
+        if character in "([":
+            depth += 1
+        elif character in ")]":
+            depth -= 1
+        if character == "," and depth == 0:
+            items.append(current)
+            current = ""
+        else:
+            current += character
+    items.append(current)
+    names = []
+    for item in items:
+        first = item.strip().split()
+        if first and first[0].lower() not in _NOT_A_COLUMN:
+            names.append(first[0].strip('"').lower())
+    return names
+
+
+def _fixture_relations() -> list[tuple[str, str, list[str]]]:
+    """``(where, relation, columns)`` for every table a test defines itself."""
+    found = []
+    for path in all_test_modules():
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        docstrings = _docstring_ids(tree)
+        for node in ast.walk(tree):
+            if id(node) in docstrings:
+                continue
+            text = _statement_text(node)
+            if text is None:
+                continue
+            match = _CREATE_TABLE.search(text)
+            if match:
+                found.append((f"{_relative(path)}:{node.lineno}",
+                              _bare_relation(match.group(1)),
+                              _declared_columns(text, match.end() - 1)))
+    for path in sorted(SQL_ROOT.rglob("*.sql")):
+        text = path.read_text(encoding="utf-8")
+        match = _CREATE_TABLE.search(text)
+        if match:
+            found.append((_relative(path), _bare_relation(match.group(1)),
+                          _declared_columns(text, match.end() - 1)))
+    return found
+
+
+def test_no_test_invents_the_shape_of_a_relation_production_defines():
+    """A fixture may borrow production's relation name only on its own terms.
+
+    Two ways to fail. A relation production defines but nothing declares the
+    columns of -- every Flyway table today -- cannot be checked at all, so
+    standing one up in a test is refused outright rather than passed silently.
+    And a dbt model's fixture may name only columns that model declares, so a
+    rename or a drop in the model takes the fixture's column with it.
+    """
+    unknown_shape, undeclared = [], []
+    for where, relation, columns in _fixture_relations():
+        if relation not in production_relations():
+            continue
+        declared = dbt_model_columns().get(relation)
+        if declared is None:
+            unknown_shape.append(f"{where} declares a shape for `{relation}`")
+            continue
+        missing = sorted(set(columns) - {name.lower() for name in declared})
+        if missing:
+            undeclared.append(f"{where} `{relation}`: {', '.join(missing)}")
+    assert not unknown_shape, (
+        "these tests declare a schema for a relation production defines, and "
+        "nothing declares that relation's columns for them to be checked "
+        "against -- Flyway owns it, so build the fixture by applying the "
+        "migration rather than by retyping it:\n  " + "\n  ".join(unknown_shape)
+    )
+    assert not undeclared, (
+        "these fixtures name columns the model does not declare. Either the "
+        "model renamed or dropped them -- in which case the fixture is stale "
+        "and so is whatever reads it -- or the model's schema.yml is one of "
+        "the 6 that documents only some of its columns, in which case document "
+        "these:\n  " + "\n  ".join(undeclared)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5j -- schema.yml is the model's shape, and dbt is what enforces it.
+#
+# The rule above can only be as good as the declaration it reads, and that
+# declaration is documentation today: nothing makes a model's `schema.yml`
+# agree with the model. `int_latest_observation.sql` says so in its own prose --
+# *"a column added to stg_observations must be added here too, or it silently
+# stops appearing downstream. Nothing currently catches that drift
+# automatically ... this model's schema file documents only vin17/source/make,
+# not the full column list, so it is not a backstop."*
+#
+# `contract: {enforced: true}` is what turns it into a backstop: dbt fails the
+# build when a model's output stops matching its declared columns and types.
+# **0 of 23 models declare one**, so this rule is seeded fully waived and
+# ratchets down as CAR-79 lands them. A ledger is the right shape for that and
+# a ticket is not -- a ticket does not fail.
+#
+# The portability objection is already retired by measurement:
+# `docs/reference/plan_125_portability_audit.md` verified that `varchar` is a
+# hard Spark parse error and `string` is DuckDB's alias and Spark's native
+# name, "verified on both". So a declared type can be spelled once for both
+# engines, and Plan 125's migration is not a reason to leave this undeclared.
+# ---------------------------------------------------------------------------
+DBT_CONTRACT_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G20", owner=162, since=date(2026, 9, 5))
+    for subject in (
+        "dbt/models/intermediate/int_active_make_models.sql",
+        "dbt/models/intermediate/int_benchmarks.sql",
+        "dbt/models/intermediate/int_latest_observation.sql",
+        "dbt/models/intermediate/int_listing_observation_fingerprints.sql",
+        "dbt/models/intermediate/int_listing_observation_runs.sql",
+        "dbt/models/intermediate/int_listing_state_fingerprints.sql",
+        "dbt/models/intermediate/int_listing_state_runs.sql",
+        "dbt/models/intermediate/int_listing_volatility_features.sql",
+        "dbt/models/intermediate/int_price_history.sql",
+        "dbt/models/marts/mart_block_rate.sql",
+        "dbt/models/marts/mart_cooldown_cohorts.sql",
+        "dbt/models/marts/mart_cooldown_event_funnel.sql",
+        "dbt/models/marts/mart_deal_scores.sql",
+        "dbt/models/marts/mart_detail_batch_outcomes.sql",
+        "dbt/models/marts/mart_inventory_coverage.sql",
+        "dbt/models/marts/mart_price_freshness_trend.sql",
+        "dbt/models/marts/mart_scrape_volume.sql",
+        "dbt/models/marts/mart_vehicle_snapshot.sql",
+        "dbt/models/staging/stg_blocked_cooldown_events.sql",
+        "dbt/models/staging/stg_dealers.sql",
+        "dbt/models/staging/stg_observations.sql",
+        "dbt/models/staging/stg_price_events.sql",
+        "dbt/models/staging/stg_search_configs.sql",
+    )
+)
+
+
+def _declares_an_enforced_contract(name: str, path: Path) -> bool:
+    """dbt accepts the contract in the model's own config or in its schema file."""
+    if re.search(r"contract\s*=\s*\{\s*['\"]enforced['\"]\s*:\s*[Tt]rue",
+                 path.read_text(encoding="utf-8")):
+        return True
+    for schema in sorted(path.parent.glob("*.yml")):
+        document = yaml.safe_load(schema.read_text(encoding="utf-8")) or {}
+        for model in document.get("models") or ():
+            if model["name"] != name:
+                continue
+            contract = (model.get("config") or {}).get("contract") or {}
+            if contract.get("enforced") is True:
+                return True
+    return False
+
+
+def test_every_dbt_model_declares_an_enforced_contract():
+    """23 waivers on 2026-09-05, and the number is the point.
+
+    The fixture rule above trusts `schema.yml`. Nothing yet makes `schema.yml`
+    true. Until a model carries an enforced contract, its declaration is a
+    comment that a checker happens to read -- so this is seeded fully waived,
+    and every waiver deleted is one model whose shape dbt will now defend.
+    """
+    unenforced = {
+        _relative(path)
+        for path in sorted((REPO_ROOT / "dbt" / "models").rglob("*.sql"))
+        if not _declares_an_enforced_contract(path.stem, path)
+    }
+    _assert_exactly(
+        unenforced,
+        DBT_CONTRACT_WAIVERS,
+        "these dbt models do not declare `contract: {enforced: true}`, so "
+        "nothing fails when the model's output stops matching its schema.yml "
+        "and every rule reading that file is trusting documentation:",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------
 # Empty since Plan 162 Stage F (CAR-49) swept all 16 on 2026-09-01. The rule
@@ -2628,6 +2906,7 @@ ALL_WAIVERS = (
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS
     + TEST_SQL_TEMPLATE_WAIVERS
+    + DBT_CONTRACT_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -2732,6 +3011,7 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("SQL literal", SQL_LITERAL_WAIVERS),
         ("test SQL", TEST_SQL_WAIVERS),
         ("test SQL template", TEST_SQL_TEMPLATE_WAIVERS),
+        ("dbt contract", DBT_CONTRACT_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )
