@@ -12,15 +12,20 @@ import psycopg2
 import pytest
 from psycopg2.extras import RealDictCursor
 
+from shared.query_loader import load_query
 from tests.sql_loader import queries
 
 SQL = queries(__file__)
 
 _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
-_SQL = (
-    Path(__file__).parents[3] / "airflow" / "sql" / "delete_stale_emails.sql"
-).read_text(encoding="utf-8")
+# Read through ``shared.query_loader``, not with ``read_text``, and the
+# difference is the whole of Plan 162 Stage X's recorder: ``SqlText`` carries
+# the file it came from, a plain ``str`` carries nothing, and this statement
+# was executing against a real Postgres with nothing able to say which file the
+# text came from. The gate reported it as executed-but-unattributable on its
+# first CI run.
+_SQL = load_query(Path(__file__).parents[3] / "airflow" / "sql", "delete_stale_emails")
 
 
 def _get_conn():

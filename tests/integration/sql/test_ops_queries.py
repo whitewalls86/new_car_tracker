@@ -75,6 +75,7 @@ from ops.queries import (
 )
 from ops.routers.coordination import _TRANSITIONS, COORDINATION_LOCK_ID
 from ops.routers.deploy import STALE_LOCK_MINUTES
+from shared.query_loader import load_query
 from tests.sql_loader import queries
 
 SQL = queries(__file__)
@@ -89,9 +90,15 @@ pytestmark = pytest.mark.integration
 # was working around: this suite runs in the main venv and cannot import
 # Airflow. Reading the .sql file is the same guarantee -- one copy, executed
 # here -- without parsing Python to get at a string.
-GATE_OBSERVATION_SQL = (
-    Path(__file__).parents[3] / "airflow" / "sql" / "record_gate_observation.sql"
-).read_text(encoding="utf-8")
+# Loaded rather than read, and Plan 162 Stage X is why. ``read_text`` returns a
+# plain ``str``; ``shared.query_loader`` returns ``SqlText``, which carries the
+# file it came from, so the execution recorder can say this statement ran. Read
+# with ``read_text`` it executed against a real Postgres on every run with
+# nothing able to attribute it -- the coverage gate reported exactly that on its
+# first CI run, which is the instrument working.
+GATE_OBSERVATION_SQL = load_query(
+    Path(__file__).parents[3] / "airflow" / "sql", "record_gate_observation"
+)
 
 # The surfaces a full-fleet deploy expands to; see ops/coordination_contract.py.
 DEPLOY_SCOPE = frozenset(
