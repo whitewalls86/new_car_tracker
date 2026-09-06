@@ -19,10 +19,12 @@ means every connection *any* fixture opens is recorded and the fixture list
 stops existing.
 
 **Attribution is exact rather than inferred**, because
-:class:`shared.query_loader.SqlText` carries its origin and preserves it
-through ``.format()``. A statement that arrives as a plain ``str`` is recorded
-with no origin rather than guessed at -- an unattributed execution is a visible
-hole, and a wrong attribution is not.
+:class:`shared.query_loader.SqlText` carries the files it was composed from
+and preserves them through ``.format()`` -- including the origins of a
+statement formatted *into* another, so a nested statement is credited to its
+own file and not only to its wrapper. A statement that arrives as a plain
+``str`` is recorded with no origins rather than guessed at -- an unattributed
+execution is a visible hole, and a wrong attribution is not.
 
 **dbt is the one surface not wrapped, and does not need to be.** It runs in a
 subprocess and already writes what it executed to ``target/run/`` beside
@@ -52,9 +54,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: must not decide what the contract says is owed.
 INSTRUMENTED_CLIENTS = frozenset({"psycopg2", "duckdb", "asyncpg", "pyspark"})
 
-#: Filled during the run. ``(client, statement, origin)`` -- origin is the
-#: ``.sql`` file when the statement came through ``shared.query_loader``.
-_RECORDED: list[dict[str, str | None]] = []
+#: Filled during the run. ``(client, statement, origins)`` -- origins are the
+#: ``.sql`` files the statement was composed from, when it came through
+#: ``shared.query_loader``, and empty when it did not.
+_RECORDED: list[dict[str, object]] = []
 
 #: Which of :data:`INSTRUMENTED_CLIENTS` were actually importable here. A job
 #: without Spark records nothing for Spark and says so, rather than the absence
@@ -64,22 +67,36 @@ _WRAPPED: set[str] = set()
 _ARTIFACT_ENV = "SQL_EXECUTION_RECORD"
 
 
-def _origin_of(statement: object) -> str | None:
-    """The ``.sql`` file a statement came from, or None if it was typed."""
-    origin = getattr(statement, "origin", None)
-    if origin is None:
-        return None
-    try:
-        return Path(origin).resolve().relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return str(origin)
+def _origins_of(statement: object) -> list[str]:
+    """The ``.sql`` files a statement came from. Empty if it was typed.
+
+    A list and not a single path because one executed string can be owned by
+    more than one file: ``lake_snapshot_cohort`` formats a selector's statement
+    into ``wrap_candidate_query.sql``, and crediting only the wrapper made the
+    fourteen selectors read as never executed. ``SqlText.format`` unions the
+    origins; this only flattens them to repo-relative strings for the record.
+    """
+    origins = getattr(statement, "origins", None)
+    if not origins:
+        return []
+    flattened = []
+    for origin in origins:
+        try:
+            flattened.append(Path(origin).resolve().relative_to(REPO_ROOT).as_posix())
+        except ValueError:
+            flattened.append(str(origin))
+    return sorted(flattened)
 
 
 def record(client: str, statement: object) -> None:
     if not isinstance(statement, str):
         return
     _RECORDED.append(
-        {"client": client, "statement": str(statement), "origin": _origin_of(statement)}
+        {
+            "client": client,
+            "statement": str(statement),
+            "origins": _origins_of(statement),
+        }
     )
 
 
@@ -251,7 +268,7 @@ def _install() -> None:
         pass
 
 
-def _dbt_executions() -> list[dict[str, str | None]]:
+def _dbt_executions() -> list[dict[str, object]]:
     """dbt's own record of what it ran, from ``target/run/``.
 
     The one execution surface that cannot be wrapped, because it is a
@@ -265,7 +282,7 @@ def _dbt_executions() -> list[dict[str, str | None]]:
         {
             "client": "dbt",
             "statement": path.read_text(encoding="utf-8"),
-            "origin": path.relative_to(REPO_ROOT).as_posix(),
+            "origins": [path.relative_to(REPO_ROOT).as_posix()],
         }
         for path in sorted(run_root.rglob("*.sql"))
     ]

@@ -9,9 +9,12 @@ reading of the new world with nothing to compare against.
 ## What was measured
 
 `tests/plugins/sql_execution_recorder.py` wraps each database client at its
-entry point and records `(client, statement text, origin)` for every execution.
-`origin` is the `.sql` file the statement was loaded from, carried by
-`shared.query_loader.SqlText` and preserved through `.format()`.
+entry point and records `(client, statement text, origins)` for every execution.
+`origins` are the `.sql` files the statement was composed from, carried by
+`shared.query_loader.SqlText` and preserved through `.format()` — a *set*, and
+not one path, because a statement formatted into another belongs to both files.
+The baseline below was taken while it still carried one, so its per-file numbers
+under-credit any nested statement; see "What the aggregation found" below.
 
 **Recipe.** From a checkout with a Flyway-migrated Postgres reachable:
 
@@ -114,3 +117,40 @@ nothing happened.
 - **dbt is captured from its own `target/run/` artifacts**, not by wrapping: it
   is a subprocess, and it already writes every compiled statement it executed.
   A declared second mechanism, not a hole.
+
+## What the aggregation found
+
+The baseline above is one machine's reading. The gate job
+(`scripts/check_sql_execution_coverage.py`, run downstream of every pytest job)
+is the real one, because a statement may execute in any of five jobs and 53 of
+the 60 files "missing" above execute in a job that run was not. In CI, with
+MinIO, a dbt-built warehouse and the Airflow metadata schema all present:
+
+| | |
+|---|---|
+| Executions read | 9,775, from 12 per-job records |
+| Production `.sql` files | 161 |
+| **Recorded executing** | **147** |
+| Not recorded | 14 |
+
+Two repairs stand between those two readings and both were found by the gate,
+not by a reviewer.
+
+**The record was being thrown away.** Every pytest job wrote its slice and only
+some uploaded it; the gate cannot measure what never left the runner. Fixed by
+uploading from each of the six jobs and merging in the gate job.
+
+**Three statements executed with their origin lost**, all of them a
+`read_text()` or a composition that returned a plain `str`: the gate's
+"executed but unattributable" check names a file whose exact text reached an
+engine with nothing saying so. That section is now empty.
+
+**The 14 that remained were not untested — they were nested.**
+`archiver/processors/lake_snapshot_cohort.py` formats a selector's own
+statement into `wrap_candidate_query.sql` and executes the result, so a single
+origin credited the wrapper and left all fourteen selectors reading as never
+executed. The reading was wrong in the expensive direction: acting on it meant
+writing fourteen Layer 2 tests for statements that already run in CI. The fix is
+in the type rather than in the gate — `SqlText.origins` is a set, and
+`.format()` unions in the origins of any `SqlText` argument — so nesting is a
+case the instrument answers instead of a case that quietly loses a file.

@@ -14,8 +14,13 @@ Two checks, and the second is narrower than it looks:
 
 * **Every production ``.sql`` file was executed, or is waived.** Both
   directions -- a waived file that *did* execute fails as a stale entry, so the
-  ledger cannot describe a repair that already happened.
-* **No execution is unattributable.** An execution with no origin whose text
+  ledger cannot describe a repair that already happened. An execution carries
+  every file it was composed from, so a statement formatted into another
+  credits both: the first reading of this gate called fourteen archiver
+  selectors unexecuted when each was running nested inside
+  ``wrap_candidate_query.sql``, which would have bought fourteen tests for
+  statements that already had coverage.
+* **No execution is unattributable.** An execution with no origins whose text
   matches a ``.sql`` file means something loaded that file and lost its
   provenance on the way -- a loader returning a plain ``str``, a transformation
   ``SqlText`` does not survive. It caught ``airflow/dags/dag_queries.py``.
@@ -73,7 +78,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     executions = _load(arguments.records)
-    executed = {e["origin"] for e in executions if e["origin"]}
+    executed = {origin for e in executions for origin in e["origins"]}
     produced = list(production_sql_files())
     waived = {entry.path for entry in UNRECORDED}
 
@@ -87,7 +92,7 @@ def main() -> int:
     unattributable = sorted({
         corpus[_normalise(e["statement"])]
         for e in executions
-        if not e["origin"] and _normalise(e["statement"]) in corpus
+        if not e["origins"] and _normalise(e["statement"]) in corpus
     })
 
     print(f"production .sql files: {len(produced)}")

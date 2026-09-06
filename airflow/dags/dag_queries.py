@@ -30,9 +30,10 @@ scraper's module and raised ImportError. That is the dual import identity
 ``docs/TESTING.md`` records as G18, reached from a second direction. The
 prefix costs nothing and the collision is silent, so keep it.
 
-This module imports nothing but ``pathlib`` on purpose: it is the one part of
-the DAG tree a reader without Airflow installed can import.
+This module imports nothing but the standard library on purpose: it is the one
+part of the DAG tree a reader without Airflow installed can import.
 """
+from collections.abc import Iterable
 from pathlib import Path
 
 _SQL_DIR = Path(__file__).parent.parent / "sql"
@@ -50,22 +51,32 @@ class SqlText(str):
     cost already accepted for this module existing at all; carrying it here is
     cheaper than mounting ``shared/`` into the Airflow image, which is the
     trade [G12](../../docs/TESTING.md#the-gap-list) settled.
+
+    ``origins`` is a set and not a single path for the reason
+    ``shared/query_loader.py`` states at length: a statement formatted into
+    another belongs to both files. Kept identical to the original because a
+    copy that drifts is worse than a copy.
     """
 
-    origin: Path
+    origins: frozenset[Path]
 
-    def __new__(cls, text: str, origin: Path) -> "SqlText":
+    def __new__(cls, text: str, origins: Iterable[Path]) -> "SqlText":
         instance = super().__new__(cls, text)
-        instance.origin = origin
+        instance.origins = frozenset(origins)
         return instance
 
     def format(self, *args: object, **kwargs: object) -> "SqlText":
-        return SqlText(str.format(self, *args, **kwargs), self.origin)
+        nested = [
+            value.origins
+            for value in (*args, *kwargs.values())
+            if isinstance(value, SqlText)
+        ]
+        return SqlText(str.format(self, *args, **kwargs), self.origins.union(*nested))
 
 
 def load_query(name: str) -> SqlText:
     path = _SQL_DIR / f"{name}.sql"
-    return SqlText(path.read_text(encoding="utf-8"), path)
+    return SqlText(path.read_text(encoding="utf-8"), (path,))
 
 
 DEPLOY_INTENT_GATE_SQL = load_query("deploy_intent_gate")
