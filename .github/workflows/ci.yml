@@ -1294,11 +1294,8 @@ jobs:
         with:
           pattern: sql-execution-*
           path: sql-execution-records
-      # `--report` for exactly one landing. The ledger it needs cannot be seeded
-      # honestly from a developer machine -- without MinIO, a dbt-built DuckDB
-      # file and the Airflow metadata schema, a local run calls 60 files
-      # unexecuted and 53 of them execute in a job it was not running. This run
-      # prints the real reading; the next commit seeds the ledger from it and
-      # drops this flag.
+      # `--report` is gone: it existed for exactly the two landings it took to
+      # get an honest reading, and the reading is 161 of 161 with an empty
+      # ledger. From here a statement that executes nowhere fails this job.
       - name: Every production statement executed somewhere, or waived
-        run: python scripts/check_sql_execution_coverage.py --report
+        run: python scripts/check_sql_execution_coverage.py

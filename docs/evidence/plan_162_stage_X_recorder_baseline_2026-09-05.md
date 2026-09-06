@@ -130,11 +130,12 @@ MinIO, a dbt-built warehouse and the Airflow metadata schema all present:
 |---|---|
 | Executions read | 9,775, from 12 per-job records |
 | Production `.sql` files | 161 |
-| **Recorded executing** | **147** |
-| Not recorded | 14 |
+| **Recorded executing** | **161** |
+| Not recorded | 0, and the ledger is empty |
 
-Two repairs stand between those two readings and both were found by the gate,
-not by a reviewer.
+Three repairs stand between the local baseline and that reading, and all three
+were found by the gate rather than by a reviewer. None of them was a missing
+test: every one was the instrument mis-reporting.
 
 **The record was being thrown away.** Every pytest job wrote its slice and only
 some uploaded it; the gate cannot measure what never left the runner. Fixed by
@@ -145,7 +146,7 @@ uploading from each of the six jobs and merging in the gate job.
 "executed but unattributable" check names a file whose exact text reached an
 engine with nothing saying so. That section is now empty.
 
-**The 14 that remained were not untested — they were nested.**
+**The last 14 were not untested — they were nested.**
 `archiver/processors/lake_snapshot_cohort.py` formats a selector's own
 statement into `wrap_candidate_query.sql` and executes the result, so a single
 origin credited the wrapper and left all fourteen selectors reading as never
@@ -154,3 +155,9 @@ writing fourteen Layer 2 tests for statements that already run in CI. The fix is
 in the type rather than in the gate — `SqlText.origins` is a set, and
 `.format()` unions in the origins of any `SqlText` argument — so nesting is a
 case the instrument answers instead of a case that quietly loses a file.
+
+**Every production statement in this repository executes against a real engine
+in CI**, on the strongest reading available: not that a test names the file, but
+that the file's text reached a database client. `--report` is gone and the gate
+now fails a statement that executes nowhere, with `UNRECORDED` empty — so the
+first one that does is a decision someone has to write down.
