@@ -24,6 +24,20 @@ Two checks, and the second is narrower than it looks:
   selectors unexecuted when each was running nested inside
   ``wrap_candidate_query.sql``, which would have bought fourteen tests for
   statements that already had coverage.
+* **The routes SQL travels are the ones this repository declares.** Every
+  execution records *how* it arrived -- ``duckdb.execute``,
+  ``psycopg2.execute_values``. Compared to :data:`EXECUTION_ROUTES` in both
+  directions: a route nobody declared fails, and a declared route nothing used
+  fails as stale. This is the answer to "can we say deterministically how SQL
+  gets executed here", and it is derived rather than declared-and-trusted --
+  the list is checked against what a real CI run actually did, so it cannot
+  quietly stop describing the repository.
+
+  **It is a tripwire, not a filter.** The recorder records every string handed
+  to every driver method; this list does not decide what gets recorded. That
+  distinction is the whole difference between it and the method-name inventory
+  it replaced, which decided what got seen and so could go silently blind.
+
 * **No execution is unattributable.** An execution with no origins whose text
   matches a ``.sql`` file means something loaded that file and lost its
   provenance on the way -- a loader returning a plain ``str``, a transformation
@@ -42,6 +56,22 @@ import json
 import re
 import sys
 from pathlib import Path
+
+#: How SQL reaches an engine in this repository, asserted both ways against
+#: what a CI run actually recorded. Adding a route here is a decision; a route
+#: appearing that is not here is a question worth asking, because the last time
+#: the recorder could not see a route it reported working statements as dead.
+EXECUTION_ROUTES = frozenset({
+    # Measured, not guessed. ``duckdb.execute`` and the two psycopg2 routes are
+    # what a run actually records; ``executemany`` was in the first draft of
+    # this list and came straight back out, because nothing in the repository
+    # calls it -- which is the stale direction earning its place before this
+    # ever reached CI.
+    "duckdb.execute",
+    "psycopg2.execute",
+    "psycopg2.execute_values",
+    "dbt.target/run",
+})
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -83,6 +113,13 @@ def main() -> int:
     executions = _load(arguments.records)
     executed = {origin for e in executions for origin in e["origins"]}
     produced = list(production_sql_files())
+    # Only executions carrying a known ``.sql`` file, so the reading is "how
+    # our SQL reaches an engine" and not "every string any driver method took".
+    # The proxy records table names and encodings too; those are harmless in the
+    # record and would be noise in this list.
+    routes = {e["via"] for e in executions if e["origins"]}
+    undeclared = sorted(routes - EXECUTION_ROUTES)
+    unused = sorted(EXECUTION_ROUTES - routes)
 
     unrecorded = sorted(set(produced) - executed)
 
@@ -96,6 +133,7 @@ def main() -> int:
         if not e["origins"] and _normalise(e["statement"]) in corpus
     })
 
+    print(f"execution routes:      {', '.join(sorted(routes))}")
     print(f"production .sql files: {len(produced)}")
     print(f"recorded executing:    {len(produced) - len(unrecorded)}")
     print(f"not recorded:          {len(unrecorded)}")
@@ -104,6 +142,14 @@ def main() -> int:
         print("\nnot recorded executing:")
         for relative in unrecorded:
             print(f"    {relative}")
+    if undeclared:
+        print("\nSQL arrived by a route this repository does not declare:")
+        for route in undeclared:
+            print(f"    {route}")
+    if unused:
+        print("\ndeclared routes nothing used (stale):")
+        for route in unused:
+            print(f"    {route}")
     if unattributable:
         print("\nexecuted but unattributable -- a loader lost the origin:")
         for relative in unattributable:
@@ -117,12 +163,38 @@ def main() -> int:
     if unrecorded:
         print(
             f"\nFAIL: {len(unrecorded)} production statement(s) executed nowhere "
-            "in this run. Give each one a Layer 2 test that runs it against a "
-            "real engine. There is deliberately no waiver list: this gate read "
-            "161 of 161 when it landed, and an escape hatch nobody needs is an "
-            "escape hatch the next person reaches for. If a statement genuinely "
-            "cannot execute in CI, say so in a diff that argues for it rather "
-            "than in a tuple."
+            "in this run.\n\n"
+            "**Check this before writing a test for them.** This gate reports "
+            "the recorder's blind spots the same way it reports real gaps: if a "
+            "statement reaches its engine by a route the recorder does not "
+            "watch, it is invisible here and reads as dead while running "
+            "perfectly well. That has already happened once -- fourteen "
+            "archiver selectors reported unexecuted because each ran nested "
+            "inside another statement -- and the repair it pointed at was "
+            "fourteen redundant tests. Confirm the statement genuinely has no "
+            "Layer 2 test before writing one; the route list above is the first "
+            "place to look.\n\n"
+            "If it is a real gap, give each one a Layer 2 test that runs it "
+            "against a real engine. There is deliberately no waiver list: this "
+            "gate read 161 of 161 when it landed, and an escape hatch nobody "
+            "needs is an escape hatch the next person reaches for. If a "
+            "statement genuinely cannot execute in CI, say so in a diff that "
+            "argues for it rather than in a tuple."
+        )
+        failed = True
+    if undeclared:
+        print(
+            f"\nFAIL: SQL arrived by {len(undeclared)} route(s) this repository "
+            "does not declare. Either production started reaching an engine a "
+            "new way -- worth knowing, and the reason this check exists -- or "
+            "EXECUTION_ROUTES has gone stale. Add the route once you know which."
+        )
+        failed = True
+    if unused:
+        print(
+            f"\nFAIL: {len(unused)} declared route(s) carried no SQL. A list "
+            "that still names a route nothing uses stops describing how this "
+            "repository executes anything."
         )
         failed = True
     if unattributable:

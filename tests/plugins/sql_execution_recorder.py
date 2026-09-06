@@ -39,16 +39,20 @@ the *cross-engine* assertion -- "this ran on the engine production uses for it"
 
 **And the entry points below are still a list of names, which is the half of
 the F1 finding this file did not close.** The proxies stopped naming methods;
-:func:`_install` still names *factories*, and ``asyncpg`` is a live miss:
+:func:`_install` still names *factories*, and ``asyncpg`` is one it gets wrong:
 ``scraper/db.py`` opens its pool with ``asyncpg.create_pool``, not
 ``asyncpg.connect``, so nothing on that path is proxied while
-``INSTRUMENTED_CLIENTS`` lists ``asyncpg`` as instrumented. It records nothing
-today for a reason that is itself worth knowing -- the pool is created at
-startup, closed at shutdown, and never queried -- so the miss is latent rather
-than live. Closing it properly means deriving the entry points production
-actually calls, the way ``test_every_production_import_is_classified`` derives
-the imports; measured 2026-09-06 and left as a decision rather than taken
-unasked, because the honest repair may be deleting the unused pool.
+``INSTRUMENTED_CLIENTS`` lists ``asyncpg`` as instrumented.
+
+**No statement can travel that path, which is why this is cosmetic and not a
+hole.** The pool is opened by the FastAPI lifespan and closed at shutdown, and
+nothing acquires a connection from it -- the scraper's request paths reach
+Postgres through ``psycopg2``. What the pool does do is real, and is not
+dead code: opening it proves the database is reachable at startup, and a
+failure there means the app never serves, which Airflow's ``http_health_sensor``
+reads as a drain that never completes. So it stays. What is untrue is the
+contract's claim that ``asyncpg`` is instrumented, which is a sentence ahead of
+its mechanism rather than missing coverage.
 """
 from __future__ import annotations
 
@@ -67,9 +71,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: must not decide what the contract says is owed.
 INSTRUMENTED_CLIENTS = frozenset({"psycopg2", "duckdb", "asyncpg", "pyspark"})
 
-#: Filled during the run. ``(client, statement, origins)`` -- origins are the
-#: ``.sql`` files the statement was composed from, when it came through
-#: ``shared.query_loader``, and empty when it did not.
+#: Filled during the run. ``(client, via, statement, origins)`` -- origins are
+#: the ``.sql`` files the statement was composed from, when it came through
+#: ``shared.query_loader``, and empty when it did not. ``via`` is the route it
+#: arrived by, ``duckdb.execute`` and the like, which is what lets the gate say
+#: *how* this repository executes SQL rather than assuming it knows.
 _RECORDED: list[dict[str, object]] = []
 
 #: Which of :data:`INSTRUMENTED_CLIENTS` were actually importable here. A job
@@ -101,12 +107,13 @@ def _origins_of(statement: object) -> list[str]:
     return sorted(flattened)
 
 
-def record(client: str, statement: object) -> None:
+def record(client: str, statement: object, via: str) -> None:
     if not isinstance(statement, str):
         return
     _RECORDED.append(
         {
             "client": client,
+            "via": via,
             "statement": str(statement),
             "origins": _origins_of(statement),
         }
@@ -126,7 +133,7 @@ def _recording_attribute(target: object, name: str, client: str):
 
     def recording(*args, **kwargs):
         for value in (*args, *kwargs.values()):
-            record(client, value)
+            record(client, value, f"{client}.{name}")
         return attribute(*args, **kwargs)
 
     return recording
@@ -285,7 +292,7 @@ def _install() -> None:
         if not getattr(original_values, "_records_sql", False):
 
             def execute_values(cur, sql, argslist, *args, **kwargs):
-                record("psycopg2", sql)
+                record("psycopg2", sql, "psycopg2.execute_values")
                 return original_values(cur, sql, argslist, *args, **kwargs)
 
             execute_values._records_sql = True  # type: ignore[attr-defined]
@@ -300,7 +307,7 @@ def _install() -> None:
         if not getattr(original, "_records_sql", False):
 
             def spark_sql(self, statement, *args, **kwargs):
-                record("pyspark", statement)
+                record("pyspark", statement, "pyspark.SparkSession.sql")
                 return original(self, statement, *args, **kwargs)
 
             spark_sql._records_sql = True  # type: ignore[attr-defined]
@@ -323,6 +330,7 @@ def _dbt_executions() -> list[dict[str, object]]:
     return [
         {
             "client": "dbt",
+            "via": "dbt.target/run",
             "statement": path.read_text(encoding="utf-8"),
             "origins": [path.relative_to(REPO_ROOT).as_posix()],
         }
