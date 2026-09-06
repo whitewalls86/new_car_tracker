@@ -30,12 +30,25 @@ execution is a visible hole, and a wrong attribution is not.
 subprocess and already writes what it executed to ``target/run/`` beside
 ``run_results.json``. A declared second mechanism, not a hole.
 
-**Two things this does not do**, recorded here rather than discovered at Gate
-D. Spark's DataFrame API is not text, so it is invisible to a recorder that
-records text -- exactly as
+**Three things this does not do**, recorded here rather than discovered at
+Gate D. Spark's DataFrame API is not text, so it is invisible to a recorder
+that records text -- exactly as
 [G15](../../docs/TESTING.md#the-gap-list) already says for the static rule. And
 the *cross-engine* assertion -- "this ran on the engine production uses for it"
 -- needs two live engines to design honestly and belongs to Plan 125 Gate D.
+
+**And the entry points below are still a list of names, which is the half of
+the F1 finding this file did not close.** The proxies stopped naming methods;
+:func:`_install` still names *factories*, and ``asyncpg`` is a live miss:
+``scraper/db.py`` opens its pool with ``asyncpg.create_pool``, not
+``asyncpg.connect``, so nothing on that path is proxied while
+``INSTRUMENTED_CLIENTS`` lists ``asyncpg`` as instrumented. It records nothing
+today for a reason that is itself worth knowing -- the pool is created at
+startup, closed at shutdown, and never queried -- so the miss is latent rather
+than live. Closing it properly means deriving the entry points production
+actually calls, the way ``test_every_production_import_is_classified`` derives
+the imports; measured 2026-09-06 and left as a decision rather than taken
+unasked, because the honest repair may be deleting the unused pool.
 """
 from __future__ import annotations
 
@@ -100,13 +113,56 @@ def record(client: str, statement: object) -> None:
     )
 
 
+def _recording_attribute(target: object, name: str, client: str):
+    """*target.name*, wrapped to record every string argument if it is callable.
+
+    The whole of what replaced the method-name list. A non-callable attribute
+    -- ``description``, ``rowcount`` -- is passed straight through, so the
+    proxy stays transparent for everything that is not a call.
+    """
+    attribute = getattr(target, name)
+    if not callable(attribute):
+        return attribute
+
+    def recording(*args, **kwargs):
+        for value in (*args, *kwargs.values()):
+            record(client, value)
+        return attribute(*args, **kwargs)
+
+    return recording
+
+
 class _RecordingCursor:
-    """A thin proxy. Everything but ``execute`` goes straight through.
+    """A thin proxy that records **any string handed to any method**.
 
     A proxy rather than a ``cursor_factory`` subclass because the suites pass
     their own factory -- ``RealDictCursor`` -- and a factory that replaced it
     would change what the tests receive. Delegation by ``__getattr__`` keeps
     that surface identical.
+
+    **Why it names no methods.** It used to define ``execute`` and
+    ``executemany``, which is a list of database-client method names -- the
+    ``_SQL_CALL_NAMES`` shape Stage N deleted rather than lengthened, sitting
+    inside the instrument built to replace it. A driver method the list had not
+    heard of recorded nothing, silently: ``asyncpg`` reaches a connection
+    through ``fetch``/``fetchrow``/``fetchval``, none of which were named, and
+    DuckDB has ``query`` and ``from_query`` beside ``execute``. Now the wrapper
+    keys on the *argument* instead: every callable is wrapped, and every string
+    argument is recorded, so a method nobody anticipated is covered by the rule
+    rather than by an edit here.
+
+    **What that trades**, stated rather than discovered later: "a string
+    reached the driver" is marginally weaker than "a statement executed". A
+    driver method that takes SQL *without* running it -- ``mogrify``,
+    ``prepare`` -- would now be credited as an execution. Measured 2026-09-06:
+    zero such call sites in production, and the coverage gate reads whole-file
+    text matches, so a fragment cannot credit a file by accident.
+
+    It also fixes what the transparency finding originally reported. The named
+    methods were defined *unconditionally*, so a wrapped ``psycopg2``
+    connection answered ``hasattr(conn, "sql")`` with True where the real one
+    says False. Defining nothing means the proxy's surface is the wrapped
+    object's surface, with no engine-specific conditional deciding it.
     """
 
     __slots__ = ("_cursor", "_client")
@@ -115,16 +171,8 @@ class _RecordingCursor:
         object.__setattr__(self, "_cursor", cursor)
         object.__setattr__(self, "_client", client)
 
-    def execute(self, statement, *args, **kwargs):
-        record(self._client, statement)
-        return self._cursor.execute(statement, *args, **kwargs)
-
-    def executemany(self, statement, *args, **kwargs):
-        record(self._client, statement)
-        return self._cursor.executemany(statement, *args, **kwargs)
-
     def __getattr__(self, name):
-        return getattr(self._cursor, name)
+        return _recording_attribute(self._cursor, name, self._client)
 
     def __setattr__(self, name, value):
         setattr(self._cursor, name, value)
@@ -150,19 +198,13 @@ class _RecordingConnection:
         object.__setattr__(self, "_client", client)
 
     def cursor(self, *args, **kwargs):
+        # The one name still spelled out, and it is here to **propagate the
+        # proxy**, not to record: a cursor handed out unwrapped is a whole
+        # surface the recorder cannot see. Recording happens in __getattr__.
         return _RecordingCursor(self._connection.cursor(*args, **kwargs), self._client)
 
-    def execute(self, statement, *args, **kwargs):
-        # DuckDB executes on the connection; psycopg2 does not have this.
-        record(self._client, statement)
-        return self._connection.execute(statement, *args, **kwargs)
-
-    def sql(self, statement, *args, **kwargs):
-        record(self._client, statement)
-        return self._connection.sql(statement, *args, **kwargs)
-
     def __getattr__(self, name):
-        return getattr(self._connection, name)
+        return _recording_attribute(self._connection, name, self._client)
 
     def __setattr__(self, name, value):
         setattr(self._connection, name, value)
