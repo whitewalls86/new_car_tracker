@@ -30,16 +30,21 @@ Three things it is not asked to plan, each derived rather than listed:
 * **Another schema's**, under ``airflow/``: ``airflow.dag_run`` is created by
   ``airflow db migrate``, not by Flyway, so a Flyway-only database cannot plan
   it. `tests/integration/sql/test_airflow_dag_queries.py` owns those.
-* **Templates**, which hold a ``{placeholder}`` only their call site can fill.
-  Those are waived against G19 in ``tests/test_testing_contract.py``, which
-  asserts the ledger in both directions at Layer 0 — this module cannot, since
-  a job with no Postgres never reaches it.
+* **Templates the call site computes**, and only those. A statement holding a
+  ``{placeholder}`` is no longer skipped for holding one: ``tests/sql_bindings``
+  reads the bindings out of the module that owns it and this plans every text
+  the statement is actually executed as. What is still waived against G19 in
+  ``tests/test_testing_contract.py`` is the one statement whose placeholder is
+  filled by ``", ".join(...)`` over a per-case list, which exists only at run
+  time. That ledger is asserted in both directions at Layer 0 — this module
+  cannot, since a job with no Postgres never reaches it.
 """
 import re
 
 import psycopg2
 import pytest
 
+from tests.sql_bindings import renderings
 from tests.test_testing_contract import (
     TEST_SQL_TEMPLATE_WAIVERS,
     _relative,
@@ -88,6 +93,23 @@ def test_there_is_something_to_check():
     )
 
 
+def _plannable(path):
+    """Every text *path* reaches an engine as: itself, or each of its renderings.
+
+    A template is planned as the statements it actually becomes rather than
+    skipped. ``tests/sql_bindings`` reads the bindings out of the call site --
+    ``RECEIPT_TABLE``, the tuples the modules iterate, the ``parametrize`` rows
+    -- so ``select_h_from_table`` is planned five times, once per protected
+    table, and a rename to any one of them fails here.
+
+    Every rendering rather than the first, because they are different
+    statements: five relation names is five catalogue lookups, and planning one
+    of them proves nothing about the other four.
+    """
+    rendered = renderings(path)
+    return rendered if rendered is not None else [path.read_text(encoding="utf-8")]
+
+
 def test_every_test_statement_plans_against_the_migrated_schema(cur):
     """Every one of them, reported together rather than one failure at a time.
 
@@ -97,14 +119,17 @@ def test_every_test_statement_plans_against_the_migrated_schema(cur):
     """
     refused = []
     for path in _checkable():
-        statement = path.read_text(encoding="utf-8")
-        try:
-            cur.execute("PREPARE _fixture_probe AS " + _to_dollar_placeholders(statement))
-        except psycopg2.Error as error:
-            refused.append(f"{_relative(path)}: {str(error).strip().splitlines()[0]}")
-            cur.connection.rollback()
-        else:
-            cur.execute("DEALLOCATE _fixture_probe")
+        for statement in _plannable(path):
+            try:
+                cur.execute(
+                    "PREPARE _fixture_probe AS " + _to_dollar_placeholders(statement)
+                )
+            except psycopg2.Error as error:
+                first = str(error).strip().splitlines()[0]
+                refused.append(f"{_relative(path)}: {first}")
+                cur.connection.rollback()
+            else:
+                cur.execute("DEALLOCATE _fixture_probe")
 
     assert not refused, (
         f"{len(refused)} statement(s) under tests/sql/ no longer plan against "

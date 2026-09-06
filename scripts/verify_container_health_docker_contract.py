@@ -332,7 +332,7 @@ def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--record", action="store_true",
-        help="refresh the committed corpus from the live API",
+        help="re-record the committed corpus from the live API",
     )
     parser.add_argument("--keep", action="store_true", help="leave the fleet running")
     args = parser.parse_args(argv)

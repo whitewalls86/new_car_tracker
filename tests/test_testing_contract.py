@@ -79,6 +79,7 @@ from tests.plugins.declared_skips import (
     DECLARED_SKIPS,
     GATE,
 )
+from tests.sql_bindings import holds_a_placeholder, renderings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = "docs/TESTING.md"
@@ -1411,7 +1412,6 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
         "scripts/preflight_local_lakehouse_snapshot.py:302",
         "scripts/run_dbt_spark.py:158",
         "scripts/spike_iceberg_lakehouse.py:134",
-        "scripts/verify_container_health_docker_contract.py:335",
     )
 )
 
@@ -1544,6 +1544,7 @@ _SQL_CLAUSE = re.compile(
 # list. Found 2026-09-05 by pointing this rule at ``tests/`` for the first
 # time, which is the hostile surface Stage X predicted it would meet.
 _MERGE_INTO = re.compile(r"\s*INTO\b", re.I)
+
 
 # DDL that *materialises a query* is not the DDL ``_DDL_VERBS`` exempts.
 # ``CREATE TABLE u AS SELECT ...`` names the columns it reads, so it drifts
@@ -1857,15 +1858,25 @@ def test_every_test_sql_file_is_named_by_the_module_it_mirrors():
 # ---------------------------------------------------------------------------
 _ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
 
-# 25 statements hold a ``{placeholder}`` that only their call site can fill --
-# a relation name, or a column list built per case. ``PREPARE`` cannot plan a
-# template, so these are the one part of ``tests/sql/`` no schema check reaches.
+# One statement holds a ``{placeholder}`` no static reading can fill.
+# ``insert_ops_price_observations`` builds ``{columns}`` and ``{values}`` with
+# ``", ".join(...)`` over lists assembled per case, so the text that reaches
+# Postgres exists only at run time. That is a real limit and it is the whole of
+# this ledger.
 #
-# The repair is named rather than left open: the bindings are derivable, since
-# every one of them is a module-level constant or an element of a literal tuple
-# the module iterates (``RECEIPT_TABLE``, ``PROTECTED_TABLES``, and the two
-# ``for table in (...)`` loops). Reading those out of the call site and
-# PREPARE-ing each rendering is what drains this list.
+# **It held 25 on 2026-09-05, and 24 of those were the rule's fault rather than
+# the statements'.** The reading was ``"{" in text``, which is wrong twice
+# over. Seven were not templates: ``'{"makes": ["test"]}'::jsonb`` is a JSONB
+# literal whose braces sit inside a quoted string, beside a ``%s`` the driver
+# binds -- they plan exactly as written and were being held out of the check
+# they would have passed, which is a coverage hole wearing a known limit's
+# clothes. The other seventeen were templates, but their bindings are stated at
+# the call site in a module constant or a literal the module iterates
+# (``RECEIPT_TABLE``, ``PROTECTED_TABLES``, ``POSTGRES_SNAPSHOT_TABLES``, and
+# the ``for table in (...)`` loops). ``tests/sql_bindings.py`` reads the shape
+# from the call's AST and the values from the imported module, and
+# ``test_fixture_statements`` now PREPAREs every rendering rather than skipping
+# the file.
 #
 # Four more were here on 2026-09-05 and are not waivers, because they were
 # repaired instead: ``{claimed_at}``, ``{created_hours_ago}`` and
@@ -1876,31 +1887,7 @@ _ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
 TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
     for subject in (
-        "tests/sql/integration/conftest/insert_search_configs.sql",
-        "tests/sql/integration/ops/test_scrape/insert_search_configs.sql",
-        "tests/sql/integration/processing/conftest/insert_search_configs.sql",
-        "tests/sql/integration/processing/conftest/insert_search_configs_2.sql",
-        "tests/sql/integration/processing/test_write_srp/insert_search_configs.sql",
-        "tests/sql/integration/scripts/test_plan145_canary_commit/delete_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_canary_commit/select_all_from_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_canary_commit/select_committed_at_from_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_canary_commit/select_h_from_table.sql",
-        "tests/sql/integration/scripts/test_plan145_canary_commit/select_n_from_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_canary_commit/select_n_from_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/delete_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/delete_receipt_table_2.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/delete_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/insert_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/insert_receipt_table_2.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_all_from_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_h_from_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_manifest_sha256_from_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_n_from_receipt_table.sql",
-        "tests/sql/integration/scripts/test_plan145_recovery_writer/select_n_from_table.sql",
-        "tests/sql/integration/sql/test_ops_queries/insert_search_configs_2.sql",
-        "tests/sql/integration/sql/test_ops_queries/insert_search_configs_3.sql",
         "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
-        "tests/sql/integration/sql/test_shared_queries/delete_schema_table.sql",
     )
 )
 
@@ -1922,18 +1909,32 @@ def test_every_test_statement_that_holds_a_template_is_waived():
     check in a job that has no Postgres. This can, at Layer 0, with nothing:
     a statement that stops being a template must leave the ledger, and one that
     becomes a template must join it.
+
+    **Holding a placeholder is no longer enough to be waived, and that is the
+    repair.** The ledger seeded at 25 on the reading ``"{" in text``, which is
+    two mistakes in one. Seven of those were not templates at all -- braces
+    inside a ``::jsonb`` literal -- so they were excluded from the schema check
+    they would have passed. The remaining eighteen were templates whose
+    bindings the call site states out loud, in a module constant or a literal
+    the module iterates. What is waived now is the intersection that is
+    genuinely unplannable: a placeholder that is real, filled with something no
+    static reading can produce.
     """
     templated = {
         _relative(path)
         for path in postgres_test_statements()
-        if "{" in path.read_text(encoding="utf-8")
+        if holds_a_placeholder(path.read_text(encoding="utf-8"))
+        and renderings(path) is None
     }
     _assert_exactly(
         templated,
         TEST_SQL_TEMPLATE_WAIVERS,
-        "a tests/sql statement holding a {placeholder} cannot be PREPAREd, so "
-        "nothing checks it against the schema. Bind the value as a parameter "
-        "if it is a value; waive it against G19 if it is a relation name.",
+        "a tests/sql statement holds a {placeholder} whose bindings cannot be "
+        "read from its call site, so nothing plans it against the schema. Bind "
+        "the value as a parameter if it is a value; name the relation in a "
+        "module constant or a literal the module iterates if it is a relation, "
+        "and tests/sql_bindings.py will render and PREPARE it. Waive against "
+        "G19 only when the call site computes the text:",
     )
 
 
