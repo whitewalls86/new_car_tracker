@@ -131,7 +131,7 @@ MinIO, a dbt-built warehouse and the Airflow metadata schema all present:
 | Executions read | 9,775, from 12 per-job records |
 | Production `.sql` files | 161 |
 | **Recorded executing** | **161** |
-| Not recorded | 0, and the ledger is empty |
+| Not recorded | 0, and there is no waiver list |
 
 Three repairs stand between the local baseline and that reading, and all three
 were found by the gate rather than by a reviewer. None of them was a missing
@@ -159,5 +159,8 @@ case the instrument answers instead of a case that quietly loses a file.
 **Every production statement in this repository executes against a real engine
 in CI**, on the strongest reading available: not that a test names the file, but
 that the file's text reached a database client. `--report` is gone and the gate
-now fails a statement that executes nowhere, with `UNRECORDED` empty — so the
-first one that does is a decision someone has to write down.
+now fails a statement that executes nowhere. The ratcheting waiver ledger this
+landed with was **deleted rather than kept empty**: with the reading complete it
+described nothing, and an unused escape hatch is one the next person reaches for
+instead of writing the test. Restoring it is a `git revert` away, in a diff that
+has to argue for it.
