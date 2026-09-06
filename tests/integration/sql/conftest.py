@@ -10,6 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 DUCKDB_PATH = os.environ.get("DUCKDB_PATH")
 
 
@@ -101,9 +105,7 @@ def airflow_metadata(cur):
     close, which is how the drain queries reached production unexecuted.
     """
     cur.execute(
-        """SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'airflow'
-              AND table_name IN ('task_instance', 'dag_run', 'alembic_version')"""
+        SQL("select_table_name_from_information_schema_tables")
     )
     present = {row["table_name"] for row in cur.fetchall()}
     missing = {"task_instance", "dag_run", "alembic_version"} - present

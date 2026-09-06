@@ -11,7 +11,7 @@ three forms and they are the same contract:
 | Form | Where | What it can do |
 |---|---|---|
 | For a person | `docs/TESTING.md` | say what is right |
-| For CI | `tests/test_testing_contract.py` | fail on seven rules, mechanically |
+| For CI | `tests/test_testing_contract.py` | fail on the mechanical rules |
 | For a coding agent | this skill | the seven, plus the four nobody can mechanise |
 
 The reason there are three is written into the plan that produced them:
@@ -64,8 +64,11 @@ pytest tests/test_testing_contract.py -q
 
 Report its output as-is. Three outcomes and they mean different things:
 
-- **Passes.** Seven rules hold. That is all it means, and saying more than that
-  is the failure this skill is written to avoid.
+- **Passes.** The mechanical rules hold. That is all it means, and saying more
+  than that is the failure this skill is written to avoid. Since Plan 162
+  Stage X that set includes *no SQL literal appears under `tests/`* — which was
+  judgement rule 4 here until the repository changed underneath it — so a
+  passing run now settles a question this skill used to have to weigh.
 - **Fails on an unwaived violation.** The change introduced it, or uncovered
   it. Say which — `git stash` and re-run settles it in one step.
 - **Fails on a stale waiver.** Something was *repaired*. The waiver must be
@@ -76,7 +79,7 @@ If the test cannot run, that is a finding, not a reason to continue on
 inspection. A skill that reports "looks fine" because it could not execute the
 check has produced exactly the advisory report the contract refuses.
 
-## Phase 3 — The four rules no test can check
+## Phase 3 — The three rules no test can check
 
 This is the work. Each of these looks mechanical from a distance and is not,
 and the reason it is not is worth carrying — it is what keeps the next person
@@ -97,8 +100,9 @@ Ask, of every patch in the diff: *if the patched thing were wrong, would this
 test still pass?* If yes, the test is asserting the mock.
 
 Patching the thing that *runs* a query stays legitimate. What is forbidden is
-that being the only thing that ever happens to the statement — and rule 4 below
-is the other half of that.
+that being the only thing that ever happens to the statement. The other half of
+that used to be rule 4 here; it is mechanical now (see below), so what is left
+for judgement is the patch itself.
 
 ### 2. Whether a failure branch matters to another service
 
@@ -121,24 +125,23 @@ The specific failure to look for is a test that would pass against a stub of
 the code under test. Also: an assertion on a mock's call arguments where the
 production caller's arguments were never checked against the real signature.
 
-### 4. Whether a `SELECT` in a test file paraphrases production or seeds a fixture
+### Struck: whether a `SELECT` in a test file paraphrases or seeds
 
-**Why judgement — and this one is worth being exact about, because it reads as
-the most mechanical of the four.** Fixture seeds are SQL in test files too.
-`tests/integration/sql/test_ops_queries.py` inserts into `airflow.dag_run`
-entirely legitimately. A checker that cannot tell a seed from a paraphrase
-fails on correct code, so there is no checker.
+**This was rule 4 and it is mechanical now.** Plan 162 Stage X moved all 505
+SQL literals out of `tests/` into `tests/sql/`, and
+`test_no_test_module_holds_a_sql_statement` fails on a new one. The rule was
+judgement for an exact reason — fixture seeds are SQL in test files too, and a
+checker that cannot tell a seed from a paraphrase fails on correct code — and
+that reason stopped applying when there was no literal left for the ambiguity
+to live in. **Do not weigh this by hand.** Report what the test says.
 
-**A paraphrase of production SQL in a test file is worse than no test.** It
-passes forever; it is a copy that cannot notice the original changed. The tree
-holds the largest live example: `test_ops_queries.py` and
-`test_processing_queries.py` are named for the services whose statements they
-should execute, import nothing from either `queries.py`, and paraphrase
-instead. That is [G14](../../../docs/TESTING.md#the-gap-list).
-
-The repair, in the contract's order of preference: load the `.sql` file; or
-import the module-level constant or `(sql, params)` builder; or, last, read it
-out of the source with `ast`.
+What is still judgement, and belongs under rule 1 rather than here: *how* a
+test reaches a production statement. The order of preference is unchanged —
+load the `.sql` file; or import the module-level constant or `(sql, params)`
+builder; or, last, read it out of the source with `ast`. A test that asserts a
+*substring* of production's statement is the shape to flag: `assert "DELETE
+FROM authorized_users" in sql` passes just as well after the `WHERE` clause is
+dropped.
 
 **`ast` is a last resort and each use marks a defect elsewhere.** There is one
 in the tree, `_sensor_constant()`, and it is correct — `airflow/dags/sensors.py`
@@ -212,14 +215,16 @@ happened. Deleting it belongs in the same change.
 - **Edit any file.** It reads, runs one test, and reports.
 - **Add a waiver**, or suggest one as a way past a failing check rather than as
   a decision the user makes.
-- **Certify a judgement rule.** "No paraphrase found" is a claim this skill can
-  make; "the SQL is correct" is not.
+- **Certify a judgement rule.** "No patch of the subject under test found" is
+  a claim this skill can make; "the mocks are honest" is not.
 - **Re-implement a mechanical check** in prose because the test was
   inconvenient to run, or report "looks fine" from inspection when the test did
   not execute.
-- **Treat a passing test as a passing review.** Seven of eleven rules is what
-  it is; reporting it as coverage is the failure the contract's question 7 was
-  written about.
+- **Treat a passing test as a passing review.** The mechanical rules are what
+  they are, and three more are this skill's; reporting the first as coverage of
+  both is the failure the contract's question 7 was written about. Do not
+  restate the split as a count — `docs/TESTING.md` carries it, and the count
+  in this file was wrong for weeks before Stage X noticed.
 - **Extend the contract by inference.** Where `docs/TESTING.md` is silent, say
   it is silent. A deliberate absence reads differently from an oversight, and
   guessing which one this is destroys the distinction.

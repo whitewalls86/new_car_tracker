@@ -1,0 +1,217 @@
+# Plan 162 Stage X — the execution baseline, 2026-09-05
+
+**Taken while DuckDB is still authoritative**, which is the whole reason this
+measurement has a date on it. [Plan 125 Gate
+D](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
+moves the reader, and a baseline taken after it is not a baseline — it is a
+reading of the new world with nothing to compare against.
+
+## What was measured
+
+`tests/plugins/sql_execution_recorder.py` wraps each database client at its
+entry point and records `(client, statement text, origins)` for every execution.
+`origins` are the `.sql` files the statement was composed from, carried by
+`shared.query_loader.SqlText` and preserved through `.format()` — a *set*, and
+not one path, because a statement formatted into another belongs to both files.
+The baseline below was taken while it still carried one, so its per-file numbers
+under-credit any nested statement; see "What the aggregation found" below.
+
+**Recipe.** From a checkout with a Flyway-migrated Postgres reachable:
+
+```bash
+SQL_EXECUTION_RECORD=/tmp/record.json \
+  pytest tests/integration -m integration --ignore=tests/integration/airflow -q
+```
+
+The plugin is registered in `pyproject.toml`'s `addopts`, so it loads in every
+job; it writes an artifact only when `SQL_EXECUTION_RECORD` names one.
+
+## The reading
+
+| | |
+|---|---|
+| Executions recorded | **3,020** |
+| Attributed to a `.sql` file | **2,271** |
+| By client | `psycopg2` 3,019, `duckdb` 1 |
+| Clients wrapped in this environment | `psycopg2`, `duckdb`, `asyncpg` |
+| Clients declared | `psycopg2`, `duckdb`, `asyncpg`, `pyspark` |
+| **Production `.sql` files recorded executing** | **101 of 161** |
+| Test `.sql` files recorded executing | 326 |
+
+The 749 unattributed executions are `PREPARE _fixture_probe AS …` and its
+`DEALLOCATE`, which `tests/integration/sql/test_fixture_statements.py` issues to
+schema-check the corpus. They are real executions and are correctly credited to
+no file: the text executed is not any file's text. Filtering them was rejected —
+over-filtering hides genuinely unattributed executions, which is the more
+dangerous direction.
+
+## What the number is for, and what it is not
+
+**It is not comparable to the Layer 2 census, and the gap is the point.**
+`test_every_production_sql_file_is_touched_by_a_layer_2_test` reports all 161
+files covered with `LAYER_2_WAIVERS` empty — but it credits a file when a Layer
+2 module *names its stem as a whole word*, which this plan has called the
+weakest available reading since the day it was written. Recorded execution says
+101.
+
+The 60-file difference is mostly the environment rather than the reading:
+
+| Tree | Not recorded here | Why |
+|---|---|---|
+| `archiver/` | 29 | The lake-snapshot selectors need MinIO, absent locally |
+| `dashboard/` | 24 | Need the DuckDB warehouse a dbt build produces |
+| `ops/` | 4 | |
+| `dbt_runner/` | 2 | Serving snapshots, DuckDB |
+| `processing/` | 1 | |
+
+**And that is the argument for the aggregation, made in numbers.** A statement
+may execute in any of five CI jobs, so no single job's record can be read as
+coverage — 53 of the 60 above are files that execute in a job this run was not.
+The per-job artifact and the gate job that combine them are what
+[CAR-78](https://linear.app/cartracker/issue/CAR-78) settles the job definitions
+for, and they land with or after Stage Q. Capture could not wait for that,
+because of the deadline at the top of this file; aggregation can.
+
+When it lands, replacing `_names(stem, text)` with "this file's text executed in
+this run" is a one-line change to the weakest rule in the contract.
+
+## What the recorder found on its first run
+
+**Three loaders existed for `airflow/sql/`, and two lost the file.** The
+recorder reported nine executions of `deploy_intent_gate.sql`,
+`record_gate_observation.sql` and `delete_stale_emails.sql` with no origin —
+statements executing against a real Postgres with nothing able to say which file
+the text came from.
+
+- `airflow/dags/dag_queries.py` has its own `load_query`, because the DAG tree
+  may not import `shared` — [G12](../TESTING.md#the-gap-list)'s decided
+  exemption. It returned a plain `str`; it now returns an origin-carrying one.
+- `tests/integration/sql/test_airflow_dag_queries.py` had a *third* loader, a
+  bare `read_text()`, because it deliberately does not import the DAG module
+  (Airflow's starlette pin conflicts with the services'). It may import
+  `shared` even though the DAG tree may not, so it now does.
+
+After both repairs, **every statement loaded from a file is attributed to it**:
+unattributed-but-file-backed went 9 → 0.
+
+That is the instrument earning its keep before it has been read once in anger,
+and it is the argument for keying the recorder on the client rather than on the
+fixtures that hand out connections: a fixture-keyed recorder would have reported
+these three as absent rather than as unattributed, and absence reads like
+nothing happened.
+
+## Limits, recorded rather than discovered later
+
+- **Spark's DataFrame API is invisible.** The recorder records text;
+  `df.selectExpr(...)` and the DataFrame API are not text. Already
+  [G15](../TESTING.md#the-gap-list) for the static rule, unchanged here.
+- **`pyspark` is declared and wrapped but recorded nothing**, because it is not
+  installed in this environment and `tests/integration/lakehouse` is
+  `DORMANT_SUITES`-declared until Plan 125 Gate C. The artifact reports which
+  clients were *wrapped* separately from which executed, so "no Spark here"
+  reads differently from "Spark executed nothing".
+- **The cross-engine assertion is not attempted.** "This ran on the engine
+  production uses for it" needs two live engines to design honestly and belongs
+  to Plan 125 Gate D. Building it against one live engine and one hypothetical
+  would fit the design to what exists today.
+- **dbt is captured from its own `target/run/` artifacts**, not by wrapping: it
+  is a subprocess, and it already writes every compiled statement it executed.
+  A declared second mechanism, not a hole.
+
+## What the aggregation found
+
+The baseline above is one machine's reading. The gate job
+(`scripts/check_sql_execution_coverage.py`, run downstream of every pytest job)
+is the real one, because a statement may execute in any of five jobs and 53 of
+the 60 files "missing" above execute in a job that run was not. In CI, with
+MinIO, a dbt-built warehouse and the Airflow metadata schema all present:
+
+| | |
+|---|---|
+| Executions read | 9,775, from 12 per-job records |
+| Production `.sql` files | 161 |
+| **Recorded executing** | **161** |
+| Not recorded | 0, and there is no waiver list |
+
+Three repairs stand between the local baseline and that reading, and all three
+were found by the gate rather than by a reviewer. None of them was a missing
+test: every one was the instrument mis-reporting.
+
+**The record was being thrown away.** Every pytest job wrote its slice and only
+some uploaded it; the gate cannot measure what never left the runner. Fixed by
+uploading from each of the six jobs and merging in the gate job.
+
+**Three statements executed with their origin lost**, all of them a
+`read_text()` or a composition that returned a plain `str`: the gate's
+"executed but unattributable" check names a file whose exact text reached an
+engine with nothing saying so. That section is now empty.
+
+**The last 14 were not untested — they were nested.**
+`archiver/processors/lake_snapshot_cohort.py` formats a selector's own
+statement into `wrap_candidate_query.sql` and executes the result, so a single
+origin credited the wrapper and left all fourteen selectors reading as never
+executed. The reading was wrong in the expensive direction: acting on it meant
+writing fourteen Layer 2 tests for statements that already run in CI. The fix is
+in the type rather than in the gate — `SqlText.origins` is a set, and
+`.format()` unions in the origins of any `SqlText` argument — so nesting is a
+case the instrument answers instead of a case that quietly loses a file.
+
+**Every production statement in this repository executes against a real engine
+in CI**, on the strongest reading available: not that a test names the file, but
+that the file's text reached a database client. `--report` is gone and the gate
+now fails a statement that executes nowhere. The ratcheting waiver ledger this
+landed with was **deleted rather than kept empty**: with the reading complete it
+described nothing, and an unused escape hatch is one the next person reaches for
+instead of writing the test. Restoring it is a `git revert` away, in a diff that
+has to argue for it.
+
+## Open findings, measured here and deliberately not fixed
+
+Two drift holes were found and closed during this stage — an unguarded
+`_SQL_EXEMPT_ROOTS` and a corpus that passed when empty, both under
+`production_sql_files()`, which is the denominator every coverage number here
+is a fraction of. A third was investigated and left, because it needs a
+decision rather than a patch. Recorded so the measurement is not repeated.
+
+**Six rules `docs/TESTING.md` calls mechanically asserted have no mutation
+case**, so nothing proves they can fail:
+
+| Test | Why it is awkward |
+|---|---|
+| `test_every_test_statement_plans_against_the_migrated_schema` | Integration-only. Needs live Postgres, which `verify_testing_contract_mutations.py` (unit tests) structurally cannot run |
+| `test_there_is_something_to_check` | Its own corpus floor |
+| `test_every_text_read_and_write_states_its_encoding` | — |
+| `test_the_encoding_rule_sees_the_shape_ruff_cannot` | Second-clause guard |
+| `test_no_route_is_hidden_from_the_schema_this_rule_reads` | Second-clause guard |
+| `test_the_assertionless_rule_sees_a_test_that_only_executes` | Second-clause guard |
+
+Four of the six are *second-clause* guards — the "is this rule blind?" checks.
+They are the self-referential ones, which is probably why they were skipped and
+is also why they are worth mutating: nothing currently proves the
+blindness-detectors are not themselves blind.
+
+**And the rules table can drift in the direction nothing checks.**
+`test_every_asserted_rule_names_a_real_test` asserts one direction only — a row
+may not name a test that does not exist — and its docstring declines the
+reverse on the stated grounds that the waiver-hygiene checks have no rule row
+and enumerating them "would need exactly the curated list this file refuses to
+keep". Measured 2026-09-06, that costs:
+
+* 41 test functions in `tests/test_testing_contract.py`, 32 named in the table
+* 4 of the 9 remainder are the waiver-hygiene checks the docstring names
+* 3 are documented in a different section
+* **2 are undocumented anywhere**: `test_no_sql_comment_contains_a_parameter_placeholder`
+  and `test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement`
+
+Also worth a look: `test_no_production_module_holds_a_sql_statement` — the rule
+that makes "all production SQL lives in a file" true — is documented under the
+heading **"Specified here, not yet asserted"**, struck through and annotated as
+mechanised. Not wrong, but a live rule filed under "not yet asserted" reads as
+false at a glance.
+
+**A possible way past the curated-list objection**, not built: require every
+test in the file to either appear in the table *or* carry a local
+`# no rule row: <reason>` marker. A central list drifts because it lives apart
+from what it describes; a marker sits beside the test it exempts, so adding a
+test with neither fails and no second list is maintained. Today that is four
+markers, two missing rows, and a decision about the middle three.

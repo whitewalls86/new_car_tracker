@@ -24,6 +24,9 @@ from shared.queries import (
     SELECT_DEPLOY_INTENT_PAUSE,
     SELECT_POSTGRES_SNAPSHOT_TABLE,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -109,7 +112,7 @@ class TestDeployIntentPause:
             ("none", True, False),
         ):
             cur.execute(
-                "UPDATE deploy_intent SET intent = %s, pause_long_jobs = %s WHERE id = 1",
+                SQL("update_deploy_intent_intent"),
                 (intent, pause),
             )
             cur.execute(SELECT_DEPLOY_INTENT_PAUSE)
@@ -176,7 +179,7 @@ class TestPostgresSnapshotTableQueries:
         seeder would carry all the way to a jsonb cast failure. The coalesce in
         the statement is what makes an empty production table a zero-row export."""
         with db_conn.cursor() as cursor:
-            cursor.execute(f"DELETE FROM {schema}.{table}")
+            cursor.execute(SQL("delete_schema_table").format(schema=schema, table=table))
             assert json.loads(dump_table(cursor, schema, table)) == []
 
     def test_replace_removes_the_rows_that_were_there_before(self, db_conn):
@@ -184,12 +187,12 @@ class TestPostgresSnapshotTableQueries:
         is what stops a seed from leaving migration rows and snapshot rows in
         the same table."""
         with db_conn.cursor() as cursor:
-            cursor.execute("SELECT count(*) FROM public.search_configs")
+            cursor.execute(SQL("select_count_from_public_search_configs"))
             assert cursor.fetchone()[0] > 0, "V001 should have seeded search_configs"
 
             load_table(cursor, "public", "search_configs", "[]")
 
-            cursor.execute("SELECT count(*) FROM public.search_configs")
+            cursor.execute(SQL("select_count_from_public_search_configs"))
             assert cursor.fetchone()[0] == 0
 
     def test_a_jsonb_column_survives_the_round_trip_as_json(self, db_conn):
@@ -213,7 +216,7 @@ class TestPostgresSnapshotTableQueries:
                 }]),
             )
             cursor.execute(
-                "SELECT params->>'zip', params->'makes'->>0 FROM public.search_configs"
+                SQL("select_params_zip_params_makes_0_from_public_search_configs")
             )
             assert cursor.fetchone() == ("60614", "toyota")
 

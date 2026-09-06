@@ -15,6 +15,10 @@ import os
 import psycopg2
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 _SALT = "test-salt"
 
@@ -57,8 +61,8 @@ def cleanup_access_data(req_emails):
     hashes = [_hash(e) for e in req_emails.values()]
     with conn.cursor() as cur:
         for h in hashes:
-            cur.execute("DELETE FROM access_requests WHERE email_hash = %s", (h,))
-            cur.execute("DELETE FROM authorized_users WHERE email_hash = %s", (h,))
+            cur.execute(SQL("delete_access_requests"), (h,))
+            cur.execute(SQL("delete_authorized_users"), (h,))
     conn.close()
 
 
@@ -80,8 +84,7 @@ def test_submit_access_request_creates_db_row(api_client, verify_cur, req_emails
     assert response.status_code == 200
 
     verify_cur.execute(
-        "SELECT status, requested_role, display_name FROM access_requests"
-        " WHERE email_hash = %s",
+        SQL("select_status_requested_role_display_name_from_access_requests"),
         (_hash(email),),
     )
     row = verify_cur.fetchone()
@@ -105,7 +108,7 @@ def test_submit_access_request_duplicate_shows_pending(api_client, verify_cur, r
     assert response.status_code == 200
 
     verify_cur.execute(
-        "SELECT COUNT(*) FROM access_requests WHERE email_hash = %s",
+        SQL("select_count_from_access_requests"),
         (_hash(email),),
     )
     assert verify_cur.fetchone()["count"] == 1
@@ -145,7 +148,7 @@ def test_submit_access_request_invalid_role_returns_400(
     assert response.status_code == 400
 
     verify_cur.execute(
-        "SELECT 1 FROM access_requests WHERE email_hash = %s",
+        SQL("select_1_from_access_requests"),
         (_hash(email),),
     )
     assert verify_cur.fetchone() is None
@@ -167,7 +170,7 @@ def test_approve_access_request_creates_authorized_user(
         follow_redirects=False,
     )
     verify_cur.execute(
-        "SELECT id FROM access_requests WHERE email_hash = %s AND status = 'pending'",
+        SQL("select_id_from_access_requests"),
         (_hash(email),),
     )
     req_id = verify_cur.fetchone()["id"]
@@ -178,7 +181,7 @@ def test_approve_access_request_creates_authorized_user(
     assert response.status_code == 303
 
     verify_cur.execute(
-        "SELECT role FROM authorized_users WHERE email_hash = %s",
+        SQL("select_role_from_authorized_users"),
         (_hash(email),),
     )
     user_row = verify_cur.fetchone()
@@ -186,7 +189,7 @@ def test_approve_access_request_creates_authorized_user(
     assert user_row["role"] == "observer"
 
     verify_cur.execute(
-        "SELECT status, resolved_at FROM access_requests WHERE id = %s",
+        SQL("select_status_resolved_at_from_access_requests"),
         (req_id,),
     )
     req_row = verify_cur.fetchone()
@@ -213,7 +216,7 @@ def test_approve_access_request_conflict_upserts(
     # Now seed the existing user so the ON CONFLICT path fires on approve.
     seed_user_committed(_hash(email), "viewer")
     verify_cur.execute(
-        "SELECT id FROM access_requests WHERE email_hash = %s AND status = 'pending'",
+        SQL("select_id_from_access_requests"),
         (_hash(email),),
     )
     req_id = verify_cur.fetchone()["id"]
@@ -224,7 +227,7 @@ def test_approve_access_request_conflict_upserts(
 
     # Role should be updated to power_user, not duplicated
     verify_cur.execute(
-        "SELECT role FROM authorized_users WHERE email_hash = %s",
+        SQL("select_role_from_authorized_users"),
         (_hash(email),),
     )
     rows = verify_cur.fetchall()
@@ -246,7 +249,7 @@ def test_deny_access_request_updates_status(api_client, verify_cur, req_emails):
         follow_redirects=False,
     )
     verify_cur.execute(
-        "SELECT id FROM access_requests WHERE email_hash = %s AND status = 'pending'",
+        SQL("select_id_from_access_requests"),
         (_hash(email),),
     )
     req_id = verify_cur.fetchone()["id"]
@@ -257,12 +260,12 @@ def test_deny_access_request_updates_status(api_client, verify_cur, req_emails):
     assert response.status_code == 303
 
     verify_cur.execute(
-        "SELECT status FROM access_requests WHERE id = %s", (req_id,)
+        SQL("select_status_from_access_requests"), (req_id,)
     )
     assert verify_cur.fetchone()["status"] == "denied"
 
     verify_cur.execute(
-        "SELECT 1 FROM authorized_users WHERE email_hash = %s", (_hash(email),)
+        SQL("select_1_from_authorized_users"), (_hash(email),)
     )
     assert verify_cur.fetchone() is None
 

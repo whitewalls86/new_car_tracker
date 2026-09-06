@@ -12,6 +12,10 @@ import uuid
 
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -37,12 +41,7 @@ def _seed_silver_observation(db_conn_factory):
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
-            """INSERT INTO staging.silver_observations
-                   (artifact_id, listing_id, source, listing_state, fetched_at, vin,
-                    price, make, model)
-               VALUES (999999, %s, 'srp', 'active', '2026-01-10 12:00:00+00',
-                       'E2EFLUSHTEST00001', 25000, 'Test-Make', 'Test-Model')
-               RETURNING id""",
+            SQL("insert_staging_silver_observations"),
             (f"e2e-flush-{uuid.uuid4().hex[:8]}",),
         )
         row_id = cur.fetchone()["id"]
@@ -52,7 +51,7 @@ def _seed_silver_observation(db_conn_factory):
     # Cleanup: delete any leftover rows (flush should have deleted, but be safe)
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM staging.silver_observations WHERE id = %s", (row_id,)
+            SQL("delete_staging_silver_observations"), (row_id,)
         )
     conn.close()
 
@@ -122,7 +121,7 @@ class TestFlushSilverE2E:
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id FROM staging.silver_observations WHERE id = %s", (row_id,)
+                SQL("select_id_from_staging_silver_observations"), (row_id,)
             )
             assert cur.fetchone() is None, "Flushed row should have been deleted"
         conn.close()

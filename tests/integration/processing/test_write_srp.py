@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 import pytest
 
 from processing.writers.srp_writer import write_srp_observations
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -49,20 +52,20 @@ def _listing(listing_id=None, vin=None, price=28000, make="Honda", model="CR-V")
 
 def _get_price_obs(vc, listing_id):
     vc.execute(
-        "SELECT * FROM ops.price_observations WHERE listing_id = %s::uuid",
+        SQL("select_all_from_ops_price_observations"),
         (listing_id,),
     )
     return vc.fetchone()
 
 
 def _get_vin_mapping(vc, vin):
-    vc.execute("SELECT * FROM ops.vin_to_listing WHERE vin = %s", (vin,))
+    vc.execute(SQL("select_all_from_ops_vin_to_listing"), (vin,))
     return vc.fetchone()
 
 
 def _count_silver(vc, artifact_id):
     vc.execute(
-        "SELECT COUNT(*) AS cnt FROM staging.silver_observations WHERE artifact_id = %s",
+        SQL("select_cnt_from_staging_silver_observations"),
         (artifact_id,),
     )
     return vc.fetchone()["cnt"]
@@ -70,8 +73,7 @@ def _count_silver(vc, artifact_id):
 
 def _count_price_obs_events(vc, listing_id):
     vc.execute(
-        "SELECT COUNT(*) AS cnt FROM staging.price_observation_events"
-        " WHERE listing_id = %s::uuid",
+        SQL("select_cnt_from_staging_price_observation_events"),
         (listing_id,),
     )
     return vc.fetchone()["cnt"]
@@ -81,22 +83,21 @@ def _cleanup(vc, listing_ids=None, vins=None, artifact_id=None):
     """Delete all rows written by write_srp_observations for the given identifiers."""
     if listing_ids:
         vc.execute(
-            "DELETE FROM ops.price_observations WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_ops_price_observations"),
             (listing_ids,),
         )
         vc.execute(
-            "DELETE FROM staging.price_observation_events"
-            " WHERE listing_id = ANY(%s::uuid[])",
+            SQL("delete_staging_price_observation_events"),
             (listing_ids,),
         )
     if vins:
-        vc.execute("DELETE FROM ops.vin_to_listing WHERE vin = ANY(%s)", (vins,))
+        vc.execute(SQL("delete_ops_vin_to_listing"), (vins,))
         vc.execute(
-            "DELETE FROM staging.vin_to_listing_events WHERE vin = ANY(%s)", (vins,),
+            SQL("delete_staging_vin_to_listing_events"), (vins,),
         )
     if artifact_id is not None:
         vc.execute(
-            "DELETE FROM staging.silver_observations WHERE artifact_id = %s",
+            SQL("delete_staging_silver_observations"),
             (artifact_id,),
         )
 
@@ -188,7 +189,7 @@ class TestWriteSrpSilverWrite:
         write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
         vc.execute(
-            "SELECT source FROM staging.silver_observations WHERE artifact_id = %s",
+            SQL("select_source_from_staging_silver_observations"),
             (artifact["artifact_id"],),
         )
         row = vc.fetchone()
@@ -229,7 +230,7 @@ class TestWriteSrpEvents:
 
         write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
-        vc.execute("SELECT event_type FROM staging.vin_to_listing_events WHERE vin = %s", (vin,))
+        vc.execute(SQL("select_event_type_from_staging_vin_to_listing_events"), (vin,))
         row = vc.fetchone()
         assert row is not None
         assert row["event_type"] == "mapped"
@@ -253,8 +254,7 @@ class TestWriteSrpVinRecencyGuard:
 
         # Seed an existing mapping at T+10
         vc.execute(
-            "INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)"
-            " VALUES (%s, %s::uuid, %s, %s)",
+            SQL("insert_ops_vin_to_listing"),
             (vin, lid, t_plus_10, artifact["artifact_id"]),
         )
 
@@ -262,7 +262,7 @@ class TestWriteSrpVinRecencyGuard:
         listings = [_listing(listing_id=lid, vin=vin)]
         write_srp_observations(listings, artifact["artifact_id"], t_plus_5)
 
-        vc.execute("SELECT mapped_at FROM ops.vin_to_listing WHERE vin = %s", (vin,))
+        vc.execute(SQL("select_mapped_at_from_ops_vin_to_listing"), (vin,))
         row = vc.fetchone()
         assert row["mapped_at"] == t_plus_10, "Older SRP should not downgrade vin_to_listing"
 
@@ -284,8 +284,7 @@ class TestWriteSrpVinFallback:
 
         # Pre-seed a vin_to_listing mapping
         vc.execute(
-            "INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)"
-            " VALUES (%s, %s::uuid, now(), %s)",
+            SQL("insert_ops_vin_to_listing_2"),
             (vin, lid, artifact["artifact_id"]),
         )
 
@@ -313,9 +312,7 @@ class TestWriteSrpVinCollision:
 
         # Seed the stale price_observation under the old listing
         vc.execute(
-            "INSERT INTO ops.price_observations"
-            " (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)"
-            " VALUES (%s::uuid, %s, 25000, 'Honda', 'CR-V', now(), %s)",
+            SQL("insert_ops_price_observations"),
             (old_lid, vin, artifact["artifact_id"]),
         )
 
@@ -324,7 +321,7 @@ class TestWriteSrpVinCollision:
 
         # Old row removed
         vc.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (old_lid,),
         )
         assert vc.fetchone()["cnt"] == 0, "Old price_observation should be deleted on relisting"
@@ -346,11 +343,7 @@ class TestWriteSrpTrackedModels:
         """
         key = f"test-srp-tm-{uuid.uuid4().hex[:8]}"
         vc.execute(
-            """
-            INSERT INTO search_configs
-                (search_key, enabled, params, rotation_order, created_at, updated_at)
-            VALUES (%s, true, '{}'::jsonb, 99, now(), now())
-            """,
+            SQL("insert_search_configs"),
             (key,),
         )
         artifact = seed_artifact_c(artifact_type="results_page", search_key=key)
@@ -360,7 +353,7 @@ class TestWriteSrpTrackedModels:
         write_srp_observations(listings, artifact["artifact_id"], _NOW, search_key=key)
 
         vc.execute(
-            "SELECT make, model FROM ops.tracked_models WHERE search_key = %s",
+            SQL("select_make_model_from_ops_tracked_models"),
             (key,),
         )
         row = vc.fetchone()
@@ -369,6 +362,6 @@ class TestWriteSrpTrackedModels:
         assert row["model"] == "rav4"
 
         _cleanup(vc, [lid], artifact_id=artifact["artifact_id"])
-        vc.execute("DELETE FROM ops.tracked_models WHERE search_key = %s", (key,))
-        vc.execute("DELETE FROM staging.tracked_model_events WHERE search_key = %s", (key,))
-        vc.execute("DELETE FROM search_configs WHERE search_key = %s", (key,))
+        vc.execute(SQL("delete_ops_tracked_models"), (key,))
+        vc.execute(SQL("delete_staging_tracked_model_events"), (key,))
+        vc.execute(SQL("delete_search_configs"), (key,))

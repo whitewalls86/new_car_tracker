@@ -18,13 +18,25 @@ directions, so a waiver that no longer describes a violation fails just as
 loudly as an unwaived violation does. That is what "the list only shrinks"
 means when a test says it rather than a document.
 
-Eight rules are mechanical and are asserted here, matching the table in
-`docs/TESTING.md` under *What CI asserts*. Four more are judgement -- whether
+The mechanical rules are asserted here, matching the table in
+`docs/TESTING.md` under *What CI asserts*. **Three** are judgement -- whether
 the thing under test is the thing being mocked, whether a failure branch
-matters to another service, whether an assertion is meaningful, and whether a
-``SELECT`` in a test file paraphrases production or seeds a fixture. Those
+matters to another service, and whether an assertion is meaningful. Those
 belong to ``.claude/skills/testing-contract/``, which flags them and refuses to
 certify them. **Nothing in this file should grow to imply it checks them.**
+
+There were four until Plan 162 Stage X, and the fourth left by being
+mechanised: *whether a ``SELECT`` in a test file paraphrases production or
+seeds a fixture*. It was judgement for an exact reason -- fixture seeds are SQL
+in test files too, and a checker that cannot tell them apart fails on correct
+code -- and that reason stopped applying when no SQL literal was left under
+``tests/`` for the ambiguity to live in. See Rule 5g.
+
+This docstring used to open "Eight rules are mechanical", which was already
+false: the table it points at had eleven rows. Counts in prose drift, which is
+the whole subject of this file, so the mechanical half is no longer stated as a
+number here -- the table is the count, and
+``test_every_asserted_rule_names_a_real_test`` is what keeps it honest.
 
 One further check faces the other way. Every rule above compares the contract
 to the repository; ``test_every_asserted_rule_names_a_real_test`` compares the
@@ -67,6 +79,7 @@ from tests.plugins.declared_skips import (
     DECLARED_SKIPS,
     GATE,
 )
+from tests.sql_bindings import holds_a_placeholder, renderings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = "docs/TESTING.md"
@@ -926,6 +939,89 @@ _SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")
 _NOT_THE_REPOSITORY = (".claude/", ".venv/", ".git/", "target/", "__pycache__/")
 
 
+#: The floor under the production corpus, and the number is deliberately far
+#: below the 161 it actually holds. A floor's job is to catch a corpus that
+#: collapsed -- a broken glob, an exemption that swallowed a service -- not to
+#: be a second count that has to be edited every time a statement lands.
+_SQL_CORPUS_FLOOR = 100
+
+_EXEMPT_ROOT_ROW = re.compile(r"^\| `([^`]+)` \| ", re.MULTILINE)
+
+
+@lru_cache(maxsize=None)
+def declared_sql_exemptions() -> frozenset[str]:
+    """The roots the contract says are not production SQL, from its own table."""
+    section = _read(CONTRACT).split(
+        "**Which directories the production corpus excludes.**"
+    )[1].split("\n\n**")[0]
+    declared = frozenset(_EXEMPT_ROOT_ROW.findall(section))
+    assert declared, (
+        f"{CONTRACT}'s 'Which directories the production corpus excludes' "
+        f"table no longer parses into rows"
+    )
+    return declared
+
+
+def test_every_sql_corpus_exemption_is_declared():
+    """Both directions, and the stale one is the reason this exists.
+
+    ``production_sql_files()`` is the denominator of every coverage number in
+    this contract, and ``_SQL_EXEMPT_ROOTS`` is the only thing deciding what it
+    counts. Widening that tuple is the one edit that makes a gate read 100% by
+    counting less: adding ``dashboard/`` drops 24 files and the execution gate
+    still reports every file it counted as executing. Nothing noticed that
+    until Plan 162 Stage X, which is late for a rule the whole stage's headline
+    number rests on.
+
+    A mechanical rule cannot judge whether an exemption is *legitimate* -- that
+    is review's job. What it can do is make the edit visible: an exemption now
+    costs a row in the contract, and a row costs a diff someone reads.
+    """
+    declared = declared_sql_exemptions()
+    exempt = set(_SQL_EXEMPT_ROOTS)
+
+    assert not exempt - declared, (
+        f"these roots are exempt from production_sql_files() but not declared "
+        f"in {CONTRACT}'s 'Which directories the production corpus excludes': "
+        f"{sorted(exempt - declared)}. Every exemption shrinks the denominator "
+        f"of every coverage number here, so it owes a row saying why."
+    )
+    assert not declared - exempt, (
+        f"{CONTRACT} declares these roots excluded from the production SQL "
+        f"corpus, but _SQL_EXEMPT_ROOTS does not exempt them: "
+        f"{sorted(declared - exempt)}. The table has gone stale, which makes it "
+        f"a description of a rule nobody is running."
+    )
+
+    empty = sorted(
+        root for root in exempt
+        if not any((REPO_ROOT / root.rstrip("/")).rglob("*.sql"))
+    )
+    assert not empty, (
+        f"these roots are exempt but hold no .sql file: {empty}. An exemption "
+        f"for a directory that no longer has SQL in it is a hole standing open "
+        f"for whatever lands there next."
+    )
+
+
+def test_the_production_sql_corpus_is_not_empty():
+    """A set difference over an empty corpus is empty, and empty passes.
+
+    ``test_there_is_something_to_check`` puts exactly this guard on the *test*
+    corpus, for exactly this reason, and the production side never had one --
+    so a broken glob or an exemption that swallowed a service would have the
+    execution gate print ``0 of 0`` and exit green. The floor is low on
+    purpose: it catches a collapse, not a statement.
+    """
+    corpus = production_sql_files()
+    assert len(corpus) > _SQL_CORPUS_FLOOR, (
+        f"only {len(corpus)} production .sql files found, below the floor of "
+        f"{_SQL_CORPUS_FLOOR}. The tree moved, the glob broke, or an entry in "
+        f"_SQL_EXEMPT_ROOTS is swallowing a service -- and every coverage "
+        f"number in this contract is a fraction of this number."
+    )
+
+
 @lru_cache(maxsize=None)
 def production_sql_files() -> tuple[str, ...]:
     return tuple(
@@ -1309,14 +1405,12 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
         "scripts/audit_adaptive_refresh_features.py:174",
         "scripts/compare_gate_a_parity.py:223",
         "scripts/compare_gate_b_parity.py:595",
-        "scripts/estimate_dictionary_savings.py:165",
         "scripts/export_volatility_features_to_iceberg.py:124",
         "scripts/export_volatility_features_to_iceberg.py:134",
         "scripts/export_volatility_features_to_iceberg.py:156",
         "scripts/preflight_local_lakehouse_snapshot.py:302",
         "scripts/run_dbt_spark.py:158",
         "scripts/spike_iceberg_lakehouse.py:134",
-        "scripts/verify_container_health_docker_contract.py:335",
     )
 )
 
@@ -1382,7 +1476,6 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
         "scripts/audit_adaptive_refresh_features.py:136",
         "scripts/compare_gate_b_parity.py:510",
         "scripts/compare_gate_b_parity.py:527",
-        "scripts/estimate_dictionary_savings.py:206",
     )
 )
 
@@ -1439,12 +1532,44 @@ _SQL_CLAUSE = re.compile(
 )
 
 
+# ``MERGE`` has exactly one form in SQL -- ``MERGE INTO target USING source``
+# -- so the ``INTO`` is adjacent to the verb, not merely somewhere after it.
+# Requiring that is grammar rather than a carve-out, and it is what stops the
+# rule reading git's own vocabulary as SQL: "Merge origin/master into
+# a-branch" and "Merge pull request #371 from whitewalls86/some-branch" are
+# both a MERGE verb followed at a distance by a clause keyword, and both are
+# commit subjects in ``tests/scripts/test_commit_msg_hook.py``'s exemption
+# list. Found 2026-09-05 by pointing this rule at ``tests/`` for the first
+# time, which is the hostile surface Stage X predicted it would meet.
+_MERGE_INTO = re.compile(r"\s*INTO\b", re.I)
+
+
+# DDL that *materialises a query* is not the DDL ``_DDL_VERBS`` exempts.
+# ``CREATE TABLE u AS SELECT ...`` names the columns it reads, so it drifts
+# from a schema exactly as a bare ``SELECT`` does -- the exemption's stated
+# reason ("there is no production schema for it to drift from") does not reach
+# it. Without this, a paraphrase can be written by putting ``CREATE TABLE x AS``
+# in front of it, which is a hole in a rule whose whole claim is that it keys
+# on the statement rather than its shape.
+#
+# Measured 2026-09-05 when Stage X first pointed this rule at ``tests/``:
+# **zero** production sites and one test site, ``test_analytics_connection_
+# guard``'s DuckDB scaffold. So this costs nothing today and closes the hole
+# before something walks through it.
+_MATERIALISING = re.compile(r"\bAS\s+(?:\(\s*)?(?:WITH|SELECT)\b", re.I)
+
+
 def _is_sql_statement(text: str) -> bool:
     """Is *text* a SQL statement, judged only on its own content?"""
     match = _SQL_VERB.match(text)
-    if not match or match.group(1).upper() in _EXEMPT_VERBS:
+    verb = match.group(1).upper() if match else ""
+    if not match:
         return False
     rest = text[match.end():]
+    if verb in _EXEMPT_VERBS and not (verb in _DDL_VERBS and _MATERIALISING.search(rest)):
+        return False
+    if verb == "MERGE" and not _MERGE_INTO.match(rest):
+        return False
     return bool(rest.strip()) and bool(_SQL_CLAUSE.search(rest))
 
 
@@ -1534,8 +1659,10 @@ def test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement():
         '_count("x", "SELECT COUNT(*) FROM t")\n'                 # 7  local helper
         'def g():\n    return ("SELECT a FROM t", params)\n'      # 8  tuple return
         'CHOICES = ["DELETE FROM t WHERE id = %s"]\n'             # 9  list element
+        'cur.execute("MERGE INTO t USING s ON t.id = s.id")\n'    # 10 merge
+        'cur.execute("CREATE TABLE u AS SELECT a FROM t")\n'      # 11 DDL over a query
     )
-    assert caught == {1, 2, 4, 5, 6, 7, 8, 10, 11}, (
+    assert caught == {1, 2, 4, 5, 6, 7, 8, 10, 11, 12, 13}, (
         f"the SQL-in-Python rule no longer sees every shape: {sorted(caught)}"
     )
 
@@ -1546,6 +1673,10 @@ def test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement():
         'con.execute("INSTALL httpfs")\n'            # session setup, exempt
         'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
         'def h():\n    """Example: SELECT a FROM t."""\n    return 1\n'  # docstring
+        'SUBJECTS = ["Merge origin/master into a-branch"]\n'  # git, not SQL
+        'SUBJECTS = ["Merge pull request #371 from whitewalls86/b"]\n'  # git, not SQL
+        'raw.execute("CREATE TABLE u (a int)")\n'     # scaffolding DDL, exempt
+        'assert "CREATE TABLE public.gate_observations" in migration\n'  # migration text
     )
     assert not clean, (
         f"the SQL-in-Python rule fires on code that is already correct: {sorted(clean)}"
@@ -1589,6 +1720,710 @@ def test_no_production_module_holds_a_sql_statement():
         INLINE_SQL_WAIVERS + SQL_LITERAL_WAIVERS,
         "these production modules hold a SQL statement in Python, so it is in "
         "no .sql file and the Layer 2 census cannot count it:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5g -- no test module holds a SQL statement either.
+#
+# **This rule removes a judgement rule rather than adding a mechanical one**,
+# which is the whole shape of Plan 162 Stage X.
+#
+# ``tests/`` was exempt from the rule above, and the exemption was reasoned.
+# Plan 161 question 3 settled that telling a *paraphrase of production* from a
+# *legitimate fixture seed* is judgement, for one stated reason: fixture seeds
+# are SQL in test files too, and a checker that cannot tell them apart fails on
+# correct code. That is true, and it was load-bearing for the whole
+# judgement/mechanical split.
+#
+# **It stops applying once no SQL literal appears under ``tests/`` at all.**
+# The ambiguity has nothing left to live in: any SQL-shaped literal here is a
+# violation whichever kind it is, so the rule needs no judgement and the
+# contract's split moves 7 mechanical / 4 judgement -> 8 / 3.
+#
+# It is deliberately :func:`_is_sql_statement` -- the *same* predicate the
+# production rule uses, not a variant. A second copy of the grammar would be
+# two rules that can disagree, which is the defect this file exists to catch.
+# Pointing the one predicate at a second file set is what made it better: the
+# hostile surface here found the two holes recorded at ``_MERGE_INTO`` and
+# ``_MATERIALISING``, and both fixes apply to production too.
+#
+# Where the statements went is ``tests/sql/``, mirroring the test tree down to
+# the module -- see :mod:`tests.sql_loader`. That root is **not** in
+# :func:`production_sql_files`, so it inflates no production denominator and
+# owes no Layer 2 test. A read-back assertion is still not a production
+# statement; it is simply no longer a literal typed inside a test.
+# ---------------------------------------------------------------------------
+TEST_SQL_WAIVERS: tuple[Waiver, ...] = ()
+
+SQL_ROOT = TESTS_DIR / "sql"
+
+
+def all_test_modules() -> list[Path]:
+    """Every ``.py`` under ``tests/``, which is this rule's whole surface.
+
+    No package filter and no ``test_*`` filter: ``conftest.py`` held 17 of the
+    statements this stage moved, and a rule that skipped it would have left the
+    seeds most tests share behind.
+    """
+    return [
+        path
+        for path in sorted(TESTS_DIR.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    ]
+
+
+def test_no_test_module_holds_a_sql_statement():
+    """505 sites on 2026-09-05, and the count is not what sized the stage.
+
+    Stage T measured the same surface as *duplication* -- 96 ad-hoc ``INSERT``s
+    and 161 distinct read-back ``SELECT``s, 43 of them written more than once
+    for 145 total retypings, one of them seventeen times -- and reached for a
+    shared Python helper. A helper removes the retyping and leaves the drift:
+    one definition that still has to agree with a schema, with nothing
+    asserting that it does. A file under ``tests/sql/`` is checked against the
+    schema by ``PREPARE`` whether or not the test consuming it runs.
+
+    **What this does not claim.** It says nothing about whether a mock is
+    mocking the thing under test, or whether an assertion is meaningful. Those
+    two stay judgement, they stay in ``docs/TESTING.md``'s judgement section,
+    and the reviewer skill goes on refusing to certify them.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in all_test_modules()
+        for line in _sql_statements_in_python(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        TEST_SQL_WAIVERS,
+        "these test modules hold a SQL statement in Python. Move it to "
+        "tests/sql/ -- mirroring the module's own path -- and load it with "
+        "`SQL(\"name\")`, so that PREPARE checks it against the schema whether "
+        "or not this test runs. See tests/sql_loader.",
+    )
+
+
+def test_every_test_sql_file_is_named_by_the_module_it_mirrors():
+    """The other direction: a statement nothing loads is a statement nobody reads.
+
+    ``tests/sql/`` mirrors the test tree, so this needs no registry -- the
+    module a file belongs to *is* its path. Two ways to fail, and the second is
+    the one that bites over time: a directory whose module has been renamed or
+    deleted, and a file whose module no longer names it. Without this, deleting
+    a test leaves its statements behind to be PREPAREd forever against a schema
+    nothing reads.
+    """
+    orphaned_directories, unnamed = [], []
+    for path in sorted(SQL_ROOT.rglob("*.sql")):
+        relative = path.relative_to(SQL_ROOT)
+        parts = list(relative.parts)
+        if parts[-2] in _ENGINE_DIRECTORIES:
+            del parts[-2]
+        module = TESTS_DIR.joinpath(*parts[:-1]).with_suffix(".py")
+        if not module.is_file():
+            orphaned_directories.append(
+                f"{_relative(path)} mirrors {_relative(module)}, which does not exist"
+            )
+        elif not _names(path.stem, module.read_text(encoding="utf-8")):
+            unnamed.append(f"{_relative(path)} is named by no line of {_relative(module)}")
+    assert not orphaned_directories, (
+        "these statements mirror a test module that is gone:\n  "
+        + "\n  ".join(orphaned_directories)
+    )
+    assert not unnamed, (
+        "these statements are loaded by nothing:\n  " + "\n  ".join(unnamed)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5h -- every test statement is schema-checked, whether or not it runs.
+#
+# The engine is **derived from the path**, not declared in a table: a statement
+# sitting directly under its module's directory is Postgres's, and one under a
+# ``duckdb/`` or ``airflow/`` segment names the engine that owns it instead.
+#
+# The default is what gives the rule its failure direction, and it is the whole
+# reason there is no list. A statement for an engine nobody has thought about
+# lands in the default bucket, is handed to ``PREPARE`` against a
+# Flyway-migrated Postgres, and fails there until somebody files it. A table of
+# engines would have to be remembered; a default that fails does not.
+#
+# ``airflow/`` is a second *Postgres* schema rather than a second engine:
+# ``airflow.dag_run`` is created by ``airflow db migrate``, not by Flyway, so a
+# Flyway-only database cannot plan it. It is named here rather than waived
+# because it is a fact about where the schema comes from.
+# ---------------------------------------------------------------------------
+_ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
+
+# One statement holds a ``{placeholder}`` no static reading can fill.
+# ``insert_ops_price_observations`` builds ``{columns}`` and ``{values}`` with
+# ``", ".join(...)`` over lists assembled per case, so the text that reaches
+# Postgres exists only at run time. That is a real limit and it is the whole of
+# this ledger.
+#
+# **It held 25 on 2026-09-05, and 24 of those were the rule's fault rather than
+# the statements'.** The reading was ``"{" in text``, which is wrong twice
+# over. Seven were not templates: ``'{"makes": ["test"]}'::jsonb`` is a JSONB
+# literal whose braces sit inside a quoted string, beside a ``%s`` the driver
+# binds -- they plan exactly as written and were being held out of the check
+# they would have passed, which is a coverage hole wearing a known limit's
+# clothes. The other seventeen were templates, but their bindings are stated at
+# the call site in a module constant or a literal the module iterates
+# (``RECEIPT_TABLE``, ``PROTECTED_TABLES``, ``POSTGRES_SNAPSHOT_TABLES``, and
+# the ``for table in (...)`` loops). ``tests/sql_bindings.py`` reads the shape
+# from the call's AST and the values from the imported module, and
+# ``test_fixture_statements`` now PREPAREs every rendering rather than skipping
+# the file.
+#
+# Four more were here on 2026-09-05 and are not waivers, because they were
+# repaired instead: ``{claimed_at}``, ``{created_hours_ago}`` and
+# ``{proc_event_hours_ago}`` interpolated a *value* into a statement where the
+# driver would have bound one, which is interpolation wearing an identifier's
+# clothes. They are ``now() - (%s || ' hours')::interval`` now, and they
+# PREPARE.
+TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
+    for subject in (
+        "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
+    )
+)
+
+
+def postgres_test_statements() -> list[Path]:
+    """Every ``tests/sql/`` statement a Flyway-migrated Postgres should plan."""
+    return [
+        path
+        for path in sorted(SQL_ROOT.rglob("*.sql"))
+        if not _ENGINE_DIRECTORIES & set(path.relative_to(SQL_ROOT).parts)
+    ]
+
+
+def test_every_test_statement_that_holds_a_template_is_waived():
+    """The template ledger describes reality, in both directions.
+
+    ``PREPARE`` is run by ``tests/integration/sql/test_fixture_statements.py``,
+    which needs an engine and therefore cannot say which files it *declined* to
+    check in a job that has no Postgres. This can, at Layer 0, with nothing:
+    a statement that stops being a template must leave the ledger, and one that
+    becomes a template must join it.
+
+    **Holding a placeholder is no longer enough to be waived, and that is the
+    repair.** The ledger seeded at 25 on the reading ``"{" in text``, which is
+    two mistakes in one. Seven of those were not templates at all -- braces
+    inside a ``::jsonb`` literal -- so they were excluded from the schema check
+    they would have passed. The remaining eighteen were templates whose
+    bindings the call site states out loud, in a module constant or a literal
+    the module iterates. What is waived now is the intersection that is
+    genuinely unplannable: a placeholder that is real, filled with something no
+    static reading can produce.
+    """
+    templated = {
+        _relative(path)
+        for path in postgres_test_statements()
+        if holds_a_placeholder(path.read_text(encoding="utf-8"))
+        and renderings(path) is None
+    }
+    _assert_exactly(
+        templated,
+        TEST_SQL_TEMPLATE_WAIVERS,
+        "a tests/sql statement holds a {placeholder} whose bindings cannot be "
+        "read from its call site, so nothing plans it against the schema. Bind "
+        "the value as a parameter if it is a value; name the relation in a "
+        "module constant or a literal the module iterates if it is a relation, "
+        "and tests/sql_bindings.py will render and PREPARE it. Waive against "
+        "G19 only when the call site computes the text:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5i -- a test may not invent the shape of a relation production defines.
+#
+# **The rule is not "a test may not create a table."** A scratch table standing
+# for nothing is legitimate scaffolding -- ``create table t as select 1`` is how
+# `test_analytics_connection_guard` gets something for its guard to refuse, and
+# forbidding it would fail on correct code. What a test may not do is declare a
+# schema for a relation *production already defines*, because that is a copy,
+# and a copy drifts.
+#
+# **The name match is the signature, not a heuristic.** A test stands up
+# ``int_listing_state_fingerprints`` precisely so that the code under test finds
+# it -- `audit_adaptive_refresh_features` looks the relation up by the name in
+# its own ``TABLE_SPECS``. Renaming the fixture to dodge this rule would stop
+# the production code finding it, so the test would stop testing anything. The
+# escape that does exist is a test passing an arbitrary relation name *into* the
+# code under test; that is a weaker test to begin with, and it is recorded here
+# rather than defended against.
+#
+# **Measured 2026-09-05, and the drift had already happened.** Three fixtures
+# hand-declare stand-ins for real dbt models: `int_listing_state_fingerprints`
+# declares 5 columns against the model's 8, `int_listing_state_runs` 1 against
+# 11, `int_listing_observation_fingerprints` 1 against 10. Nothing noticed,
+# because nothing compared them.
+#
+# **Subset, not equality, and that is the whole design.** Requiring equality
+# would force an 11-column fixture where the test needs one column, which is
+# ceremony. Subset catches the two failures that matter -- a renamed column and
+# a dropped one both remove it from the model's declaration -- and lets a narrow
+# fixture stay narrow. An *added* column does not fire, correctly: it cannot
+# break a fixture that never mentioned it.
+#
+# **What this does not catch is a retype**, and it cannot: ``schema.yml``
+# carries column names and no ``data_type`` -- 0 of 187 on 2026-09-05. The
+# fixture says ``run_duration_hours INTEGER`` and nothing in the repository
+# declares what the model's ``datediff_hours()`` actually returns. Stated in
+# ``docs/TESTING.md`` as a limit rather than counted as coverage; CAR-90 -> the
+# Stage S contract work closes it.
+# ---------------------------------------------------------------------------
+_CREATE_TABLE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP\w*\s+|UNLOGGED\s+)*TABLE\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w.\"]*)\s*\(",
+    re.I,
+)
+_NOT_A_COLUMN = frozenset(
+    {"primary", "foreign", "unique", "check", "constraint", "exclude", "like"}
+)
+
+
+@lru_cache(maxsize=None)
+def dbt_model_columns() -> dict[str, frozenset[str]]:
+    """``{model name: declared columns}``, read from dbt's own schema files.
+
+    dbt's ``schema.yml`` is the only place in the repository that declares what
+    a model's columns are without executing it, which is why it is the
+    authority here rather than the model's final ``SELECT``. It is an
+    incomplete authority -- 17 of 23 models document every column and 6 do not
+    -- and that is handled by the rule below failing rather than by this
+    function guessing: a fixture naming an undocumented column is told to
+    document it.
+    """
+    columns: dict[str, frozenset[str]] = {}
+    for path in sorted((REPO_ROOT / "dbt" / "models").rglob("*.yml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for model in document.get("models") or ():
+            columns[model["name"]] = frozenset(
+                column["name"] for column in model.get("columns") or ()
+            )
+    assert columns, "no dbt models parsed out of dbt/models/**/*.yml"
+    return columns
+
+
+@lru_cache(maxsize=None)
+def production_relations() -> frozenset[str]:
+    """Every relation production defines: dbt's models and Flyway's tables."""
+    models = {path.stem for path in (REPO_ROOT / "dbt" / "models").rglob("*.sql")}
+    flyway = {
+        _bare_relation(match)
+        for path in (REPO_ROOT / "db" / "migrations").glob("*.sql")
+        for match in _CREATE_TABLE.findall(path.read_text(encoding="utf-8"))
+    }
+    return frozenset(models | flyway)
+
+
+def _bare_relation(name: str) -> str:
+    """``ops.artifacts_queue`` -> ``artifacts_queue``. Fixtures are unqualified."""
+    return name.replace('"', "").rsplit(".", 1)[-1]
+
+
+def _declared_columns(text: str, start: int) -> list[str]:
+    """The column names in the parenthesised definition beginning at *start*."""
+    depth, body, index = 0, [], start
+    while index < len(text):
+        character = text[index]
+        if character == "(":
+            depth += 1
+            if depth == 1:
+                index += 1
+                continue
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        body.append(character)
+        index += 1
+    items, depth, current = [], 0, ""
+    for character in "".join(body):
+        if character in "([":
+            depth += 1
+        elif character in ")]":
+            depth -= 1
+        if character == "," and depth == 0:
+            items.append(current)
+            current = ""
+        else:
+            current += character
+    items.append(current)
+    names = []
+    for item in items:
+        first = item.strip().split()
+        if first and first[0].lower() not in _NOT_A_COLUMN:
+            names.append(first[0].strip('"').lower())
+    return names
+
+
+def _fixture_relations() -> list[tuple[str, str, list[str]]]:
+    """``(where, relation, columns)`` for every table a test defines itself."""
+    found = []
+    for path in all_test_modules():
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        docstrings = _docstring_ids(tree)
+        for node in ast.walk(tree):
+            if id(node) in docstrings:
+                continue
+            text = _statement_text(node)
+            if text is None:
+                continue
+            match = _CREATE_TABLE.search(text)
+            if match:
+                found.append((f"{_relative(path)}:{node.lineno}",
+                              _bare_relation(match.group(1)),
+                              _declared_columns(text, match.end() - 1)))
+    for path in sorted(SQL_ROOT.rglob("*.sql")):
+        text = path.read_text(encoding="utf-8")
+        match = _CREATE_TABLE.search(text)
+        if match:
+            found.append((_relative(path), _bare_relation(match.group(1)),
+                          _declared_columns(text, match.end() - 1)))
+    return found
+
+
+def test_no_test_invents_the_shape_of_a_relation_production_defines():
+    """A fixture may borrow production's relation name only on its own terms.
+
+    Two ways to fail. A relation production defines but nothing declares the
+    columns of -- every Flyway table today -- cannot be checked at all, so
+    standing one up in a test is refused outright rather than passed silently.
+    And a dbt model's fixture may name only columns that model declares, so a
+    rename or a drop in the model takes the fixture's column with it.
+    """
+    unknown_shape, undeclared = [], []
+    for where, relation, columns in _fixture_relations():
+        if relation not in production_relations():
+            continue
+        declared = dbt_model_columns().get(relation)
+        if declared is None:
+            unknown_shape.append(f"{where} declares a shape for `{relation}`")
+            continue
+        missing = sorted(set(columns) - {name.lower() for name in declared})
+        if missing:
+            undeclared.append(f"{where} `{relation}`: {', '.join(missing)}")
+    assert not unknown_shape, (
+        "these tests declare a schema for a relation production defines, and "
+        "nothing declares that relation's columns for them to be checked "
+        "against -- Flyway owns it, so build the fixture by applying the "
+        "migration rather than by retyping it:\n  " + "\n  ".join(unknown_shape)
+    )
+    assert not undeclared, (
+        "these fixtures name columns the model does not declare. Either the "
+        "model renamed or dropped them -- in which case the fixture is stale "
+        "and so is whatever reads it -- or the model's schema.yml is one of "
+        "the 6 that documents only some of its columns, in which case document "
+        "these:\n  " + "\n  ".join(undeclared)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5j -- schema.yml is the model's shape, and dbt is what enforces it.
+#
+# The rule above can only be as good as the declaration it reads, and that
+# declaration is documentation today: nothing makes a model's `schema.yml`
+# agree with the model. `int_latest_observation.sql` says so in its own prose --
+# *"a column added to stg_observations must be added here too, or it silently
+# stops appearing downstream. Nothing currently catches that drift
+# automatically ... this model's schema file documents only vin17/source/make,
+# not the full column list, so it is not a backstop."*
+#
+# `contract: {enforced: true}` is what turns it into a backstop: dbt fails the
+# build when a model's output stops matching its declared columns and types.
+# **0 of 23 models declare one**, so this rule is seeded fully waived and
+# ratchets down as CAR-79 lands them. A ledger is the right shape for that and
+# a ticket is not -- a ticket does not fail.
+#
+# The portability objection is already retired by measurement:
+# `docs/reference/plan_125_portability_audit.md` verified that `varchar` is a
+# hard Spark parse error and `string` is DuckDB's alias and Spark's native
+# name, "verified on both". So a declared type can be spelled once for both
+# engines, and Plan 125's migration is not a reason to leave this undeclared.
+# ---------------------------------------------------------------------------
+DBT_CONTRACT_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G20", owner=162, since=date(2026, 9, 5))
+    for subject in (
+        "dbt/models/intermediate/int_active_make_models.sql",
+        "dbt/models/intermediate/int_benchmarks.sql",
+        "dbt/models/intermediate/int_latest_observation.sql",
+        "dbt/models/intermediate/int_listing_observation_fingerprints.sql",
+        "dbt/models/intermediate/int_listing_observation_runs.sql",
+        "dbt/models/intermediate/int_listing_state_fingerprints.sql",
+        "dbt/models/intermediate/int_listing_state_runs.sql",
+        "dbt/models/intermediate/int_listing_volatility_features.sql",
+        "dbt/models/intermediate/int_price_history.sql",
+        "dbt/models/marts/mart_block_rate.sql",
+        "dbt/models/marts/mart_cooldown_cohorts.sql",
+        "dbt/models/marts/mart_cooldown_event_funnel.sql",
+        "dbt/models/marts/mart_deal_scores.sql",
+        "dbt/models/marts/mart_detail_batch_outcomes.sql",
+        "dbt/models/marts/mart_inventory_coverage.sql",
+        "dbt/models/marts/mart_price_freshness_trend.sql",
+        "dbt/models/marts/mart_scrape_volume.sql",
+        "dbt/models/marts/mart_vehicle_snapshot.sql",
+        "dbt/models/staging/stg_blocked_cooldown_events.sql",
+        "dbt/models/staging/stg_dealers.sql",
+        "dbt/models/staging/stg_observations.sql",
+        "dbt/models/staging/stg_price_events.sql",
+        "dbt/models/staging/stg_search_configs.sql",
+    )
+)
+
+
+def _declares_an_enforced_contract(name: str, path: Path) -> bool:
+    """dbt accepts the contract in the model's own config or in its schema file."""
+    if re.search(r"contract\s*=\s*\{\s*['\"]enforced['\"]\s*:\s*[Tt]rue",
+                 path.read_text(encoding="utf-8")):
+        return True
+    for schema in sorted(path.parent.glob("*.yml")):
+        document = yaml.safe_load(schema.read_text(encoding="utf-8")) or {}
+        for model in document.get("models") or ():
+            if model["name"] != name:
+                continue
+            contract = (model.get("config") or {}).get("contract") or {}
+            if contract.get("enforced") is True:
+                return True
+    return False
+
+
+def test_every_dbt_model_declares_an_enforced_contract():
+    """23 waivers on 2026-09-05, and the number is the point.
+
+    The fixture rule above trusts `schema.yml`. Nothing yet makes `schema.yml`
+    true. Until a model carries an enforced contract, its declaration is a
+    comment that a checker happens to read -- so this is seeded fully waived,
+    and every waiver deleted is one model whose shape dbt will now defend.
+    """
+    unenforced = {
+        _relative(path)
+        for path in sorted((REPO_ROOT / "dbt" / "models").rglob("*.sql"))
+        if not _declares_an_enforced_contract(path.stem, path)
+    }
+    _assert_exactly(
+        unenforced,
+        DBT_CONTRACT_WAIVERS,
+        "these dbt models do not declare `contract: {enforced: true}`, so "
+        "nothing fails when the model's output stops matching its schema.yml "
+        "and every rule reading that file is trusting documentation:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5k -- the recorder wraps every client production reaches an engine
+# through, and the client set is derived rather than kept.
+#
+# **This is the rule the recorder's first design would have failed.** Keying
+# capture to the fixtures that hand out connections sees ``psycopg2`` and
+# ``duckdb`` and misses ``asyncpg`` and ``pyspark``; it would have shipped
+# recording nothing for ``scraper/sql/`` and gone on recording nothing when
+# Spark lands. The fix is not a longer list of clients -- that is
+# ``_SQL_CALL_NAMES`` with a different noun. It is to derive the *imports* and
+# make anything unclassified fail.
+#
+# So the surface is every third-party top-level import across production
+# Python, and the contract classifies each one as reaching an engine or not.
+# **A new engine is a new import**, and a new import fails here until somebody
+# decides which it is. That is the property a maintained client list cannot
+# have, and it is why this reads imports rather than clients.
+# ---------------------------------------------------------------------------
+_CLIENT_ROW = re.compile(r"^\| ((?:`\w+`(?:, )?)+) \| (\*\*yes\*\*|no) \|", re.M)
+
+
+@lru_cache(maxsize=None)
+def classified_imports() -> dict[str, bool]:
+    """``{import name: reaches an engine}``, from the contract's own table."""
+    section = _read(CONTRACT).split("### How production reaches an engine")[1]
+    section = section.split("### Mocking")[0]
+    classified: dict[str, bool] = {}
+    for names, verdict in _CLIENT_ROW.findall(section):
+        for name in re.findall(r"`(\w+)`", names):
+            classified[name] = verdict == "**yes**"
+    assert classified, (
+        f"{CONTRACT}'s 'How production reaches an engine' table no longer "
+        f"parses into rows"
+    )
+    return classified
+
+
+@lru_cache(maxsize=None)
+def production_imports() -> frozenset[str]:
+    """Every third-party top-level import across production Python.
+
+    The standard library and this repository's own packages are dropped
+    because neither can be a database client somebody forgot to wrap. The
+    local set includes the bare module names the dashboard and the DAG tree
+    import flat -- ``db``, ``queries``, ``sensors`` and their kin -- which are
+    this repository's modules reached through the dual import identity
+    ``docs/TESTING.md`` records as G18, not third-party packages.
+    """
+    local = set(service_packages()) | {
+        "tests", "scripts", "airflow", "dbt", "lakehouse", "dags",
+        "db", "queries", "pages", "sensors", "dag_queries", "notifications",
+        "pools", "coordination_contract",
+    }
+    found: set[str] = set()
+    for path in production_python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [(node.module or "").split(".")[0]]
+            else:
+                continue
+            found.update(
+                name for name in names
+                if name and name not in sys.stdlib_module_names and name not in local
+            )
+    return frozenset(found)
+
+
+def production_db_clients() -> frozenset[str]:
+    """The imports the contract says production reaches an engine through."""
+    return frozenset(name for name, reaches in classified_imports().items() if reaches)
+
+
+def test_every_production_import_is_classified():
+    """Both directions, and the second one is what keeps the table honest.
+
+    An unclassified import is the failure that matters: it is how a new engine
+    arrives, and the whole recorder rests on there being no such thing. A row
+    for an import nothing imports any more is the mirror -- a table describing
+    a tree that has moved on, which is `ARCHITECTURE.md:179` in miniature.
+    """
+    classified = set(classified_imports())
+    imported = set(production_imports())
+    assert not imported - classified, (
+        "these third-party imports are not classified in "
+        f"{CONTRACT}'s 'How production reaches an engine':\n  "
+        + "\n  ".join(sorted(imported - classified))
+        + "\n\nSay whether production reaches a database engine through each. "
+        "If it does, the recorder must wrap it; if not, the row says so."
+    )
+    assert not classified - imported, (
+        f"{CONTRACT} classifies imports that no production module imports any "
+        "more, so the table describes a tree that has moved on:\n  "
+        + "\n  ".join(sorted(classified - imported))
+    )
+
+
+def test_the_recorder_instruments_every_client_production_reaches():
+    """The contract and the plugin, compared rather than assumed to agree.
+
+    Declared rather than probed at runtime on both sides: what a job happens to
+    have installed must not decide what the contract says is owed. A job
+    without Spark records nothing for Spark and reports that it did not wrap
+    it -- which reads differently from Spark executing nothing, and has to.
+    """
+    from tests.plugins.sql_execution_recorder import INSTRUMENTED_CLIENTS
+
+    declared = production_db_clients()
+    unwrapped = sorted(declared - INSTRUMENTED_CLIENTS)
+    assert not unwrapped, (
+        "the contract says production reaches an engine through these, and the "
+        "execution recorder does not wrap them, so every statement they carry "
+        f"is invisible to the record: {unwrapped}"
+    )
+    phantom = sorted(INSTRUMENTED_CLIENTS - declared)
+    assert not phantom, (
+        "the execution recorder wraps clients the contract does not list as "
+        f"reaching an engine: {phantom}. Either the table is stale or the "
+        "recorder is wrapping something it should not."
+    )
+
+
+#: The gate that reads what the recorder wrote, and the pieces of ``ci.yml``
+#: without which it measures nothing. Named here rather than in the workflow
+#: alone because that is exactly how the record was lost the first time: the
+#: upload steps existed in some jobs and not others, the gate read what
+#: happened to arrive, and no test noticed.
+RECORD_ENV = "SQL_EXECUTION_RECORD"
+RECORDER_MODULE = "tests.plugins.sql_execution_recorder"
+COVERAGE_GATE_SCRIPT = "scripts/check_sql_execution_coverage.py"
+_RECORD_ARTIFACT = "sql-execution-"
+
+
+def _sql_execution_wiring() -> tuple[set[str], set[str], dict]:
+    """``(jobs running pytest, jobs uploading a record, the gate job)``."""
+    document = yaml.safe_load(_read(WORKFLOW))
+    running: set[str] = set()
+    uploading: set[str] = set()
+    gate: dict = {}
+    for key, job in document["jobs"].items():
+        for step in job.get("steps", []) or []:
+            run = str(step.get("run", ""))
+            for line in run.splitlines():
+                match = _PYTEST_INVOCATION.search(line.strip())
+                if match and match.group("args").startswith(("tests", "-", "--")):
+                    running.add(key)
+            if COVERAGE_GATE_SCRIPT in run:
+                gate = job | {"__key__": key, "__run__": run}
+            with_ = step.get("with", {}) or {}
+            if "upload-artifact" in str(step.get("uses", "")):
+                if str(with_.get("name", "")).startswith(_RECORD_ARTIFACT):
+                    uploading.add(key)
+    return running, uploading, gate
+
+
+def test_every_job_that_runs_pytest_has_its_record_read_by_the_gate():
+    """The four pieces, because any one of them missing measures nothing.
+
+    **This is the rule the first CI run needed and did not have.** The gate
+    landed with upload steps in some jobs and not others; it then read the
+    records that happened to arrive and reported a coverage number for the
+    whole repository from a fraction of it. Nothing failed, because the only
+    statement of which jobs owe a record was the workflow file agreeing with
+    itself.
+
+    So the owing set is *derived*: a job that runs pytest produces a record, so
+    a job that runs pytest owes an upload, and the gate owes a ``needs`` on it.
+    A job added next year is covered by the derivation rather than by anyone
+    remembering this file exists -- the same reason ``RECORD_ENV`` is set at
+    workflow level and asserted there.
+
+    The last clause is the ratchet: ``--report`` prints the reading and exits
+    0, which is what the gate needed for the two landings it took to get an
+    honest number. Leaving it in place would have made the gate a decoration,
+    so putting it back now costs a diff that touches this docstring.
+    """
+    document = yaml.safe_load(_read(WORKFLOW))
+    assert RECORD_ENV in document.get("env", {}), (
+        f"{WORKFLOW} no longer sets {RECORD_ENV} at workflow level, so a job "
+        f"written after this one records nothing and its statements read as "
+        f"never executed."
+    )
+
+    running, uploading, gate = _sql_execution_wiring()
+    silent = sorted(running - uploading)
+    assert not silent, (
+        f"jobs in {WORKFLOW} that run pytest but upload no execution record: "
+        f"{silent}. Every statement they execute is invisible to "
+        f"{COVERAGE_GATE_SCRIPT}, which will report it as executing nowhere."
+    )
+
+    assert gate, f"{WORKFLOW} no longer runs {COVERAGE_GATE_SCRIPT} at all."
+    unread = sorted(uploading - set(gate.get("needs", [])))
+    assert not unread, (
+        f"{gate['__key__']} does not wait on {unread}, which upload execution "
+        f"records. Without the dependency the gate can start before they "
+        f"finish and read a different set of records on every run."
+    )
+    assert "--report" not in gate["__run__"], (
+        f"{COVERAGE_GATE_SCRIPT} is running with --report, which prints the "
+        f"reading and exits 0. It existed to seed the ledger honestly and the "
+        f"ledger is seeded; with it the gate cannot fail."
+    )
+
+    config = tomllib.loads(_read("pyproject.toml"))["tool"]["pytest"]["ini_options"]
+    assert f"-p {RECORDER_MODULE}" in config.get("addopts", ""), (
+        f"pyproject.toml no longer registers {RECORDER_MODULE} through "
+        f"addopts, so every job sets {RECORD_ENV} and none of them records."
     )
 
 
@@ -2312,9 +3147,23 @@ def test_every_asserted_rule_names_a_real_test():
         f"expected a markdown separator row, got '{separator.strip()}'"
     )
 
+    # **Every test module, not just this one.** Until Plan 162 Stage X this
+    # read only this file, which made the rules table unable to name a check
+    # living anywhere else -- and the first rule that legitimately does arrived
+    # with that stage: `PREPARE`-ing every `tests/sql/` statement needs an
+    # engine, so it belongs in a Layer 2 suite, not in this Layer 0 file. The
+    # narrow reading would have forced the choice between a row that lies about
+    # where its check is and no row at all.
+    #
+    # Widening it is derived rather than listed -- a second hardcoded filename
+    # would be the inventory this file refuses to keep -- and it costs only
+    # that a name could be satisfied by a same-named test in another module,
+    # which is a weaker guard than the original for a claim nobody makes by
+    # accident.
     defined = {
         node.name
-        for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+        for path in all_test_modules()
+        for node in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body
         if isinstance(node, ast.FunctionDef)
     }
 
@@ -2350,6 +3199,9 @@ ALL_WAIVERS = (
     + DUPLICATE_SQL_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
+    + TEST_SQL_WAIVERS
+    + TEST_SQL_TEMPLATE_WAIVERS
+    + DBT_CONTRACT_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -2452,6 +3304,9 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("duplicate SQL", DUPLICATE_SQL_WAIVERS),
         ("inline SQL", INLINE_SQL_WAIVERS),
         ("SQL literal", SQL_LITERAL_WAIVERS),
+        ("test SQL", TEST_SQL_WAIVERS),
+        ("test SQL template", TEST_SQL_TEMPLATE_WAIVERS),
+        ("dbt contract", DBT_CONTRACT_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )

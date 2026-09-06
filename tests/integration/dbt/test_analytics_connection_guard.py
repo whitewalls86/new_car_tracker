@@ -17,14 +17,18 @@ assertion.
 import duckdb
 import pytest
 
+from tests.sql_loader import queries
+
 from .real_build import ReadOnlyConnection, refuse_writes
+
+SQL = queries(__file__)
 
 
 @pytest.fixture()
 def con():
     """A throwaway in-memory warehouse, wrapped the way the real one is."""
     raw = duckdb.connect(":memory:")
-    raw.execute("create table t as select 1 as a, 'x' as b")
+    raw.execute(SQL("duckdb/create_t"))
     return ReadOnlyConnection(raw)
 
 
@@ -32,7 +36,7 @@ class TestReadsAreAllowed:
     """The guard is worthless if it also blocks the suite's real queries."""
 
     def test_a_plain_select_runs(self, con):
-        assert con.execute("select a from t").fetchall() == [(1,)]
+        assert con.execute(SQL("duckdb/select_a_from_t_2")).fetchall() == [(1,)]
 
     def test_a_cte_runs(self, con):
         """`WITH ... SELECT` is the shape most of the real queries take.
@@ -42,15 +46,15 @@ class TestReadsAreAllowed:
         keyword.
         """
         rows = con.execute(
-            "with c as (select a from t) select a from c"
+            SQL("duckdb/select_a_from_c")
         ).fetchall()
         assert rows == [(1,)]
 
     def test_parameters_are_passed_through(self, con):
-        assert con.execute("select a from t where b = ?", ["x"]).fetchall() == [(1,)]
+        assert con.execute(SQL("duckdb/select_a_from_t_3"), ["x"]).fetchall() == [(1,)]
 
     def test_fetchone_and_description_still_work(self, con):
-        result = con.execute("select a, b from t")
+        result = con.execute(SQL("duckdb/select_a_b_from_t"))
         assert result.fetchone() == (1, "x")
         assert [column[0] for column in con.description] == ["a", "b"]
 
@@ -58,37 +62,37 @@ class TestReadsAreAllowed:
 class TestWritesAreRefused:
     """Each of these would have been impossible on a read-only connection."""
 
-    @pytest.mark.parametrize("sql", [
-        "insert into t values (2, 'y')",
-        "update t set a = 9",
-        "delete from t",
-        "create table u as select 1",
-        "drop table t",
-        "alter table t rename to u",
+    @pytest.mark.parametrize("name", [
+        "insert_t",
+        "update_t",
+        "delete_t_row",
+        "create_u_as_select",
+        "drop_t",
+        "alter_t_rename",
         # A read-only connection never had an opinion about this one: it reads
         # the warehouse and writes the filesystem.
-        "copy t to '/tmp/leaked.csv'",
-        "attach ':memory:' as other",
+        "copy_t_to_file",
+        "attach_memory",
     ])
-    def test_a_mutating_statement_is_refused(self, con, sql):
+    def test_a_mutating_statement_is_refused(self, con, name):
         with pytest.raises(AssertionError, match="for reading"):
-            con.execute(sql)
+            con.execute(SQL(f"duckdb/{name}"))
 
     def test_a_write_hidden_behind_a_read_is_refused(self, con):
         """Multi-statement input is where a leading-keyword check would fail."""
         with pytest.raises(AssertionError, match="INSERT"):
-            con.execute("select a from t; insert into t values (3, 'z')")
+            con.execute(SQL("duckdb/select_a_from_t"))
 
     def test_the_refusal_names_the_statement_type(self, con):
         with pytest.raises(AssertionError, match="DELETE"):
-            con.execute("delete from t")
+            con.execute(SQL("duckdb/delete_t"))
 
     def test_nothing_was_written(self, con):
         """The refusal has to happen before execution, not after it."""
-        for sql in ("insert into t values (2, 'y')", "delete from t"):
+        for name in ("insert_t", "delete_t_row"):
             with pytest.raises(AssertionError):
-                con.execute(sql)
-        assert con.execute("select count(*) from t").fetchone() == (1,)
+                con.execute(SQL(f"duckdb/{name}"))
+        assert con.execute(SQL("duckdb/select_count_from_t")).fetchone() == (1,)
 
 
 def test_the_allowlist_denies_by_default():

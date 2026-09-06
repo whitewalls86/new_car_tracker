@@ -25,6 +25,16 @@ on:
 # `test_every_pytest_step_runs_under_the_declared_skip_gate`.
 env:
   REQUIRE_DECLARED_SKIPS: "1"
+  # Plan 162 Stage X, and workflow level for the same reason as the line above.
+  # `tests/plugins/sql_execution_recorder.py` records what text executed against
+  # which client; it writes an artifact only when this names somewhere to put
+  # it, and until this existed every job recorded faithfully and threw the
+  # record away at exit.
+  #
+  # A **directory**, not a file: `service-integration` runs pytest five times
+  # and `schema-contracts` twice, so one filename would leave each job
+  # reporting its last suite as its whole record.
+  SQL_EXECUTION_RECORD: sql-execution
 
 jobs:
 
@@ -162,6 +172,19 @@ jobs:
           # fails. Every other pytest step here already sets this.
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-docs-tests
+          path: sql-execution/
+          if-no-files-found: warn
 
   lint:
     name: Lint (ruff)
@@ -312,6 +335,19 @@ jobs:
           name: coverage-xml
           path: coverage.xml
           if-no-files-found: error
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-unit-tests
+          path: sql-execution/
+          if-no-files-found: warn
 
   docker-build:
     name: Docker build (all services)
@@ -503,6 +539,19 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-dbt-models
+          path: sql-execution/
+          if-no-files-found: warn
 
   snapshot-dbt:
     name: dbt build against a production snapshot
@@ -895,6 +944,19 @@ jobs:
           AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow.db
           AIRFLOW__CORE__LOAD_EXAMPLES: "false"
 
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-schema-contracts
+          path: sql-execution/
+          if-no-files-found: warn
+
   service-integration:
     name: Service integration tests (Postgres)
     runs-on: ubuntu-latest
@@ -1025,6 +1087,19 @@ jobs:
           DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
           POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/dbt_runner_test.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-service-integration
+          path: sql-execution/
+          if-no-files-found: warn
 
   lake-integration:
     name: Lake integration tests (MinIO)
@@ -1179,3 +1254,48 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
           LOG_PATH: /tmp/scraper_test.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-lake-integration
+          path: sql-execution/
+          if-no-files-found: warn
+
+  # Plan 162 Stage X. The half of the execution recorder no pytest job can be.
+  # A statement may execute in any of the jobs above, so no single job's record
+  # is a coverage reading; only something downstream of all of them is. This is
+  # what replaces `_names(stem, text)` -- crediting a file because a Layer 2
+  # module mentions its name -- with whether the file's text actually reached a
+  # database client.
+  sql-execution-coverage:
+    name: SQL execution coverage
+    runs-on: ubuntu-latest
+    needs: [changes, lint, docs-tests, unit-tests, dbt-models, schema-contracts, service-integration, lake-integration]
+    # The heavy gate, matching its siblings: a run that could not classify still
+    # runs this, and one that classified itself as light has no records to read.
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The gate reads `production_sql_files()` out of the contract test rather
+      # than deriving the file list a second time -- two derivations are two
+      # answers, and the one nobody runs is the one that drifts.
+      - run: pip install pytest pyyaml
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sql-execution-*
+          path: sql-execution-records
+      # `--report` is gone: it existed for exactly the two landings it took to
+      # get an honest reading, and the reading is 161 of 161 with an empty
+      # ledger. From here a statement that executes nowhere fails this job.
+      - name: Every production statement executed somewhere, or waived
+        run: python scripts/check_sql_execution_coverage.py

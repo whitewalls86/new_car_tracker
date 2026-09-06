@@ -32,7 +32,13 @@ explicit-preview-rules = true
 # Registering here rather than per step is also what makes a job nobody has
 # written yet covered by default.
 pythonpath = ["."]
-addopts = "-p tests.plugins.declared_skips"
+# The execution recorder is registered the same way and for the same reason:
+# it wraps each database client at its entry point, so it has to be installed
+# before any connection is opened -- and a job that forgot to name it would
+# record nothing while looking exactly like a job in which nothing executed.
+# Plan 162 Stage X. It writes an artifact only when SQL_EXECUTION_RECORD names
+# one, so an ordinary local run pays a wrapper and nothing else.
+addopts = "-p tests.plugins.declared_skips -p tests.plugins.sql_execution_recorder"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

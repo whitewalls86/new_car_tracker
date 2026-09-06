@@ -45,6 +45,9 @@ from archiver.queries import (
 )
 from scripts import seed_lake_snapshot_fixture as fx
 from shared.duckdb_s3 import get_duckdb_s3_connection
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = [
     pytest.mark.integration,
@@ -56,12 +59,9 @@ pytestmark = [
 
 # A candidate query standing in for a selector's, in the one position a bind
 # parameter cannot occupy. Deliberately trivial: what the wrappers do with an
-# inner query is the subject, not what the inner query selects.
-_CANDIDATE_SQL = """
-    SELECT vin, listing_id, artifact_id
-    FROM read_parquet('{path}', union_by_name=true)
-    WHERE vin IS NOT NULL
-"""
+# inner query is the subject, not what the inner query selects. It reads
+# Parquet through DuckDB, so it is filed under `duckdb/` and no Flyway-migrated
+# Postgres is asked to plan it.
 
 
 @pytest.fixture(scope="module")
@@ -78,7 +78,7 @@ def silver_path():
 
 @pytest.fixture(scope="module")
 def candidate_sql(silver_path):
-    return _CANDIDATE_SQL.format(path=silver_path)
+    return SQL("duckdb/candidate_rows").format(path=silver_path)
 
 
 class TestSelectorWrappers:

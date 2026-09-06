@@ -16,6 +16,9 @@ answering it required a comparison against outside practice that had never been
 made.
 
 **The comparison found that most of the corpus restates established practice.**
+*(Too strong, and narrowed on 2026-09-06 — see [the
+correction](#correction-2026-09-06-the-comparison-conceded-more-than-it-measured).
+The storage convention is well-trodden; the enforcement is not.)*
 Executable architecture rules are *fitness functions*, with a published book and
 libraries (ArchUnit, import-linter). A waiver list that only shrinks is a
 ratcheting baseline (`betterer`, SonarQube, mypy). SQL in files is
@@ -29,8 +32,8 @@ files rot silently and this one fails on a stale entry.
 
 | Tool | What it is | Status against this repository |
 |---|---|---|
-| [aiosql](https://nackjicholson.github.io/aiosql/) | SQL in `.sql` files, named by `-- name:` comment, loaded as Python methods. PEP 249 and asyncio drivers, PostgreSQL **and** DuckDB | Substantially `shared.query_loader` plus the `queries.py` exposure layer, as a maintained library |
-| [testcontainers-python](https://github.com/testcontainers/testcontainers-python) | Real service containers per test. v4.14.2, pytest-integrated, [PostgreSQL module](https://testcontainers.com/modules/postgresql/) | Directly addresses Layer 2's premise and [Stage Q](../plans/plan_162_testing_census_and_restructure.md#stage-q-cis-services-are-productions-in-definition-and-in-contents)'s problem statement |
+| [aiosql](https://nackjicholson.github.io/aiosql/) | SQL in `.sql` files, named by `-- name:` comment, loaded as Python methods. PEP 249 and asyncio drivers, PostgreSQL **and** DuckDB | ~~Substantially `shared.query_loader` plus the `queries.py` exposure layer, as a maintained library~~ — **overstated; see the correction below.** It is the loader half only |
+| [testcontainers-python](https://github.com/testcontainers/testcontainers-python) | Real service containers per test. v4.14.2, pytest-integrated, [PostgreSQL module](https://testcontainers.com/modules/postgresql/) | ~~Directly addresses Layer 2's premise and [Stage Q](../plans/plan_162_testing_census_and_restructure.md#stage-q-cis-services-are-productions-in-definition-and-in-contents)'s problem statement~~ — **wrong about Stage Q; see the correction below** |
 | sqlc | Generates typed code from SQL, validated against a real schema at build time | Go-first; Python support less mature. A maybe |
 | sqlfluff | A SQL linter | The honest answer to "is there a linter", which flake8 is not |
 | pgTAP | Unit tests written in SQL, run inside Postgres | Unexamined |
@@ -38,6 +41,64 @@ files rot silently and this one fails on a stale entry.
 **jOOQ, MyBatis and Yesql are other-language precedent, not options**, and are
 recorded that way rather than padding the list. aiosql documents itself as
 "YeSQL for Python", which is where that lineage lands.
+
+### Correction, 2026-09-06: the comparison conceded more than it measured
+
+**Two rows above are wrong and the headline is too strong.** They are struck
+rather than rewritten, because this document's whole subject is a question
+answered from recall instead of retrieval, and quietly correcting the answer
+would repeat that in the other direction. Stage X has since been built, which
+is what makes the gap visible: the comparison was made before the thing it was
+comparing against existed.
+
+**aiosql is the loader half and nothing above it.** Four things Stage X rests on
+have no equivalent in it:
+
+- **Provenance.** `SqlText` carries the set of files a statement was composed
+  from and preserves it through `.format()`, unioning in the origins of any
+  nested statement. A library that returns `str` cannot do this, and without it
+  the recorder attributes nothing — this is the property that turned "fourteen
+  selectors never execute" into "fourteen selectors run nested inside
+  `wrap_candidate_query.sql`".
+- **The execution record.** Merging twelve per-job artifacts across six CI jobs
+  to answer *did this file's text reach a database client in this run*. That is
+  a coverage instrument that happens to need a loader, not a loader feature.
+- **Polarity.** aiosql is opt-in convenience: it cannot report that someone
+  typed a statement inline, it simply does not load that one.
+  `test_no_production_module_holds_a_sql_statement` fails the build. A library
+  that is used and a rule that cannot be evaded are different mechanisms.
+- **The both-ways assertions.** A waiver that no longer describes a violation
+  fails; a declared execution route nothing used fails as stale.
+
+The overlap is real and shallow: file-per-statement, and a function that reads
+it. That is worth knowing and is not what this plan is about.
+
+**Testcontainers does not address Stage Q, and would make it worse.** Q's
+problem is not that CI lacks real services — it has them, and Layer 2 already
+runs against a Flyway-migrated Postgres, DuckDB and MinIO. Q's problem is that
+CI's service *definitions* have drifted from production's: four copies of
+`postgres:16` omitting Compose's `shared_buffers`, `max_connections` and
+`shm_size`, three of MinIO omitting the OIDC and Prometheus configuration, four
+hand-maintained Flyway argument lists. Testcontainers moves that definition into
+Python, making it a **fifth** transcription of what production runs. Q's answer
+is the opposite move: a `docker-compose.ci.yml` override derived from the file
+production actually uses, so there is one definition rather than five. The row
+above named the right stage for the wrong reason.
+
+**What the headline should have said.** Not *"most of the corpus restates
+established practice"* but: **the storage convention is well-trodden and the
+enforcement is not.** Fitness functions, ratcheting baselines and surrogate keys
+are all genuine prior art and that half of the original reading stands. What has
+no off-the-shelf equivalent is the combination this plan is actually made of —
+a statement that carries its own origin, a record of what executed, and rules
+that fail rather than assist. The three self-assertions on the waiver list were
+already named above as stronger than their equivalents; that observation was
+right and was too small.
+
+**The rule this document states still holds, and now cuts both ways.** *"Does
+this already exist"* is a retrieval question. So is *"and does it do what we
+need"* — a tool found by search still has to be read before its coverage is
+conceded, and this table conceded on the strength of a product page.
 
 ## The gap that made the comparison necessary
 

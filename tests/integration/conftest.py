@@ -11,6 +11,10 @@ import psycopg2
 import pytest
 from psycopg2.extras import RealDictCursor
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 # ---------------------------------------------------------------------------
 # Connection
 # ---------------------------------------------------------------------------
@@ -110,11 +114,7 @@ def seed_search_config(cur):
     """Insert a minimal search_configs row. Returns the search_key."""
     key = f"test-config-{uuid.uuid4().hex[:8]}"
     cur.execute(
-        """
-        INSERT INTO search_configs
-            (search_key, enabled, params, rotation_order, created_at, updated_at)
-        VALUES (%s, true, '{"makes": ["test"]}'::jsonb, 1, now(), now())
-        """,
+        SQL("insert_search_configs"),
         (key,),
     )
     return key
@@ -125,11 +125,7 @@ def seed_authorized_user(cur):
     """Insert a minimal authorized_users row. Returns (id, email_hash)."""
     email_hash = f"testhash_{uuid.uuid4().hex[:12]}"
     cur.execute(
-        """
-        INSERT INTO authorized_users (email_hash, role, display_name)
-        VALUES (%s, 'admin', 'Test Admin')
-        RETURNING id
-        """,
+        SQL("insert_authorized_users"),
         (email_hash,),
     )
     user_id = cur.fetchone()["id"]
@@ -141,11 +137,7 @@ def seed_access_request(cur):
     """Insert a minimal access_requests row. Returns (id, email_hash)."""
     email_hash = f"requesthash_{uuid.uuid4().hex[:12]}"
     cur.execute(
-        """
-        INSERT INTO access_requests (email_hash, requested_role, status)
-        VALUES (%s, 'viewer', 'pending')
-        RETURNING id
-        """,
+        SQL("insert_access_requests"),
         (email_hash,),
     )
     req_id = cur.fetchone()["id"]

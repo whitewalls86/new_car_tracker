@@ -10,6 +10,9 @@ import uuid
 import pytest
 
 from processing.routers.batch import _claim_batch
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -23,12 +26,7 @@ def _seed_artifact(vc, artifact_type="results_page", status="pending", search_ke
     lid = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
     vc.execute(
-        """
-        INSERT INTO ops.artifacts_queue
-            (minio_path, artifact_type, listing_id, run_id, fetched_at, status, search_key)
-        VALUES (%s, %s, %s::uuid, %s, now(), %s, %s)
-        RETURNING artifact_id
-        """,
+        SQL("insert_ops_artifacts_queue"),
         (
             f"s3://bronze/test/{uuid.uuid4().hex}.html.zst",
             artifact_type, lid, run_id, status, search_key,
@@ -39,7 +37,7 @@ def _seed_artifact(vc, artifact_type="results_page", status="pending", search_ke
 
 def _get_artifact_status(vc, artifact_id):
     vc.execute(
-        "SELECT status FROM ops.artifacts_queue WHERE artifact_id = %s",
+        SQL("select_status_from_ops_artifacts_queue"),
         (artifact_id,),
     )
     row = vc.fetchone()
@@ -48,8 +46,7 @@ def _get_artifact_status(vc, artifact_id):
 
 def _count_processing_events(vc, artifact_id):
     vc.execute(
-        "SELECT COUNT(*) AS cnt FROM staging.artifacts_queue_events"
-        " WHERE artifact_id = %s AND status = 'processing'",
+        SQL("select_cnt_from_staging_artifacts_queue_events"),
         (artifact_id,),
     )
     return vc.fetchone()["cnt"]
@@ -68,13 +65,12 @@ def _quiet_queue(vc):
     making explicit rather than inheriting from step order.
     """
     vc.execute(
-        "SELECT artifact_id, status FROM ops.artifacts_queue"
-        " WHERE status IN ('pending', 'retry')"
+        SQL("select_artifact_id_status_from_ops_artifacts_queue")
     )
     parked = [(r["artifact_id"], r["status"]) for r in vc.fetchall()]
     if parked:
         vc.execute(
-            "UPDATE ops.artifacts_queue SET status = 'skip' WHERE artifact_id = ANY(%s)",
+            SQL("update_ops_artifacts_queue_status"),
             ([artifact_id for artifact_id, _ in parked],),
         )
 
@@ -82,7 +78,7 @@ def _quiet_queue(vc):
 
     for artifact_id, status in parked:
         vc.execute(
-            "UPDATE ops.artifacts_queue SET status = %s WHERE artifact_id = %s",
+            SQL("update_ops_artifacts_queue_status_2"),
             (status, artifact_id),
         )
 
@@ -103,10 +99,10 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_ops_artifacts_queue"), (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_staging_artifacts_queue_events"), (artifact_id,)
         )
 
     def test_claims_retry_artifact(self, vc):
@@ -119,10 +115,10 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_ops_artifacts_queue"), (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_staging_artifacts_queue_events"), (artifact_id,)
         )
 
     def test_does_not_claim_complete_artifact(self, vc):
@@ -136,7 +132,7 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_ops_artifacts_queue"), (artifact_id,)
         )
 
     def test_does_not_claim_skip_artifact(self, vc):
@@ -149,7 +145,7 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_ops_artifacts_queue"), (artifact_id,)
         )
 
     def test_artifact_type_filter_claims_only_matching_type(self, vc):
@@ -167,11 +163,11 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = ANY(%s)",
+            SQL("delete_ops_artifacts_queue_2"),
             ([srp_id, detail_id],),
         )
         vc.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = ANY(%s)",
+            SQL("delete_staging_artifacts_queue_events_2"),
             ([srp_id, detail_id],),
         )
 
@@ -186,10 +182,10 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_ops_artifacts_queue"), (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_staging_artifacts_queue_events"), (artifact_id,)
         )
 
     def test_returned_rows_have_expected_keys(self, vc):
@@ -208,10 +204,10 @@ class TestClaimBatch:
 
         # Cleanup
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_ops_artifacts_queue"), (artifact_id,)
         )
         vc.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = %s", (artifact_id,)
+            SQL("delete_staging_artifacts_queue_events"), (artifact_id,)
         )
 
     def test_respects_batch_size_limit(self, vc):
@@ -225,10 +221,10 @@ class TestClaimBatch:
 
         # Cleanup all 5
         vc.execute(
-            "DELETE FROM ops.artifacts_queue WHERE artifact_id = ANY(%s)", (ids,)
+            SQL("delete_ops_artifacts_queue_2"), (ids,)
         )
         vc.execute(
-            "DELETE FROM staging.artifacts_queue_events WHERE artifact_id = ANY(%s)", (ids,)
+            SQL("delete_staging_artifacts_queue_events_2"), (ids,)
         )
 
     def test_empty_queue_returns_empty_list(self, vc):

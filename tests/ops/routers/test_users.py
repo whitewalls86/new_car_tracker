@@ -3,6 +3,12 @@
 # =============================================================================
 from datetime import datetime, timezone
 
+from ops.queries import (
+    DELETE_AUTHORIZED_USER,
+    INSERT_ACCESS_REQUEST,
+    UPDATE_USER_ROLE,
+)
+
 SALT = "test-salt"
 
 
@@ -52,7 +58,7 @@ def test_submit_access_request_ok(mock_client, mock_cursor_context, mocker):
     assert "request has been submitted" in resp.text
 
     sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
-    assert any("INSERT INTO access_requests" in sql for sql in sql_calls)
+    assert INSERT_ACCESS_REQUEST in sql_calls
 
 
 def test_submit_access_request_db_error(
@@ -122,7 +128,7 @@ def test_submit_access_request_duplicate_pending(mock_client, mock_cursor_contex
     assert resp.status_code == 200
     # No INSERT should have been issued for the duplicate
     sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
-    assert not any("INSERT INTO access_requests" in sql for sql in sql_calls)
+    assert INSERT_ACCESS_REQUEST not in sql_calls
 
 
 def test_list_users_ok(mock_client, mock_cursor_context):
@@ -165,7 +171,7 @@ def test_change_user_role_ok(mock_client, mock_cursor_context, mocker):
     _, cursor = mock_cursor_context
     cursor.execute.assert_called_once()
     sql = cursor.execute.call_args[0][0]
-    assert "UPDATE authorized_users SET role" in sql
+    assert sql == UPDATE_USER_ROLE
 
 
 def test_change_user_role_invalid(mock_client):
@@ -192,7 +198,7 @@ def test_revoke_user_ok(mock_client, mock_cursor_context, mocker):
     _, cursor = mock_cursor_context
     cursor.execute.assert_called_once()
     sql = cursor.execute.call_args[0][0]
-    assert "DELETE FROM authorized_users" in sql
+    assert sql == DELETE_AUTHORIZED_USER
 
 
 # ---------------------------------------------------------------------------
