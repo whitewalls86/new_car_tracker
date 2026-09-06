@@ -2256,6 +2256,95 @@ def test_the_recorder_instruments_every_client_production_reaches():
     )
 
 
+#: The gate that reads what the recorder wrote, and the pieces of ``ci.yml``
+#: without which it measures nothing. Named here rather than in the workflow
+#: alone because that is exactly how the record was lost the first time: the
+#: upload steps existed in some jobs and not others, the gate read what
+#: happened to arrive, and no test noticed.
+RECORD_ENV = "SQL_EXECUTION_RECORD"
+RECORDER_MODULE = "tests.plugins.sql_execution_recorder"
+COVERAGE_GATE_SCRIPT = "scripts/check_sql_execution_coverage.py"
+_RECORD_ARTIFACT = "sql-execution-"
+
+
+def _sql_execution_wiring() -> tuple[set[str], set[str], dict]:
+    """``(jobs running pytest, jobs uploading a record, the gate job)``."""
+    document = yaml.safe_load(_read(WORKFLOW))
+    running: set[str] = set()
+    uploading: set[str] = set()
+    gate: dict = {}
+    for key, job in document["jobs"].items():
+        for step in job.get("steps", []) or []:
+            run = str(step.get("run", ""))
+            for line in run.splitlines():
+                match = _PYTEST_INVOCATION.search(line.strip())
+                if match and match.group("args").startswith(("tests", "-", "--")):
+                    running.add(key)
+            if COVERAGE_GATE_SCRIPT in run:
+                gate = job | {"__key__": key, "__run__": run}
+            with_ = step.get("with", {}) or {}
+            if "upload-artifact" in str(step.get("uses", "")):
+                if str(with_.get("name", "")).startswith(_RECORD_ARTIFACT):
+                    uploading.add(key)
+    return running, uploading, gate
+
+
+def test_every_job_that_runs_pytest_has_its_record_read_by_the_gate():
+    """The four pieces, because any one of them missing measures nothing.
+
+    **This is the rule the first CI run needed and did not have.** The gate
+    landed with upload steps in some jobs and not others; it then read the
+    records that happened to arrive and reported a coverage number for the
+    whole repository from a fraction of it. Nothing failed, because the only
+    statement of which jobs owe a record was the workflow file agreeing with
+    itself.
+
+    So the owing set is *derived*: a job that runs pytest produces a record, so
+    a job that runs pytest owes an upload, and the gate owes a ``needs`` on it.
+    A job added next year is covered by the derivation rather than by anyone
+    remembering this file exists -- the same reason ``RECORD_ENV`` is set at
+    workflow level and asserted there.
+
+    The last clause is the ratchet: ``--report`` prints the reading and exits
+    0, which is what the gate needed for the two landings it took to get an
+    honest number. Leaving it in place would have made the gate a decoration,
+    so putting it back now costs a diff that touches this docstring.
+    """
+    document = yaml.safe_load(_read(WORKFLOW))
+    assert RECORD_ENV in document.get("env", {}), (
+        f"{WORKFLOW} no longer sets {RECORD_ENV} at workflow level, so a job "
+        f"written after this one records nothing and its statements read as "
+        f"never executed."
+    )
+
+    running, uploading, gate = _sql_execution_wiring()
+    silent = sorted(running - uploading)
+    assert not silent, (
+        f"jobs in {WORKFLOW} that run pytest but upload no execution record: "
+        f"{silent}. Every statement they execute is invisible to "
+        f"{COVERAGE_GATE_SCRIPT}, which will report it as executing nowhere."
+    )
+
+    assert gate, f"{WORKFLOW} no longer runs {COVERAGE_GATE_SCRIPT} at all."
+    unread = sorted(uploading - set(gate.get("needs", [])))
+    assert not unread, (
+        f"{gate['__key__']} does not wait on {unread}, which upload execution "
+        f"records. Without the dependency the gate can start before they "
+        f"finish and read a different set of records on every run."
+    )
+    assert "--report" not in gate["__run__"], (
+        f"{COVERAGE_GATE_SCRIPT} is running with --report, which prints the "
+        f"reading and exits 0. It existed to seed the ledger honestly and the "
+        f"ledger is seeded; with it the gate cannot fail."
+    )
+
+    config = tomllib.loads(_read("pyproject.toml"))["tool"]["pytest"]["ini_options"]
+    assert f"-p {RECORDER_MODULE}" in config.get("addopts", ""), (
+        f"pyproject.toml no longer registers {RECORDER_MODULE} through "
+        f"addopts, so every job sets {RECORD_ENV} and none of them records."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------

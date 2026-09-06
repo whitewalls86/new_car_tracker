@@ -485,6 +485,28 @@ MUTATIONS = [
         ["tests/plugins/sql_execution_recorder.py"],
         [],
     ),
+    (
+        "test_every_job_that_runs_pytest_has_its_record_read_by_the_gate",
+        "a job runs pytest and uploads no execution record",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "          name: sql-execution-unit-tests\n",
+            "          name: coverage-unit-tests\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_job_that_runs_pytest_has_its_record_read_by_the_gate",
+        "the coverage gate goes back to only reporting",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "run: python scripts/check_sql_execution_coverage.py",
+            "run: python scripts/check_sql_execution_coverage.py --report",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
 ]
 
 

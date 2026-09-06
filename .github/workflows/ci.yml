@@ -1277,7 +1277,7 @@ jobs:
   sql-execution-coverage:
     name: SQL execution coverage
     runs-on: ubuntu-latest
-    needs: [changes, lint, unit-tests, dbt-models, schema-contracts, service-integration, lake-integration]
+    needs: [changes, lint, docs-tests, unit-tests, dbt-models, schema-contracts, service-integration, lake-integration]
     # The heavy gate, matching its siblings: a run that could not classify still
     # runs this, and one that classified itself as light has no records to read.
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
