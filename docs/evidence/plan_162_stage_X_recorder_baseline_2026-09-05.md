@@ -164,3 +164,54 @@ landed with was **deleted rather than kept empty**: with the reading complete it
 described nothing, and an unused escape hatch is one the next person reaches for
 instead of writing the test. Restoring it is a `git revert` away, in a diff that
 has to argue for it.
+
+## Open findings, measured here and deliberately not fixed
+
+Two drift holes were found and closed during this stage — an unguarded
+`_SQL_EXEMPT_ROOTS` and a corpus that passed when empty, both under
+`production_sql_files()`, which is the denominator every coverage number here
+is a fraction of. A third was investigated and left, because it needs a
+decision rather than a patch. Recorded so the measurement is not repeated.
+
+**Six rules `docs/TESTING.md` calls mechanically asserted have no mutation
+case**, so nothing proves they can fail:
+
+| Test | Why it is awkward |
+|---|---|
+| `test_every_test_statement_plans_against_the_migrated_schema` | Integration-only. Needs live Postgres, which `verify_testing_contract_mutations.py` (unit tests) structurally cannot run |
+| `test_there_is_something_to_check` | Its own corpus floor |
+| `test_every_text_read_and_write_states_its_encoding` | — |
+| `test_the_encoding_rule_sees_the_shape_ruff_cannot` | Second-clause guard |
+| `test_no_route_is_hidden_from_the_schema_this_rule_reads` | Second-clause guard |
+| `test_the_assertionless_rule_sees_a_test_that_only_executes` | Second-clause guard |
+
+Four of the six are *second-clause* guards — the "is this rule blind?" checks.
+They are the self-referential ones, which is probably why they were skipped and
+is also why they are worth mutating: nothing currently proves the
+blindness-detectors are not themselves blind.
+
+**And the rules table can drift in the direction nothing checks.**
+`test_every_asserted_rule_names_a_real_test` asserts one direction only — a row
+may not name a test that does not exist — and its docstring declines the
+reverse on the stated grounds that the waiver-hygiene checks have no rule row
+and enumerating them "would need exactly the curated list this file refuses to
+keep". Measured 2026-09-06, that costs:
+
+* 41 test functions in `tests/test_testing_contract.py`, 32 named in the table
+* 4 of the 9 remainder are the waiver-hygiene checks the docstring names
+* 3 are documented in a different section
+* **2 are undocumented anywhere**: `test_no_sql_comment_contains_a_parameter_placeholder`
+  and `test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement`
+
+Also worth a look: `test_no_production_module_holds_a_sql_statement` — the rule
+that makes "all production SQL lives in a file" true — is documented under the
+heading **"Specified here, not yet asserted"**, struck through and annotated as
+mechanised. Not wrong, but a live rule filed under "not yet asserted" reads as
+false at a glance.
+
+**A possible way past the curated-list objection**, not built: require every
+test in the file to either appear in the table *or* carry a local
+`# no rule row: <reason>` marker. A central list drifts because it lives apart
+from what it describes; a marker sits beside the test it exempts, so adding a
+test with neither fails and no second list is maintained. Today that is four
+markers, two missing rows, and a decision about the middle three.
