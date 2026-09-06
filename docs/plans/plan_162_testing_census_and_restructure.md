@@ -366,8 +366,8 @@ moved it to the end without making it a different stage.
 | 13 | [**N**](#stage-n-the-dag-trees-sql-convention) | 9 | `airflow/dags` and the `.sql` convention | G12 | `done` | CAR-53 |
 | 14 | [**P**](#stage-p-dbt-builds-against-production-shaped-data) | 10 | dbt builds against production-shaped data | — | `done` | CAR-54 |
 | 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `done` | CAR-81 |
-| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `next` | CAR-83 |
-| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `—` | CAR-79 |
+| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `done` | CAR-83 |
+| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `next` | CAR-79 |
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `—` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
 | 20 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
@@ -2923,3 +2923,61 @@ changes, so `docs-tests` was skipped in each. The commit carrying this record
 entry is docs-only and is therefore the run that exercises it. That is why the
 plugin prints its accepted declarations rather than staying silent: for that
 job, the evidence is a green log rather than a watched failure.
+
+### Stage X — a test may not author SQL either, and what ran against which engine
+
+**Legacy:** Stage 16 · **Issue:** CAR-83 · **Closed:** 2026-09-06
+
+**Cost:** estimate 1 point, actual 2. CAR-83 recorded before the work that its
+estimate predated the recorder and was owed a revisit it never had; the
+recorder, the aggregation gate and `SqlText` were all invented here.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+**Every production statement in this repository executes against a real engine
+in CI**, on the strongest available reading — not that a test names the file,
+but that the file's text reached a database client. No waiver list: one landed
+with the gate and was deleted rather than kept empty, because an empty ledger
+and no ledger differ in exactly what the next statement that executes nowhere
+costs to repair.
+
+| | Start | End |
+|---|---|---|
+| SQL literals under `tests/` | 506 | **0** |
+| Statements under `tests/sql/` | 0 | 381 |
+| Production `.sql` files | 161 | 163 |
+| …recorded executing in CI | never measured | **163 of 163** |
+| `TEST_SQL_TEMPLATE_WAIVERS` (G19) | gap did not exist | 1 |
+| `DBT_CONTRACT_WAIVERS` (G20) | gap did not exist | 23, seeded full for Stage S |
+| `INLINE_SQL_WAIVERS` (G5) | 15 | 14 |
+| Judgement rules in the contract | 4 | **3** |
+
+**The aggregation was not in this exit and landed anyway.** The exit placed it
+"with or after Stage Q"; it is here, so Stage Q inherits less than its section
+claims — worth knowing before that stage is scoped.
+
+**Three readings below 161 were the instrument, not the repository, and the gate
+found all three** — CI discarding its own execution record, two loaders
+returning a plain `str`, and fourteen archiver selectors reading as dead while
+running nested inside `wrap_candidate_query.sql`. The last was fixed in the type
+rather than in the gate.
+
+**The full record is
+[`plan_162_stage_X_evidence.md`](../evidence/plan_162_stage_X_evidence.md)**, 9 sections:
+
+1. Where test SQL went, and the provenance decision taken at the top
+2. The aggregation this exit had deferred, and what Stage Q inherits now
+3. Three instrument defects the gate found, and two holes under the denominator
+4. A count the stage was scoped by was already wrong
+5. G19 drained 25 → 1 — seven never templates, seventeen the call site states
+6. One waiver that was prose, and why the predicate was left alone
+7. Plan 129's statements, and the obligation that forced a testability seam
+8. An authoring gap seen from outside, and the skill that answers it
+9. A failure this stage caused, and the guard that fixes it
+
+Its two companions stay as written:
+[the origin](../evidence/plan_162_stage_X_origin_2026-09-04.md), with its
+2026-09-06 correction, and [the recorder
+baseline](../evidence/plan_162_stage_X_recorder_baseline_2026-09-05.md), with
+the open contract-drift findings.
