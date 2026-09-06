@@ -75,7 +75,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from shared.query_loader import load_query
+
 LOG = logging.getLogger("dictionary_savings")
+
+#: This script's statements, loaded rather than typed. Plan 129's own scripts
+#: are production -- ``train_html_dictionary`` produces the dictionary the write
+#: path compresses against, and it imports ``collect_documents`` from here -- so
+#: the SQL owes what production SQL owes: a file, a Layer 2 test that executes
+#: it against a real engine, and a line in the execution record.
+SQL_DIR = Path(__file__).resolve().parent / "sql"
+SELECT_AVAILABLE_CAPTURE_MONTHS = load_query(SQL_DIR, "select_available_capture_months")
+SELECT_CORPUS_SAMPLE = load_query(SQL_DIR, "select_corpus_sample")
 
 # Layout as written by archiver/processors/flush_silver_observations.py and
 # flush_staging_events.py.
@@ -155,23 +166,22 @@ class Totals:
 
 # ── Sampling ──────────────────────────────────────────────────────────────────
 
-def fetch_available_months(con: Any, source_pattern: str) -> list[str]:
+def fetch_available_months(
+    con: Any, source_pattern: str, *, silver_path: str = SILVER_PATH
+) -> list[str]:
     """Distinct capture months present in the observation lake, oldest first.
 
     Reads only the hive partition columns, so this is a directory listing
     rather than a scan.
+
+    *silver_path* defaults to the MinIO glob and exists so a Layer 2 test can
+    point the same statement at local fixture Parquet -- the fixture-mode split
+    ``lake_snapshot_cohort.open_duckdb_connection`` already makes for the
+    selectors, which is what lets this statement be executed against a real
+    engine rather than only read.
     """
     rows = con.execute(
-        f"""
-        SELECT DISTINCT
-            printf('%04d-%02d', CAST(obs_year AS INTEGER), CAST(obs_month AS INTEGER))
-                AS capture_month
-        FROM read_parquet('{SILVER_PATH}', hive_partitioning=true, union_by_name=true)
-        WHERE source ILIKE ?
-          AND obs_year IS NOT NULL
-          AND obs_month IS NOT NULL
-        ORDER BY capture_month
-        """,
+        SELECT_AVAILABLE_CAPTURE_MONTHS.format(silver_path=silver_path),
         [source_pattern],
     ).fetchall()
     return [str(row[0]) for row in rows]
@@ -183,6 +193,8 @@ def fetch_corpus_sample(
     months: Sequence[str],
     sample_size: int,
     source_pattern: str = "%detail%",
+    silver_path: str = SILVER_PATH,
+    artifact_events_path: str = ARTIFACT_EVENTS_PATH,
 ) -> list[dict[str, Any]]:
     """Sample detail artifacts evenly across *months*.
 
@@ -203,65 +215,12 @@ def fetch_corpus_sample(
     per_month = max(1, math.ceil(sample_size / len(months)))
     placeholders = ", ".join("?" for _ in months)
 
-    query = f"""
-    WITH obs AS (
-        SELECT
-            artifact_id,
-            listing_id,
-            fetched_at,
-            printf('%04d-%02d', CAST(obs_year AS INTEGER), CAST(obs_month AS INTEGER))
-                AS capture_month
-        FROM read_parquet('{SILVER_PATH}', hive_partitioning=true, union_by_name=true)
-        WHERE source ILIKE ?
-          AND listing_id IS NOT NULL
-          AND artifact_id IS NOT NULL
-    ),
-
-    in_window AS (
-        SELECT * FROM obs WHERE capture_month IN ({placeholders})
-    ),
-
-    one_row_per_artifact AS (
-        SELECT
-            artifact_id,
-            any_value(listing_id) AS listing_id,
-            any_value(capture_month) AS capture_month,
-            min(fetched_at) AS fetched_at
-        FROM in_window
-        GROUP BY artifact_id
-    ),
-
-    ranked AS (
-        SELECT
-            *,
-            row_number() OVER (
-                PARTITION BY capture_month
-                ORDER BY hash(artifact_id)
-            ) AS month_rank
-        FROM one_row_per_artifact
-    ),
-
-    artifact_paths AS (
-        SELECT
-            artifact_id,
-            any_value(minio_path) AS minio_path
-        FROM read_parquet('{ARTIFACT_EVENTS_PATH}', hive_partitioning=true, union_by_name=true)
-        WHERE artifact_type = 'detail_page'
-          AND minio_path IS NOT NULL
-        GROUP BY artifact_id
+    query = SELECT_CORPUS_SAMPLE.format(
+        silver_path=silver_path,
+        artifact_events_path=artifact_events_path,
+        month_placeholders=placeholders,
+        per_month=int(per_month),
     )
-
-    SELECT
-        r.artifact_id,
-        r.listing_id,
-        r.capture_month,
-        r.fetched_at,
-        p.minio_path
-    FROM ranked r
-    JOIN artifact_paths p USING (artifact_id)
-    WHERE r.month_rank <= {int(per_month)}
-    ORDER BY r.capture_month, r.month_rank
-    """
     params = [source_pattern, *months]
     columns = [desc[0] for desc in con.execute(query, params).description]
     return [dict(zip(columns, row)) for row in con.fetchall()]

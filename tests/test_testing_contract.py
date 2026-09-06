@@ -1405,7 +1405,6 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
         "scripts/audit_adaptive_refresh_features.py:174",
         "scripts/compare_gate_a_parity.py:223",
         "scripts/compare_gate_b_parity.py:595",
-        "scripts/estimate_dictionary_savings.py:165",
         "scripts/export_volatility_features_to_iceberg.py:124",
         "scripts/export_volatility_features_to_iceberg.py:134",
         "scripts/export_volatility_features_to_iceberg.py:156",
@@ -1477,7 +1476,6 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
         "scripts/audit_adaptive_refresh_features.py:136",
         "scripts/compare_gate_b_parity.py:510",
         "scripts/compare_gate_b_parity.py:527",
-        "scripts/estimate_dictionary_savings.py:206",
     )
 )
 

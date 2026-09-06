@@ -211,6 +211,7 @@ free.
 |---|---|---|
 | `scripts/` | yes | Production. Invoked by CI, an image, a Compose file, an ops route or a harness hook — or imported by something that is |
 | `scripts/oneoff/` | **no** | Spent. The owning plan has archived and nothing binding names it. An entry here should cite that plan in its docstring, so the bucket cannot outlive its reasons |
+| `scripts/sql/` | yes | The statements `scripts/` executes, one per file, loaded through `shared.query_loader`. It holds no Python, so the answer is vacuous — and it is `yes` rather than `**no**` deliberately, because `**no**` obliges an `[tool.coverage.run] omit` entry, and omitting a directory that could later hold Python is the silent-drop this table exists to prevent. What is *not* vacuous is the SQL: these are production statements like any other, in `production_sql_files()`, owing a Layer 2 test that runs them against a real engine and a line in the execution record. A statement is not exempt for living beside a script rather than inside a service |
 
 **The safe failure direction is the point.** A new script lands in
 production-land and is measured **by default**; leaving the instrument takes a
