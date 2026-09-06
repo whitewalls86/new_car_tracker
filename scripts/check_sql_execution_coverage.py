@@ -118,6 +118,17 @@ def main() -> int:
     # The proxy records table names and encodings too; those are harmless in the
     # record and would be noise in this list.
     routes = {e["via"] for e in executions if e["origins"]}
+
+    # The corpus is this gate's denominator, and a set difference over an empty
+    # one is empty -- so a broken glob would print "0 of 0" and exit green.
+    # `test_the_production_sql_corpus_is_not_empty` carries the real floor; this
+    # is the structural half, here because this is what prints the number.
+    if not produced:
+        raise SystemExit(
+            "production_sql_files() returned nothing, so this gate would report "
+            "full coverage of an empty corpus. The tree moved, or an entry in "
+            "_SQL_EXEMPT_ROOTS is swallowing the repository."
+        )
     undeclared = sorted(routes - EXECUTION_ROUTES)
     unused = sorted(EXECUTION_ROUTES - routes)
 

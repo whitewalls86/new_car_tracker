@@ -938,6 +938,89 @@ _SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")
 _NOT_THE_REPOSITORY = (".claude/", ".venv/", ".git/", "target/", "__pycache__/")
 
 
+#: The floor under the production corpus, and the number is deliberately far
+#: below the 161 it actually holds. A floor's job is to catch a corpus that
+#: collapsed -- a broken glob, an exemption that swallowed a service -- not to
+#: be a second count that has to be edited every time a statement lands.
+_SQL_CORPUS_FLOOR = 100
+
+_EXEMPT_ROOT_ROW = re.compile(r"^\| `([^`]+)` \| ", re.MULTILINE)
+
+
+@lru_cache(maxsize=None)
+def declared_sql_exemptions() -> frozenset[str]:
+    """The roots the contract says are not production SQL, from its own table."""
+    section = _read(CONTRACT).split(
+        "**Which directories the production corpus excludes.**"
+    )[1].split("\n\n**")[0]
+    declared = frozenset(_EXEMPT_ROOT_ROW.findall(section))
+    assert declared, (
+        f"{CONTRACT}'s 'Which directories the production corpus excludes' "
+        f"table no longer parses into rows"
+    )
+    return declared
+
+
+def test_every_sql_corpus_exemption_is_declared():
+    """Both directions, and the stale one is the reason this exists.
+
+    ``production_sql_files()`` is the denominator of every coverage number in
+    this contract, and ``_SQL_EXEMPT_ROOTS`` is the only thing deciding what it
+    counts. Widening that tuple is the one edit that makes a gate read 100% by
+    counting less: adding ``dashboard/`` drops 24 files and the execution gate
+    still reports every file it counted as executing. Nothing noticed that
+    until Plan 162 Stage X, which is late for a rule the whole stage's headline
+    number rests on.
+
+    A mechanical rule cannot judge whether an exemption is *legitimate* -- that
+    is review's job. What it can do is make the edit visible: an exemption now
+    costs a row in the contract, and a row costs a diff someone reads.
+    """
+    declared = declared_sql_exemptions()
+    exempt = set(_SQL_EXEMPT_ROOTS)
+
+    assert not exempt - declared, (
+        f"these roots are exempt from production_sql_files() but not declared "
+        f"in {CONTRACT}'s 'Which directories the production corpus excludes': "
+        f"{sorted(exempt - declared)}. Every exemption shrinks the denominator "
+        f"of every coverage number here, so it owes a row saying why."
+    )
+    assert not declared - exempt, (
+        f"{CONTRACT} declares these roots excluded from the production SQL "
+        f"corpus, but _SQL_EXEMPT_ROOTS does not exempt them: "
+        f"{sorted(declared - exempt)}. The table has gone stale, which makes it "
+        f"a description of a rule nobody is running."
+    )
+
+    empty = sorted(
+        root for root in exempt
+        if not any((REPO_ROOT / root.rstrip("/")).rglob("*.sql"))
+    )
+    assert not empty, (
+        f"these roots are exempt but hold no .sql file: {empty}. An exemption "
+        f"for a directory that no longer has SQL in it is a hole standing open "
+        f"for whatever lands there next."
+    )
+
+
+def test_the_production_sql_corpus_is_not_empty():
+    """A set difference over an empty corpus is empty, and empty passes.
+
+    ``test_there_is_something_to_check`` puts exactly this guard on the *test*
+    corpus, for exactly this reason, and the production side never had one --
+    so a broken glob or an exemption that swallowed a service would have the
+    execution gate print ``0 of 0`` and exit green. The floor is low on
+    purpose: it catches a collapse, not a statement.
+    """
+    corpus = production_sql_files()
+    assert len(corpus) > _SQL_CORPUS_FLOOR, (
+        f"only {len(corpus)} production .sql files found, below the floor of "
+        f"{_SQL_CORPUS_FLOOR}. The tree moved, the glob broke, or an entry in "
+        f"_SQL_EXEMPT_ROOTS is swallowing a service -- and every coverage "
+        f"number in this contract is a fraction of this number."
+    )
+
+
 @lru_cache(maxsize=None)
 def production_sql_files() -> tuple[str, ...]:
     return tuple(

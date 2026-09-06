@@ -486,6 +486,28 @@ MUTATIONS = [
         [],
     ),
     (
+        "test_every_sql_corpus_exemption_is_declared",
+        "an exemption quietly shrinks the coverage denominator",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")',
+            '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/", "dashboard/")',
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_the_production_sql_corpus_is_not_empty",
+        "the corpus glob stops matching and every coverage number reads 0 of 0",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            "            for path in REPO_ROOT.rglob(\"*.sql\")",
+            "            for path in REPO_ROOT.rglob(\"*.sqlx\")",
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
+    (
         "test_every_job_that_runs_pytest_has_its_record_read_by_the_gate",
         "a job runs pytest and uploads no execution record",
         lambda: _edit(
