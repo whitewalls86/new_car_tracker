@@ -44,7 +44,7 @@ import re
 import psycopg2
 import pytest
 
-from tests.sql_bindings import renderings
+from tests.sql_bindings import holds_a_placeholder, renderings
 from tests.test_testing_contract import (
     TEST_SQL_TEMPLATE_WAIVERS,
     _relative,
@@ -105,9 +105,22 @@ def _plannable(path):
     Every rendering rather than the first, because they are different
     statements: five relation names is five catalogue lookups, and planning one
     of them proves nothing about the other four.
+
+    **The placeholder check comes first, and it is not an optimisation.**
+    Reading a call site means importing the module that owns it, and importing
+    a module under ``tests/integration/`` runs its package ``conftest`` --
+    ``tests/integration/ops/conftest.py`` imports the FastAPI app, whose
+    ``Form`` routes need ``python-multipart``, which this job does not install.
+    Asking for bindings a statement does not have imported the whole test tree
+    to answer a question about a statement with nothing to bind, and turned a
+    dependency absent by design into a failure of this suite. A statement with
+    no placeholder is its own rendering and needs no call site at all.
     """
+    text = path.read_text(encoding="utf-8")
+    if not holds_a_placeholder(text):
+        return [text]
     rendered = renderings(path)
-    return rendered if rendered is not None else [path.read_text(encoding="utf-8")]
+    return rendered if rendered is not None else [text]
 
 
 def test_every_test_statement_plans_against_the_migrated_schema(cur):
