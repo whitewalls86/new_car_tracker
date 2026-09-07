@@ -81,7 +81,7 @@ worth of logs *usable by a person*, it belongs here.
 - Which services are ingested — Plan 154.
 - Distributed tracing, span metrics, and the service graph — Plan 151. If
   cross-service correlation needs real trace context rather than a shared
-  identifier, that is Plan 151's Stage 2 decision and not a dashboard change.
+  identifier, that is Plan 151's Stage C decision and not a dashboard change.
 - Alert rules. Existing alerts are revalidated against new labels where they
   overlap, but new alerting design is not in scope.
 - Business-data dashboards. `mart_vehicle_snapshot` and the price lineage are
@@ -156,7 +156,7 @@ Conditional on Plan 141's formatter change landing a usable identifier.
   once Plan 141 is in.
 - **Plan 151 owns tracing.** If Stage 3 concludes that a shared log identifier
   is insufficient for real correlation, that finding is input to Plan 151's
-  Stage 2 decision and is not solved here.
+  Stage C decision and is not solved here.
 - **Plan 150 owns analytics presentation.** Business questions about listings
   and prices are answered from the marts, not from logs.
 

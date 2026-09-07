@@ -434,7 +434,7 @@ _CONTRACT_PLAN = 172
 #   exactly that transition, so a new entry means the skill was bypassed. This
 #   is the ceiling that gets tested first: all five entries are pre-172 plans
 #   still live, and more will reach closeout.
-MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 36
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 35
 MAX_THE_CHECKS_WAIVERS = 5
 
 
@@ -452,16 +452,19 @@ class SectionWaiver:
     since: date = _SECTION_MEASURED
 
 
-# 44 live plans, of which: 7 already carry '## What this plan is for'
+# 44 live plans, of which: 8 already carry '## What this plan is for'
 # (162 and 134 were backfilled landing Stage D, because the published
 # build-order window required it; 164 followed when Plan 172 archived and
 # promoted it into that window, which is also what paid the ceiling above down
 # from 39; 154 and 151 followed on the same mechanism twice more on 2026-09-04,
 # as Plan 138 archived and Plan 164 left for closeout -- each departure moved
 # the published boundary one row further down and caught the plan beneath it.
-# 173 and 174 carry the section already and needed no backfill); 1, Plan 88,
-# has no document at all and is named in NO_DOCUMENT_LIVE_PLANS instead of
-# here; the remaining 36 are waived below. 7 + 1 + 36 = 44.
+# 173 and 174 carry the section already and needed no backfill; 170 was
+# backfilled 2026-09-07, and is the first one no departure forced -- it was
+# written because the plan was being restructured for `plan-start`, not because
+# a row above it left); 1, Plan 88, has no document at all and is named in
+# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 35 are waived below.
+# 8 + 1 + 35 = 44.
 #
 # **The mechanism is worth naming, because it has now fired three times.** A
 # plan is promoted into the published window by a row *above* it leaving, which
@@ -482,7 +485,7 @@ WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
     SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
     SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
-    SectionWaiver(169), SectionWaiver(170), SectionWaiver(171),
+    SectionWaiver(169), SectionWaiver(171),
 )
 
 # The closeout plans owing '## The checks' -- currently all five of them, so

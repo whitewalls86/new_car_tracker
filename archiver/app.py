@@ -64,7 +64,7 @@ _ALLOW_PACK_JOBS = (
 )
 
 # ---------------------------------------------------------------------------
-# Plan 134 Stage 1 — the flush/compact failure contract, warning-only
+# Plan 134 — the flush/compact failure contract
 # ---------------------------------------------------------------------------
 #
 # Exactly the gap the Plan 131 block below describes, on the three endpoints
@@ -80,11 +80,15 @@ _ALLOW_PACK_JOBS = (
 # both. So these predicates are already known to be right on the two failure
 # modes that have actually happened.
 #
-# What is not known is what *else* they would fire on, and that is the whole
-# reason this stage warns instead of raising: an oversight here costs a log
-# line for seven days rather than a skipped dbt build every hour. Stage 2
-# flips them to a 500, one endpoint per deploy and 48 hours apart, in
-# ascending order of blast radius.
+# What was not known is what *else* they would fire on, which is why Stage B
+# warned instead of raising: an oversight cost a log line rather than a
+# skipped dbt build every hour. That window closed clean on 2026-09-07 — zero
+# warnings over 376 evaluations — so Stage C is flipping them to a 500, one
+# endpoint per deploy and 48 hours apart, in ascending order of blast radius.
+#
+# **Where that has got to: /compact/silver/run raises; both flushes still
+# warn.** Read each endpoint's own docstring rather than this block, which
+# will be stale between deploys by design.
 #
 # The shape is _pack_failure_reason's, below: a pure function on the summary
 # dict, mirroring that job's own CLI exit code, unit-tested directly against
@@ -94,17 +98,17 @@ _ALLOW_PACK_JOBS = (
 
 
 def _warn_would_fail(job: str, reason: Optional[str]) -> None:
-    """Log the Stage 1 warning for a run Stage 2 will fail, and carry on.
+    """Log the warning for a run Stage C will fail, and carry on.
 
     The greppable half of the observation window. Every warning emitted here
-    carries the literal ``would fail``, so the seven-day gate is one query:
+    carries the literal ``would fail``, so the gate is one query:
 
         {service="archiver", level="WARNING"} |~ "would fail"
 
     rather than a text-matching exercise across three job vocabularies. Keep
-    the phrase intact when Stage 2 replaces a call site with the raise — the
-    window is read out of that query, and each endpoint leaves it on its own
-    deploy.
+    the phrase intact: each endpoint leaves this query on its own Stage C
+    deploy, when its call site here is replaced by the raise, and the ones
+    still calling it are still being read out of it.
     """
     if reason:
         logger.warning("%s: would fail — %s", job, reason)
@@ -218,10 +222,11 @@ def trigger_cleanup_queue() -> Dict[str, Any]:
 def trigger_flush_silver() -> Dict[str, Any]:
     """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).
 
-    Plan 134 Stage 1: a run failing ``_flush_silver_failure_reason`` logs a
-    ``would fail`` warning and **still returns 200**. Stage 2 turns that into a
-    500 carrying the summary and a ``failure_reason`` — last of the three,
-    because a 500 here skips the dbt build for that hour.
+    **Still warning-only.** A run failing ``_flush_silver_failure_reason``
+    logs a ``would fail`` warning and returns 200. Stage C deploy 3 of 3 turns
+    that into a 500 carrying the summary and a ``failure_reason`` — last of
+    the three, deliberately, because a 500 here skips the dbt build for that
+    hour.
     """
     with active_job():
         result = _flush_silver_observations()
@@ -233,14 +238,24 @@ def trigger_flush_silver() -> Dict[str, Any]:
 def trigger_compact_silver() -> Dict[str, Any]:
     """Compact silver_normalized/observations partitions (Airflow DAG trigger).
 
-    Plan 134 Stage 1: a run failing ``_compact_failure_reason`` logs a
-    ``would fail`` warning and **still returns 200**. Stage 2 turns that into a
-    500 carrying the summary and a ``failure_reason`` — first of the three,
-    because this runs daily and nothing downstream depends on it.
+    **Enforced.** A run failing ``_compact_failure_reason`` returns 500 with
+    the summary and a ``failure_reason`` as ``detail``; ``compact_silver``
+    calls ``raise_for_status()``, so the DAG goes red and pages.
+
+    Plan 134 Stage C, deploy 1 of 3. First deliberately: this runs daily and
+    nothing downstream depends on it, which makes it both the smallest blast
+    radius and the cheapest place for the repaired pager to be wrong. The two
+    flushes are still warning-only and leave the observation window on their
+    own deploys, 48 hours apart.
     """
     with active_job():
         result = _compact_silver()
-        _warn_would_fail("compact_silver", _compact_failure_reason(result))
+        reason = _compact_failure_reason(result)
+        if reason:
+            logger.error("compact_silver: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
         return result
 
 
@@ -514,10 +529,11 @@ def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str,
 def trigger_flush_staging() -> Dict[str, Any]:
     """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).
 
-    Plan 134 Stage 1: a run failing ``_flush_staging_failure_reason`` logs a
-    ``would fail`` warning naming the tables and **still returns 200**. Stage 2
-    turns that into a 500 carrying the summary and a ``failure_reason`` —
-    second of the three, since the dbt build does not read staging events.
+    **Still warning-only.** A run failing ``_flush_staging_failure_reason``
+    logs a ``would fail`` warning naming the tables and returns 200. Stage C
+    deploy 2 of 3 turns that into a 500 carrying the summary and a
+    ``failure_reason`` — second of the three, since the dbt build does not
+    read staging events.
     """
     with active_job():
         result = _flush_staging_events()

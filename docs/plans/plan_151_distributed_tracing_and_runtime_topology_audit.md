@@ -7,16 +7,12 @@ two questions with evidence: whether seeing the live dependency graph reveals
 anything the hand-written one misses, and whether it costs less than it is
 worth. The experiment is allowed to conclude no.
 
-## Status
+## The case
 
-**BUILD ORDER, written 2026-08-25.** Priority **72 (medium)**. Effort **M plus
-a 7-day observation window**.
+A research-gated observability plan. It deliberately does not commit the project
+to Tempo, full trace retention, or broad instrumentation before a small
+metrics-first experiment proves their value and operating cost.
 
-This is a research-gated observability plan. It deliberately does not commit
-the project to Tempo, full trace retention, or broad instrumentation before a
-small metrics-first experiment proves their value and operating cost.
-
-## Problem
 
 [Plan 142](plan_142_planned_host_maintenance.md) is introducing a checked-in
 service-to-surface registry so deploy and maintenance coordination can pause
@@ -37,7 +33,15 @@ traces. That makes it a useful independent audit signal for Plan 142 and a
 small, honest introduction to streaming-shaped telemetry. It does not make the
 observed graph safe enough to become maintenance policy.
 
-## Objective
+## Design
+
+A bounded OpenTelemetry pipeline, metrics-first, over a few high-value
+cross-service paths -- compared against Plan 142's declared operational graph,
+and sized so that stopping after any stage leaves a coherent system. Tempo is
+not adopted up front; it is a stage that only exists if an earlier stage's
+decision calls for it.
+
+### Objective
 
 Introduce a bounded OpenTelemetry pipeline that observes a few high-value
 cross-service paths, compares their runtime edges with Plan 142's declared
@@ -51,7 +55,7 @@ The result should answer two questions with evidence:
 2. Is metrics-only trace processing sufficient, or does retaining and querying
    individual traces justify operating Tempo?
 
-## Principles
+### Principles
 
 1. **Declared policy remains authoritative.** Runtime observation audits the
    service-to-surface registry; it never decides what is safe to stop.
@@ -72,7 +76,7 @@ The result should answer two questions with evidence:
    metrics-only collector, add Tempo, narrow the instrumentation, or remove the
    pipeline.
 
-## Non-goals
+### Non-goals
 
 - Replacing Plan 142's service-to-surface registry, DAG admission declarations,
   drain counters, or release gates.
@@ -88,7 +92,7 @@ The result should answer two questions with evidence:
 - Introducing tail-based sampling, a multi-component observability cluster, or
   long trace retention before the bounded experiment shows a need.
 
-## Architecture boundary
+### Architecture boundary
 
 The candidate flow is:
 
@@ -100,7 +104,7 @@ instrumented application boundary
     -> Prometheus
     -> Grafana dashboards and alerts
 
-optional only after the Stage 2 decision:
+optional only after the Stage C decision:
     collector -> Tempo -> trace lookup from Grafana
 ```
 
@@ -118,9 +122,49 @@ transport edge. A network call proves communication, not that both endpoints
 mutate the same state or require the same drain behavior. Human review remains
 the step that translates runtime evidence into safety policy.
 
-## Stage 0 — Contract and experiment design
+### Test and verification contract
 
-Stage 0 is the next executable slice once Plan 142's Stage 1 registry schema is
+- Unit tests validate trace attribute normalization, route templating, status
+  mapping, context propagation helpers, and sensitive/high-cardinality field
+  rejection.
+- Configuration tests validate collector syntax, bounded queues/retries, health
+  telemetry, and the absence of prohibited exporters or attributes.
+- Integration fixtures send sampled traces across each selected boundary and
+  assert the expected service-graph/span metrics appear.
+- Contract tests derive the declared graph from Plan 142's registry and reject
+  a separately maintained copy.
+- A negative integration fixture creates an observed undeclared edge and proves
+  the comparator reports it without changing coordination state.
+- Failure tests make the collector unavailable and prove application work
+  continues while telemetry loss becomes visible.
+- Dashboard and alert tests follow the repository's existing provisioned
+  Grafana validation pattern.
+
+## Stages
+
+Sequenced before [`docs/PLAN_DOCUMENT.md`](../PLAN_DOCUMENT.md) landed; adopted
+stage letters on 2026-09-07. No Linear issue carries a legacy number yet, so the
+mapping serves inbound prose -- including
+[Plan 155](plan_155_log_dashboards.md), which cites this plan's Stage C by its
+old number and was updated with it:
+
+| Legacy | Stage | | Legacy | Stage |
+|:---:|:---:|---|:---:|:---:|
+| 0 | **A** | | 3 | **D** |
+| 1 | **B** | | 4 | **E** |
+| 2 | **C** | | | |
+
+| Order | Stage | What it delivers | State | Issue |
+|---:|:---:|---|---|---|
+| 1 | [**A**](#stage-a--contract-and-experiment-design) | The telemetry contract, budgets, and the experiment's shape | `next` | -- |
+| 2 | [**B**](#stage-b--metrics-first-telemetry-pipeline) | The metrics-first pipeline, no trace retention | `--` | -- |
+| 3 | [**C**](#stage-c--declared-versus-observed-audit) | Runtime edges compared with Plan 142's declared graph, and the retention decision | `--` | -- |
+| 4 | [**D**](#stage-d--optional-bounded-tempo-proof) | Tempo, only on an affirmative Stage C decision | `--` | -- |
+| 5 | [**E**](#stage-e--observation-and-decision) | Seven days observed, and the keep/change/remove decision | `--` | -- |
+
+### Stage A — Contract and experiment design
+
+Stage A is the next executable slice once Plan 142's Stage 1 registry schema is
 stable. It produces a written experiment contract before adding a collector.
 
 1. Inventory the existing Prometheus, Loki, Grafana, and application metrics
@@ -138,16 +182,21 @@ stable. It produces a written experiment contract before adding a collector.
    budgets. Record abort thresholds before deployment.
 7. Choose an initial sampling policy and document what conclusions sampling
    makes unsafe.
-8. Write the Stage 1 dashboard, alert, verification, and rollback contract.
+8. Write the Stage B dashboard, alert, verification, and rollback contract.
 
-### Stage 0 gate
+#### Stage A gate
 
 Proceed only if the selected paths can be instrumented without sensitive or
 unbounded attributes, the declared graph has a stable export, and the
 collector fits a written single-host resource budget. Otherwise record the gap
 and stop without deploying another service.
 
-## Stage 1 — Metrics-first telemetry pipeline
+**Exit:** the telemetry contract, the resource budget and the declared-graph
+export are written down, and the eight items above are answered for the
+selected paths. Nothing is deployed in this stage, so its exit is a document,
+not a diff -- and recording the gap and stopping is a valid way to meet it.
+
+### Stage B — Metrics-first telemetry pipeline
 
 1. Instrument only the approved paths with OpenTelemetry SDKs or narrowly
    scoped automatic instrumentation.
@@ -163,17 +212,23 @@ and stop without deploying another service.
    work. Telemetry export must fail open and remain outside operational control
    paths.
 
-### Stage 1 gate
+#### Stage B gate
 
 The metrics-only pipeline must survive representative traffic without breaching
 its resource or cardinality budget, leaking prohibited attributes, or changing
 application success behavior. Failure rolls back instrumentation export and
 the collector; it does not weaken Plan 142 policy.
 
-## Stage 2 — Declared-versus-observed audit
+**Exit:** the metrics-only pipeline is running against representative traffic
+inside its written budget, service-graph and span metrics reach Prometheus with
+no traces retained, and removing the collector has been shown not to block
+application work. Telemetry that fails open is the property under test, so it
+is demonstrated rather than asserted.
+
+### Stage C — Declared-versus-observed audit
 
 1. Publish Plan 142's declared service/surface relationships using the contract
-   designed in Stage 0.
+   designed in Stage A.
 2. Compare declared and observed edges with explicit instrumentation-coverage
    and last-observed timestamps.
 3. Alert only on observed-but-undeclared edges after a bounded persistence
@@ -186,7 +241,7 @@ the collector; it does not weaken Plan 142 policy.
 6. Review every mismatch and record whether it found registry drift,
    instrumentation noise, or a modeling limitation.
 
-### Stage 2 decision — Is trace retention justified?
+#### Stage C decision — Is trace retention justified?
 
 Add Tempo only if the metrics-first experiment produces a concrete diagnostic
 question that aggregate metrics cannot answer and individual trace lookup is
@@ -197,9 +252,15 @@ removal path.
 If that evidence is absent, keep the metrics-only pipeline and do not deploy
 Tempo merely to complete the conventional stack.
 
-## Stage 3 — Optional bounded Tempo proof
+**Exit:** declared and observed edges are compared with coverage and
+last-observed timestamps, a deliberately created undeclared edge has been caught
+by the audit, every mismatch is recorded as drift, noise or a modeling limit,
+and the retention decision above is written with its measurements. A decision of
+"no Tempo" meets this exit; Stage D then does not run.
 
-This stage exists only after an affirmative Stage 2 decision.
+### Stage D — Optional bounded Tempo proof
+
+This stage exists only after an affirmative Stage C decision.
 
 1. Deploy the smallest supported single-host Tempo topology with bounded local
    or object-store retention.
@@ -207,14 +268,19 @@ This stage exists only after an affirmative Stage 2 decision.
 3. Link metrics and logs to traces where stable identifiers permit it without
    raising cardinality or disclosure risk.
 4. Demonstrate the specific incident or latency investigation named in the
-   Stage 2 decision.
+   Stage C decision.
 5. Measure query usefulness, ingest failures, storage growth, compaction, CPU,
    memory, and operator burden.
 
 Tempo is removed if it does not answer the named question reliably within the
 resource budget. Metrics-only operation remains an acceptable finish.
 
-## Stage 4 — Observation and decision
+**Exit:** either Tempo has answered the specific investigation named in the
+Stage C decision, within the resource budget and with its measured cost written
+down, or it has been removed and the pipeline is back to metrics-only. Both are
+valid exits; the stage is not finished while Tempo is running unevaluated.
+
+### Stage E — Observation and decision
 
 Observe the approved pipeline for seven days including scheduled DAG activity,
 ordinary idle periods, a targeted service deployment, and at least one scoped
@@ -239,25 +305,13 @@ End with one explicit decision:
 - **change** sampling, coverage, or topology and repeat a bounded observation;
 - **remove** the pipeline because its value does not justify its cost.
 
-Broader instrumentation is a later decision, not an implicit Stage 4 task.
+**Exit:** seven days observed across the named conditions, every item in the
+record list above filled in, and exactly one of the four decisions written down
+with its reasoning. A decision of **remove** is a successful exit, not a failed
+one -- this plan is allowed to conclude no, and the exit is the record, not the
+pipeline surviving.
 
-## Test and verification contract
-
-- Unit tests validate trace attribute normalization, route templating, status
-  mapping, context propagation helpers, and sensitive/high-cardinality field
-  rejection.
-- Configuration tests validate collector syntax, bounded queues/retries, health
-  telemetry, and the absence of prohibited exporters or attributes.
-- Integration fixtures send sampled traces across each selected boundary and
-  assert the expected service-graph/span metrics appear.
-- Contract tests derive the declared graph from Plan 142's registry and reject
-  a separately maintained copy.
-- A negative integration fixture creates an observed undeclared edge and proves
-  the comparator reports it without changing coordination state.
-- Failure tests make the collector unavailable and prove application work
-  continues while telemetry loss becomes visible.
-- Dashboard and alert tests follow the repository's existing provisioned
-  Grafana validation pattern.
+Broader instrumentation is a later decision, not an implicit Stage E task.
 
 ## Relationship to other plans
 
@@ -297,12 +351,12 @@ Broader instrumentation is a later decision, not an implicit Stage 4 task.
 
 ## Rollback and safe stopping points
 
-- **After Stage 0:** stop with a written contract and no runtime change.
-- **After Stage 1:** remove application exporters and the collector; existing
+- **After Stage A:** stop with a written contract and no runtime change.
+- **After Stage B:** remove application exporters and the collector; existing
   Prometheus, Loki, Grafana, and application behavior remain intact.
-- **After Stage 2:** keep or remove metrics-only auditing without changing Plan
+- **After Stage C:** keep or remove metrics-only auditing without changing Plan
   142's registry or coordination behavior.
-- **After Stage 3:** remove Tempo while retaining metrics-only processing, or
+- **After Stage D:** remove Tempo while retaining metrics-only processing, or
   remove the entire telemetry path.
-- **After Stage 4:** the recorded keep/change/remove decision is the plan's
+- **After Stage E:** the recorded keep/change/remove decision is the plan's
   durable output; no broader rollout is owed implicitly.

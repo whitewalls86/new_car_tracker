@@ -162,6 +162,10 @@ overbuilt.
 
 ## Stages
 
+| Order | Stage | What it delivers | Estimate | State | Issue |
+|---:|:---:|---|---:|---|---|
+| 1 | [**A**](#stage-a--machine-credentials-in-a-table-with-a-lifecycle) | Machine credentials in a table, with a lifecycle | 1 | `next` | -- |
+
 ### Stage A — Machine credentials in a table, with a lifecycle
 
 One stage, because the whole change is about a point of work and every
@@ -179,7 +183,3 @@ been reissued one; `SNAPSHOT_DOWNLOAD_TOKENS` and `SNAPSHOT_DOWNLOAD_TOKEN` are
 gone from the code and the production `.env`; and a token's plaintext exists in
 no database, log or shell history. Demonstrated by revoking a live token and
 observing the next request refused **without a restart** — not asserted.
-
-| Order | Stage | Estimate | Status |
-|---:|---|---:|---|
-| 1 | A — Machine credentials in a table, with a lifecycle | 1 | next |

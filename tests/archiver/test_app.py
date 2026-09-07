@@ -1289,12 +1289,13 @@ class TestCompactFailureReason:
         assert reason and "connection refused" in reason
 
 
-class TestStage1IsWarningOnly:
-    """The endpoints still return 200. That is the stage, not an oversight.
+class TestTheUnflippedEndpointsAreStillWarningOnly:
+    """Both flushes still return 200. That is Stage C in progress, not an oversight.
 
-    An oversight in a predicate costs a log line for seven days here, and a
-    skipped dbt build every hour under Stage 2. These tests are what has to
-    change, deliberately and one endpoint at a time, when Stage 2 flips them.
+    Stage C flips one endpoint per deploy, 48 hours apart. Each deploy moves
+    one case out of this class and into ``TestCompactSignalsFailure`` and its
+    successors — deliberately, one at a time. Compaction went first and has
+    already left; the two flushes are still here.
     """
 
     def test_a_failed_silver_flush_warns_and_returns_200(
@@ -1330,25 +1331,6 @@ class TestStage1IsWarningOnly:
         assert "flush_staging: would fail" in caplog.text
         assert "staging.coordination_state_events" in caplog.text
 
-    def test_a_failed_compaction_warns_and_returns_200(
-        self, mock_archiver_client, mocker, caplog
-    ):
-        fake = {
-            "scanned": 2, "compacted": 0, "incremental": 0, "skipped": 0,
-            "failed": 1, "error": None,
-            "partitions": [{"source": "cargurus", "date": "2026-08-29",
-                            "ok": False, "error": "rename failed"}],
-        }
-        mocker.patch("archiver.app._compact_silver", return_value=fake)
-
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            resp = mock_archiver_client.post("/compact/silver/run")
-
-        assert resp.status_code == 200
-        assert resp.json() == fake
-        assert "compact_silver: would fail" in caplog.text
-        assert "cargurus/2026-08-29" in caplog.text
-
     def test_every_stage_1_warning_carries_the_window_query_string(
         self, mock_archiver_client, mocker, caplog
     ):
@@ -1381,4 +1363,102 @@ class TestStage1IsWarningOnly:
             resp = mock_archiver_client.post("/flush/silver/run")
 
         assert resp.status_code == 200
+        assert "would fail" not in caplog.text
+
+
+class TestCompactSignalsFailure:
+    """Plan 134 Stage C, deploy 1 of 3: ``/compact/silver/run`` raises.
+
+    The mirror of ``TestPackEndpointsSignalFailure`` for the first of the three
+    endpoints Stage C flips. The two flushes are not here yet; each arrives on
+    its own deploy.
+    """
+
+    def test_failed_partitions_return_500_carrying_the_summary(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        # {"failed": 1, "error": None} is the case that used to be a 200: the
+        # top-level error is set only when MinIO itself is unreachable.
+        fake = {
+            "scanned": 2, "compacted": 0, "incremental": 0, "skipped": 0,
+            "failed": 1, "error": None,
+            "partitions": [{"source": "cargurus", "date": "2026-08-29",
+                            "ok": False, "error": "rename failed"}],
+        }
+        mocker.patch("archiver.app._compact_silver", return_value=fake)
+
+        with caplog.at_level(logging.ERROR, logger="archiver"):
+            resp = mock_archiver_client.post("/compact/silver/run")
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        # The whole summary survives, so the pager can quote the partition.
+        assert detail["failed"] == 1
+        assert detail["partitions"][0]["error"] == "rename failed"
+        assert "cargurus/2026-08-29" in detail["failure_reason"]
+        assert "compact_silver: run failed" in caplog.text
+
+    def test_a_minio_error_returns_500(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._compact_silver",
+            return_value={
+                "scanned": 0, "compacted": 0, "incremental": 0, "skipped": 0,
+                "failed": 0, "error": "connection refused", "partitions": [],
+            },
+        )
+
+        resp = mock_archiver_client.post("/compact/silver/run")
+
+        assert resp.status_code == 500
+        assert "connection refused" in resp.json()["detail"]["failure_reason"]
+
+    def test_a_clean_run_is_unchanged(self, mock_archiver_client, mocker):
+        fake = {
+            "scanned": 7, "compacted": 3, "incremental": 4, "skipped": 0,
+            "failed": 0, "error": None, "partitions": [],
+        }
+        mocker.patch("archiver.app._compact_silver", return_value=fake)
+
+        resp = mock_archiver_client.post("/compact/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "failure_reason" not in resp.json()
+
+    def test_a_run_that_only_skipped_is_not_a_failure(
+        self, mock_archiver_client, mocker
+    ):
+        # A day whose partitions are all already compacted. Failing on this
+        # would page every morning on a system that is working.
+        fake = {
+            "scanned": 7, "compacted": 0, "incremental": 0, "skipped": 7,
+            "failed": 0, "error": None, "partitions": [],
+        }
+        mocker.patch("archiver.app._compact_silver", return_value=fake)
+
+        resp = mock_archiver_client.post("/compact/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_compaction_no_longer_emits_the_window_warning(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        """This endpoint has left ``|~ "would fail"``. The flushes have not.
+
+        The observation query is still live for the two unflipped endpoints,
+        so a stray ``would fail`` from compaction would put a flipped endpoint
+        back into a window that is meant to be reading only the others.
+        """
+        mocker.patch(
+            "archiver.app._compact_silver",
+            return_value={
+                "scanned": 1, "compacted": 0, "incremental": 0, "skipped": 0,
+                "failed": 1, "error": None, "partitions": [],
+            },
+        )
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            mock_archiver_client.post("/compact/silver/run")
+
         assert "would fail" not in caplog.text

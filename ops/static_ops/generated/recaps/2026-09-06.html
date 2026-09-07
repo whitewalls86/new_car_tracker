@@ -1,0 +1,1542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-08-31 to 2026-09-06</title>
+<link rel="canonical" href="https://cartracker.info/recaps/2026-09-06">
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-08-31 to 2026-09-06. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-08-31-to-2026-09-06">Week of 2026-08-31 to 2026-09-06</h1>
+<p><strong>Window:</strong> 2026-08-31 00:00:00 to 2026-09-06 23:59:59, local author time
+<strong>Recapped:</strong> 2026-09-07
+<strong>Commits in window:</strong> 392 (290 non-merge, 102 merges)</p>
+<p>The largest week in this repository's history by some distance, and worth saying
+so before anything else: the prescribed read for a recap was measured at ~19k
+tokens on a normal week and came to ~190k here. Six plans archived, two of which
+were also written in the same week; twelve new plan documents were opened.
+Nearly half of everything — 129 of 290 non-merge commits — belongs to a single
+plan.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plan-162-the-testing-census-and-ci-restructure-129-commits">Plan 162 — the testing census and CI restructure (129 commits)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_162_testing_census_and_restructure.md">Plan 162</a> exists to run a
+census of the whole automated test suite for coverage, dead assertions and drift
+between what CI checks and what the code does, then to close the gaps it finds
+and restructure CI around what the census showed actually mattered. It inherited
+its inbox from Plan 161, which had deliberately fixed nothing it discovered.</p>
+<p>The week ran the plan from its census to its sixteenth closed stage. The census
+itself was scoped and numbered (<code>dfa55ae</code>, <code>a0a49c8</code>), then the gaps came off in
+order: the orphaned test suites wired into CI (<code>5862935</code>), coverage unblinded so
+its number means something (<code>8c10d95</code>), the two health-sensor censuses given one
+declared source (<code>17d4fab</code>, <code>a5fda6c</code>, <code>92ef62b</code>), and the 267-second
+<code>dbt build + test</code> job decomposed and split into four (<code>5097569</code>, <code>5dd6bb7</code>,
+<code>70d2411</code>, <code>9f21f87</code>).</p>
+<p>Three themes are worth separating out.</p>
+<p><strong>Mechanising rules that were previously habits.</strong> A sweep moved 34 files to
+<code>mocker</code> and 16 layer numbers to the contract (<code>5de9a3c</code>); an encoding guard was
+built at runtime, then rebuilt statically once the runtime version proved to be
+the wrong shape (<code>a3eea2b</code>, <code>f9a702b</code>, <code>c7d1d33</code>, <code>8325046</code>); every skip in CI
+must now be declared or the run fails, demonstrated by adding an undeclared skip
+to watch the gate fail and then removing it (<code>03553fb</code>, <code>fcec5ac</code>, <code>7b8ea40</code>).</p>
+<p><strong>SQL stopped being paraphrased.</strong> G5 — no production module holds SQL at a call
+site — and G14 — every production <code>.sql</code> file is executed — were closed
+(<code>9b2f685</code>, <code>54b516d</code>, <code>dad8f33</code>, <code>3bcac3a</code>), then Stage X went further: a test
+may not author SQL either (<code>b45702d</code>), a test may not invent the shape of a
+relation production defines (<code>815fcf2</code>), and a recorder now captures what text
+ran against which engine (<code>ae97f83</code>). The resulting execution-coverage gate
+reports <strong>161 of 161 production <code>.sql</code> files executing, from 9,775 executions
+across 12 per-job records</strong> (<code>2fc6184</code>). The commit is candid that every reading
+below 161 turned out to be the instrument rather than the repository — CI
+discarding most of the record, two loaders returning a plain <code>str</code>, fourteen
+selectors credited only to their wrapper — each found by the gate and fixed on
+the same branch. The waiver ledger it replaced was then deleted (<code>d7981b3</code>), and
+14 SQL waivers were retired, 37 down to 23 (<code>e54c98d</code>).</p>
+<p><strong>dbt now builds against production-shaped data</strong> (<code>35ed492</code>, <code>da1f3f0</code>), with
+the gate proved by injecting a deliberate data-test violation to watch it fail
+and then reverting it (<code>37406c1</code>, <code>e6e3c13</code>).</p>
+<p>Two stages were added by production rather than by the suite. Stage K
+(<code>95cc107</code>, <code>af8f28d</code>) fixed the defect where <code>dashboard</code> and <code>pgadmin</code> — the two
+services designed to pause no surface — were the two that could never be deployed
+alone, because V043's CHECK required a non-empty scope on every active record.
+The second half of that commit is the more useful finding: <code>_set_intent</code> caught
+bare <code>Exception</code> and rendered every failure as 503 &quot;Database unavailable&quot;, so the
+production diagnosis pointed at the one component that was healthy throughout.</p>
+<p>Mid-week the plan was restructured onto Plan 172's new plan-document contract and
+its stages renumbered from digits to letters (<code>b76904a</code>, <code>1364808</code>, <code>f0edeca</code>),
+with a follow-up commit for the bare back-references the sweep missed
+(<code>9075bbf</code>). Sixteen of twenty-two stages are <code>done</code>; the slice pointer ends the
+week on Stage S (<code>6d3e3d4</code>).</p>
+<h3 id="plan-138-public-surface-refresh-67-commits-archived-2026-09-04">Plan 138 — public surface refresh (67 commits, archived 2026-09-04)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md">Plan 138</a> existed because the live
+page and README claimed a system the repository no longer was: 36 migrations
+against 49, 971 tests against 3,661, eleven containers against more than two
+dozen, and three different make/model counts on one page.</p>
+<p>Both surfaces were rewritten from a reconciled contract (<code>1c47893</code>, <code>515bb82</code>),
+the landing page moved to <code>/</code> with <code>/info</code> a permanent redirect (<code>c80f494</code>), the
+page taken same-origin under a strict CSP after a 41.7 MB eager hero video was
+removed (<code>6695b60</code>), and the hand-maintained roadmap and recap copy replaced with
+build-time projections CI validates (<code>d411445</code>, <code>15d028d</code>, <code>e211ecc</code>). Stage 7
+made published content servable from the checkout rather than the image
+(<code>5f00c60</code>), which is why a merged recap now goes live on a <code>git pull</code> with no
+image build.</p>
+<p><strong>Stage 2 shipped, was deployed, broke <code>/dashboard</code>, and was reverted the same
+night</strong> (<code>2b2808b</code>, then <code>433cc4d</code> to reapply). The post-mortem (<code>a1f1e4b</code>) is the
+part worth keeping: the plan's analysis of the Streamlit coupling was simply
+wrong. It had predicted one failure mode and written an assertion that catches
+it — verified by mutating the Caddyfile three ways — and that assertion was blind
+to what actually happened. Streamlit serves one SPA shell for every path and
+routes client-side, so <code>/dashboard</code> was never a route it recognised; it worked
+because the fallback landed back on Streamlit through the catch-all, and taking
+<code>/</code> away removed the fallback. The fix confined Streamlit to a base path
+(<code>22032bc</code>), the mechanism was measured rather than left as a guess (<code>37f4ba3</code>),
+and the assertion was rewritten against the base path (<code>f3cc48b</code>).</p>
+<p>The plan added three mechanisms to keep the surfaces honest — a commit gate that
+holds a staged surface until it has been read (<code>3d8ea58</code>), a closeout question
+that fires when the tree moves under a surface nobody edited (<code>a4166ee</code>), and
+<code>docs/PUBLIC_SURFACE.md</code> as the one contract its three forms cite (<code>c66ea98</code>).
+Both gates earned their keep late: Stage 4's found the freshness label wrong in
+two directions on the same field (<code>db02910</code>), and Stage 6's route matrix, run in
+full for the first time, found HEAD answering 405 on every public route
+(<code>b5b4eb2</code>). Archived <code>13ce139</code>, with presentation work carved out to
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_174_public_site_shape.md">Plan 174</a> (<code>9f2984f</code>).</p>
+<h3 id="plan-172-the-plan-document-contract-15-commits-opened-and-archived-2026-09-03">Plan 172 — the plan document contract (15 commits, opened and archived 2026-09-03)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md">Plan 172</a> was raised out of Plan 138
+Stage 1d and archived two days later. Its case: 98 plan documents had no shape
+rule — 4% of work-unit sections declared an exit, evidence appeared at four
+heading depths, and 43 of 44 live plans carried no public section.</p>
+<p>It produced <code>docs/PLAN_DOCUMENT.md</code> (<code>8e9bdc0</code>) and five skills at three grains —
+<code>plan-draft</code> (<code>27c783e</code>), <code>plan-start</code> (<code>5de445e</code>), and <code>note-evidence</code> plus the
+<code>stage-close</code>/<code>close-out</code> split (<code>0d26683</code>) — along with the <code>plans</code> skill's
+open-plan operation (<code>380bcf8</code>) and a contract test (<code>5a40ff6</code>). Stage G's
+planned re-measure was retired in favour of a ratchet asserting the waiver list
+only shrinks (<code>00d4b74</code>), after three of its four before-numbers proved
+unreplayable; the ratchet was paid down to 38 on archival (<code>46782cd</code>).</p>
+<h3 id="plan-161-the-testing-contract-12-commits-archived-2026-08-31">Plan 161 — the testing contract (12 commits, archived 2026-08-31)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_161_testing_contract.md">Plan 161</a> replaced a Testing Strategy
+paragraph that had been accurate in April and quietly false by August with a
+contract in three forms — <code>docs/TESTING.md</code>, a <code>testing-contract</code> skill, and 17
+assertions in CI (<code>cad95c8</code>, <code>06f90e3</code>, <code>f2f5ab3</code>, <code>2836a53</code>). Mechanising three
+measurements the prose half had made by eye found all three low, and the
+asserting test then failed its own first CI run and proved its own thesis:
+FastAPI changed <code>include_router</code> between 0.128 and 0.141, so a shallow
+<code>app.routes</code> walk returned 4 routes for <code>ops</code> instead of 54 <strong>without erroring</strong>,
+and only the stale-waiver assertion caught it (<code>2324b0a</code>, <code>e46ce27</code>, <code>313c914</code>).
+The unpinned pre-1.0 dependency underneath was recorded against Plan 121
+(<code>8c854e0</code>).</p>
+<h3 id="plan-164-the-cycle-close-ritual-10-commits-moved-to-closeout">Plan 164 — the cycle-close ritual (10 commits, moved to closeout)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md">Plan 164</a> gives a home to three steps
+of the cycle-close routine that had no owner and are only ever correct at the
+close (<code>266b4d5</code>). It built the ref-hygiene step (<code>df8ea36</code>), made it
+prevention-first and cross-machine (<code>96b3f8e</code>), and enforced the settings and the
+recap habit rather than the sweep (<code>0643cbd</code>, <code>c6bcadc</code>). The one-time backfill
+took <strong>69 remote refs down to 4</strong>, deliberately leaving one unmerged branch and
+two that active worktrees were sitting on; every deleted tip was a strict
+ancestor of <code>origin/master</code>, so no commit went anywhere, only names did. The
+merged-branch budget dropped 67 → 5 (<code>7e49b71</code>).</p>
+<h3 id="plan-175-the-commit-gates-bundling-hole-7-commits-opened-and-archived-2026-09-04">Plan 175 — the commit gate's bundling hole (7 commits, opened and archived 2026-09-04)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_175_commit_gate_bundling.md">Plan 175</a> was found on 2026-09-04
+while reading the gate Plan 138 had just built: the <code>PreToolUse</code> hook ran <em>before</em>
+the command, so it read an empty index whenever a commit staged its own changes —
+a bundled <code>git add … &amp;&amp; git commit</code> fired the gate, found nothing, and returned 0,
+indistinguishable from a surface that had been read (<code>1cd7755</code>). Enforcement moved
+inside <code>git commit</code> (<code>9874473</code>).</p>
+<p><strong>The stage reintroduced its own defect twice</strong>, which is the finding worth
+keeping. <code>chmod +x</code> on Windows never reaches the index, so the hook committed as
+<code>100644</code> and git silently declines to run a hook without the execute bit — it
+would have checked out on macOS installed, configured and never firing
+(<code>5e3f09d</code>). Then <code>hooks_installed()</code> compared <code>core.hooksPath</code> against the
+literal string <code>.githooks</code>, and within hours the value in this clone had become
+an absolute path to the same directory, so git was running the hook while the
+gate called it uninstalled and refused every agent commit (<code>d9eaf8d</code>).</p>
+<h3 id="plan-146-the-planning-system-7-commits">Plan 146 — the planning system (7 commits)</h3>
+<p>Last week's recap landed (<code>54fee43</code>), and writing it exposed that the state
+parser could not see the closeout table (<code>bf989fc</code>) — a defect recorded against
+the plan alongside a correction to the recap's rename sha (<code>83b9245</code>). CI's
+Documentation tests job was given <code>PYTHONPATH</code> and <code>workflow_dispatch</code> (<code>404f521</code>,
+<code>78e5aad</code>, CAR-42). Handoffs and reports were filed out of <code>docs/plans/</code>
+(<code>538c9fa</code>) with every broken reference repointed (<code>4bd29dc</code>).</p>
+<h3 id="plan-142-scoped-operational-coordination-6-commits-moved-to-closeout">Plan 142 — scoped operational coordination (6 commits, moved to closeout)</h3>
+<p>The first real maintenance window produced findings, and this week fixed them:
+four defects that made the window unrunnable (<code>42a81d6</code>), an <code>observability_fresh</code>
+check that could never pass on any host (<code>9594d19</code>), and a <code>mounts_expected</code> gate
+that had to read the <code>findmnt</code> tree (<code>1815b39</code>), with the abort criterion coupled
+to the boundary table (<code>f5e577a</code>) and the first window's findings closed
+(<code>0b6191a</code>). Deployed and verified in production (<code>2ff4918</code>).</p>
+<h3 id="plan-139-test-suite-maintenance-5-commits-archived-2026-08-31">Plan 139 — test suite maintenance (5 commits, archived 2026-08-31)</h3>
+<p>Stage F gave <code>tests/integration/sql</code> the real Airflow schema so <code>ops</code> queries
+crossing into the <code>airflow</code> schema execute at all (<code>f3b4406</code>, <code>9ea2e27</code>,
+<code>9e56012</code>). Stage H was folded into Plan 162 and the plan archived (<code>1107433</code>),
+with the references its archival left stale cleared (<code>34bc12a</code>).</p>
+<h3 id="plan-149-linear-as-the-weekly-execution-layer-6-commits">Plan 149 — Linear as the weekly execution layer (6 commits)</h3>
+<p>Cycle 1's close was recorded (<code>7fb6a92</code>), and four defects in the seeding skills
+were fixed: seed to a points budget rather than an issue count (<code>bafcebf</code>),
+<code>fill-cycle</code> creates the projects it seeds into (<code>a30cdb0</code>), a plan that gets an
+issue gets a project in both skills (<code>7c2bada</code>), and a Backlog-status issue cannot
+hold a <code>cycleId</code> (<code>7412a25</code>). <code>ticket-now</code> now always passes <code>assignee</code> explicitly
+(<code>03abeb1</code>).</p>
+<h3 id="plan-170-and-the-twelve-new-plan-documents-3-commits-plus-singletons">Plan 170 and the twelve new plan documents (3 commits, plus singletons)</h3>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_170_container_image_reclaim_policy.md">Plan 170</a> opened with a
+container image reclaim policy (<code>a831eb2</code>), resolved its Stage 0 trend question
+and pulled build cache into scope (<code>aa1c82e</code>), then corrected its own measurement
+claim — containerd is already on a panel (<code>c4cbcc6</code>).</p>
+<p>Eleven other plans were opened this week and filed:
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_165_service_subdomain_routing.md">165</a> subdomain routing, scoped
+out of Plan 138 (<code>40dda68</code>); <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_166_container_pid1_reaping.md">166</a>
+container PID 1 does not reap its adopted orphans (<code>640877b</code>);
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_167_solver_config_default_truth.md">167</a> the solver truth in
+<code>.env.example</code> (<code>67c982f</code>);
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_168_generated_knowledge_substrate.md">168</a> the generated knowledge
+substrate at build-order 8 (<code>d8b9913</code>);
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_169_public_analytics_agent.md">169</a> the public analytics agent
+(<code>624df20</code>); <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_171_coordination_failure_vocabulary.md">171</a> the
+coordination failure vocabulary (<code>6d563e9</code>), filed directly out of Stage K's two
+commits; <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_173_machine_credential_lifecycle.md">173</a> machine
+credential lifecycle (<code>f5adf55</code>); and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_174_public_site_shape.md">174</a> the public site shape (<code>9f2984f</code>).
+Plans 172 and 175 are covered above; 164 opened and reached closeout in the same
+week.</p>
+<p>Also this week: Plan 129's closeout documentation (<code>11aa6d9</code>), Plan 145's
+post-mortem closed against the finished plan (<code>972dfa5</code>) with its design
+attribution corrected against git (<code>1fbf526</code>), Plan 125's four new obligations
+from the testing contract recorded (<code>5c1944c</code>) and Gate C's evidence archived out
+of the gitignored cache (<code>e0b33d6</code>), Plan 154's expected-running service count
+corrected twice (<code>81a5c3d</code>, <code>c60ff6d</code>), and Plan 121 given a record of what local
+bring-up actually is after <code>scripts/setup.ps1</code> was deleted (<code>f55b1f5</code>).</p>
+<h3 id="every-commit-by-plan">Every commit, by plan</h3>
+<p>The narrative above cites the commits that carry the argument. This is the full
+roll, so the denominator reconciles. Headings are plan numbers; the last two
+groups are commits that declare no plan and commits that name none.</p>
+<h4 id="162-129">162 (129)</h4>
+<ul>
+<li><code>dfa55ae</code> docs(plan-162): scope the plan now that the census is done (CAR-40)</li>
+<li><code>a0a49c8</code> docs(plan-162): number the census as Stage 0 and record its evidence (CAR-40)</li>
+<li><code>5862935</code> test(plan-162): run the orphaned suites and wire the survivors into CI (CAR-45)</li>
+<li><code>296016c</code> docs(plan-162): re-own G13 and fold it into Stage 5 (CAR-45)</li>
+<li><code>8c10d95</code> test(plan-162): unblind coverage and make its number mean something (CAR-46)</li>
+<li><code>92cb718</code> docs(plan-162): scope Stage 5b, separating production scripts from spent ones (CAR-55)</li>
+<li><code>2b12294</code> docs(plan-162): reconcile Stage 2 with Stage 1's gap-list convention (CAR-46)</li>
+<li><code>c711dcc</code> docs(plan-162): record Stage 2's evidence and unstick the index row (CAR-46)</li>
+<li><code>4b6a9c8</code> docs(plan-162): record what CI verified about the coverage gate (CAR-46)</li>
+<li><code>17d4fab</code> test(plan-162): give the two health-sensor censuses one declared source</li>
+<li><code>a5fda6c</code> test(plan-162): read the census by path, not by importing it</li>
+<li><code>92ef62b</code> test(plan-162): make DAG_SPECS name every DAG the DagBag builds</li>
+<li><code>06547b3</code> docs(plan-162): record Stage 3's evidence and point the index at Stage 4</li>
+<li><code>d9597ef</code> docs(plan-162): mark Stage 2 complete in the stage table</li>
+<li><code>5dd6bb7</code> ci(plan-162): split the dbt build + test job into four jobs (CAR-48)</li>
+<li><code>8c54915</code> ci(plan-162): stop two comments impersonating the Airflow pin (CAR-48)</li>
+<li><code>5097569</code> measure(plan-162): decompose the per-invocation dbt cost (CAR-48)</li>
+<li><code>70d2411</code> ci(plan-162): install per job only what its own suites import (CAR-48)</li>
+<li><code>e3b4c82</code> measure(plan-162): probe DuckDB coexistence with dbt in-process (CAR-48)</li>
+<li><code>9f21f87</code> perf(plan-162): run the real-build dbt tests in-process (CAR-48)</li>
+<li><code>848b22e</code> docs(plan-162): record Stage 4's evidence, measured (CAR-48)</li>
+<li><code>4647e6d</code> test(plan-162): put the read-only guard back, on statements (CAR-48)</li>
+<li><code>802adac</code> docs(plan-162): advance Plan 162's build-order slice to Stage 5 (CAR-48)</li>
+<li><code>783ab79</code> ci(plan-162): delete the Stage C measurement rig (CAR-48)</li>
+<li><code>4c5c7dd</code> docs(plan-162): bring the coverage section up to date with Stages 2 and 4 (CAR-48)</li>
+<li><code>103d987</code> docs(plan-162): record the third reading, and widen every range to match (CAR-48)</li>
+<li><code>5de9a3c</code> test(plan-162): sweep 34 files to mocker and 16 layer numbers to the contract (CAR-49)</li>
+<li><code>eaec028</code> test(plan-162): refile test_scrape_listings as the unit test it is (CAR-49)</li>
+<li><code>e954306</code> refactor(plan-162): split scripts/ into production and spent (CAR-55)</li>
+<li><code>10140ef</code> docs(plan-162): Stage 5b evidence, and scope the incremental-CI question to Stage 10 (CAR-55)</li>
+<li><code>0b9d0c4</code> docs(plan-162): add Stage 6b, the guard G13's exception said would be needed</li>
+<li><code>1172a7a</code> feat(plan-162): empty ROUTE_WAIVERS and give container_health a test home (CAR-50)</li>
+<li><code>d8d607d</code> fix(plan-162): install container_health's deps in the contract job (CAR-50)</li>
+<li><code>9741370</code> test(plan-162): unit-test the Docker contract verifier to 99% (CAR-50)</li>
+<li><code>184ca11</code> test(plan-162): cover the Promtail checker's replay setup too (CAR-50)</li>
+<li><code>c5c7650</code> docs(plan-162): record Stage 6's CI evidence (CAR-50)</li>
+<li><code>9dd99f5</code> docs(plan-162): advance the slice pointer to Stage 6b (CAR-50)</li>
+<li><code>97f4af8</code> docs(plan-162): keep the status lines general so they stop going stale</li>
+<li><code>8325046</code> fix(plan-162): name the encoding on every production text read and write</li>
+<li><code>a3eea2b</code> test(plan-162): fail when a text read or write lets the locale decide</li>
+<li><code>f9a702b</code> test(plan-162): catch the encoding shapes no static rule can name</li>
+<li><code>27288e6</code> fix(plan-162): scope the encoding guard's ignores to third-party modules</li>
+<li><code>c7d1d33</code> refactor(plan-162): check the encoding shapes statically instead of at runtime</li>
+<li><code>cc264db</code> docs(plan-162): record what CI said about the encoding guard</li>
+<li><code>b15c506</code> docs(plan-162): close out Stage 6b and advance the slice pointer to Stage 7</li>
+<li><code>0d7b436</code> fix(plan-162): skip gitignored files in the encoding guard's file walk</li>
+<li><code>9b2f685</code> feat(plan-162): mechanise G5, the inline-SQL gap nothing has ever checked</li>
+<li><code>0e4be9a</code> test(plan-162): execute the six Data Health statements against real DuckDB</li>
+<li><code>cad86d5</code> refactor(plan-162): extract the seven single-site statements, and execute them</li>
+<li><code>54b516d</code> feat(plan-162): close G5 -- no production module holds SQL at a call site</li>
+<li><code>566032c</code> test(plan-162): close the two holes that closing G5 exposed</li>
+<li><code>2af4d5f</code> docs(plan-162): record Stage 11 and G16, the question Plan 161 did not ask</li>
+<li><code>404ef08</code> fix(plan-162): scan production Python, not service packages, for SQL</li>
+<li><code>4b05d9d</code> refactor(plan-162): sort the scripts' SQL into what is production and what is not</li>
+<li><code>13d8de6</code> fix(plan-162): let the Layer 2 census read where the selector tests already are</li>
+<li><code>dad8f33</code> feat(plan-162): drain G14 to one entry, and stop a statement being filed twice</li>
+<li><code>23e2913</code> docs(plan-162): add Stage 12, the fixture duplication this plan created</li>
+<li><code>3bcac3a</code> feat(plan-162): close G14 -- every production .sql file is executed</li>
+<li><code>da72354</code> test(plan-162): execute ops' statements instead of retyping them</li>
+<li><code>53f7bf0</code> refactor(plan-162): file admin.py's statements, and unblock the last paraphrases</li>
+<li><code>2a98d4b</code> docs(plan-162): measure the assertion duplication Stage 12 inherits</li>
+<li><code>35ed492</code> fix(plan-162): a placeholder in a .sql comment is part of the statement</li>
+<li><code>ffa8225</code> docs(plan-162): record Stage 7's evidence, and close it</li>
+<li><code>88b185d</code> docs(plan-162): advance the slice pointer to Stage 8 (CAR-51)</li>
+<li><code>dfa0fac</code> docs(plan-162): add Stage 6c, the contract-versus-constraint gap a deploy found</li>
+<li><code>fe0ace8</code> docs(plan-162): point the slice cell at Stage 6c, not Stage 8</li>
+<li><code>086724f</code> docs(plan-162): record Stage 7's production deploy</li>
+<li><code>95cc107</code> fix(coordination): let a service that pauses no surface be deployed alone</li>
+<li><code>af8f28d</code> fix(coordination): report why a deploy release failed</li>
+<li><code>6b66333</code> docs(plan-162): narrow Stage 8, hand the dashboard Python to Plan 150</li>
+<li><code>f6a7077</code> docs(plan-162): close out Stage 6c with its production evidence</li>
+<li><code>ceb4f07</code> test(plan-162): assert Layer 2's second clause, and run the scraper's write path unmocked</li>
+<li><code>5ffd3fb</code> test(plan-162): close G8 by running the SRP fetch path unmocked</li>
+<li><code>5b8b144</code> docs(plan-162): document SCRAPER_RESULTS_BASE_URL and why it stays unset</li>
+<li><code>cdd2906</code> docs(plan-162): record Stage 8's evidence from CI</li>
+<li><code>575ae72</code> docs(plan-162): record Stage 8's deploy, and the half it does not confirm</li>
+<li><code>b86fd51</code> docs(plan-162): record Stage 8's cost as 2 estimated, 1 actual</li>
+<li><code>9044b8e</code> feat(plan-162): give airflow/dags a reachable .sql convention, and replace two SQL rules with one</li>
+<li><code>7011aa1</code> docs(plan-162): close out Stage 8 with its production confirmation</li>
+<li><code>3398299</code> docs(plan-162): point Plan 162's slice cell at Stage 9</li>
+<li><code>afb3100</code> docs(plan-162): close out Stage 9, and point the slice cell at Stage 10</li>
+<li><code>99f7f73</code> docs(plan-162): scope Stage 10 and split it into 10, 10b and 10c</li>
+<li><code>35532b4</code> feat(plan-162): build dbt against a production-shaped snapshot (CAR-54)</li>
+<li><code>e54c98d</code> refactor(plan-162): retire 14 SQL waivers, 37 -&gt; 23 (CAR-54)</li>
+<li><code>2e346cd</code> ci(plan-162): hold the snapshot-dbt gate for its own PR (CAR-54)</li>
+<li><code>af8b2ec</code> docs(plan-162): record Stage 10's split, the DAG defect, and the credential trail</li>
+<li><code>da1f3f0</code> feat(plan-162): gate dbt on a production snapshot, and fix the DAG that exports it (CAR-54)</li>
+<li><code>37406c1</code> test(plan-162): TEMPORARY — inject a data-test violation to prove the gate fails</li>
+<li><code>e6e3c13</code> docs(plan-162): record Stage 10's deliberate violation, and revert it (CAR-54)</li>
+<li><code>a70fb12</code> docs(plan-162): close Stage 10, and open Stage 13 for the skips it exposed (CAR-54)</li>
+<li><code>fa2f4c7</code> docs(plan-162): give Stages 11 and 12 the exits they never had</li>
+<li><code>71f6b1d</code> docs(plan-162): open Stage 15 for the defect class the DAG fix only patched</li>
+<li><code>d6a8cb3</code> docs(plan-162): open Stage 16 for SQL a test authors itself</li>
+<li><code>44946a3</code> docs(plan-162): record how Stage 16 was arrived at</li>
+<li><code>ef16b1c</code> docs(plan-162): size Stage 16 and repoint the slice cell to 10b</li>
+<li><code>7ccb735</code> docs(plan-162): rescope Stage 10c and record Stage 10b's decisions</li>
+<li><code>b76904a</code> docs(plan-162): restructure onto the plan-document contract</li>
+<li><code>1364808</code> docs(plan-162): repoint every external stage reference at the new letters</li>
+<li><code>9075bbf</code> docs(plan-162): convert the bare stage back-references the sweep missed</li>
+<li><code>f0edeca</code> docs(plan-162): reorder the remaining eight stages, and repoint the index</li>
+<li><code>a0c47a1</code> docs(plan-162): estimate Stages R and V at 1 point each</li>
+<li><code>30e2b94</code> docs(plan-162): rewrite Stage S around branch coverage, move the recorder to X</li>
+<li><code>70127be</code> docs(plan-162): point Stage T's dependency at X, where the recorder now lives</li>
+<li><code>03553fb</code> feat(plan-162): declare every skip in CI, or fail the run</li>
+<li><code>fcec5ac</code> test(plan-162): an undeclared skip, to watch the gate fail</li>
+<li><code>7b8ea40</code> test(plan-162): remove the demonstration skip, green again</li>
+<li><code>f111d02</code> docs(plan-162): close Stage U</li>
+<li><code>9253ae7</code> refactor(plan-162): move every executed test statement into tests/sql/</li>
+<li><code>b45702d</code> feat(plan-162): a test may not author SQL either</li>
+<li><code>815fcf2</code> feat(plan-162): a test may not invent the shape of a relation production defines</li>
+<li><code>ae97f83</code> feat(plan-162): record what text ran against which engine</li>
+<li><code>ec9ad67</code> fix(plan-162): keep the execution record CI was throwing away</li>
+<li><code>e044708</code> feat(plan-162): the SQL execution coverage gate, reporting once before it bites</li>
+<li><code>52ee24e</code> fix(plan-162): load the last two statements that were read rather than loaded</li>
+<li><code>fdba0de</code> fix(plan-162): SqlText carries the set of files a statement came from</li>
+<li><code>2fc6184</code> feat(plan-162): the SQL execution coverage gate bites -- 161 of 161</li>
+<li><code>9cd23ba</code> test(plan-162): the execution gate's own CI wiring is asserted, not assumed</li>
+<li><code>d7981b3</code> refactor(plan-162): delete the execution-coverage waiver ledger</li>
+<li><code>1cc1c67</code> refactor(plan-162): the recorder keys on the argument, not the method name</li>
+<li><code>a616d0c</code> feat(plan-162): declare the routes SQL travels, and assert them both ways</li>
+<li><code>d2d0561</code> test(plan-162): guard the denominator every coverage number is a fraction of</li>
+<li><code>79d606b</code> docs(plan-162): record the contract-drift findings this stage did not fix</li>
+<li><code>a3d2b17</code> test(plan-162): plan every templated test statement instead of waiving it</li>
+<li><code>301beb1</code> feat(plan-162): Plan 129's sampling statements move to files and gain a Layer 2 test</li>
+<li><code>6c6dcc0</code> docs(plan-162): a skill for adding SQL, because the reader starts cold</li>
+<li><code>ae74cf3</code> docs(plan-162): the prior-art comparison conceded more than it measured</li>
+<li><code>2906edf</code> fix(plan-162): ask for bindings only where there is a placeholder to bind</li>
+<li><code>6d3e3d4</code> docs(plan-162): close Stage X, and point the slice at Stage S</li>
+<li><code>de188c8</code> docs(plan-162): the depends-on cell states a dependency, not progress</li>
+</ul>
+<h4 id="138-67">138 (67)</h4>
+<ul>
+<li><code>e0b2054</code> docs(plan-138): publish the recaps, and name the coupling the root move breaks</li>
+<li><code>385c2be</code> docs(plan-138): fix the generator contract Stage 1d and 1e could not be built from</li>
+<li><code>b869275</code> docs(plan-138): reconcile the overview's solver naming with the live path (CAR-37)</li>
+<li><code>3cb759b</code> docs(plan-138): record the Stage 0 baseline and dispose of every drift row (CAR-44)</li>
+<li><code>f0a5f81</code> docs(plan-138): correct the baseline's stated measurement basis (CAR-44)</li>
+<li><code>fa9ef9b</code> docs(plan-138): close Gate 0 and open Stage 1a (CAR-38)</li>
+<li><code>1c47893</code> docs(plan-138): rebuild the README against the public truth contract (CAR-38)</li>
+<li><code>0f3f622</code> docs(plan-138): retitle the cover badge its content no longer matches (CAR-38)</li>
+<li><code>3a48feb</code> docs(plan-138): mark both overviews by register, not by disclosure</li>
+<li><code>3bc23f1</code> docs(plan-138): bring the storage overview up to date with Plan 145</li>
+<li><code>b33c4f9</code> docs(plan-138): drop the README's pointer to a setup script that cannot run (CAR-38)</li>
+<li><code>515bb82</code> feat(plan-138): rebuild the landing page against the public truth contract</li>
+<li><code>adbc8d0</code> docs(plan-138): record Stage 1b, open Stage 1f, and bring Stages 3 and 5 current</li>
+<li><code>7a47f18</code> docs(plan-138): point the build-order row at Stage 1c (CAR-56)</li>
+<li><code>e9302d9</code> docs(plan-138): bring the Stage 1 slice table current for 1b and 1c (CAR-56)</li>
+<li><code>3d8ea58</code> feat(plan-138): gate public-surface commits on a review skill (CAR-56)</li>
+<li><code>436842c</code> docs(plan-138): record the Stage 1c evidence and point the row at 1d (CAR-56)</li>
+<li><code>d411445</code> feat(plan-138): generate the public roadmap projection (CAR-57)</li>
+<li><code>b0cec16</code> docs(plan-138): record Stage 1d and promote 1e to the next slice (CAR-57)</li>
+<li><code>4a9de43</code> fix(plan-138): regenerate the stale public roadmap projection</li>
+<li><code>469d2ed</code> fix(plan-138): write test fixtures as UTF-8, not the Windows locale codepage</li>
+<li><code>c204d22</code> fix(plan-138): make the public-surface hook run on Windows</li>
+<li><code>15d028d</code> feat(plan-138): project the weekly recaps onto the public site (CAR-58)</li>
+<li><code>64ac21c</code> docs(plan-138): record Stage 1e's publication policy and what it corrected (CAR-58)</li>
+<li><code>9d46e6b</code> fix(plan-138): make plan-week regenerate the recap projection it invalidates (CAR-58)</li>
+<li><code>ee80754</code> docs(plan-138): record Stage 1e and promote 1f to the next slice (CAR-58)</li>
+<li><code>e5452ca</code> fix(plan-138): regenerate the roadmap projection the slice-cell edit staled (CAR-58)</li>
+<li><code>85f29d8</code> docs(plan-138): teach the plans skill that its two files are published (CAR-58)</li>
+<li><code>f632613</code> docs(plan-138): draw the corpus framings onto both surfaces (CAR-59)</li>
+<li><code>5367ab0</code> docs(plan-138): advance the slice pointer to Stage 1h (CAR-59)</li>
+<li><code>4960b52</code> docs(plan-138): replace the PR sequence with a build order (CAR-61)</li>
+<li><code>59b5b15</code> docs(plan-138): draft article D on the April cutover</li>
+<li><code>e6b6a48</code> docs(plan-138): rewrite article D's companion post as a teaser</li>
+<li><code>a4166ee</code> docs(plan-138): add the closeout public-surface question (CAR-61)</li>
+<li><code>331b980</code> docs(plan-138): record Stage 1h evidence and advance the slice pointer (CAR-61)</li>
+<li><code>3907c2f</code> docs(plan-138): close the seam that let a slice-pointer edit publish unnoticed (CAR-61)</li>
+<li><code>81ddeff</code> docs(plan-138): point the slice cell at Stage 2 now the ops deploy has landed (CAR-61)</li>
+<li><code>a20b94f</code> docs(plan-138): add Stage 7 -- publish content without an image rebuild</li>
+<li><code>5f00c60</code> feat(plan-138): serve generated public content from the checkout, not the image</li>
+<li><code>3675e47</code> docs(plan-138): point the remaining stage specs at the moved content path</li>
+<li><code>eb45064</code> docs(plan-138): correct the deploy state and the unreachability claim</li>
+<li><code>3c53a35</code> docs(plan-138): close out Stage 7, and correct a claim it was publishing</li>
+<li><code>c80f494</code> feat(plan-138): make / the public landing page and give the recaps a route</li>
+<li><code>afac29c</code> docs(plan-138): add the Stage 2 deploy run sheet</li>
+<li><code>2b2808b</code> Revert &quot;Merge pull request #338 from whitewalls86/car-62-plan-138-stage-2&quot;</li>
+<li><code>a1f1e4b</code> docs(plan-138): record why Stage 2 was deployed and reverted</li>
+<li><code>22032bc</code> fix(plan-138): confine Streamlit to /dashboard/ with a base path</li>
+<li><code>37f4ba3</code> docs(plan-138): replace &quot;mechanism unknown&quot; with the measured mechanism</li>
+<li><code>433cc4d</code> Reapply &quot;Merge pull request #338 from whitewalls86/car-62-plan-138-stage-2&quot;</li>
+<li><code>f3cc48b</code> test(plan-138): assert Streamlit under its base path, not under the catch-all</li>
+<li><code>6060495</code> docs(plan-138): close out Stage 2 with Gate 2 met, and advance the slice pointer</li>
+<li><code>74d17aa</code> docs(plan-138): add Stage 8, extract the public surface contract</li>
+<li><code>c66ea98</code> docs(plan-138): extract docs/PUBLIC_SURFACE.md, the public surface contract</li>
+<li><code>1cd9afa</code> docs(plan-138): re-measure the status block against the tree</li>
+<li><code>4842209</code> docs(plan-138): point the slice cell at Stage 8, not Stage 4</li>
+<li><code>847d76e</code> docs(plan-138): record Stage 3's three decisions, which were made and unwritten</li>
+<li><code>6695b60</code> feat(plan-138): take the landing page same-origin and drop the hero video</li>
+<li><code>50ebf55</code> docs(plan-138): record Stage 3b and 3c evidence, and correct a stale routing comment</li>
+<li><code>38eaa66</code> docs(plan-138): bring the Caddy route test's header up to date</li>
+<li><code>8761f7c</code> docs(plan-138): redesign 1g as its own page, and sequence Stage 9 first</li>
+<li><code>e211ecc</code> feat(plan-138): publish what a plan is for, not which stage is next</li>
+<li><code>0ec6d5a</code> feat(plan-138): close Stage 4 and add Stage 10, covering the surfaces Stage 9 created</li>
+<li><code>db02910</code> fix(plan-138): show the analytics bucket's end, not its label</li>
+<li><code>b8dcc79</code> test(plan-138): close Stage 5 with a README contract and a fallback assertion</li>
+<li><code>b5b4eb2</code> fix(plan-138): answer HEAD on every public route, and revalidate the generated artifacts</li>
+<li><code>780d393</code> docs(plan-138): record Gate 1h as met, which it has been since Stage 2</li>
+<li><code>13ce139</code> docs(plan-138): archive the public surface refresh</li>
+</ul>
+<h4 id="172-15">172 (15)</h4>
+<ul>
+<li><code>3f8ca3b</code> docs(plan-172): open the plan-authoring plan, and Plan 138's stage that consumes it</li>
+<li><code>5d45022</code> docs(plan-172): rescope to the plan document, and give it four questions</li>
+<li><code>9054f0c</code> docs(plan-172): bring the index row up to the rescoped plan</li>
+<li><code>8e9bdc0</code> docs(plan-172): write the plan-document contract</li>
+<li><code>380bcf8</code> feat(plan-172): add the plans skill's open-plan operation</li>
+<li><code>27c783e</code> feat(plan-172): add the plan-draft skill</li>
+<li><code>9bd25d4</code> docs(plan-172): ask how stages chunk into issues, not one-per-stage</li>
+<li><code>5de445e</code> feat(plan-172): add the plan-start skill</li>
+<li><code>5a40ff6</code> test(plan-172): mechanise the plan-document contract's public sections</li>
+<li><code>db0142e</code> fix(plan-172): address PR #352 review findings</li>
+<li><code>38da869</code> docs(plan-172): point Stage G at the measurement it actually re-runs</li>
+<li><code>0d26683</code> feat(plan-172): split stage-close out of close-out, add note-evidence</li>
+<li><code>00d4b74</code> test(plan-172): assert the waiver list only shrinks, retiring Stage G's re-measure</li>
+<li><code>219d9ec</code> docs(plan-172): repoint the five references the close-out split orphaned</li>
+<li><code>46782cd</code> docs(plan-172): archive the plan, and pay the waiver ratchet down to 38</li>
+</ul>
+<h4 id="161-12">161 (12)</h4>
+<ul>
+<li><code>cad95c8</code> docs(plan-161): the testing contract, and what it is measured against</li>
+<li><code>06f90e3</code> docs(plan-161): one mocking convention, layers ordered by cost, ast as a symptom</li>
+<li><code>9a56635</code> docs(plan-161): the restructuring has a plan number, and 139's split is decided</li>
+<li><code>ab6c5b3</code> docs(plan-161): CAR-33 closeout evidence</li>
+<li><code>db89cbb</code> docs(plan-161): the harness must not decide the outcome</li>
+<li><code>f2f5ab3</code> test(plan-161): the reviewer skill and the test that asserts the contract (CAR-34)</li>
+<li><code>313c914</code> test(plan-161): fail on an empty routing table, and report what was enumerated (CAR-34)</li>
+<li><code>e46ce27</code> test(plan-161): enumerate routes from the OpenAPI schema, not a routes walk (CAR-34)</li>
+<li><code>2324b0a</code> docs(plan-161): record the FastAPI enumeration failure as CAR-34 evidence</li>
+<li><code>5147200</code> test(plan-161): assert gap-list owners against the archive, and reconcile Plan 139</li>
+<li><code>92d2f99</code> docs(plans): archive Plan 161 and move Plan 142 to closeout</li>
+<li><code>2836a53</code> test(plan-161): assert the contract's claims about its own enforcement (CAR-43)</li>
+</ul>
+<h4 id="164-10">164 (10)</h4>
+<ul>
+<li><code>266b4d5</code> docs(plan-164): a cycle-close ritual, for the three steps nothing owns</li>
+<li><code>8bc1c35</code> docs(plan-164): <code>git branch -d</code> checks the upstream, not HEAD</li>
+<li><code>df8ea36</code> feat(plan-164): write the cycle-close order and build the ref-hygiene step</li>
+<li><code>96b3f8e</code> feat(plan-164): make ref hygiene prevention-first and cross-machine</li>
+<li><code>0643cbd</code> test(plan-164): enforce the settings and the recap habit, not the sweep</li>
+<li><code>c6bcadc</code> test(plan-164): tighten the recap deadline to Wednesday, and pin the boundary</li>
+<li><code>7e49b71</code> feat(plan-164): drop the ref ratchet to 5 after the backfill swept 65 branches</li>
+<li><code>95ed7f9</code> feat(plan-164): build Stages 1 and 2, and correct the premise that blocked them</li>
+<li><code>181b8e1</code> docs(plan-164): close Stages 0, 1, 2 and 3 with their record entries</li>
+<li><code>fee0089</code> docs(plan-164): move to closeout, and backfill Plan 154's public section</li>
+</ul>
+<h4 id="146-7">146 (7)</h4>
+<ul>
+<li><code>54fee43</code> docs(recaps): recap the week of 2026-08-24 to 2026-08-30</li>
+<li><code>bf989fc</code> fix(plan-146): the state parser could not see the closeout table</li>
+<li><code>83b9245</code> docs(plan-146): correct the recap's rename sha, and record the parser defect</li>
+<li><code>404f521</code> fix(plan-146): give the Documentation tests job PYTHONPATH (CAR-42)</li>
+<li><code>78e5aad</code> fix(plan-146): add workflow_dispatch so CI can be re-run manually (CAR-42)</li>
+<li><code>538c9fa</code> docs(plan-146): file handoffs and reports out of docs/plans/</li>
+<li><code>4bd29dc</code> docs(plan-146): repoint every reference the move broke</li>
+</ul>
+<h4 id="175-7">175 (7)</h4>
+<ul>
+<li><code>1cd7755</code> docs(plan-175): open the commit gate bundling hole plan</li>
+<li><code>9874473</code> feat(plan-175): move the public-surface gate inside git commit</li>
+<li><code>5e3f09d</code> fix(plan-175): mark the pre-commit hook executable in the index</li>
+<li><code>d9eaf8d</code> fix(plan-175): compare the hooks path as a path, not as a string</li>
+<li><code>b211212</code> docs(plan-175): close Stage A with its record entry</li>
+<li><code>2f4cb7f</code> docs(plan-175): archive the plan with its public summary</li>
+<li><code>098eefe</code> fix(plan-175): consume the attribution stamp on every accepted message</li>
+</ul>
+<h4 id="142-6">142 (6)</h4>
+<ul>
+<li><code>42a81d6</code> fix(plan-142): the four defects that made a maintenance window unrunnable</li>
+<li><code>9594d19</code> fix(plan-142): observability_fresh could never pass, on any host</li>
+<li><code>2ff4918</code> docs(plan-142): Stage 4's defects are deployed and verified in production</li>
+<li><code>1815b39</code> fix(plan-142): read the findmnt tree so mounts_expected can pass (CAR-17)</li>
+<li><code>0b6191a</code> fix(plan-142): close the findings the first real window produced (CAR-17)</li>
+<li><code>f5e577a</code> test(plan-142): couple the abort criterion to the boundary table (CAR-17)</li>
+</ul>
+<h4 id="149-6">149 (6)</h4>
+<ul>
+<li><code>bafcebf</code> chore(plan-149): seed cycles to a points budget, not an issue count</li>
+<li><code>7fb6a92</code> docs(plan-149): record Cycle 1's close, and make category 3 test the slice</li>
+<li><code>a30cdb0</code> chore(plan-149): fill-cycle creates the projects it seeds into</li>
+<li><code>7c2bada</code> chore(plan-149): a plan that gets an issue gets a project, in both skills</li>
+<li><code>7412a25</code> chore(plan-149): a Backlog-status issue cannot hold a cycleId</li>
+<li><code>03abeb1</code> fix(ticket-now): always pass assignee explicitly on issue creation</li>
+</ul>
+<h4 id="139-5">139 (5)</h4>
+<ul>
+<li><code>f3b4406</code> test(plan-139): give tests/integration/sql the real Airflow schema</li>
+<li><code>9ea2e27</code> docs(plan-139): Stage F's CI evidence, measured rather than estimated</li>
+<li><code>9e56012</code> docs(plan-139): mark Stage F complete</li>
+<li><code>1107433</code> docs(plan-139): fold Stage H into Plan 162 and archive Plan 139</li>
+<li><code>34bc12a</code> docs(plan-139): clear the references Plan 139's archival left stale</li>
+</ul>
+<h4 id="170-3">170 (3)</h4>
+<ul>
+<li><code>a831eb2</code> docs(plan-170): add container image reclaim policy</li>
+<li><code>aa1c82e</code> docs(plan-170): resolve Stage 0's trend question, pull build cache into scope</li>
+<li><code>c4cbcc6</code> docs(plan-170): correct the measurement claim -- containerd is already on a panel</li>
+</ul>
+<h4 id="121-2">121 (2)</h4>
+<ul>
+<li><code>8c854e0</code> docs(plan-121): record the unpinned-FastAPI incident against the constraints item</li>
+<li><code>f55b1f5</code> docs(plan-121): record what local bring-up actually is, after deleting setup.ps1</li>
+</ul>
+<h4 id="125-2">125 (2)</h4>
+<ul>
+<li><code>5c1944c</code> docs(plan-125): record the four obligations the testing contract now places on its gates</li>
+<li><code>e0b33d6</code> docs(plan-125): archive Gate C's evidence out of the gitignored cache</li>
+</ul>
+<h4 id="145-2">145 (2)</h4>
+<ul>
+<li><code>972dfa5</code> docs(plan-145): close the post-mortem against the finished plan</li>
+<li><code>1fbf526</code> docs(plan-145): correct the design attribution against git</li>
+</ul>
+<h4 id="154-2">154 (2)</h4>
+<ul>
+<li><code>81a5c3d</code> docs(plan-154): correct the expected-running service count in the build order</li>
+<li><code>c60ff6d</code> docs(plan-154): correct the expected-running set and every count derived from it</li>
+</ul>
+<h4 id="129-1">129 (1)</h4>
+<ul>
+<li><code>11aa6d9</code> Plan 129 Closout documentation.</li>
+</ul>
+<h4 id="165-1">165 (1)</h4>
+<ul>
+<li><code>40dda68</code> docs(plan-165): subdomain routing, scoped out of Plan 138</li>
+</ul>
+<h4 id="166-1">166 (1)</h4>
+<ul>
+<li><code>640877b</code> docs(plan-166): container PID 1 does not reap its adopted orphans</li>
+</ul>
+<h4 id="167-1">167 (1)</h4>
+<ul>
+<li><code>67c982f</code> docs(plan-167): open Plan 167 and state the solver truth in .env.example</li>
+</ul>
+<h4 id="168-1">168 (1)</h4>
+<ul>
+<li><code>d8b9913</code> docs(plan-168): schedule the generated knowledge substrate at build-order 8</li>
+</ul>
+<h4 id="169-1">169 (1)</h4>
+<ul>
+<li><code>624df20</code> docs(plan-169): file the public analytics agent in the backlog at 46</li>
+</ul>
+<h4 id="171-1">171 (1)</h4>
+<ul>
+<li><code>6d563e9</code> docs(plan-171): file the coordination failure vocabulary</li>
+</ul>
+<h4 id="173-1">173 (1)</h4>
+<ul>
+<li><code>f5adf55</code> docs(plan-173): open machine credential lifecycle in the build order (CAR-77)</li>
+</ul>
+<h4 id="174-1">174 (1)</h4>
+<ul>
+<li><code>9f2984f</code> docs(plan-174): open the public site shape plan, carved out of Plan 138</li>
+</ul>
+<h4 id="none-declared-3">none-declared (3)</h4>
+<ul>
+<li><code>aaeb4b6</code> chore: delete scripts/setup.ps1, superseded and non-functional since April</li>
+<li><code>d2cc8ba</code> feat: enforce the commit-attribution skill instead of remembering it</li>
+<li><code>b0e3d6a</code> docs: drop the CI lake snapshot from the not-production-serving lists</li>
+</ul>
+<h4 id="unattributed-3">unattributed (3)</h4>
+<ul>
+<li><code>6b9d4f2</code> feat(ops): name and scope the snapshot download tokens</li>
+<li><code>aebcacf</code> refactor(ops): put snapshot credential lookup behind a storage seam</li>
+<li><code>8acf088</code> fix(ops): deliver SNAPSHOT_DOWNLOAD_TOKENS to the container, and open Stage 14</li>
+</ul>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Read from <code>docs/PLANS.md</code>'s own history across the window — 57 index revisions,
+comparing the last revision before 2026-08-31 with the last inside 2026-09-06.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Start of window</th>
+<th>End of window</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>129</td>
+<td>closeout</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>138</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>139</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>161</td>
+<td>build</td>
+<td>archived</td>
+</tr>
+<tr>
+<td>142</td>
+<td>build</td>
+<td>closeout</td>
+</tr>
+<tr>
+<td>164</td>
+<td>absent</td>
+<td>closeout</td>
+</tr>
+<tr>
+<td>165</td>
+<td>absent</td>
+<td>backlog</td>
+</tr>
+<tr>
+<td>166</td>
+<td>absent</td>
+<td>backlog</td>
+</tr>
+<tr>
+<td>167</td>
+<td>absent</td>
+<td>backlog</td>
+</tr>
+<tr>
+<td>168</td>
+<td>absent</td>
+<td>build</td>
+</tr>
+<tr>
+<td>169</td>
+<td>absent</td>
+<td>backlog</td>
+</tr>
+<tr>
+<td>170</td>
+<td>absent</td>
+<td>build</td>
+</tr>
+<tr>
+<td>171</td>
+<td>absent</td>
+<td>backlog</td>
+</tr>
+<tr>
+<td>173</td>
+<td>absent</td>
+<td>build</td>
+</tr>
+<tr>
+<td>174</td>
+<td>absent</td>
+<td>build</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Two archivals are invisible to that diff and must be named separately.</strong> Plans
+172 and 175 were both opened <em>and</em> archived inside the window, so they read as
+absent at each endpoint and cancel out. Both appear in
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/planning/completed_plans.md"><code>completed_plans.md</code></a>, dated 2026-09-03 and
+2026-09-04. This is a limit of an endpoint comparison, not a finding about the
+week: any plan whose whole life fits inside one window will do the same.</p>
+<p>Six plans archived in seven days — 129, 138, 139, 161, 172, 175 — which is the
+largest number this repository has recorded in one week.</p>
+<p>Twelve plan documents were created in the window (164 through 175), and every
+one of them appears in a table. There is no unindexed plan document this week,
+which is the defect Plan 146 was written to prevent.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li>
+<p><strong>Plan 162 has six stages left</strong> — S, T, W, Q, V and R — of twenty-two. The
+slice pointer ends the week on Stage S, branch coverage for the dbt models
+(<code>6d3e3d4</code>). Sixteen closed in one week; the remaining six were reordered on
+2026-09-04 (<code>f0edeca</code>, <code>a0c47a1</code>).</p>
+</li>
+<li>
+<p><strong>Three <code>.env.example</code> keys have no established answer.</strong> <code>8acf088</code> measured 37
+keys, four of which no <code>docker-compose*.yml</code> references. One was the defect it
+fixed; <code>FASTAPI_ADMIN_KEY</code>, <code>MLFLOW_TRACKING_URI</code> and <code>PROVENANCE_ENV</code> are
+pre-existing and each needs wiring, deletion, or a declaration that it is
+script-only. Stage V is deliberately unsized until that investigation runs.</p>
+</li>
+<li>
+<p><strong>Stage X recorded contract-drift findings it did not fix</strong> (<code>79d606b</code>).</p>
+</li>
+<li>
+<p><strong>Plan 138 archived with two deliverables never produced</strong> — the mobile
+Lighthouse report and the before/after measurements. Four of its completion
+criteria moved to Plan 174 along with the presentation work. The archive row
+says so; it is recorded here because an archived plan stops being read.</p>
+</li>
+<li>
+<p><strong>Four closeout gates are open and dated.</strong> Plan 164 lands on Cycle 2's close
+(2026-09-09), Plan 142 on a second maintenance window run through the
+checked-in procedure (2026-09-30), Plan 146 on <code>docs/recaps/</code> holding a file
+for every complete week from 2026-08-17 to 2026-09-13, and Plan 149 on
+2026-09-15. Plans 136 and 160 also sit in closeout with dates of 2026-09-17
+and 2026-09-13.</p>
+<p>This recap is itself one of the four files Plan 146's gate counts.</p>
+</li>
+<li>
+<p><strong>Plan 138 Stage 2's revert is a resolved question, not an open one.</strong> The
+mechanism was unknown at the time of <code>a1f1e4b</code> and measured in <code>37f4ba3</code>; it is
+listed here only so a reader of the revert does not go looking for a loose end.</p>
+</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p><strong>Three commits name no plan in either their subject or their body.</strong> All three
+are the snapshot-download credential work on the <code>ops</code> service:</p>
+<ul>
+<li><code>6b9d4f2</code> feat(ops): name and scope the snapshot download tokens</li>
+<li><code>aebcacf</code> refactor(ops): put snapshot credential lookup behind a storage seam</li>
+<li><code>8acf088</code> fix(ops): deliver SNAPSHOT_DOWNLOAD_TOKENS to the container, and open Stage 14</li>
+</ul>
+<p>Their bodies mention Plans 108 and 112 as context for <em>why</em> the token format
+needed scopes, which is not the same as claiming either plan. The enclosing merge
+commits say where to look — <code>05de301</code> (PR #358,
+<code>car-54-plan-162-stage-10-gate</code>) for the first two and <code>381d66b</code> (PR #359,
+<code>car-plan-162-compose-env-wiring</code>) for the third — and <code>8acf088</code> discusses Plan
+162's Stages 13 and 14 by number. That is a strong hint and not an attribution,
+so it is recorded as a hint. The work itself is recapped above under Plan 162's
+Stage P and in <em>What is still owed</em>.</p>
+<p><strong>Three further commits state explicitly that they belong to no plan</strong>, which is
+an answer rather than a gap:</p>
+<ul>
+<li><code>aaeb4b6</code> chore: delete scripts/setup.ps1, superseded and non-functional since April</li>
+<li><code>d2cc8ba</code> feat: enforce the commit-attribution skill instead of remembering it</li>
+<li><code>b0e3d6a</code> docs: drop the CI lake snapshot from the not-production-serving lists</li>
+</ul>
+<p><code>b0e3d6a</code> is worth quoting on the point: it says attributing the fix to either
+Plan 138 or Plan 174 &quot;would be inventing a mapping&quot;. <code>d2cc8ba</code> built the
+mechanism that makes this section shrink — a <code>PreToolUse</code> hook plus a
+<code>commit-msg</code> hook enforcing that every commit is routed through the attribution
+skill, written after five commits went through one invocation of it in a single
+session.</p>
+<h2 id="merges">Merges</h2>
+<p>102 merges: 78 GitHub pull-request merges (#298 through #375) and 24 local
+integration merges, none of which is recapped — the work they carry is the
+non-merge commits above, and recapping both would double the week.</p>
+<h3 id="pull-request-merges-78">Pull-request merges (78)</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th>Date</th>
+<th>PR</th>
+<th>Plan named by branch</th>
+<th>Branch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0316113</code></td>
+<td>2026-08-31</td>
+<td>#298</td>
+<td>none named</td>
+<td><code>docs/recap-2026-08-30</code></td>
+</tr>
+<tr>
+<td><code>524ee21</code></td>
+<td>2026-08-31</td>
+<td>#300</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-42-docs-tests-pythonpath</code></td>
+</tr>
+<tr>
+<td><code>238d0f9</code></td>
+<td>2026-08-31</td>
+<td>#299</td>
+<td>161</td>
+<td><code>millerandrewpreston/car-33-plan-161-testing-contract</code></td>
+</tr>
+<tr>
+<td><code>4cd6e54</code></td>
+<td>2026-08-31</td>
+<td>#301</td>
+<td>138</td>
+<td><code>docs/plan-138-recaps-and-plan-165</code></td>
+</tr>
+<tr>
+<td><code>2134406</code></td>
+<td>2026-08-31</td>
+<td>#303</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-42-workflow-dispatch</code></td>
+</tr>
+<tr>
+<td><code>df2d8a2</code></td>
+<td>2026-08-31</td>
+<td>#302</td>
+<td>142</td>
+<td><code>millerandrewpreston/car-35-plan-142-stage-4-fix-the-four-stage-23-defects-and-deploy</code></td>
+</tr>
+<tr>
+<td><code>739b667</code></td>
+<td>2026-08-31</td>
+<td>#304</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-35-closeout-evidence</code></td>
+</tr>
+<tr>
+<td><code>7f196ec</code></td>
+<td>2026-08-31</td>
+<td>#305</td>
+<td>139</td>
+<td><code>millerandrewpreston/car-36-plan-139-stage-f-give-testsintegrationsql-the-airflow-schema</code></td>
+</tr>
+<tr>
+<td><code>22676f8</code></td>
+<td>2026-08-31</td>
+<td>#307</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-17-mounts-expected-gate</code></td>
+</tr>
+<tr>
+<td><code>a1f12d3</code></td>
+<td>2026-08-31</td>
+<td>#306</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-34-reviewer-skill</code></td>
+</tr>
+<tr>
+<td><code>02818f8</code></td>
+<td>2026-08-31</td>
+<td>#309</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-36-closeout-evidence</code></td>
+</tr>
+<tr>
+<td><code>6fdfa4f</code></td>
+<td>2026-08-31</td>
+<td>#308</td>
+<td>none named</td>
+<td><code>millerandrewpreston/car-17-stage-4-window-findings</code></td>
+</tr>
+<tr>
+<td><code>b6061e7</code></td>
+<td>2026-08-31</td>
+<td>#310</td>
+<td>161</td>
+<td><code>plan-161-archive-and-142-closeout</code></td>
+</tr>
+<tr>
+<td><code>d6bceb6</code></td>
+<td>2026-08-31</td>
+<td>#311</td>
+<td>none named</td>
+<td><code>car-43-contract-enforcement-claim</code></td>
+</tr>
+<tr>
+<td><code>8072823</code></td>
+<td>2026-08-31</td>
+<td>#312</td>
+<td>138</td>
+<td><code>docs/plan-138-stage-1-contract</code></td>
+</tr>
+<tr>
+<td><code>0c3e5dd</code></td>
+<td>2026-08-31</td>
+<td>#313</td>
+<td>138</td>
+<td><code>car-37-plan-138-gate-0b</code></td>
+</tr>
+<tr>
+<td><code>7ba7566</code></td>
+<td>2026-08-31</td>
+<td>#314</td>
+<td>162</td>
+<td><code>car-40-plan-162-census</code></td>
+</tr>
+<tr>
+<td><code>6bf8997</code></td>
+<td>2026-08-31</td>
+<td>#315</td>
+<td>138</td>
+<td><code>car-44-plan-138-gate-0</code></td>
+</tr>
+<tr>
+<td><code>8fc6190</code></td>
+<td>2026-08-31</td>
+<td>#316</td>
+<td>154</td>
+<td><code>plan-154-expected-service-count</code></td>
+</tr>
+<tr>
+<td><code>461987b</code></td>
+<td>2026-08-31</td>
+<td>#317</td>
+<td>none named</td>
+<td><code>car-45-stage-1-orphaned-suites-ci</code></td>
+</tr>
+<tr>
+<td><code>1f90284</code></td>
+<td>2026-08-31</td>
+<td>#318</td>
+<td>162</td>
+<td><code>car-46-plan-162-stage-2-unblind-coverage</code></td>
+</tr>
+<tr>
+<td><code>a87245e</code></td>
+<td>2026-08-31</td>
+<td>#319</td>
+<td>162</td>
+<td><code>car-47-plan-162-stage-3-health-sensor-census</code></td>
+</tr>
+<tr>
+<td><code>a458877</code></td>
+<td>2026-08-31</td>
+<td>#320</td>
+<td>138</td>
+<td><code>car-38-plan-138-stage-1a</code></td>
+</tr>
+<tr>
+<td><code>83ca95a</code></td>
+<td>2026-08-31</td>
+<td>#321</td>
+<td>162</td>
+<td><code>car-48-plan-162-stage-4-dbt-job-split</code></td>
+</tr>
+<tr>
+<td><code>63e5b6e</code></td>
+<td>2026-08-31</td>
+<td>#322</td>
+<td>138</td>
+<td><code>car-39-plan-138-stage-1b</code></td>
+</tr>
+<tr>
+<td><code>b80ae88</code></td>
+<td>2026-08-31</td>
+<td>#323</td>
+<td>138</td>
+<td><code>car-56-plan-138-stage-1c</code></td>
+</tr>
+<tr>
+<td><code>71765f2</code></td>
+<td>2026-09-01</td>
+<td>#324</td>
+<td>162</td>
+<td><code>car-49-plan-162-stage-5-mechanical-sweeps</code></td>
+</tr>
+<tr>
+<td><code>9534f89</code></td>
+<td>2026-09-01</td>
+<td>#325</td>
+<td>162</td>
+<td><code>car-55-plan-162-stage-5b-script-classification</code></td>
+</tr>
+<tr>
+<td><code>3f40f55</code></td>
+<td>2026-09-01</td>
+<td>#326</td>
+<td>138</td>
+<td><code>car-57-plan-138-stage-1d</code></td>
+</tr>
+<tr>
+<td><code>0e12080</code></td>
+<td>2026-09-01</td>
+<td>#328</td>
+<td>none named</td>
+<td><code>fix-master-red-roadmap-and-encoding</code></td>
+</tr>
+<tr>
+<td><code>244ac0c</code></td>
+<td>2026-09-01</td>
+<td>#327</td>
+<td>none named</td>
+<td><code>fix-public-surface-gate-interpreter</code></td>
+</tr>
+<tr>
+<td><code>ca052fa</code></td>
+<td>2026-09-01</td>
+<td>#329</td>
+<td>168</td>
+<td><code>worktree-plan-168-169-public-agent</code></td>
+</tr>
+<tr>
+<td><code>9199337</code></td>
+<td>2026-09-01</td>
+<td>#331</td>
+<td>138</td>
+<td><code>car-58-plan-138-stage-1e</code></td>
+</tr>
+<tr>
+<td><code>144db69</code></td>
+<td>2026-09-01</td>
+<td>#330</td>
+<td>162</td>
+<td><code>car-50-plan-162-stage-6-container-health</code></td>
+</tr>
+<tr>
+<td><code>15e310c</code></td>
+<td>2026-09-01</td>
+<td>#333</td>
+<td>138</td>
+<td><code>car-59-plan-138-stage-1f</code></td>
+</tr>
+<tr>
+<td><code>7217e98</code></td>
+<td>2026-09-01</td>
+<td>#332</td>
+<td>162</td>
+<td><code>car-60-plan-162-stage-6b</code></td>
+</tr>
+<tr>
+<td><code>712762e</code></td>
+<td>2026-09-01</td>
+<td>#334</td>
+<td>145</td>
+<td><code>docs/plan-145-post-mortem-closeout</code></td>
+</tr>
+<tr>
+<td><code>95589e1</code></td>
+<td>2026-09-01</td>
+<td>#335</td>
+<td>138</td>
+<td><code>car-61-plan-138-stage-1h</code></td>
+</tr>
+<tr>
+<td><code>b18e552</code></td>
+<td>2026-09-01</td>
+<td>#336</td>
+<td>170</td>
+<td><code>docs/plan-170-container-image-reclaim</code></td>
+</tr>
+<tr>
+<td><code>fc3a0e9</code></td>
+<td>2026-09-01</td>
+<td>#337</td>
+<td>138</td>
+<td><code>car-65-plan-138-stage-7</code></td>
+</tr>
+<tr>
+<td><code>60a1bb5</code></td>
+<td>2026-09-01</td>
+<td>#338</td>
+<td>138</td>
+<td><code>car-62-plan-138-stage-2</code></td>
+</tr>
+<tr>
+<td><code>34ce824</code></td>
+<td>2026-09-01</td>
+<td>#340</td>
+<td>none named</td>
+<td><code>car-62-dashboard-bare-path</code></td>
+</tr>
+<tr>
+<td><code>6d08b0a</code></td>
+<td>2026-09-01</td>
+<td>#341</td>
+<td>none named</td>
+<td><code>car-62-stage-2-postmortem</code></td>
+</tr>
+<tr>
+<td><code>d23c1d7</code></td>
+<td>2026-09-01</td>
+<td>#342</td>
+<td>138</td>
+<td><code>car-62-plan-138-stage-2-closeout</code></td>
+</tr>
+<tr>
+<td><code>bf82d4d</code></td>
+<td>2026-09-01</td>
+<td>#339</td>
+<td>162</td>
+<td><code>car-51-plan-162-stage-7</code></td>
+</tr>
+<tr>
+<td><code>acb1aaa</code></td>
+<td>2026-09-02</td>
+<td>#345</td>
+<td>162</td>
+<td><code>car-52-plan-162-stage-8</code></td>
+</tr>
+<tr>
+<td><code>00753e2</code></td>
+<td>2026-09-02</td>
+<td>#343</td>
+<td>138</td>
+<td><code>car-67-plan-138-stage-8-contract</code></td>
+</tr>
+<tr>
+<td><code>9561678</code></td>
+<td>2026-09-02</td>
+<td>#344</td>
+<td>162</td>
+<td><code>car-66-plan-162-stage-6c</code></td>
+</tr>
+<tr>
+<td><code>ff690e0</code></td>
+<td>2026-09-02</td>
+<td>#347</td>
+<td>162</td>
+<td><code>car-52-plan-162-stage-8-assertions</code></td>
+</tr>
+<tr>
+<td><code>7cb7f0e</code></td>
+<td>2026-09-02</td>
+<td>#348</td>
+<td>172</td>
+<td><code>plan-172-plan-authoring</code></td>
+</tr>
+<tr>
+<td><code>dbbd556</code></td>
+<td>2026-09-02</td>
+<td>#346</td>
+<td>138</td>
+<td><code>car-68-plan-138-stage-3</code></td>
+</tr>
+<tr>
+<td><code>4e9ae21</code></td>
+<td>2026-09-02</td>
+<td>#349</td>
+<td>none named</td>
+<td><code>car-52-closeout-evidence</code></td>
+</tr>
+<tr>
+<td><code>d248002</code></td>
+<td>2026-09-02</td>
+<td>#350</td>
+<td>162</td>
+<td><code>car-53-plan-162-stage-9</code></td>
+</tr>
+<tr>
+<td><code>dce7b10</code></td>
+<td>2026-09-02</td>
+<td>#351</td>
+<td>172</td>
+<td><code>car-69-plan-172-plan-authoring</code></td>
+</tr>
+<tr>
+<td><code>b54464e</code></td>
+<td>2026-09-03</td>
+<td>#352</td>
+<td>172</td>
+<td><code>car-70-plan-172-stage-a-contract</code></td>
+</tr>
+<tr>
+<td><code>63a1e13</code></td>
+<td>2026-09-03</td>
+<td>#353</td>
+<td>162</td>
+<td><code>car-54-plan-162-stage-10</code></td>
+</tr>
+<tr>
+<td><code>28ffccd</code></td>
+<td>2026-09-03</td>
+<td>#354</td>
+<td>138</td>
+<td><code>docs/plan-138-writing-surface-amendment</code></td>
+</tr>
+<tr>
+<td><code>b578d97</code></td>
+<td>2026-09-03</td>
+<td>#355</td>
+<td>172</td>
+<td><code>car-73-plan-172-stage-g-baseline</code></td>
+</tr>
+<tr>
+<td><code>8d76d4c</code></td>
+<td>2026-09-03</td>
+<td>#356</td>
+<td>138</td>
+<td><code>car-74-plan-138-stage-9</code></td>
+</tr>
+<tr>
+<td><code>4036c7f</code></td>
+<td>2026-09-03</td>
+<td>#357</td>
+<td>162</td>
+<td><code>car-54-plan-162-stage-10-snapshot-build</code></td>
+</tr>
+<tr>
+<td><code>05de301</code></td>
+<td>2026-09-03</td>
+<td>#358</td>
+<td>162</td>
+<td><code>car-54-plan-162-stage-10-gate</code></td>
+</tr>
+<tr>
+<td><code>381d66b</code></td>
+<td>2026-09-03</td>
+<td>#359</td>
+<td>162</td>
+<td><code>car-plan-162-compose-env-wiring</code></td>
+</tr>
+<tr>
+<td><code>c3176d4</code></td>
+<td>2026-09-03</td>
+<td>#360</td>
+<td>162</td>
+<td><code>car-plan-162-stage-11-12-exits</code></td>
+</tr>
+<tr>
+<td><code>b81f091</code></td>
+<td>2026-09-03</td>
+<td>#361</td>
+<td>162</td>
+<td><code>car-plan-162-stage-15</code></td>
+</tr>
+<tr>
+<td><code>d273f53</code></td>
+<td>2026-09-03</td>
+<td>#362</td>
+<td>none named</td>
+<td><code>claude/planning-sql-testing-agentic-0fmphc</code></td>
+</tr>
+<tr>
+<td><code>8efd0fb</code></td>
+<td>2026-09-04</td>
+<td>#363</td>
+<td>162</td>
+<td><code>car-78-plan-162-stages-10b-10c</code></td>
+</tr>
+<tr>
+<td><code>90b9ac7</code></td>
+<td>2026-09-04</td>
+<td>#364</td>
+<td>138</td>
+<td><code>plan-138-closeout</code></td>
+</tr>
+<tr>
+<td><code>38c3352</code></td>
+<td>2026-09-04</td>
+<td>#365</td>
+<td>138</td>
+<td><code>plan-138-data-through-bucket-end</code></td>
+</tr>
+<tr>
+<td><code>fcdc203</code></td>
+<td>2026-09-04</td>
+<td>#366</td>
+<td>138</td>
+<td><code>plan-138-stage-5</code></td>
+</tr>
+<tr>
+<td><code>06635c3</code></td>
+<td>2026-09-04</td>
+<td>#367</td>
+<td>138</td>
+<td><code>plan-138-archive</code></td>
+</tr>
+<tr>
+<td><code>622e3d7</code></td>
+<td>2026-09-04</td>
+<td>#368</td>
+<td>175</td>
+<td><code>car-89-plan-175-commit-hooks</code></td>
+</tr>
+<tr>
+<td><code>26632ad</code></td>
+<td>2026-09-04</td>
+<td>#369</td>
+<td>175</td>
+<td><code>plan-175-stage-a-record</code></td>
+</tr>
+<tr>
+<td><code>7bc6cd0</code></td>
+<td>2026-09-04</td>
+<td>#370</td>
+<td>175</td>
+<td><code>plan-175-closeout</code></td>
+</tr>
+<tr>
+<td><code>326f5dc</code></td>
+<td>2026-09-04</td>
+<td>#371</td>
+<td>162</td>
+<td><code>car-79-plan-162-stage-s-rewrite</code></td>
+</tr>
+<tr>
+<td><code>962e4fc</code></td>
+<td>2026-09-04</td>
+<td>#372</td>
+<td>164</td>
+<td><code>car-41-plan-164-stages-0-and-3</code></td>
+</tr>
+<tr>
+<td><code>dbe250e</code></td>
+<td>2026-09-04</td>
+<td>#373</td>
+<td>none named</td>
+<td><code>public-surface-ci-lake-snapshot-copy</code></td>
+</tr>
+<tr>
+<td><code>4817c01</code></td>
+<td>2026-09-04</td>
+<td>#374</td>
+<td>162</td>
+<td><code>car-81-plan-162-stage-u-declared-skips</code></td>
+</tr>
+<tr>
+<td><code>03401ce</code></td>
+<td>2026-09-06</td>
+<td>#375</td>
+<td>none named</td>
+<td><code>claude/linear-issue-162-piece-x-d98xh8</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="local-integration-merges-24">Local integration merges (24)</h3>
+<p>These carry no PR number. Most are <code>origin/master</code> merged down into a working
+branch mid-stage; three at the start of the window are branch merges from the
+<code>docs/plans/</code> relocation.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Merge</th>
+<th>Date</th>
+<th>PR</th>
+<th>Plan named by branch</th>
+<th>Subject</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>c47f6b4</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>149</td>
+<td><code>docs/plan-149-cycle-1-findings, taking master's index</code></td>
+</tr>
+<tr>
+<td><code>15bb60e</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>145</td>
+<td><code>docs/plan-145-post-mortem-transcript-evidence</code></td>
+</tr>
+<tr>
+<td><code>5a7b74a</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>131</td>
+<td><code>plan-131-packed-cold-storage, relocating its content to docs/plans/</code></td>
+</tr>
+<tr>
+<td><code>f8f50de</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>161</td>
+<td><code>branch 'master' into millerandrewpreston/car-33-plan-161-testing-contract</code></td>
+</tr>
+<tr>
+<td><code>fa754bb</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>138</td>
+<td><code>branch 'master' into docs/plan-138-recaps-and-plan-165</code></td>
+</tr>
+<tr>
+<td><code>84b9186</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>121</td>
+<td><code>remote-tracking branch 'origin/master' into millerandrewpreston/plan-121-pinning-and-plan-161-closeout</code></td>
+</tr>
+<tr>
+<td><code>acb0fbe</code></td>
+<td>2026-08-31</td>
+<td>no PR</td>
+<td>162</td>
+<td><code>remote-tracking branch 'origin/master' into worktree-car-49-plan-162-stage-5</code></td>
+</tr>
+<tr>
+<td><code>411ab21</code></td>
+<td>2026-09-01</td>
+<td>no PR</td>
+<td>168</td>
+<td><code>remote-tracking branch 'origin/master' into worktree-plan-168-169-public-agent</code></td>
+</tr>
+<tr>
+<td><code>12dc913</code></td>
+<td>2026-09-01</td>
+<td>no PR</td>
+<td>138</td>
+<td><code>remote-tracking branch 'origin/master' into car-58-plan-138-stage-1e</code></td>
+</tr>
+<tr>
+<td><code>d9a19c5</code></td>
+<td>2026-09-01</td>
+<td>no PR</td>
+<td>145</td>
+<td><code>remote-tracking branch 'origin/master' into docs/plan-145-post-mortem-closeout</code></td>
+</tr>
+<tr>
+<td><code>b239e0d</code></td>
+<td>2026-09-01</td>
+<td>no PR</td>
+<td>170</td>
+<td><code>remote-tracking branch 'origin/master' into docs/plan-170-container-image-reclaim</code></td>
+</tr>
+<tr>
+<td><code>6adeaf3</code></td>
+<td>2026-09-01</td>
+<td>no PR</td>
+<td>162</td>
+<td><code>remote-tracking branch 'origin/master' into car-51-plan-162-stage-7</code></td>
+</tr>
+<tr>
+<td><code>ee79e2a</code></td>
+<td>2026-09-01</td>
+<td>no PR</td>
+<td>162</td>
+<td><code>origin/master into car-51-plan-162-stage-7</code></td>
+</tr>
+<tr>
+<td><code>f50960c</code></td>
+<td>2026-09-02</td>
+<td>no PR</td>
+<td>125</td>
+<td><code>remote-tracking branch 'origin/master' into feature/plan-125-portability-audit</code></td>
+</tr>
+<tr>
+<td><code>fb9f11b</code></td>
+<td>2026-09-02</td>
+<td>no PR</td>
+<td>138</td>
+<td><code>remote-tracking branch 'origin/master' into car-68-plan-138-stage-3</code></td>
+</tr>
+<tr>
+<td><code>73a13e5</code></td>
+<td>2026-09-02</td>
+<td>no PR</td>
+<td>138</td>
+<td><code>remote-tracking branch 'origin/master' into car-68-plan-138-stage-3</code></td>
+</tr>
+<tr>
+<td><code>4fce919</code></td>
+<td>2026-09-02</td>
+<td>no PR</td>
+<td>none named</td>
+<td><code>remote-tracking branch 'origin/master' into car-52-closeout-evidence</code></td>
+</tr>
+<tr>
+<td><code>3814c5b</code></td>
+<td>2026-09-02</td>
+<td>no PR</td>
+<td>162</td>
+<td><code>remote-tracking branch 'origin/master' into car-53-plan-162-stage-9</code></td>
+</tr>
+<tr>
+<td><code>c71b3d1</code></td>
+<td>2026-09-02</td>
+<td>no PR</td>
+<td>172</td>
+<td><code>remote-tracking branch 'origin/master' into car-69-plan-172-plan-authoring</code></td>
+</tr>
+<tr>
+<td><code>3c5ddaa</code></td>
+<td>2026-09-03</td>
+<td>no PR</td>
+<td>172</td>
+<td><code>origin/master into car-70-plan-172-stage-a-contract (Plan 129 closeout)</code></td>
+</tr>
+<tr>
+<td><code>be253c1</code></td>
+<td>2026-09-03</td>
+<td>no PR</td>
+<td>172</td>
+<td><code>remote-tracking branch 'origin/master' into car-73-plan-172-stage-g-baseline</code></td>
+</tr>
+<tr>
+<td><code>cacfddf</code></td>
+<td>2026-09-03</td>
+<td>no PR</td>
+<td>162</td>
+<td><code>remote-tracking branch 'origin/master' into car-54-plan-162-stage-10-snapshot-build</code></td>
+</tr>
+<tr>
+<td><code>396889e</code></td>
+<td>2026-09-04</td>
+<td>no PR</td>
+<td>162</td>
+<td><code>remote-tracking branch 'origin/master' into car-79-plan-162-stage-s-rewrite</code></td>
+</tr>
+<tr>
+<td><code>4396304</code></td>
+<td>2026-09-04</td>
+<td>no PR</td>
+<td>164</td>
+<td><code>origin/master into car-41-plan-164-stages-0-and-3</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Two notes on this table. The three merges dated 2026-08-31 that name a branch
+rather than <code>origin/master</code> — <code>c47f6b4</code>, <code>15bb60e</code> and <code>5a7b74a</code> — are the tail
+of the relocation of plan documents into <code>docs/plans/</code>. The other 21 are
+<code>origin/master</code> merged down into a working branch mid-stage; they carry work
+already recapped, from this window or an earlier one, and introduce nothing new.</p>
+<p><code>2b2808b</code> and <code>433cc4d</code> are absent from both merge tables on purpose. They revert
+and reapply PR #338's merge, and reverting a merge produces an ordinary
+single-parent commit, so git counts them among the 290 non-merge commits. They
+are recapped under Plan 138.</p>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>Zero commits.</strong> The window closed at 2026-09-06 23:59:59 and this recap was
+written on 2026-09-07, so nothing has landed since:</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-09-06 23:59:59'
+# 0
+</code></pre>
+<p>This is the first recap in some time with an empty tail — the measured figure on
+2026-08-21 was 117 deferred against 55 in the window. It reflects when the recap
+was written rather than anything about the week.</p>
+<p><code>docs/recaps/</code> now holds a file for every complete week from 2026-04-19 to
+2026-09-06 with no gap. No week is owed.</p>
+</main>
+</body>
+</html>
