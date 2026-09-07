@@ -68,7 +68,66 @@ UNREACHABLE_REASON = {
 }
 
 
-def _unreachable_reason(predicate: exp.Expression, scope) -> str:
+def _asserts_non_null(condition: exp.Expression) -> set[str]:
+    """Columns this predicate guarantees are not NULL if it holds.
+
+    ``NOT x IS NULL`` is the explicit form. ``x IN (...)``, ``x = 'detail'`` and
+    any other comparison are the implicit ones: SQL's three-valued logic makes a
+    comparison against NULL yield NULL, which a WHERE treats as false, so a row
+    surviving the filter cannot have a NULL there either.
+    """
+    found: set[str] = set()
+    for part in _conjuncts_of(condition):
+        target = None
+        if isinstance(part, exp.Not) and isinstance(part.this, exp.Is) \
+                and isinstance(part.this.expression, exp.Null):
+            target = part.this.this
+        elif isinstance(part, (exp.In, exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)):
+            target = part.this
+        if isinstance(target, exp.Column):
+            found.add(target.name)
+    return found
+
+
+def _conjuncts_of(condition: exp.Expression) -> list[exp.Expression]:
+    out, stack = [], [condition]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, exp.And):
+            stack.extend([node.left, node.right])
+        else:
+            out.append(node)
+    return out
+
+
+def guaranteed_non_null(tree: exp.Expression) -> dict[str, set[str]]:
+    """``{scope name: columns that scope's WHERE guarantees are not NULL}``."""
+    scopes, names = scope_names(tree)
+    guarantees: dict[str, set[str]] = {}
+    for scope in scopes:
+        clause = scope.expression.args.get("where")
+        if clause is not None:
+            guarantees[names[id(scope.expression)]] = _asserts_non_null(clause.this)
+    return guarantees
+
+
+def _sources_of(scope) -> set[str]:
+    """The relation names this scope selects from, including its joins."""
+    names: set[str] = set()
+    source = scope.expression.args.get("from_")
+    parts = ([source.this] if source is not None else [])
+    parts += [join.this for join in scope.expression.args.get("joins") or ()]
+    for part in parts:
+        if isinstance(part, exp.Table):
+            names.add(part.name)
+        alias = part.args.get("alias") if isinstance(part, exp.Expression) else None
+        if isinstance(alias, exp.TableAlias) and alias.name:
+            names.add(alias.name)
+    return names
+
+
+def _unreachable_reason(predicate: exp.Expression, scope,
+                        guarantees: dict[str, set[str]] | None = None) -> str:
     """Arms no data can reach, as opposed to arms no probe can express.
 
     The distinction matters for the same reason ``error`` is separate from
@@ -76,6 +135,30 @@ def _unreachable_reason(predicate: exp.Expression, scope) -> str:
     fixture will ever change, and filing it as a coverage gap would leave a
     permanent entry in the waiver ledger that nobody can ever delete.
     """
+    # A coalesce whose argument the model has already filtered non-null.
+    #
+    # `coalesce(listing_id, '')` sitting one CTE below `where listing_id is not
+    # null` has a fallback no row can take -- not for want of fixture data, but
+    # because the model itself removed every row that would. Ten such guards
+    # were sitting in the coverage ledger implying somebody could close them.
+    #
+    # Kept in the SQL and reported here rather than deleted: the guard is free,
+    # and the filter it depends on is one edit away from moving. What is wrong
+    # is counting it as a gap.
+    if guarantees and isinstance(predicate, exp.Paren):
+        inner = predicate.this
+        if isinstance(inner, exp.Is) and isinstance(inner.expression, exp.Null) \
+                and isinstance(inner.this, exp.Column):
+            column = inner.this.name
+            for source in _sources_of(scope):
+                if column in guarantees.get(source, set()):
+                    return (
+                        f"`{column}` is filtered non-null by the `{source}` scope "
+                        f"this one reads from, so no row reaching here can take "
+                        f"the fallback. A guard the model has already made "
+                        f"redundant -- correct to keep, wrong to count as a gap"
+                    )
+
     grouped = scope.expression.args.get("group") is not None
     if not grouped:
         return ""
@@ -246,12 +329,12 @@ def probe_for(tree: exp.Expression, scope, branch: Branch) -> tuple[str | None, 
     return probe.sql(dialect=DIALECT), ""
 
 
-def _unreachable_for(branch: Branch, scope) -> str:
+def _unreachable_for(branch: Branch, scope, guarantees=None) -> str:
     try:
         predicate = sqlglot.parse_one(branch.predicate, dialect=DIALECT)
     except sqlglot.errors.ParseError:
         return ""
-    return _unreachable_reason(predicate, scope)
+    return _unreachable_reason(predicate, scope, guarantees)
 
 
 def _scalar_result(branch: Branch, sql: str, connection) -> ProbeResult:
@@ -280,6 +363,7 @@ def probe_model(path: Path, connection, phase: str = "") -> list[ProbeResult]:
     model = path.stem
     tree = sqlglot.parse_one(path.read_text(encoding="utf-8"), dialect=DIALECT)
     scopes, names = scope_names(tree)
+    guarantees = guaranteed_non_null(tree)
 
     results: list[ProbeResult] = []
     for scope in scopes:
@@ -287,7 +371,7 @@ def probe_model(path: Path, connection, phase: str = "") -> list[ProbeResult]:
         for found in branches_in_scope(scope, model, name):
             branch = Branch(found.model, found.scope, found.kind,
                             found.ordinal, found.predicate, phase)
-            unreachable = _unreachable_for(branch, scope)
+            unreachable = _unreachable_for(branch, scope, guarantees)
             if unreachable:
                 results.append(ProbeResult(branch, 0, 0, "", "", unreachable))
                 continue
@@ -351,14 +435,32 @@ _MOCK_CTE_PREFIX = "__dbt__cte__"
 
 
 def probe_unit_tests(root: Path, connection, phase: str = "") -> list[ProbeResult]:
-    """Probe every compiled unit test, attributing branches to its model."""
+    """Probe every compiled unit test, attributing branches to its model.
+
+    **The phase comes from the test's own compiled SQL, not from the caller.**
+    dbt writes an identical compiled unit test into both compile roots, so the
+    root a test was read from says nothing about which form it rendered. Tagging
+    by root credited a cold-form test to an ``@incremental`` id, and where a
+    scope orders its conjuncts differently between phases that is a different
+    branch: a test of ``NOT fetched_at IS NULL`` was closing a Plan 123 lookback
+    window.
+
+    Predicate-text equality was tried as the discriminator and is too strict --
+    a test that pins ``now_ts`` through ``overrides.macros`` compiles
+    ``>= CAST('...') - INTERVAL '7' DAYS`` where the model has
+    ``>= NOW() - INTERVAL '7' DAYS``. Same branch, different text, attribution
+    silently lost. :func:`rendered_warm` reads the structural fact instead.
+    """
     results: list[ProbeResult] = []
     for model, path in compiled_unit_tests(root):
+        compiled = path.read_text(encoding="utf-8")
+        rendered = "incremental" if rendered_warm(compiled, model) else "full"
         for result in probe_model(path, connection, phase):
             if result.branch.scope.startswith(_MOCK_CTE_PREFIX):
                 continue
             branch = Branch(model, result.branch.scope, result.branch.kind,
-                            result.branch.ordinal, result.branch.predicate, phase)
+                            result.branch.ordinal, result.branch.predicate,
+                            rendered)
             results.append(ProbeResult(branch, result.taken_true,
                                        result.taken_false, result.unprobeable,
                                        result.error, result.unreachable))
@@ -404,6 +506,75 @@ def drop_phase_where_identical(results: Sequence[ProbeResult],
 def covered_ids(results: Sequence[ProbeResult]) -> set[str]:
     """Branch ids this measurement saw take both arms."""
     return {r.branch.id for r in results if r.both_arms}
+
+
+def rendered_warm(compiled_sql: str, model: str) -> bool:
+    """Did this compiled unit test render the model's incremental form?
+
+    dbt substitutes every mocked input with a CTE named ``__dbt__cte__<name>``,
+    and the input a unit test mocks to reach the warm form is ``this`` -- the
+    model itself. So a compiled unit test carrying a CTE named after its own
+    model is one that overrode ``is_incremental`` and supplied a target
+    relation; anything else rendered the cold form, whatever root it was read
+    from.
+    """
+    return f"__dbt__cte__{model}" in compiled_sql
+
+
+def attribute_units(unit_results: Sequence[ProbeResult],
+                    model_results: Sequence[ProbeResult]) -> list[ProbeResult]:
+    """Decide which compile phase each unit-test result is evidence for.
+
+    **Two rules, because one discriminator does not cover both cases**, and each
+    was tried alone first.
+
+    *Predicate equality* credits a phase whose branch at that id carries the same
+    condition. This is what handles the majority: only the ``source_rows`` scope
+    of an incremental model changes between forms, so a cold-form test genuinely
+    exercises every branch in the scopes that did not change, and those ids
+    appear identically under both phases. Used alone it is too strict -- a test
+    pinning ``now_ts`` through ``overrides.macros`` compiles
+    ``>= CAST('2026-01-15...') - INTERVAL '7' DAYS`` where the model has
+    ``>= NOW() - ...``, and the attribution is silently lost.
+
+    *Rendered form* credits the phase the test's own SQL actually rendered, read
+    structurally via :func:`rendered_warm`. This is what handles the macro
+    override, and the ``@incremental`` lookback branches that only a warm-form
+    test reaches. Used alone it is too coarse -- it withdraws credit from every
+    unchanged scope, which took the gap from 0 to 25 when tried.
+
+    A result is evidence for a phase if *either* holds. Neither rule alone was
+    right, and tagging by the compile root a test was read from -- the first
+    attempt -- was simply wrong: dbt writes the identical compiled test into
+    both roots, so the root says nothing at all.
+    """
+    by_id: dict[str, str] = {}
+    for result in model_results:
+        by_id[result.branch.id] = result.branch.predicate
+
+    out: list[ProbeResult] = []
+    for result in unit_results:
+        branch = result.branch
+        rendered = branch.phase
+        for phase in ("", "full", "incremental"):
+            candidate = Branch(branch.model, branch.scope, branch.kind,
+                               branch.ordinal, branch.predicate, phase)
+            if candidate.id not in by_id:
+                continue
+            # An unphased id only exists for a model that compiles identically
+            # either way, so whichever form the test rendered is that model's
+            # only form and the rendering cannot disagree with it. Without this
+            # a test pinning a macro lost credit on every non-incremental model:
+            # its predicate text differs from the model's, and `rendered` is
+            # always "full" or "incremental", so neither rule below could fire
+            # on a branch carrying no phase at all.
+            unphased = phase == ""
+            same_condition = by_id[candidate.id] == branch.predicate
+            if unphased or same_condition or phase == rendered:
+                out.append(ProbeResult(candidate, result.taken_true,
+                                       result.taken_false, result.unprobeable,
+                                       result.error, result.unreachable))
+    return out
 
 
 def merge(*sources: Sequence[ProbeResult]) -> list[ProbeResult]:

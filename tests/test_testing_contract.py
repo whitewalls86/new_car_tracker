@@ -344,6 +344,58 @@ def pytest_steps() -> tuple[tuple[str, str, str], ...]:
 # ---------------------------------------------------------------------------
 CI_INVOCATION_WAIVERS = ()
 
+_IGNORED_PATH = re.compile(r"--ignore=(\S+)")
+
+
+def test_every_ignored_path_is_invoked_by_another_step_in_the_same_job():
+    """A suite carved out of one invocation must be run by another one.
+
+    **Rule 1 is directory-grained, and this is the hole that leaves.** It reads
+    ``argument.split()[0]``, so a step invoking ``tests/integration/dbt/``
+    satisfies it for every file in that directory -- including files that step
+    explicitly ``--ignore``s. Delete the separate step that was supposed to run
+    them and everything stays green while the gate silently stops running,
+    which is precisely the failure rule 1 exists to prevent, reappearing one
+    level down.
+
+    It is not hypothetical. Plan 162 Stage S carved two suites out of
+    ``tests/integration/dbt/`` because neither can share a process with the
+    in-process dbt the other suites there use: ``test_branch_coverage.py`` for
+    ``dbt compile`` overwriting ``target/`` under its neighbours, and
+    ``test_constraint_mutation.py`` because ``attached_warehouse()`` opens the
+    warehouse under a configuration DuckDB refuses while dbt-duckdb holds it.
+    Both are load-bearing gates; both were, for one commit, deletable without
+    turning anything red.
+
+    The check is per job rather than per workflow deliberately. These suites
+    need what their job built -- a warehouse, a compiled project -- so a step in
+    some other job would satisfy a global check while running against a
+    warehouse that does not exist.
+    """
+    ignored: dict[tuple[str, str], set[str]] = {}
+    invoked: dict[str, set[str]] = {}
+    for job, step, argument in pytest_steps():
+        parts = argument.split()
+        invoked.setdefault(job, set()).update(
+            part for part in parts if part.startswith("tests")
+        )
+        for path in _IGNORED_PATH.findall(argument):
+            ignored.setdefault((job, step), set()).add(path)
+
+    orphaned = sorted(
+        f"{job}: `{step}` ignores {path}, and no other step in that job runs it"
+        for (job, step), paths in ignored.items()
+        for path in paths
+        if path not in invoked.get(job, set())
+    )
+    assert not orphaned, (
+        "these paths are excluded from one pytest invocation and invoked by no "
+        "other step in the same job, so the tests in them run nowhere -- and "
+        "the rule above still passes, because it reads the directory the "
+        "invocation names rather than the files it actually runs:\n  "
+        + "\n  ".join(orphaned)
+    )
+
 
 @dataclass(frozen=True)
 class Dormant:
@@ -2192,6 +2244,12 @@ TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
         "tests/sql/integration/dbt/test_constraint_mutation/count_failing_rows.sql",
         "tests/sql/integration/dbt/test_constraint_mutation/count_relation_rows.sql",
         "tests/sql/integration/dbt/test_constraint_mutation/materialize_relation.sql",
+        # Same reason, one gate over: the non-vacuity gate walks every model
+        # under dbt/models/ rather than naming any, so the relation is generated
+        # and there is no call-site constant to read the renderings from. A list
+        # of models beside the models is exactly the thing that goes stale and
+        # lets a new one escape the obligation.
+        "tests/sql/integration/dbt/test_models_are_not_vacuous/count_model_rows.sql",
     )
 )
 
