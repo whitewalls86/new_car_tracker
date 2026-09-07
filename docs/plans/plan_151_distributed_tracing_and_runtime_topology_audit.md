@@ -191,6 +191,11 @@ unbounded attributes, the declared graph has a stable export, and the
 collector fits a written single-host resource budget. Otherwise record the gap
 and stop without deploying another service.
 
+**Exit:** the telemetry contract, the resource budget and the declared-graph
+export are written down, and the eight items above are answered for the
+selected paths. Nothing is deployed in this stage, so its exit is a document,
+not a diff -- and recording the gap and stopping is a valid way to meet it.
+
 ### Stage B — Metrics-first telemetry pipeline
 
 1. Instrument only the approved paths with OpenTelemetry SDKs or narrowly
@@ -213,6 +218,12 @@ The metrics-only pipeline must survive representative traffic without breaching
 its resource or cardinality budget, leaking prohibited attributes, or changing
 application success behavior. Failure rolls back instrumentation export and
 the collector; it does not weaken Plan 142 policy.
+
+**Exit:** the metrics-only pipeline is running against representative traffic
+inside its written budget, service-graph and span metrics reach Prometheus with
+no traces retained, and removing the collector has been shown not to block
+application work. Telemetry that fails open is the property under test, so it
+is demonstrated rather than asserted.
 
 ### Stage C — Declared-versus-observed audit
 
@@ -240,6 +251,12 @@ removal path.
 
 If that evidence is absent, keep the metrics-only pipeline and do not deploy
 Tempo merely to complete the conventional stack.
+
+**Exit:** declared and observed edges are compared with coverage and
+last-observed timestamps, a deliberately created undeclared edge has been caught
+by the audit, every mismatch is recorded as drift, noise or a modeling limit,
+and the retention decision above is written with its measurements. A decision of
+"no Tempo" meets this exit; Stage D then does not run.
 
 ### Stage D — Optional bounded Tempo proof
 
