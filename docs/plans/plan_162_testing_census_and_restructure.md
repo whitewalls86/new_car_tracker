@@ -1406,12 +1406,17 @@ seeds `ARTIFACT_NULL_VIN` and `ARTIFACT_SHORT_VIN` deliberately, so both reject
 paths of its `vin17` guard and its accept path run against production-shaped
 Parquet on every real build. The headcount scores it zero.
 
-Set against branch counts the ranking inverts. Counting branch points in the
-model SQL — a regex proxy, not a parse, and low by construction —
-`int_listing_volatility_features` carries ~48 against 3 unit tests,
-`int_listing_observation_fingerprints` ~37 against 5, `mart_deal_scores` ~33
-against 4. **The models holding the most logic are the least proportionally
-covered, and every instrument in this repository reports them as covered.**
+Set against branch counts the ranking inverts. Scoping counted branch points
+with a regex proxy — not a parse, and expected to be low by construction — and
+put `int_listing_volatility_features` at ~48 against 3 unit tests,
+`int_listing_observation_fingerprints` at ~37 against 5, and `mart_deal_scores`
+at ~33 against 4. **Re-counted 2026-09-06 from a real parse of dbt's compiled
+SQL: 46, 33 and 34 respectively, against a total of 250 branch points across
+the 23 models.** The proxy was close and its ranking was right, which is worth
+recording because it is the rarer outcome in this plan — three of the four
+other numbers this stage was scoped by did not survive measurement. **The models
+holding the most logic are the least proportionally covered, and every
+instrument in this repository reports them as covered.**
 
 **Three lists already claim to cover branches. None is derived from the models,
 and no two are checked against each other.**
@@ -1488,6 +1493,140 @@ is the stage that already makes every statement live in a file and validates it
 against an engine, and it runs before this one, so the capture baseline's
 deadline is served earlier there than it was here.
 
+**The column contract arrived here from
+[Stage X](#stage-x-a-test-may-not-author-sql-either) on 2026-09-05**, travelling
+the other way. X needed a trustworthy declaration of each model's shape — to
+stop a test inventing one — and found there is none. `schema.yml` is
+documentation: nothing makes it agree with the model it describes, and no column
+in it carries a type. The drift is already in the tree, in three fixtures that
+hand-declare stand-ins for real models and have diverged from them —
+`int_listing_state_fingerprints` declared 5 columns against the model's 8,
+`int_listing_state_runs` 1 against 11, `int_listing_observation_fingerprints` 1
+against 10. Nothing noticed, because nothing was comparing them.
+[`int_latest_observation.sql`](../../dbt/models/intermediate/int_latest_observation.sql)
+already records the production half of the same defect in its own prose: *"a
+column added to stg_observations must be added here too, or it silently stops
+appearing downstream. Nothing currently catches that drift automatically … this
+model's schema file documents only vin17/source/make, not the full column list,
+so it is not a backstop."* X landed the ledger that makes this visible — G20,
+seeded at 23, one waiver per model — and the name-only half of the fixture rule;
+**the retype half is recorded there as a stated limit and is struck when this
+stage closes.**
+
+**The scoping counts were wrong in three places, and re-measuring them is the
+first thing this stage did.** CAR-79 named six models with partial column lists
+and put the shortfall at ~101 columns. Measured against each model's final
+`SELECT` on 2026-09-06:
+
+| Model | Declared | Emitted | Undocumented |
+|---|---:|---:|---:|
+| `mart_deal_scores` | 4 | 39 | **35** |
+| `int_latest_observation` | 3 | 33 | 30 |
+| `stg_observations` | 6 | 33 | 27 |
+| `mart_vehicle_snapshot` | 5 | 29 | 24 |
+| `stg_price_events` | 6 | 10 | 4 |
+| | | | **120** |
+
+**Five models, not six, and the largest gap was not on the list.**
+`int_listing_volatility_features` was cited at 27/31 and `mart_block_rate` at
+6/8; both document every column they emit. `mart_deal_scores` — 4 declared
+against 39 emitted, because its final `SELECT` is `select *` over a CTE that
+projects 38 — was cited nowhere, and it is the worst case in the project. So 18
+of 23 models are complete rather than 17, the shortfall is **120 columns rather
+than ~101**, and the completed declaration is **307 columns rather than 187**,
+which is the denominator the type contract below actually has to fill. This is
+the third time in this plan that a stage's scoping number was wrong in the
+direction that made the stage look smaller, and the second time in two stages —
+see [Stage X](#stage-x-a-test-may-not-author-sql-either), whose evidence records
+the same thing under §4.
+
+#### Six decisions taken while scoping this stage, 2026-09-06
+
+Each was settled against a measurement taken first, in a throwaway dbt project
+running the pinned CI versions (`dbt-core==1.10.20`, `dbt-duckdb==1.10.1`).
+
+**1. The branch list is parsed, not matched, and its identity is positional.**
+`sqlglot` on the duckdb dialect parses **184 of 184** files under
+`target/compiled/` — all 23 models and all 161 data tests — with no failures,
+`arg_max`, `filter (where …)`, `qualify`, `::numeric` and windows included.
+Compiled rather than raw, because `regex_matches()`, `parquet_source()` and
+`datediff_days()` sit inside the expressions the enumerator has to see, and a
+Jinja stub that rendered one of them branchless would undercount without
+failing. A branch is keyed `model.<output column>.<kind>.<ordinal>`; the
+predicate text rides along as a fingerprint the reconciliation prints for
+review but never keys on, because a text key silently detaches every claim on
+the next edit. The accepted cost is that reordering `CASE` arms transfers a
+claim between them — which changes semantics anyway and so is already review's
+business.
+
+**2. Coverage is observed, not claimed.** The alternative was nominal: each of
+the three lists declares branch ids and the gate checks both directions. That
+relocates the hand-curation this stage exists to close, and a typed claim can
+be wrong forever without failing. It was rejected once
+`target/compiled/…/unit_tests.yml/` turned out to hold **the model's own SQL
+with each `ref()` replaced by a `__dbt__cte__` CTE of the `given` rows** — a
+unit test is the model with fixed inputs, so one probe mechanism reaches all
+three lists. A probe is `count(*) filter (where <predicate>)` and its negation,
+evaluated in the branch's own scope; a branch is covered when both arms come
+back non-zero. Demonstrated on `stg_dealers`, where
+`test_dealers_most_recent_attributes_win` takes only the true arm and
+`test_dealers_null_customer_id_excluded` takes both. Two limits are accepted:
+branches inside windows, `qualify` or aggregate arguments have no row-level
+scope to attach to and are recorded unprobeable with the reason, and unit-test
+probes must ride in the `dbt-models` job rather than a bare compile, because
+`get_fixture_sql` reads the real relation's columns and errors without it.
+
+**3. Every branch counts the same.** 74 of the 250 are `coalesce` fallbacks and
+48 of those are `coalesce(field, '')` field normalizations inside the two
+fingerprint concats, which raised the option of filtering them out or
+weighting them by kind. Both were rejected: a filter is a judgement that
+shrinks the denominator, which is the defect this plan has now found in four
+separate instruments, and a field that is never null in the fixture is a field
+the fingerprint has never been shown to distinguish on. The obligation is both
+arms of all 250.
+
+**4. The constraint gate mutates only inside the model that declares the
+constraint.** Mutating across models and rebuilding the downstream subtree was
+considered and dropped. `not_null_mart_vehicle_snapshot_vin` cannot be broken
+from inside `mart_vehicle_snapshot` — the guard is `where vin17 is not null` at
+[`int_latest_observation.sql:39`](../../dbt/models/intermediate/int_latest_observation.sql),
+and the mart takes it as its driving table. Calling that constraint decorative
+is **correct, not a false verdict**: it restates an invariant established
+upstream, where `not_null_int_latest_observation_vin17` sits and is locally
+load-bearing. Generalised: a propagated constraint is either mirrored upstream,
+where local mutation finds it, or it is not — and then the finding is that the
+model establishing the invariant fails to declare it, which is the more useful
+one and comes free. So two classes, not three, with a decorative verdict
+carrying the upstream guard's branch id as its reason. The stated limit is that
+mutation measures the code as it stands and cannot tell "decorative because
+redundant" from "decorative but a useful regression barrier" — which is why the
+exit records these rather than deleting them.
+
+**5. G16 gets a manifest, not a count.** A high-water count plus the absorption
+ledger was the cheaper design and is rejected on a hole in exactly the thing
+being asserted: delete `foo.sql` and add `bar.sql` in one commit and the count
+never moves, so the departure goes unrecorded. The objection to the manifest
+was churn, and the churn was measured — production `.sql` add/delete events run
+2, 6 and 6 in non-sweep months against 112, 28 and 95 in the three months that
+were Plan 120's selector extraction and this plan's own Stages L and X. **About
+five lines a month, from sweeps that are now finished.** That does not buy a
+correctness hole in a rule whose whole subject is silent departure. No
+`--update` flag: a manifest that regenerates itself is a rubber stamp, and the
+diff someone reads is the entire mechanism. `SQL_ABSORBED_BY_DBT` stays out of
+`ALL_WAIVERS` — it is permanent record rather than a draining queue, and
+[`test_no_waiver_outlives_the_plan_that_owns_it`](../../tests/test_testing_contract.py)
+would turn the whole ledger red the day this plan archives.
+
+**6. The column contract is derived from a build, and its Spark half leaves.**
+Names and types both come from `DESCRIBE` against the built relations, so
+exits 6 and 7 close in one operation and nobody hand-transcribes a column list
+— the failure that produced the three stale fixtures Stage X found. Contracts
+were confirmed enforced on `table` and on `view` (4 of the 23 are views), with
+a precise diagnostic naming the column, both types and the mismatch reason, and
+`string` was confirmed accepted by dbt-duckdb and normalized to `VARCHAR`. The
+spellings are DuckDB's; both Spark questions this stage uncovered are
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md)'s and are recorded there.
+
 **Exit.**
 
 1. **The branch list is derived from the model SQL**, not maintained. A model
@@ -1504,6 +1643,19 @@ deadline is served earlier there than it was here.
    Demonstrated by a silent shrink failing, not asserted.
 5. **The non-empty gate derives its source list from `sources.yml`**, so a
    source added to the dbt project cannot go unchecked.
+6. **`schema.yml` is complete.** The 5 partial column lists are filled — 120
+   columns — so 23 of 23 models document every column their final `SELECT`
+   emits.
+7. **Every column carries a `data_type`, under `contract: {enforced: true}`** —
+   0 of 187 do today, and 307 will be declared once exit 6 lands — so dbt fails
+   the build when a model's output stops matching its declaration. Spellings
+   valid on both engines per [Plan 125's
+   audit](../reference/plan_125_portability_audit.md): `varchar` is a hard Spark
+   parse error, `string` is DuckDB's alias and Spark's native name, *"verified
+   on both"*. A model that cannot carry an enforced contract has the reason
+   recorded rather than being skipped.
+8. **G20's waiver ledger is empty**, ratcheting down from the 23 Stage X seeded,
+   one per model.
 
 ### Stage T exists because this plan grew the suite
 
