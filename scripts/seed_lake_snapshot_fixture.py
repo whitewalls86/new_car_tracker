@@ -182,6 +182,66 @@ def _fixture_shift(now: Optional[datetime] = None) -> timedelta:
 #: rather than drifting if the clock crosses midnight mid-run.
 _SHIFT = _fixture_shift()
 
+#: Where the base seed records the shift it was written under. **The shift is
+#: per-process, and that is the hazard this marker closes**: CI seeds the base
+#: fixture in one process and asserts (or seeds later phases) in another, so a
+#: run that crosses 00:00 UTC between the two computes shifts one day apart --
+#: the assertion windows sit a day off the data, and the OBSFP correction
+#: scenario's deliberate fetched_at tie breaks, silently. Deliberately outside
+#: `silver_normalized/` and `ops_normalized/`, so no Parquet glob, source audit
+#: or dbt source ever sees it.
+_SHIFT_MARKER_KEY = f"{BUCKET}/lake_snapshot_fixture/shift_marker.json"
+
+
+def _write_shift_marker() -> None:
+    import json
+
+    with get_s3fs().open(_SHIFT_MARKER_KEY, "w") as handle:
+        json.dump(
+            {"shift_days": _SHIFT.days,
+             "fixture_epoch": FIXTURE_EPOCH.date().isoformat()},
+            handle,
+        )
+
+
+def seeded_shift_days() -> Optional[int]:
+    """The shift the base fixture on MinIO was seeded under, or None if absent."""
+    import json
+
+    s3 = get_s3fs()
+    if not s3.exists(_SHIFT_MARKER_KEY):
+        return None
+    with s3.open(_SHIFT_MARKER_KEY, "r") as handle:
+        return int(json.load(handle)["shift_days"])
+
+
+def assert_shift_matches() -> None:
+    """Refuse to read or extend a fixture seeded under a different day's shift.
+
+    Called by every non-base :func:`seed` phase and by the tests that derive
+    windows from :func:`_ts`, so a day-crossing between the seeding process and
+    this one fails as a sentence naming the repair -- reseed -- instead of as
+    an assertion quietly measuring data a day out of alignment.
+    """
+    seeded = seeded_shift_days()
+    if seeded is None:
+        raise RuntimeError(
+            "the MinIO fixture carries no shift marker, so it either predates "
+            "the marker or was never seeded. Reseed the base phase "
+            "(python scripts/seed_lake_snapshot_fixture.py) before reading it "
+            "or seeding a later phase."
+        )
+    if seeded != _SHIFT.days:
+        raise RuntimeError(
+            f"the base fixture was seeded under a shift of {seeded} days and "
+            f"this process computed {_SHIFT.days} -- the clock crossed midnight "
+            f"UTC between the two. Every relationship inside the seeded data is "
+            f"intact, but this process's _ts() values sit "
+            f"{_SHIFT.days - seeded:+d} day(s) off it, which breaks the "
+            f"deliberate fetched_at ties and the derived windows. Reseed the "
+            f"base fixture and rerun."
+        )
+
 
 def _ts(*args: int) -> datetime:
     """A fixture timestamp, written against :data:`FIXTURE_EPOCH` and shifted."""
@@ -1252,7 +1312,13 @@ def seed(phase: str = "base") -> List[str]:
         raise ValueError(f"unknown phase {phase!r}; expected one of {PHASES}")
     ensure_bucket()
     if phase == "base":
-        return [_seed_silver(build_silver_rows())] + _seed_ops()
+        keys = [_seed_silver(build_silver_rows())] + _seed_ops()
+        # Written after the data, so a marker's existence implies a seeded base.
+        _write_shift_marker()
+        return keys
+    # Later phases extend the base in place, and their rows only relate to it
+    # correctly when both were written under the same day's shift.
+    assert_shift_matches()
     if phase == "observation_fingerprint_incremental":
         return [
             _seed_silver(

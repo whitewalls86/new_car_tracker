@@ -89,13 +89,48 @@ class Branch:
         return f"{self.id}  `{self.predicate}`"
 
 
-def compiled_model_paths(root: Path | None = None) -> list[Path]:
-    """Every compiled model, excluding dbt's data tests and unit tests.
+def _manifest_model_names(base: Path) -> set[str]:
+    """The model names dbt's own manifest declares, found beside *base*.
 
-    Data tests compile into ``<model>.schema.yml/`` directories and unit tests
-    into ``unit_tests.yml/`` ones. Both are real SQL and both parse, but neither
-    is a model, and counting them would put a ``not_null`` test's own ``where``
-    clause into the denominator of the models' branch coverage.
+    Walked up from the compiled root rather than hardcoded, so the same rule
+    resolves ``dbt/target/compiled/...`` (manifest two levels up, in
+    ``target/``) and the temporary copies ``compiled_in_both_phases()`` makes
+    (manifest copied into the temp directory beside ``compiled/``).
+    """
+    import json
+
+    for candidate in [base, *base.parents]:
+        manifest = candidate / "manifest.json"
+        if manifest.is_file():
+            document = json.loads(manifest.read_text(encoding="utf-8"))
+            names = {
+                node["name"]
+                for node in document["nodes"].values()
+                if node["resource_type"] == "model"
+            }
+            assert names, f"{manifest} declares no models"
+            return names
+    raise FileNotFoundError(
+        f"no manifest.json found beside {base} or any of its parents. The "
+        f"model list comes from dbt's manifest, not from filename convention "
+        f"-- a compiled data test declared in a plain schema.yml would "
+        f"otherwise enumerate as a model, its WHERE clause would enter the "
+        f"branch denominator, and its SQL would be mutated as model code."
+    )
+
+
+def compiled_model_paths(root: Path | None = None) -> list[Path]:
+    """Every compiled model, as dbt's manifest declares them.
+
+    Filtered by ``resource_type == "model"`` from ``manifest.json`` rather than
+    by filename convention. The convention (`<model>.schema.yml/` for data
+    tests, ``unit_tests.yml/`` for unit tests) matches this repository today,
+    but it is a fact about how properties files happen to be named, not dbt's
+    rule: dbt names a compiled test directory after whatever ``.yml`` declared
+    the test, so a grouped ``coverage.yml`` would have put every ``not_null_*``
+    under an unrecognized directory and its ``where`` clause into the models'
+    branch denominator. The manifest is what the sibling constraint-mutation
+    gate already reads, and it cannot be fooled by a rename.
     """
     base = root or COMPILED_ROOT
     if not base.is_dir():
@@ -105,11 +140,8 @@ def compiled_model_paths(root: Path | None = None) -> list[Path]:
             f"build) has to have run first. Returning an empty list here would "
             f"make every branch-coverage number downstream read zero and pass."
         )
-    return sorted(
-        path
-        for path in base.rglob("*.sql")
-        if ".schema.yml" not in str(path) and "unit_tests.yml" not in str(path)
-    )
+    models = _manifest_model_names(base)
+    return sorted(path for path in base.rglob("*.sql") if path.stem in models)
 
 
 def _conjuncts(predicate: exp.Expression) -> list[exp.Expression]:

@@ -558,36 +558,19 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
-      - name: Run selector/dbt equivalence tests
-        # Compares the real dbt build above against the Plan 120 selector SQL
-        # over the same MinIO data — the coupling guard requested in Gate B
-        # review (not a hand-copied paraphrase of the dbt logic).
-        #
-        # --durations is Plan 139 Stage C's instruction, kept rather than run
-        # once: this step is the critical path now that nothing else shares
-        # its job, so the per-test breakdown has to stay readable in the log
-        # rather than living only in a plan document that ages.
-        #
-        # The --ignore is the other half of the step below it, and neither half
-        # works alone: this argument is a directory, so a file added to it joins
-        # this process by default, and the next step's whole reason for existing
-        # is that one file must not. The reasoning is written out there.
-        run: >-
-          pytest tests/integration/dbt/
-          --ignore=tests/integration/dbt/test_branch_coverage.py
-          --ignore=tests/integration/dbt/test_constraint_mutation.py
-          -v -m integration --durations=20
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          DUCKDB_PATH: /tmp/ci_analytics.duckdb
-          MINIO_ENDPOINT: http://localhost:9000
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-          MINIO_BUCKET: bronze
-
       - name: Run the dbt branch-coverage gate
         # Plan 162 Stage S. Its own pytest process, and the separation is the
         # design rather than tidiness.
+        #
+        # **Ordering is load-bearing: the two gate steps run before the
+        # equivalence suite below, not after it.** That suite's real-build
+        # tests seed later fixture phases into the shared 2099 partition and
+        # rebuild a subset of models, leaving a warehouse no single `dbt build`
+        # produced — some models holding phase-2/3 rows beside marts still on
+        # phase 1, with the stg_* views reading the enlarged Parquet live.
+        # Measured here instead, the gates describe exactly what the build step
+        # above produced, which is the state the documented repro (`seed, build,
+        # run the gate alone`) reproduces.
         #
         # `test_incremental_models_real_build.py` and
         # `test_observation_fingerprints_real_build.py` call `run_dbt()`, which
@@ -666,6 +649,35 @@ jobs:
           TZ: UTC
           DUCKDB_PATH: /tmp/ci_analytics.duckdb
           POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run selector/dbt equivalence tests
+        # Compares the real dbt build above against the Plan 120 selector SQL
+        # over the same MinIO data — the coupling guard requested in Gate B
+        # review (not a hand-copied paraphrase of the dbt logic).
+        #
+        # --durations is Plan 139 Stage C's instruction, kept rather than run
+        # once: this step is the critical path now that nothing else shares
+        # its job, so the per-test breakdown has to stay readable in the log
+        # rather than living only in a plan document that ages.
+        #
+        # The --ignore is the other half of the two gate steps above, and
+        # neither half works alone: this argument is a directory, so a file
+        # added to it joins this process by default, and the gates' whole
+        # reason for existing is that those two files must not. It also runs
+        # after them, deliberately — its real-build tests reseed and rebuild,
+        # and the gates must measure the untouched build.
+        run: >-
+          pytest tests/integration/dbt/
+          --ignore=tests/integration/dbt/test_branch_coverage.py
+          --ignore=tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123

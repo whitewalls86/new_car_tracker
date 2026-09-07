@@ -19,7 +19,10 @@ evaluated against that CTE's own ``FROM``, not against the model's final
 ``SELECT`` -- the columns it names do not exist there. So a probe is built by
 taking the scope's own ``FROM`` and joins, carrying the model's full ``WITH``
 chain along so the references resolve, and replacing the projection with the
-two counts.
+two counts. The scope's ``WHERE`` rides along for every expression it gates
+(everything except the WHERE's own conjuncts and outer-join conditions, which
+are evaluated before it), because an arm taken only by rows the model discards
+is not an exercised arm.
 
 **Not every branch is probeable, and the ones that are not are recorded rather
 than assumed covered.** A condition over a window function or an aggregate has
@@ -41,6 +44,7 @@ from tests.dbt.branch_list import (
     REPO_ROOT,
     Branch,
     branches_in_scope,
+    compiled_model_paths,
     scope_names,
 )
 
@@ -127,7 +131,8 @@ def _sources_of(scope) -> set[str]:
 
 
 def _unreachable_reason(predicate: exp.Expression, scope,
-                        guarantees: dict[str, set[str]] | None = None) -> str:
+                        guarantees: dict[str, set[str]] | None = None,
+                        kind: str = "") -> str:
     """Arms no data can reach, as opposed to arms no probe can express.
 
     The distinction matters for the same reason ``error`` is separate from
@@ -145,16 +150,31 @@ def _unreachable_reason(predicate: exp.Expression, scope,
     # Kept in the SQL and reported here rather than deleted: the guard is free,
     # and the filter it depends on is one edit away from moving. What is wrong
     # is counting it as a gap.
-    if guarantees and isinstance(predicate, exp.Paren):
+    if isinstance(predicate, exp.Paren):
         inner = predicate.this
         if isinstance(inner, exp.Is) and isinstance(inner.expression, exp.Null) \
                 and isinstance(inner.this, exp.Column):
             column = inner.this.name
             for source in _sources_of(scope):
-                if column in guarantees.get(source, set()):
+                if guarantees and column in guarantees.get(source, set()):
                     return (
                         f"`{column}` is filtered non-null by the `{source}` scope "
                         f"this one reads from, so no row reaching here can take "
+                        f"the fallback. A guard the model has already made "
+                        f"redundant -- correct to keep, wrong to count as a gap"
+                    )
+            # The scope's own WHERE, for expressions evaluated under it. Now
+            # that the probe carries the scope's filter, a fallback the same
+            # WHERE forecloses would measure one-armed forever -- not for want
+            # of fixture data but because the model discards every row that
+            # could take it. Same verdict as the upstream case, one clause
+            # closer.
+            if kind not in _EVALUATED_BEFORE_WHERE:
+                clause = scope.expression.args.get("where")
+                if clause is not None and column in _asserts_non_null(clause.this):
+                    return (
+                        f"`{column}` is filtered non-null by this scope's own "
+                        f"WHERE, so no row reaching this expression can take "
                         f"the fallback. A guard the model has already made "
                         f"redundant -- correct to keep, wrong to count as a gap"
                     )
@@ -235,6 +255,29 @@ def _unprobeable_reason(predicate: exp.Expression) -> str:
 #: Marker returned beside a probe that yields one boolean rather than two counts.
 _SCALAR = "\x00scalar"
 
+#: Branch kinds whose condition is evaluated before the scope's WHERE filters
+#: anything, so the probe must NOT carry that WHERE. A `where_conjunct` IS the
+#: filter -- restricting its probe by the whole WHERE would make its own false
+#: arm unreachable by construction. An `outer_join`'s match-or-miss happens at
+#: join time, before the WHERE ever runs.
+_EVALUATED_BEFORE_WHERE = frozenset({"where_conjunct", "outer_join"})
+
+
+def _scope_filter_for(select: exp.Expression, branch: Branch):
+    """The scope's own WHERE, iff *branch* is evaluated under it.
+
+    Every other kind -- case arms, coalesce fallbacks, nullif, greatest/least,
+    aggregate filters, HAVING conjuncts -- is evaluated only for rows the
+    scope's WHERE keeps. Probing those over the unfiltered FROM counted arms
+    on rows the model itself discards: `mart_deal_scores`' scored CTE filters
+    `price > 0`, and a `case when v.msrp > 0 and v.price > 0` inside it read as
+    two-armed off rows with no price, which no row reaching the CASE can be.
+    An arm only discarded rows take is not an exercised arm.
+    """
+    if branch.kind in _EVALUATED_BEFORE_WHERE:
+        return None
+    return select.args.get("where")
+
 
 def _is_scalar_over_scope(predicate: exp.Expression, select: exp.Expression) -> bool:
     """Is this condition one answer for the whole relation, not one per row?
@@ -292,6 +335,9 @@ def probe_for(tree: exp.Expression, scope, branch: Branch) -> tuple[str | None, 
         # is no row for which `max(fetched_at) is null` is true or false.
         probe = exp.Select().select(exp.alias_(predicate.copy(), "scalar_arm"))
         probe.set("from_", source.copy())
+        scope_filter = _scope_filter_for(select, branch)
+        if scope_filter is not None:
+            probe.set("where", scope_filter.copy())
         ctes = tree.args.get("with_")
         if ctes is not None:
             probe.set("with_", ctes.copy())
@@ -321,6 +367,9 @@ def probe_for(tree: exp.Expression, scope, branch: Branch) -> tuple[str | None, 
     probe.set("from_", source.copy())
     for join in select.args.get("joins") or ():
         probe.append("joins", join.copy())
+    scope_filter = _scope_filter_for(select, branch)
+    if scope_filter is not None:
+        probe.set("where", scope_filter.copy())
 
     ctes = tree.args.get("with_")
     if ctes is not None:
@@ -334,7 +383,7 @@ def _unreachable_for(branch: Branch, scope, guarantees=None) -> str:
         predicate = sqlglot.parse_one(branch.predicate, dialect=DIALECT)
     except sqlglot.errors.ParseError:
         return ""
-    return _unreachable_reason(predicate, scope, guarantees)
+    return _unreachable_reason(predicate, scope, guarantees, branch.kind)
 
 
 def _scalar_result(branch: Branch, sql: str, connection) -> ProbeResult:
@@ -468,11 +517,14 @@ def probe_unit_tests(root: Path, connection, phase: str = "") -> list[ProbeResul
 
 
 def models_differing_by_phase(full_root: Path, incremental_root: Path) -> set[str]:
-    """The models whose compiled SQL depends on whether their relation exists."""
+    """The models whose compiled SQL depends on whether their relation exists.
+
+    Enumerated through :func:`compiled_model_paths` so the definition of "a
+    model" lives in exactly one place -- dbt's manifest -- instead of a second
+    copy of the filename filter that could drift from the first.
+    """
     differing = set()
-    for path in full_root.rglob("*.sql"):
-        if ".schema.yml" in str(path) or "unit_tests.yml" in str(path):
-            continue
+    for path in compiled_model_paths(full_root):
         twin = incremental_root / path.relative_to(full_root)
         if not twin.exists():
             continue

@@ -291,8 +291,13 @@ def compiled_in_both_phases() -> tuple[Path, Path]:
     captured = []
     for extra in (["--full-refresh"], []):
         run_dbt("compile", *extra)
-        destination = Path(tempfile.mkdtemp(prefix="dbt-compiled-")) / "compiled"
+        parent = Path(tempfile.mkdtemp(prefix="dbt-compiled-"))
+        destination = parent / "compiled"
         shutil.copytree(_COMPILED, destination)
+        # The manifest rides along because `compiled_model_paths` reads the
+        # model list from it rather than from filename convention, and it walks
+        # up from the compiled root to find it -- same rule as dbt/target/.
+        shutil.copy2(_COMPILED.parent / "manifest.json", parent / "manifest.json")
         captured.append(destination / "cartracker" / "models")
     return captured[0], captured[1]
 

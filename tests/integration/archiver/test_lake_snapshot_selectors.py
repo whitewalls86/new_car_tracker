@@ -46,6 +46,20 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _fixture_shift_is_current():
+    """Fail the module loudly if the seed and this process straddle midnight.
+
+    Every window below is derived through ``fx._ts()``, which shifts the
+    fixture's epoch-relative dates by an amount computed from *this* process's
+    clock. The data was shifted by the seeding process's clock. The two agree
+    for the whole of a UTC day and silently disagree by one day across
+    midnight — the marker turns that into a named reseed instead of windows
+    that sit a day off the rows they measure.
+    """
+    fx.assert_shift_matches()
+
+
 @pytest.fixture(scope="module")
 def minio_con():
     con = get_duckdb_s3_connection()
