@@ -367,8 +367,8 @@ moved it to the end without making it a different stage.
 | 14 | [**P**](#stage-p-dbt-builds-against-production-shaped-data) | 10 | dbt builds against production-shaped data | — | `done` | CAR-54 |
 | 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `done` | CAR-81 |
 | 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `done` | CAR-83 |
-| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `next` | CAR-79 |
-| 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `—` | CAR-80 |
+| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `done` | CAR-79 |
+| 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `next` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
 | 20 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 21 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-88 |
@@ -1374,7 +1374,7 @@ so it carries none of the four conditions above, and `docker-build` is the job
 
 ### Stage S answers a question Plan 161 did not ask
 
-**Legacy:** Stage 11 · **Issue:** CAR-79 · **State:** `—`
+**Legacy:** Stage 11 · **Issue:** CAR-79 · **State:** `done`
 
 **Added 2026-09-01. Rewritten 2026-09-04, against a measurement that
 contradicted its own premise.** [Plan 161](plan_161_testing_contract.md) asked
@@ -1571,9 +1571,22 @@ says the framing was wrong. Of 308 measurable branch points:
 not a random remainder — they are almost exactly the surface a unit test
 *cannot* express:
 
-- **12 are phase-tagged**, `@full` or `@incremental`. A dbt unit test never
-  materializes a relation, so `is_incremental()` machinery is structurally out
-  of its reach — no quantity of unit testing gets these.
+- **12 are phase-tagged**, `@full` or `@incremental` — and this bullet said
+  something false when it was written, which is worth leaving visible. It read
+  *"a dbt unit test never materializes a relation, so `is_incremental()`
+  machinery is structurally out of its reach — no quantity of unit testing gets
+  these."* **Corrected 2026-09-07: a unit test reaches them.** It needs
+  `overrides: {macros: {is_incremental: true}}` and a mocked `- input: this`,
+  and on a clean warehouse that fails — dbt runs a model's unit tests *before*
+  materializing it, so the test needs a relation the test is blocking. That
+  reads as a deadlock and is not one: dbt's documentation prescribes
+  `dbt run --empty` first, which creates the relations without running tests.
+  With that step a clean warehouse builds `PASS=282 ERROR=0` and all 19 of the
+  incremental-only branch points are unit-tested. **The claim was inferred from
+  a failure rather than from the documentation, and it was inferred twice —
+  once by an agent, once by the author checking it.** It is corrected here
+  rather than deleted because the shape of the error is the plan's own subject:
+  a measurement taken without a precondition, read as a property of the world.
 - **2 are `stg_observations`' `vin17` guard**, which is this section's own
   headline anecdote arriving from the other direction: the model with zero unit
   tests, whose reject paths run on every build because the fixture seeds
@@ -1778,7 +1791,7 @@ spellings are DuckDB's; both Spark questions this stage uncovered are
 
 ### Stage T exists because this plan grew the suite
 
-**Legacy:** Stage 12 · **Issue:** CAR-80 · **State:** `—`
+**Legacy:** Stage 12 · **Issue:** CAR-80 · **State:** `next`
 
 **Added 2026-09-01, at the maintainer's suggestion, during Stage L.** Plan 162
 has spent nine stages adding tests -- Stage B put 73 orphaned ones into CI,
@@ -2033,7 +2046,7 @@ and which it does not. Demonstrated by a restated literal failing, not asserted.
 
 ### Stage X: a test may not author SQL either
 
-**Legacy:** Stage 16 · **Issue:** CAR-83 · **State:** `next`
+**Legacy:** Stage 16 · **Issue:** CAR-83 · **State:** `done`
 
 **Added 2026-09-04, from a review of what the SQL contract actually guarantees.**
 The contract's claim is not that SQL *should* live in files. It is that SQL which
@@ -3252,3 +3265,117 @@ Its two companions stay as written:
 2026-09-06 correction, and [the recorder
 baseline](../evidence/plan_162_stage_X_recorder_baseline_2026-09-05.md), with
 the open contract-drift findings.
+
+### Stage S — branch coverage for the dbt models
+
+**Legacy:** Stage 11 · **Issue:** CAR-79 · **Closed:** 2026-09-07
+
+**Cost:** estimate 2 points. `In Progress` 2026-09-06 18:30Z → 2026-09-07
+18:52Z. The issue itself records that *"the estimate predates this rewrite and
+has not been revisited"*; the actual is the maintainer's to set.
+
+All nine exits met. The dbt project's obligation is now stated as branch
+coverage and held by three gates that fail loudly rather than by any list
+someone maintains.
+
+| | Start | End |
+|---|---|---|
+| Measurable branch points | 308 | **297** (11 removed as dead) |
+| …covered both arms | never measured | **297 of 297** |
+| `UNIT_TEST_WAIVERS` | 160, seeded full | **0** |
+| `BRANCH_COVERAGE_WAIVERS` | 142, seeded full | **0** |
+| `UNPROBEABLE_BRANCHES` | 12 | **0** |
+| `UNREACHABLE_BRANCHES` | 11 | **0** |
+| `DBT_CONTRACT_WAIVERS` (G20) | 23, seeded by Stage X | **0** |
+| dbt unit tests | 18 models, count unknown | 39 tests, every branch |
+| Models building zero rows | 5 of 23 | **0** |
+| Constraints shown load-bearing | never measured | **15 of 161**; 146 decorative |
+| `schema.yml` columns declared | 187 | **307**, all typed, 23/23 enforced |
+| `TEST_SQL_TEMPLATE_WAIVERS` (G19) | 1 | **5** |
+| `ALL_WAIVERS` | 44 | **25** |
+
+**"Unreachable" is not a category — it is a symptom of three different
+defects, and the ledger for it should never have existed.** Eleven branch
+points could be taken by no fixture row and no unit test. Read as a property
+of the code they would have been a permanent ledger nobody could drain. Read
+as a symptom they resolved into: **six guards against states the surrounding
+SQL already makes impossible** (dead code, deleted — `nullif(count(*), 0)`
+under a GROUP BY, a `coalesce` around an expression whose first argument is
+the literal 0, a LEFT JOIN whose two sides are grouped from the same relation
+on the same key), **one fixture too old to reach a 7-day recency window**, and
+**one genuine production bug**. Every entry the ledger ever held was removable.
+It is empty because the code went, not because anything was excused.
+
+**The bug it found is what the stage is for.** `mart_vehicle_snapshot`'s
+`listing_state` falls back to a recency test whose header says "seen on SRP
+within 7 days"; it read `int_price_history.last_seen_at`, which is
+`max(event_at)` over *price events*. A VIN seen an hour ago that never carried
+a price was published `'unlisted'`; a listing still on SRP aged into
+`'unlisted'` as soon as its price stopped moving. It had been wrong for as long
+as the model existed, `dbt build` was green throughout, and the fixture's own
+`not_null` constraint on the column passed vacuously because the model built
+zero rows.
+
+**The fixture had rotted on the calendar, inside the stage measuring it.**
+Every `_ts()` literal was an absolute 2026 date, so the newest fixture row aged
+away from `now()` as time passed. The 7-day arm above was covered the day it
+was written and had been silently uncoverable for weeks. `FIXTURE_EPOCH` plus a
+whole-day shift fixes it: every relationship the fixture encodes is a
+*difference* between two timestamps and a constant shift preserves all of them,
+so the scenarios survive and only the distance to `now()` changes. **A test
+that was true when written and quietly stopped being true is the failure mode
+this plan keeps rediscovering** — see Stage A's undercounts and Stage X's three
+instrument defects.
+
+**Five models built to zero rows with ~30 constraints asserting vacuously**,
+from two independent causes: `scripts/seed_lake_snapshot_fixture.py` seeded
+MinIO only, so `ops.tracked_models` was empty and `int_active_make_models`
+inner-joined nothing; and the recency arm above. `--require-non-empty` named
+this exact cascade in its own CI comment while guarding sources rather than
+models, in a different job. The non-vacuity gate has **no waiver list**, by
+decision: a list is exactly where these five would have been recorded instead
+of repaired.
+
+**146 of 161 declared constraints are decorative** — no mutation of the guard
+that produces them fails their test. That is not a defect to fix here; it is a
+measurement nobody had, and the ledger now records which 15 hold something up.
+
+**`dbt run --empty` is a prerequisite, not an optimisation, and the plan
+asserted the opposite.** §Stage S said unit tests could not reach
+`is_incremental()` machinery — *"structurally out of its reach"*. They can:
+`overrides: {macros: {is_incremental: true}}` with a mocked `- input: this`,
+after `dbt run --empty` creates the relations dbt needs to type the mocked
+rows. **The false claim was inferred from a failure rather than read from dbt's
+documentation, and inferred twice — once by an agent, once by the author
+checking the agent.** It cost eight correct unit tests, deleted on the bad
+diagnosis and restored when the maintainer asked for the public docs to be
+read. The bullet is corrected in place above rather than deleted, because the
+shape of the error — a measurement taken without a precondition, read as a
+property of the world — is this plan's own subject. 19 branch points are
+reachable no other way.
+
+**Attribution between the cold and warm compiles took four attempts**, and
+three of the four failures were surfaced by an agent or the maintainer rather
+than by the author. Tagging by compile root, then by predicate text, then by
+rendered form (which moved the gap from 0 to 25), then the rule that holds:
+unphased, or same condition, or same rendering.
+
+**Two instrument defects worth carrying forward.** Filing an execution error as
+`unprobeable` made a missing S3 config read as 143 legitimately excused
+branches *and the gate reported an improvement* — an instrument that cannot
+distinguish "no probe can express this" from "the probe broke" will always
+report progress when it breaks. `error` is now a separate state with its own
+assertion. And `sqlglot` 30 renamed the AST arg keys `from` and `with` to
+`from_` and `with_`, which silently made 212 branches read as having no source
+scope.
+
+**The one ledger that grew is `TEST_SQL_TEMPLATE_WAIVERS`, 1 → 5** — three
+constraint-mutation templates and one non-vacuity template whose renderings are
+generated SQL that Layer 0 cannot enumerate. Recorded as debt, not as a
+convenience.
+
+**A scoping count this stage was sized by was wrong**, again: 250 branch points
+became 216 became 297 as the enumerator learned that `count(*) filter (where
+…)` is one branch and not two, and that both compile phases must be counted.
+Stage A's finding — *"the direction of that error is the reusable finding"* —
+now holds three stages out of three where a by-eye count was checked.
