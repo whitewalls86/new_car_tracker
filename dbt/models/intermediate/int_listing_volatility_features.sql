@@ -84,7 +84,16 @@ runs_with_meta as (
         m.make,
         m.model
     from {{ ref('int_listing_state_runs') }} r
-    left join vin_listing_meta m using (vin17, listing_id)
+    -- ON rather than USING, and the difference is not cosmetic: USING *merges*
+    -- the key columns, so vin17/listing_id come back non-null whether or not
+    -- `m` matched, and nothing in the result distinguishes a matched row from a
+    -- null-extended one. Plan 162 Stage S's branch prober reads a left join's
+    -- two outcomes as a branch and could not express this one at all. Same rows
+    -- out either way -- the only change is that the join's own condition is now
+    -- visible to a reader and to a probe.
+    left join vin_listing_meta m
+        on m.vin17 = r.vin17
+       and m.listing_id = r.listing_id
 ),
 
 open_runs as (
@@ -259,8 +268,12 @@ select
 
 from open_runs o
 cross join as_of ao
-join vin_stats vs                             using (vin17)
-left join listing_state_change_counts lsc     using (vin17)
+join vin_stats vs                             on vs.vin17  = o.vin17
+-- ON rather than USING for the same reason as the vin_listing_meta join above:
+-- USING merges vin17, so a row that found no state-change count is
+-- indistinguishable from one that did. The inner join above is converted too,
+-- so the two joins read the same way.
+left join listing_state_change_counts lsc     on lsc.vin17 = o.vin17
 left join price_changes pc                    on pc.vin  = o.vin17
 left join {{ ref('int_price_history') }} ph   on ph.vin  = o.vin17
 left join {{ ref('int_benchmarks') }} bm      on bm.make = o.make and bm.model = o.model
