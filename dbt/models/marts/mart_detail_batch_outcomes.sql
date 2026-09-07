@@ -15,7 +15,12 @@ select
     count(distinct vin17) filter (where vin17 is not null)                     as unique_vins_enriched,
     round(
         count(*) filter (where vin17 is not null) * 100.0
-        / nullif(count(*), 0), 1
+        -- No nullif around this count. It guards a division by zero that cannot
+        -- happen: the scope groups, and a group exists only because it has at
+        -- least one row, so count(*) is never 0. Removing it is exact --
+        -- nullif(count(*), 0) and count(*) are the same value for every group
+        -- that can exist.
+        / count(*), 1
     )                                                                          as extraction_yield
 from {{ ref('stg_observations') }}
 where source = 'detail'

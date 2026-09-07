@@ -98,10 +98,24 @@ scored as (
 
         -- ===== DEAL SCORE (0-100) =====
         round((
-            -- MSRP discount (35 pts): 10%+ discount = full points
-            coalesce(greatest(0, least(35,
+            -- MSRP discount (35 pts): 10%+ discount = full points.
+            --
+            -- No coalesce around this, and its absence is deliberate. There was
+            -- one -- `coalesce(greatest(...), 0)` -- and Plan 162 Stage S's
+            -- branch prober showed its NULL arm was unreachable: greatest and
+            -- least ignore NULL arguments on both DuckDB and Spark, and the
+            -- first argument here is the literal 0, so the expression cannot be
+            -- NULL whatever the data. It was dead code that cost a permanent
+            -- entry in a coverage ledger nobody could ever drain.
+            --
+            -- Worth knowing while reading this: because least() skips NULLs, a
+            -- listing with msrp = 0 or a NULL msrp takes the FULL 35 points --
+            -- nullif makes the discount NULL and least(35, NULL) is 35. That is
+            -- current behaviour, asserted by the unit tests, and it looks like a
+            -- scoring defect rather than an intent.
+            greatest(0, least(35,
                 (v.msrp - v.price)::numeric / nullif(v.msrp, 0) * 350
-            )), 0)
+            ))
 
             -- National price percentile (30 pts): lower = better deal
             + (1 - coalesce(pctl.national_price_percentile, 0.75)) * 30
