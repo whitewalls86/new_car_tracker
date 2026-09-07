@@ -1540,6 +1540,112 @@ direction that made the stage look smaller, and the second time in two stages �
 see [Stage X](#stage-x-a-test-may-not-author-sql-either), whose evidence records
 the same thing under §4.
 
+#### The three lists answer three questions, not one
+
+**Amended 2026-09-07, against a measurement taken after the enumerator
+existed.** This section previously treated the three lists as three ways of
+doing one job, and asked which branches each of them covered. With the branch
+list in hand that question could finally be asked of the data, and the answer
+says the framing was wrong. Of 308 measurable branch points:
+
+| | branches |
+|---|---:|
+| Covered by a dbt unit test | **148** |
+| Covered by the fixture-driven real build | 95 |
+| Union | 200 |
+| **Only** the fixture reaches | **22** |
+| **Only** a unit test reaches | 75 |
+| Both reach | 73 |
+| Neither reaches | 108 |
+
+**Unit tests are already the stronger branch instrument by half again**, and
+73 branches are covered twice over. But the 22 the fixture alone reaches are
+not a random remainder — they are almost exactly the surface a unit test
+*cannot* express:
+
+- **12 are phase-tagged**, `@full` or `@incremental`. A dbt unit test never
+  materializes a relation, so `is_incremental()` machinery is structurally out
+  of its reach — no quantity of unit testing gets these.
+- **2 are `stg_observations`' `vin17` guard**, which is this section's own
+  headline anecdote arriving from the other direction: the model with zero unit
+  tests, whose reject paths run on every build because the fixture seeds
+  `ARTIFACT_NULL_VIN` and `ARTIFACT_SHORT_VIN` deliberately.
+- **4 are cooldown bucket boundaries** in `mart_cooldown_cohorts` and
+  `mart_cooldown_event_funnel`, mapping one-to-one onto the selector registry's
+  `cooldown_bucket_3_4`, `_5_10` and `_11_plus`. The branch-first snapshot
+  design, seen from the far end.
+- **4 are deep CTE predicates** in `int_listing_volatility_features`, several
+  joins past anything a mocked `ref()` reaches.
+
+**So the lists are not redundant, they are differently shaped, and grading them
+all on one number was the error.** The work divides:
+
+| List | Owes |
+|---|---|
+| `dbt/models/*/unit_tests.yml` | **Branch exhaustiveness — 100%, both arms, every branch**, including ones another instrument already reaches |
+| the fixture-driven build | **Non-vacuity**: every model materializes rows, cold and warm |
+| the snapshot selectors | **Relevance**: which branches production actually reaches |
+
+**Unit tests take exhaustiveness because they are the only list that can
+construct a state production has never produced.** A selector finds rows; it
+cannot find the absence of rows, and it cannot find a state the business has
+never entered. Keying coverage to production data would make the branch list
+hostage to whatever production happens to contain.
+
+**The fixture is released from branch coverage entirely, and that is what makes
+it maintainable.** Its data stops being pinned in place by an obligation to
+reach particular branches, and answers one question instead: does a build over
+this data produce a world where every model is actually populated? Nothing else
+can ask that. No unit test would ever have found that five of the 23 models
+build to zero rows — see [the empty
+models](#five-models-build-over-an-empty-world) — and a production-shaped
+snapshot would not either, because production has the rows that fixture lacks.
+
+**And the third question inverts.** A branch production never takes is not a
+coverage gap somebody must close by inventing data. It is a finding: dead code,
+or a state never yet seen. Nothing in this repository currently answers it.
+
+#### Five models build over an empty world
+
+**Measured 2026-09-06.** `int_active_make_models`, `int_benchmarks`,
+`mart_deal_scores`, `mart_price_freshness_trend` and `mart_vehicle_snapshot`
+materialize **zero rows** against the fixture, and the build reports success.
+Their data tests pass vacuously — `not_null` over an empty relation is
+trivially true — so roughly thirty declared constraints currently assert
+against nothing at all.
+
+The cause is one line of provenance: dbt has six sources, two of which are
+Postgres tables read through `postgres_scan`, and
+[`scripts/seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py)
+seeds **MinIO only**. `ops.tracked_models` is written by the processing service
+at runtime and by nothing in the dbt path, so it is empty;
+`int_active_make_models` inner-joins it and yields nothing; `mart_vehicle_snapshot`
+inner-joins that; `mart_deal_scores` and `mart_price_freshness_trend` read the
+mart. `int_benchmarks` is empty for an unrelated reason — its join between
+`int_latest_observation` and `int_price_history` survives no rows under the
+`current_price > 0` filter.
+
+**The instrument for this already exists and is pointed at the other job.**
+`--require-non-empty` names this exact cascade in its own CI comment — *"left
+empty, `stg_search_configs` reads nothing, `int_active_make_models` inner-joins
+to nothing, and `mart_vehicle_snapshot` builds green over an empty world"* — but
+it runs in `snapshot-dbt`, against the production snapshot, and guards
+*sources*. The fixture build in `dbt-models` has no such gate, and no gate at
+all on *models*.
+
+**There is no waiver list, and the case against one is a live defect rather
+than a principle.** `mart_vehicle_snapshot.sql:35` reads
+`case when ph.last_seen_at >= {{ now_ts() }} - interval '7 days' then 'active'
+else 'unlisted' end`, and the fixture's timestamps are absolute — `2026-07-26`
+and neighbours. That arm was covered when it was written and has been dead for
+weeks, because wall-clock time moved past the fixture and nothing was watching.
+A waiver list is precisely where that would have been absorbed: a red gate
+nobody can explain, a line reading "legitimately empty in the fixture", and rot
+recorded instead of repaired. The cost of refusing one is that this gate will
+one day fail for a reason no commit caused; the answer to that is to anchor the
+fixture's dates relative to `now()`, which is work this stage owes and a waiver
+would have hidden.
+
 #### Six decisions taken while scoping this stage, 2026-09-06
 
 Each was settled against a measurement taken first, in a throwaway dbt project
@@ -1630,23 +1736,28 @@ spellings are DuckDB's; both Spark questions this stage uncovered are
 **Exit.**
 
 1. **The branch list is derived from the model SQL**, not maintained. A model
-   that gains a branch no unit test, no selector and no fixture scenario reaches
-   fails the suite. Demonstrated by adding one, not asserted.
-2. **The three lists are reconciled against it**, in both directions: every
-   branch is claimed by at least one, and every entry in each list names a
-   branch that exists.
-3. **Every declared column constraint is shown to be load-bearing** — removing
+   that gains a branch nothing exercises fails the suite. Demonstrated by adding
+   one, not asserted.
+2. **Every branch is exercised in both directions by a dbt unit test** — all of
+   them, including branches some other instrument already reaches. See
+   [the division of labour](#the-three-lists-answer-three-questions-not-one)
+   for why duplication is the point rather than waste.
+3. **The fixture's obligation is non-vacuity, and it is the whole of the
+   fixture's obligation.** Every model materializes at least one row, on a cold
+   build and on an incremental one. No waiver list: an empty model is a defect
+   in the fixture, never a fact to be recorded.
+4. **Every declared column constraint is shown to be load-bearing** — removing
    the guard that produces it fails its test. A constraint no mutation can
    break is recorded as decorative rather than left standing as coverage.
-4. **G16 is asserted.** `production_sql_files()` may shrink only when the change
+5. **G16 is asserted.** `production_sql_files()` may shrink only when the change
    names the dbt model that absorbed the statement; a silent shrink fails.
    Demonstrated by a silent shrink failing, not asserted.
-5. **The non-empty gate derives its source list from `sources.yml`**, so a
+6. **The non-empty gate derives its source list from `sources.yml`**, so a
    source added to the dbt project cannot go unchecked.
-6. **`schema.yml` is complete.** The 5 partial column lists are filled — 120
+7. **`schema.yml` is complete.** The 5 partial column lists are filled — 120
    columns — so 23 of 23 models document every column their final `SELECT`
    emits.
-7. **Every column carries a `data_type`, under `contract: {enforced: true}`** —
+8. **Every column carries a `data_type`, under `contract: {enforced: true}`** —
    0 of 187 do today, and 307 will be declared once exit 6 lands — so dbt fails
    the build when a model's output stops matching its declaration. Spellings
    valid on both engines per [Plan 125's
@@ -1654,7 +1765,7 @@ spellings are DuckDB's; both Spark questions this stage uncovered are
    parse error, `string` is DuckDB's alias and Spark's native name, *"verified
    on both"*. A model that cannot carry an enforced contract has the reason
    recorded rather than being skipped.
-8. **G20's waiver ledger is empty**, ratcheting down from the 23 Stage X seeded,
+9. **G20's waiver ledger is empty**, ratcheting down from the 23 Stage X seeded,
    one per model.
 
 ### Stage T exists because this plan grew the suite
