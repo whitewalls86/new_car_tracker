@@ -3398,3 +3398,16 @@ became 216 became 297 as the enumerator learned that `count(*) filter (where
 …)` is one branch and not two, and that both compile phases must be counted.
 Stage A's finding — *"the direction of that error is the reusable finding"* —
 now holds three stages out of three where a by-eye count was checked.
+
+**Addendum, 2026-09-07, after review: the instrument was corrected, and the
+stage's numbers survive it at 295 of 295.** The PR #379 review found probes
+counting arms over rows the scope's own WHERE discards; corrected (and with
+the gates reordered ahead of the reseeding suite), the stricter read named
+exactly two branches — both dead code in `mart_deal_scores`, deleted per this
+stage's own precedent — and one fixture gap, repaired as data, so the
+fingerprint `unique`s stay demonstrably load-bearing and the 15-of-161 split
+is unchanged. All four ledgers are still empty and no exit reopens; 295 is
+derived (297 minus the two deletions — the CI log proves the gates pass but
+does not print the count). Full account with the recipe in
+[plan_162_stage_S_evidence.md](../evidence/plan_162_stage_S_evidence.md); CI
+run 34162171648 at `5b96948`.
