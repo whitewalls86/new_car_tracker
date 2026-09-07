@@ -3287,7 +3287,7 @@ someone maintains.
 | `UNPROBEABLE_BRANCHES` | 12 | **0** |
 | `UNREACHABLE_BRANCHES` | 11 | **0** |
 | `DBT_CONTRACT_WAIVERS` (G20) | 23, seeded by Stage X | **0** |
-| dbt unit tests | 18 models, count unknown | 39 tests, every branch |
+| dbt unit tests | 66, in 3 files | **105**, in 10 — 39 added here |
 | Models building zero rows | 5 of 23 | **0** |
 | Constraints shown load-bearing | never measured | **15 of 161**; 146 decorative |
 | `schema.yml` columns declared | 187 | **307**, all typed, 23/23 enforced |
@@ -3368,6 +3368,25 @@ report progress when it breaks. `error` is now a separate state with its own
 assertion. And `sqlglot` 30 renamed the AST arg keys `from` and `with` to
 `from_` and `with_`, which silently made 212 branches read as having no source
 scope.
+
+**The gate was audited by mutation after it was built, and had a hole.** Ten
+anti-patterns were applied to a clean tree one at a time. Seven failed loudly:
+deleting a gate file, deleting a gate's CI step while keeping the `--ignore`,
+turning `enforced: true` off, dropping a `data_type` (dbt itself, `ERROR=1`),
+and adding a new untested branch to a model, which is exit 1 demonstrated
+rather than asserted. Two were correct passes — deleting a unit test that had
+become redundant when `mart_vehicle_snapshot` was fixed, and re-adding an
+absolute `datetime` to the fixture, which the shift makes harmless.
+
+**One was a real failure of the gate.** `UNPROBEABLE_BRANCHES` and
+`UNREACHABLE_BRANCHES` are asserted as exact sets, so neither can take an
+untrue entry. The two *waiver* ledgers had only the staleness half — a waived
+id must still name a live branch — and nothing asked whether the branch still
+needed waiving, so a waiver naming a fully covered branch passed 6 of 6.
+`test_no_coverage_waiver_names_a_branch_that_is_already_covered` closes it,
+verified by both mutations failing on it. That the ledger the whole stage
+drained to zero could be silently refilled is the same one-directional
+checking this plan keeps finding elsewhere, this time in its own instrument.
 
 **The one ledger that grew is `TEST_SQL_TEMPLATE_WAIVERS`, 1 → 5** — three
 constraint-mutation templates and one non-vacuity template whose renderings are

@@ -236,12 +236,54 @@ def test_no_branch_waiver_outlives_the_branch_it_names():
     from the other side.
     """
     live = {result.branch.id for result in _measure()[0]}
-    stale = sorted((BRANCH_COVERAGE_WAIVERS | UNPROBEABLE_BRANCHES) - live)
+    declared = BRANCH_COVERAGE_WAIVERS | UNPROBEABLE_BRANCHES | UNIT_TEST_WAIVERS
+    stale = sorted(declared - live)
     assert not stale, (
         "these waived branch ids are no longer in the branch list. Either the "
         "model was edited and the id moved -- re-run the gate and re-seed from "
         "what it reports -- or the branch is gone and its waiver goes with "
         "it:\n  " + "\n  ".join(stale)
+    )
+
+
+def test_no_coverage_waiver_names_a_branch_that_is_already_covered():
+    """The other direction, which the two waiver ledgers were missing.
+
+    ``UNPROBEABLE_BRANCHES`` and ``UNREACHABLE_BRANCHES`` are asserted as exact
+    sets, so neither can take an entry that is not true -- the gate recomputes
+    what belongs in them and compares. The two *waiver* ledgers had only the
+    staleness half: they checked that a waived id still names a live branch,
+    not that the branch still needs waiving. A waiver for a branch that is
+    fully covered therefore passed, which is the shape of the failure this
+    whole stage exists to catch -- an exemption that reads as a fact and is
+    checked in one direction only.
+
+    Verified 2026-09-07 by adding
+    ``mart_block_rate.__main__.case_when.0`` -- a covered branch -- to
+    ``UNIT_TEST_WAIVERS``: the gate passed 6 of 6 before this test existed.
+
+    With both ledgers empty this is trivially satisfied today, and that is the
+    point of adding it now. The cost of an unnecessary waiver is paid on the
+    day someone drains the branch it names and leaves the entry behind, and by
+    then nothing remembers it was unnecessary.
+    """
+    results, unit_tests = _measure()
+    reached = covered_ids(unit_tests)
+
+    unnecessary = sorted(
+        f"UNIT_TEST_WAIVERS: {result.branch.id} -- a unit test takes both arms"
+        for result in results
+        if result.branch.id in UNIT_TEST_WAIVERS and result.branch.id in reached
+    ) + sorted(
+        f"BRANCH_COVERAGE_WAIVERS: {result.branch.id} -- both arms are taken"
+        for result in results
+        if result.branch.id in BRANCH_COVERAGE_WAIVERS and result.both_arms
+    )
+    assert not unnecessary, (
+        "these waivers exempt branches that are already covered. Delete them: "
+        "a waiver that describes no violation is an exemption nobody is "
+        "watching, and it will still be here on the day the branch it names "
+        "regresses:\n  " + "\n  ".join(unnecessary)
     )
 
 
