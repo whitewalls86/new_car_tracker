@@ -689,3 +689,58 @@ read as done. See [It was never only this DAG](#it-was-never-only-this-dag).
 The natural home for an archiver `/metrics` route and for a dashboard panel on
 these failure counts. This plan produces the log contract they would consume
 and deliberately stops there.
+
+---
+
+## Record
+
+### Stage 1 — Warning-only predicates, the `_notify` repair, and the seven-day window
+
+Stage 0's evidence predates this section and remains inline above at
+[Evidence — Stage 0](#evidence--stage-0-2026-08-30).
+
+**Landed** 2026-08-30 in [PR #295](https://github.com/whitewalls86/new_car_tracker/pull/295)
+— `585c56f` the predicates, `0306629` the shared notifier, `a05168b` the root cause.
+
+**The window opened 2026-08-31 02:03:49 UTC** and closed 2026-09-07 02:04 UTC.
+The start was not recorded at the time; it is the VM's `git pull` of `610f77e`
+(the PR #295 merge), which carries `585c56f` and which the prior `de18913` did
+not. Linear moved the issue to Soaking at 02:04:10Z, 21 seconds later.
+
+**The window is clean.** `{service="archiver", level="WARNING"} |~ "would fail"`
+returns **zero entries**. Archiver holds one Loki series across the window,
+`level=INFO`, so it emitted no WARNING and no ERROR record at all.
+
+**The zero is a real zero, not a selector gap.** The same matcher returns
+archiver records on 2026-07-08 (4), 08-09 (15), 08-14 (6), 08-27 (3) and 08-28
+(30) — the last two days before the window opened — and archiver logged
+continuously throughout, 3,228 records at ~320/day, while other services
+emitted thousands of WARNING and ERROR records over the same span.
+
+**The predicates ran.** 184 `hourly_analytics_refresh` runs, every one
+successful, so `_flush_silver_failure_reason` and `_flush_staging_failure_reason`
+each evaluated 184 times; 8 `compact_silver` runs, each logging
+`run complete — failed=0`. **376 evaluations, 0 warnings.** No archiver summary
+in the window carried a non-zero `errors=` or `failed=`, and Airflow recorded no
+failed or upstream_failed task instance in any DAG.
+
+**Against Stage 0.** Stage 0 measured two incidents in three weeks, so the
+expected count over seven days was under one. Zero is consistent with it, and no
+warning fired on a condition Stage 0 did not predict — the gate is met.
+Success criterion 3 holds: the two tables agree.
+
+**What this window did not prove.** `notify` was **skipped 184 times**; its
+`one_failed` trigger never fired because nothing failed. The repaired notifier
+is therefore verified by `tests/airflow/test_notifications.py` and not by a
+production page. Stage 2's gate assumes the pager delivers, so the first
+enforced failure is also the notifier's first live test — deliberately
+`/compact/silver/run`, which is daily and has nothing downstream.
+
+**Verified by** `pytest tests/archiver/test_app.py tests/airflow/test_notifications.py`
+— 122 passed. Loki and Airflow read directly from production 2026-09-07.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. (`README.md:61-62`'s stale flush schedules are
+pre-existing and already assigned to Plan 138's truth pass.)
+
+**Cost:** estimate 2 → actual 1 (−1).
