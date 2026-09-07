@@ -347,6 +347,13 @@ OBSFP_CORRECTION_FIXED_PRICE = 23500
 # base rows ends up the actual global max(fetched_at). (Rows added for other
 # scenarios earlier in this file, e.g. the dbt-equivalence VINs, top out at
 # 2026-07-03 and are unrelated to this cluster.)
+# The base-phase same-artifact reparse pair (see _dedupe_collision_rows). Its
+# artifact id sits in the 900xx range with the dbt-equivalence artifacts, its
+# fetched_at with their early-July cluster.
+VIN_DEDUPE_PAIR = _vin17("DEDUPEPAIR")
+LISTING_DEDUPE_PAIR = "LDEDUPE"
+ARTIFACT_DEDUPE_PAIR = 90071
+
 VIN_FP_TARGET = _vin17("FPTARGT")
 LISTING_FP_TARGET = "L50"
 ARTIFACT_FP_ANCHOR = 500
@@ -695,6 +702,43 @@ def _observation_fingerprint_rows() -> List[Dict[str, Any]]:
     ]
 
 
+def _dedupe_collision_rows() -> List[Dict[str, Any]]:
+    """A same-artifact reparse pair, so the fingerprint dedupes are demonstrable.
+
+    Both fingerprint models guarantee their `unique` key with a
+    ``row_number() = 1`` dedupe, and the base fixture held no partition with
+    more than one row -- so when the constraint-mutation gate started measuring
+    against the base build alone (rather than the state left behind by the
+    incremental suites' second waves), dropping either dedupe produced no
+    duplicate and both `unique` tests read as decorative. That is a fact about
+    the fixture, not about the constraints: production reparses an artifact and
+    lands a second observation row with the same artifact_id and listing_id,
+    which is exactly what this pair is.
+
+    Two rows, one artifact, one listing, distinct fetched_at (so both models'
+    orderings pick a deterministic winner) and distinct prices (a genuine
+    correction, not a duplicate byte-for-byte). With the dedupes intact each
+    model emits one row per key; with either dedupe mutated away, both rows
+    surface and the model's own `unique` test kills the mutant.
+
+    Unlisted, with no price events, and a fetched_at weeks stale -- a detail
+    row's state is taken directly, so the VIN publishes as 'unlisted' and
+    stays out of mart_deal_scores' scored population and the freshness
+    trend's active-only counts. Its prices still travel through the
+    fingerprints, which is all the scenario needs.
+    """
+    return [
+        _obs_row(VIN_DEDUPE_PAIR, listing_id=LISTING_DEDUPE_PAIR,
+                 artifact_id=ARTIFACT_DEDUPE_PAIR, source="detail",
+                 fetched_at=_ts(2026, 7, 2, 12), written_at=_ts(2026, 7, 2, 12),
+                 price=27000, listing_state="unlisted"),
+        _obs_row(VIN_DEDUPE_PAIR, listing_id=LISTING_DEDUPE_PAIR,
+                 artifact_id=ARTIFACT_DEDUPE_PAIR, source="detail",
+                 fetched_at=_ts(2026, 7, 2, 13), written_at=_ts(2026, 7, 2, 13),
+                 price=26500, listing_state="unlisted"),
+    ]
+
+
 def _detail_fingerprint_incremental_base_rows() -> List[Dict[str, Any]]:
     """Base-phase rows for int_listing_state_fingerprints' real-build
     incremental test (see build_detail_fingerprint_incremental_rows below)."""
@@ -821,6 +865,7 @@ def build_silver_rows() -> List[Dict[str, Any]]:
         _dbt_equivalence_rows()
         + _selector_scenario_rows()
         + _observation_fingerprint_rows()
+        + _dedupe_collision_rows()
         + _detail_fingerprint_incremental_base_rows()
         + _listing_state_runs_base_rows()
         + _scrape_volume_base_rows()
