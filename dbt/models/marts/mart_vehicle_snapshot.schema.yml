@@ -8,18 +8,73 @@ models:
       authoritative from detail observations, inferred for SRP-only VINs.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: vin
+        data_type: string
         data_tests:
           - not_null
           - unique
       - name: listing_state
+        data_type: string
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['active', 'unlisted']
       - name: make
+        data_type: string
       - name: model
+        data_type: string
       - name: price
+        data_type: integer
         description: Current price from the price observation event stream.
+      - name: listing_id
+        data_type: string
+      - name: vehicle_trim
+        data_type: string
+      - name: model_year
+        data_type: smallint
+      - name: mileage
+        data_type: integer
+      - name: msrp
+        data_type: integer
+      - name: fuel_type
+        data_type: string
+      - name: body_style
+        data_type: string
+      - name: stock_type
+        data_type: string
+      - name: canonical_detail_url
+        data_type: string
+      - name: customer_id
+        data_type: string
+      - name: seller_customer_id
+        data_type: string
+      - name: dealer_name
+        data_type: string
+      - name: dealer_zip
+        data_type: string
+      - name: last_observed_at
+        data_type: timestamptz
+      - name: price_observed_at
+        data_type: timestamptz
+      - name: first_price
+        data_type: integer
+      - name: min_price
+        data_type: integer
+      - name: max_price
+        data_type: integer
+      - name: price_drop_count
+        data_type: bigint
+      - name: price_increase_count
+        data_type: bigint
+      - name: total_price_observations
+        data_type: bigint
+      - name: first_seen_at
+        data_type: timestamptz
+      - name: last_seen_at
+        data_type: timestamptz
+      - name: days_on_market
+        data_type: bigint

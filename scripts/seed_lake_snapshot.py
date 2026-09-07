@@ -22,7 +22,10 @@ six source tables; the two that resolve through `postgres_scan()` cannot be
 objects in a bucket, so they travel as JSON under `postgres/` and are written
 into a database instead. That half runs only when --postgres-url is given, and
 `--require-non-empty` is what turns "the snapshot seeded nothing" from a green
-build over an empty world into a failure at the seed.
+build over an empty world into a failure at the seed. Plan 162 Stage S made the
+list it checks derived: `dbt_source_tables()` reads `sources.yml` itself, so a
+seventh source is checked the day it is declared rather than the day somebody
+remembers to add it here.
 
 Refuses to run against an endpoint, bucket or Postgres host that looks
 production-like unless --allow-production-target is passed explicitly. Never
@@ -34,10 +37,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import yaml
 
 # ``python scripts/seed_lake_snapshot.py`` puts ``scripts/`` rather than the
 # repository root on sys.path.  Keep the documented direct invocation working
@@ -45,6 +51,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from archiver.processors.lake_source_audit import SOURCE_TABLE_SPECS
 from scripts.lake_snapshot_common import (
     FIXTURE_PREFIXES,
     LakeSnapshotError,
@@ -63,15 +70,88 @@ from shared.lake_snapshot_postgres import (
 DEFAULT_MINIO_ENDPOINT = "http://localhost:9000"
 DEFAULT_BUCKET = "bronze"
 
-# The four lake tables a complete snapshot carries, as the archive manifest
-# names them. Used only by --require-non-empty; the upload plan itself walks the
-# extracted tree and needs no list.
-LAKE_TABLES = (
-    "silver_observations",
-    "price_observation_events",
-    "vin_to_listing_events",
-    "blocked_cooldown_events",
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DBT_SOURCES_PATH = REPO_ROOT / "dbt" / "models" / "sources.yml"
+
+# `external_location` for a Postgres source. The connection URL is a jinja
+# `env_var()` expression and is deliberately not captured -- the (schema, table)
+# pair is what `POSTGRES_SNAPSHOT_TABLES` is keyed by, and it is all this needs.
+_POSTGRES_SCAN = re.compile(
+    r"^postgres_scan\(\s*'[^']*'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*\)$"
 )
+# ...and for a Parquet source: the s3:// URL inside `read_parquet()`. The bucket
+# is a jinja expression containing no `/`, so the first slash after the scheme
+# is what separates it from the archive-relative path.
+_S3_URL = re.compile(r"'s3://([^']+)'")
+
+# relative Parquet glob -> the name the archive manifest counts rows under.
+# The path is the join key and no translation table is needed for the names:
+# `silver.observations` in sources.yml and `silver_observations` in the specs
+# carry the *identical* string `silver_normalized/observations/**/*.parquet`, so
+# the one pair whose names disagree resolves for free.
+_LAKE_TABLE_BY_PATH = {
+    str(spec["relative_path"]): name for name, spec in SOURCE_TABLE_SPECS.items()
+}
+
+
+def dbt_source_tables(
+    sources_path: Optional[Path] = None,
+) -> Dict[str, Tuple[str, str]]:
+    """Resolve every table in `dbt/models/sources.yml` to something a seed counts.
+
+    `--require-non-empty` exists to prove that the sources a dbt build reads
+    actually landed rows. Its subject is therefore *dbt's* source list, and a
+    copy of that list kept here is the defect Plan 162 Stage S closes: a seventh
+    source added to the dbt project was checked by nothing, and the gate went on
+    passing over exactly the empty world it exists to catch.
+
+    Returns dbt's ``"<source>.<table>"`` -> ``(kind, key)``, where *kind* is
+    ``"lake"`` and *key* the archive manifest's table name, or *kind* is
+    ``"postgres"`` and *key* is ``"<schema>.<table>"`` as `load_postgres_tables`
+    reports it.
+
+    A source that resolves to neither raises rather than being skipped. Skipping
+    would restore the silence this function was written to remove: an
+    unrecognised source would simply not be counted, and a source not counted is
+    indistinguishable from a source that is fine.
+    """
+    path = Path(sources_path) if sources_path else DBT_SOURCES_PATH
+    if not path.exists():
+        raise LakeSnapshotError(
+            f"--require-non-empty needs the dbt source list and {path} is not "
+            f"there; it derives the sources to check rather than keeping a copy"
+        )
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+    resolved: Dict[str, Tuple[str, str]] = {}
+    for source in document.get("sources") or ():
+        for table in source.get("tables") or ():
+            name = f"{source.get('name')}.{table.get('name')}"
+            # `external_location` is a YAML folded scalar: the newlines and
+            # indentation it arrives with are formatting, not content.
+            location = " ".join(
+                str((table.get("meta") or {}).get("external_location") or "").split()
+            )
+            postgres = _POSTGRES_SCAN.match(location)
+            if postgres:
+                resolved[name] = ("postgres", f"{postgres[1]}.{postgres[2]}")
+                continue
+            url = _S3_URL.search(location)
+            relative_path = url[1].split("/", 1)[1] if url and "/" in url[1] else None
+            if relative_path in _LAKE_TABLE_BY_PATH:
+                resolved[name] = ("lake", _LAKE_TABLE_BY_PATH[relative_path])
+                continue
+            raise LakeSnapshotError(
+                f"dbt source {name} declares external_location {location!r}, "
+                f"which names neither a postgres_scan() relation nor any path "
+                f"in lake_source_audit.SOURCE_TABLE_SPECS "
+                f"({sorted(_LAKE_TABLE_BY_PATH)}). Nothing seeds it, so "
+                f"--require-non-empty cannot show that a build over this seed "
+                f"is not green over an empty world."
+            )
+    if not resolved:
+        raise LakeSnapshotError(f"no dbt sources parsed out of {path}")
+    return resolved
 
 
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -94,9 +174,11 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--require-non-empty", dest="require_non_empty", action="store_true",
-        help="Fail if any of the six dbt sources seeded zero rows. Without it a "
-             "short snapshot seeds quietly and the build that reads it is green "
-             "over an empty world.",
+        help="Fail if any source in dbt/models/sources.yml seeded zero rows. "
+             "The list is read from that file rather than kept here, so a "
+             "source added to the dbt project cannot go unchecked. Without the "
+             "flag a short snapshot seeds quietly and the build that reads it "
+             "is green over an empty world.",
     )
     return parser.parse_args(argv)
 
@@ -224,23 +306,25 @@ def load_postgres_tables(
 def assert_non_empty(
     manifest: Dict[str, Any], postgres_counts: Dict[str, int],
 ) -> None:
-    """Raise unless all six dbt sources landed at least one row.
+    """Raise unless every dbt source landed at least one row.
 
-    The four lake tables are read from the manifest rather than counted from the
+    The sources are `dbt_source_tables()`'s, read out of `sources.yml` on every
+    call, so "every dbt source" keeps meaning that as the dbt project grows
+    rather than quietly meaning "the six that existed when this was written".
+
+    The lake tables are read from the manifest rather than counted from the
     uploaded files: a Parquet file with zero rows is still a file, so a
     file-count check would pass exactly where this has to fail.
     """
     tables = manifest.get("tables") or {}
-    empty = [
-        f"{name} ({(tables.get(name) or {}).get('rows', 0)} rows)"
-        for name in LAKE_TABLES
-        if not (tables.get(name) or {}).get("rows")
-    ]
-    empty += [
-        f"{schema}.{table} ({postgres_counts.get(f'{schema}.{table}', 0)} rows)"
-        for schema, table in POSTGRES_SNAPSHOT_TABLES
-        if not postgres_counts.get(f"{schema}.{table}")
-    ]
+    empty: List[str] = []
+    for kind, key in dbt_source_tables().values():
+        if kind == "lake":
+            rows = (tables.get(key) or {}).get("rows", 0) or 0
+        else:
+            rows = postgres_counts.get(key, 0) or 0
+        if not rows:
+            empty.append(f"{key} ({rows} rows)")
     if empty:
         raise LakeSnapshotError(
             "--require-non-empty: these dbt sources seeded no rows, so a build "

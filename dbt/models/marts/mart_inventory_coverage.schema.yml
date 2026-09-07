@@ -9,22 +9,30 @@ models:
       One row per (make, model). Composite PK: (make, model).
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: make
+        data_type: string
         data_tests:
           - not_null
       - name: model
+        data_type: string
         data_tests:
           - not_null
       - name: total_vins
+        data_type: bigint
         data_tests:
           - not_null
       - name: detail_enriched
+        data_type: bigint
         data_tests:
           - not_null
       - name: srp_only
+        data_type: bigint
         data_tests:
           - not_null
       - name: coverage_pct
+        data_type: double
         data_tests:
           - not_null

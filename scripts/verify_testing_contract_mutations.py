@@ -453,12 +453,12 @@ MUTATIONS = [
     ),
     (
         "test_every_dbt_model_declares_an_enforced_contract",
-        "a model gains an enforced contract and its G20 waiver goes stale",
+        "a model drops its enforced contract and nothing waives it",
         lambda: _edit(
             "dbt/models/staging/stg_dealers.schema.yml",
-            '    config:\n      tags: ["hourly_core"]',
             '    config:\n      tags: ["hourly_core"]\n'
             "      contract:\n        enforced: true",
+            '    config:\n      tags: ["hourly_core"]',
         ),
         ["dbt/models/staging/stg_dealers.schema.yml"],
         [],

@@ -9,23 +9,30 @@ models:
       num_of_attempts is the cumulative count at the time of the event.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: event_id
+        data_type: bigint
         data_tests:
           - not_null
           - unique
       - name: listing_id
+        data_type: string
         data_tests:
           - not_null
       - name: event_type
+        data_type: string
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['blocked', 'incremented', 'cleared']
       - name: num_of_attempts
+        data_type: integer
         data_tests:
           - not_null
       - name: event_at
+        data_type: timestamptz
         data_tests:
           - not_null
