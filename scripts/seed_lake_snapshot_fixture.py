@@ -81,7 +81,8 @@ Two design rules make this safe to share:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -100,6 +101,17 @@ from archiver.processors.flush_staging_events import (
     _VIN_TO_LISTING_EVENTS_SCHEMA as _VIN_TO_LISTING_WRITER_SCHEMA,
 )
 from shared.minio import BUCKET, ensure_bucket, get_s3fs
+from shared.query_loader import load_query
+
+SQL_DIR = Path(__file__).resolve().parent / "sql"
+SELECT_ENABLED_SEARCH_KEYS = load_query(SQL_DIR, "select_enabled_search_keys")
+INSERT_FIXTURE_TRACKED_MODELS = load_query(SQL_DIR, "insert_fixture_tracked_models")
+
+#: Where the two Postgres-backed dbt sources live. A keyword argument rather
+#: than a constant in the statements, so Layer 2 can point them at a fixture
+#: schema without a second copy of the SQL.
+OPS_SCHEMA = "ops"
+CONFIG_SCHEMA = "public"
 
 # Reserved partition. Everything lands under 2099, which no production flush or
 # other CI seed writes to.
@@ -938,12 +950,51 @@ def build_price_event_rows() -> List[Dict[str, Any]]:
         (201, LISTING_PH_AFFECTED, VIN_PH_AFFECTED, 5000, 39000, PH_AFFECTED_EVENT_2),
         (202, LISTING_PH_STABLE, VIN_PH_STABLE, 5003, 15000, PH_STABLE_EVENT),
     ]
+    # Prices for the benchmark VINs, and the reason they are here.
+    #
+    # Plan 162 Stage S. Every price event above names a VIN that either does not
+    # appear in the observations at all or appears with a short-form VIN that
+    # `stg_observations`' 17-character guard nulls -- so `int_price_history` and
+    # `int_latest_observation` shared no `vin17` and their join produced nothing.
+    # `int_benchmarks` inner-joins them and built empty; `mart_vehicle_snapshot`
+    # left-joins them, so every row it produced carried a null price, and
+    # `mart_deal_scores`' `price > 0` filter then emptied it too. Two of the 23
+    # models computed nothing and the build reported success.
+    #
+    # The DENSE VINs are the right ones to price: they exist to make one
+    # make/model group dense enough for stable percentiles
+    # (`benchmark_dense_make_model`), which is exactly what `int_benchmarks`
+    # aggregates. Prices fan out so the percentiles differ from the mean rather
+    # than collapsing onto it, which is what makes a percentile assertion able
+    # to fail.
+    #
+    # These carry their own make/model rather than riding the Honda/Civic
+    # default below, because the SPARSE VINs are a Rare Bird group and labelling
+    # their price events Honda/Civic would put two different make/models on one
+    # VIN -- fixture data that contradicts itself is worse than fixture data
+    # that is missing.
+    benchmark_prices = [
+        dict(event_id=300 + i, listing_id=f"LDENSE{i}", vin=f"DENSE{i:012d}",
+             artifact_id=2000 + i, price=18000 + (i * 250),
+             make="Honda", model="Civic", event_type="upserted", source="detail",
+             event_at=_ts(2026, 7, 2))
+        for i in range(20)
+    ] + [
+        # One priced SPARSE VIN each, so the sparse benchmark group is a group
+        # rather than an absence -- the dense/sparse contrast is the point of
+        # both selectors.
+        dict(event_id=330 + i, listing_id=f"LSPARSE{i}", vin=f"SPARSE{i:011d}",
+             artifact_id=3000 + i, price=41000 + (i * 1000),
+             make="Rare", model="Bird", event_type="upserted", source="detail",
+             event_at=_ts(2026, 7, 2))
+        for i in range(2)
+    ]
     return [
         dict(event_id=eid, listing_id=lid, vin=vin, artifact_id=aid, price=price,
              make="Honda", model="Civic", event_type="upserted", source="detail",
              event_at=event_at)
         for (eid, lid, vin, aid, price, event_at) in specs
-    ]
+    ] + benchmark_prices
 
 
 def build_cooldown_event_rows() -> List[Dict[str, Any]]:
@@ -1083,6 +1134,78 @@ PHASES = (
 )
 
 
+def fixture_make_models(rows: Optional[Iterable[Dict[str, Any]]] = None) -> List[Tuple[str, str]]:
+    """The distinct (make, model) pairs this fixture's observations carry.
+
+    Derived from the fixture rather than kept beside it, so a make added to a
+    scenario reaches ``int_active_make_models`` -- and therefore
+    ``mart_vehicle_snapshot`` and ``mart_deal_scores`` -- without anyone
+    remembering to edit a second list. That is the whole reason this is a
+    function and not a tuple of literals: the defect it repairs was a
+    hand-maintained source list going stale against the data.
+    """
+    observations = list(rows if rows is not None else build_silver_rows())
+    pairs = {
+        (str(row["make"]).lower(), str(row["model"]).lower())
+        for row in observations
+        if row.get("make") and row.get("model")
+    }
+    return sorted(pairs)
+
+
+def seed_postgres_sources(
+    connection,
+    *,
+    ops_schema: str = OPS_SCHEMA,
+    config_schema: str = CONFIG_SCHEMA,
+    rows: Optional[Iterable[Dict[str, Any]]] = None,
+) -> int:
+    """Seed ``tracked_models`` so the Postgres-backed dbt sources are not empty.
+
+    **Four of dbt's six sources are Parquet and two are Postgres**, and this
+    seeder wrote only the Parquet half. ``ops.tracked_models`` is written in
+    production by the processing service and by nothing in the dbt path, so it
+    was empty on every fixture build: ``int_active_make_models`` inner-joins it
+    and yielded nothing, ``mart_vehicle_snapshot`` inner-joins that, and five of
+    the 23 models built over an empty world while the build reported success and
+    their ``not_null`` tests passed vacuously.
+
+    Returns the number of rows inserted. Raises if no search config is enabled,
+    because a seed that silently inserted nothing would leave exactly the empty
+    world it exists to prevent -- which is the failure being repaired, one table
+    over.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(SELECT_ENABLED_SEARCH_KEYS.format(schema=config_schema))
+        search_keys = [row[0] for row in cursor.fetchall()]
+        if not search_keys:
+            raise RuntimeError(
+                f"{config_schema}.search_configs has no enabled row, so every "
+                f"tracked_models row this seeds would be filtered out by "
+                f"int_active_make_models' join and five models would still "
+                f"build empty. Seed or enable a search config first."
+            )
+
+        pairs = fixture_make_models(rows)
+        if not pairs:
+            raise RuntimeError(
+                "the fixture's observations carry no make/model pair, so "
+                "int_active_make_models would still be empty."
+            )
+
+        statement = INSERT_FIXTURE_TRACKED_MODELS.format(schema=ops_schema)
+        inserted = 0
+        for search_key in search_keys:
+            for make, model in pairs:
+                cursor.execute(
+                    statement,
+                    {"search_key": search_key, "make": make, "model": model},
+                )
+                inserted += cursor.rowcount
+    connection.commit()
+    return inserted
+
+
 def seed(phase: str = "base") -> List[str]:
     """Upload fixture data for the given phase. Returns the written keys."""
     if phase not in PHASES:
@@ -1146,10 +1269,25 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=PHASES, default="base")
+    parser.add_argument(
+        "--postgres-url", dest="postgres_url", default="",
+        help="Also seed the two Postgres-backed dbt sources. Omitted, they are "
+             "left alone and five models build over an empty world.",
+    )
     args = parser.parse_args()
 
     for key in seed(phase=args.phase):
         print(f"Uploaded s3://{BUCKET}/{key} (phase={args.phase})")
+
+    if args.postgres_url:
+        import psycopg2
+
+        connection = psycopg2.connect(args.postgres_url)
+        try:
+            inserted = seed_postgres_sources(connection)
+        finally:
+            connection.close()
+        print(f"Seeded {inserted} ops.tracked_models rows (phase={args.phase})")
 
 
 if __name__ == "__main__":

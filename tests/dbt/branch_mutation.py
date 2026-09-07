@@ -1,6 +1,6 @@
 """Removing a guard must break the constraint that guard produces.
 
-Plan 162 Stage S, exit 3. 161 column constraints are declared across the 23
+Plan 162 Stage S, exit 4. 161 column constraints are declared across the 23
 models and nothing demonstrated that any of them was load-bearing. A
 ``not_null`` is a claim about a branch guard, so **the mutation set is derived
 from the branch list rather than written by hand**: for each branch, delete it
@@ -37,6 +37,7 @@ from sqlglot import exp
 
 from tests.dbt.branch_list import (
     Branch,
+    _conjuncts,
     branches_in_scope,
     scope_names,
 )
@@ -64,18 +65,22 @@ class ConstraintVerdict:
 
 
 def _drop_from_conjunction(clause: exp.Expression, ordinal: int) -> exp.Expression | None:
-    """Remove the *ordinal*-th ``AND`` conjunct, or the whole clause if it is last."""
-    parts: list[exp.Expression] = []
-    stack = [clause]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, exp.And):
-            stack.extend([node.right, node.left])
-        else:
-            parts.append(node)
+    """Remove the *ordinal*-th ``AND`` conjunct, or the whole clause if it is last.
+
+    **The split is** :func:`~tests.dbt.branch_list._conjuncts` **itself, not a
+    second walk that agrees with it.** It was written as a second walk, and the
+    two disagreed: ``branch_list`` pushes ``[left, right]`` onto its stack and
+    pops, which yields the conjuncts reversed, while this pushed
+    ``[right, left]`` and yielded them in order. Every ``where`` ordinal
+    therefore named one guard and deleted a different one -- and the mutant was
+    still valid SQL, so it could only ever show up as the wrong constraint dying
+    or the right one surviving. Sharing the function is the only version of this
+    that cannot drift again.
+    """
+    parts = _conjuncts(clause)
     if ordinal >= len(parts):
         return clause
-    kept = [p for i, p in enumerate(parts) if i != ordinal]
+    kept = [part.copy() for i, part in enumerate(parts) if i != ordinal]
     if not kept:
         return None
     current = kept[0]
@@ -126,6 +131,18 @@ def mutate(tree: exp.Expression, branch: Branch) -> exp.Expression | None:
             clause.set("this", replacement)
         return clone
 
+    if branch.kind == "outer_join":
+        # Handled before _owned_branch_nodes, which indexes a dict of
+        # expression-node kinds and has no entry for a join: a join is reached
+        # through the SELECT's `joins` arg rather than by walking its body.
+        node = _nth_outer_join(select, branch.ordinal)
+        if node is None:
+            return None
+        # An inner join removes the null-extended arm while keeping the join.
+        node.set("side", None)
+        node.set("kind", "INNER")
+        return clone
+
     nodes = _owned_branch_nodes(scope, branch.kind)
     if branch.kind == "case_arm":
         index, case = _nth_case_arm(nodes, branch.ordinal)
@@ -134,8 +151,17 @@ def mutate(tree: exp.Expression, branch: Branch) -> exp.Expression | None:
         ifs = list(case.args.get("ifs") or ())
         del ifs[index]
         case.set("ifs", ifs)
-        if not ifs and case.args.get("default") is not None:
-            case.replace(case.args["default"].copy())
+        if not ifs:
+            # `CASE END` is a parse error, so a CASE that has lost its last arm
+            # has to be replaced by what it now evaluates to. With an ELSE that
+            # is the ELSE; **without one it is NULL**, which SQL already says --
+            # a CASE no WHEN matches and that has no ELSE is NULL -- and which
+            # the first version of this operator did not write, leaving `CASE
+            # END` in six models. That is the failure mode this gate is built
+            # against: a mutant that will not execute is indistinguishable from
+            # a constraint dying unless the harness insists on the difference.
+            default = case.args.get("default")
+            case.replace(default.copy() if default is not None else exp.Null())
         return clone
 
     if branch.kind == "case_else":
@@ -177,15 +203,6 @@ def mutate(tree: exp.Expression, branch: Branch) -> exp.Expression | None:
         if node is None:
             return None
         node.replace(node.this.copy())
-        return clone
-
-    if branch.kind == "outer_join":
-        node = _nth_outer_join(select, branch.ordinal)
-        if node is None:
-            return None
-        # An inner join removes the null-extended arm while keeping the join.
-        node.set("side", None)
-        node.set("kind", "INNER")
         return clone
 
     return None
@@ -270,6 +287,40 @@ def retarget(sql: str, model: str, replacement: str) -> str:
     return _RELATION.sub(
         lambda m: replacement if m.group(1) == model else m.group(0), sql
     )
+
+
+def source_columns_for(tree: exp.Expression, column: str) -> list[str]:
+    """The names *column* is built from, then *column* itself.
+
+    ``upstream_guard_for`` searches predicate text for a column name, and the
+    name a constraint is declared under is frequently not the name the guard
+    upstream is written in. The design's own worked example is exactly this:
+    ``not_null_mart_vehicle_snapshot_vin`` is held by ``where vin17 is not
+    null`` in ``int_latest_observation``, and the mart reaches it through
+    ``obs.vin17 as vin`` -- so a search for ``vin`` finds nothing and the
+    decorative verdict comes back with no reason at all, which is the one thing
+    the reason string exists to prevent.
+
+    Resolution is one hop, through the model's own final projection. It is not
+    a general lineage solver and does not need to be: the question is which
+    names to grep upstream predicates for, and a name that turns out to guard
+    nothing costs a miss, not a wrong answer.
+
+    **The resolved names come first, and the order decides the answer.** Looking
+    for ``vin`` before ``vin17`` finds ``stg_observations``' validity CASE --
+    which is where ``vin17`` is *constructed*, and which produces NULLs rather
+    than excluding them, so it is precisely not the guard holding a ``not_null``
+    downstream. The name the upstream model writes its guards in is the more
+    specific of the two, so it is tried first.
+    """
+    names: list[str] = []
+    select = tree.find(exp.Select)
+    for projection in (select.expressions if select is not None else ()):
+        if projection.alias_or_name != column:
+            continue
+        names.extend(found.name for found in projection.find_all(exp.Column))
+    ordered = sorted({n for n in names if n != column}, key=lambda n: (-len(n), n))
+    return ordered + [column]
 
 
 def upstream_guard_for(model: str, column: str, branches: Sequence[Branch],

@@ -531,10 +531,105 @@ jobs:
         # once: this step is the critical path now that nothing else shares
         # its job, so the per-test breakdown has to stay readable in the log
         # rather than living only in a plan document that ages.
-        run: pytest tests/integration/dbt/ -v -m integration --durations=20
+        #
+        # The --ignore is the other half of the step below it, and neither half
+        # works alone: this argument is a directory, so a file added to it joins
+        # this process by default, and the next step's whole reason for existing
+        # is that one file must not. The reasoning is written out there.
+        run: >-
+          pytest tests/integration/dbt/
+          --ignore=tests/integration/dbt/test_branch_coverage.py
+          --ignore=tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
         env:
           PYTHONPATH: ${{ github.workspace }}
           DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run the dbt branch-coverage gate
+        # Plan 162 Stage S. Its own pytest process, and the separation is the
+        # design rather than tidiness.
+        #
+        # `test_incremental_models_real_build.py` and
+        # `test_observation_fingerprints_real_build.py` call `run_dbt()`, which
+        # invokes dbt **in-process** — Plan 139 Stage C measured that as ~3s of
+        # every 4.4s saved, and `tests/integration/dbt/real_build.py` argues the
+        # trade. What it costs is a lock: dbt-duckdb caches its adapter, so it
+        # holds DUCKDB_PATH open read-write for the life of the interpreter, and
+        # DuckDB refuses a second handle to one file under a *different*
+        # configuration. Which suite shares a pytest process with those two is
+        # therefore not a scheduling preference. It decides what a suite in that
+        # process is permitted to open.
+        #
+        # **Branch coverage would survive the shared process today**, and is
+        # split out anyway. `analytics_con()` opens the same path under the same
+        # configuration, which is the one thing dbt's open handle allows — so
+        # folding this back in goes green, which is exactly why someone would.
+        # The next gate on Stage S's list cannot: the constraint-mutation gate
+        # needs `attached_warehouse()`, a separate `:memory:` database with the
+        # warehouse ATTACHed READ_ONLY so a mutated model can be materialized
+        # somewhere that is not the warehouse under assertion, and READ_ONLY is
+        # precisely the different configuration DuckDB will not grant.
+        # `assert_no_in_process_dbt()` is there so that arrives as a sentence
+        # instead of a lock error six frames deep.
+        #
+        # **What breaks if the two are merged.** Nothing, on the commit that
+        # merges them. The seam is what is lost: the mutation gate then turns up
+        # needing a step that has to be carved back out of a passing one, and
+        # the argument for carving it has to be reconstructed from a DuckDB
+        # error message by whoever is unlucky enough to hit it. Split while it
+        # costs an --ignore and a step; not later, when it costs a bisect.
+        #
+        # It needs the build step's environment entire, not a subset:
+        # `compiled_in_both_phases()` runs `dbt compile --full-refresh` and then
+        # `dbt compile` to capture both renderings of the seven models whose
+        # incremental form differs from their cold one, and dbt's `on-run-start`
+        # hook reads Postgres on every invocation regardless of what is
+        # selected. TZ is pinned rather than inherited: GitHub runners are UTC
+        # already, so it changes nothing today — it is here because a pinned
+        # expectation that resolves to a timestamp is not a fact about the
+        # models if it also depends on the runner's clock offset, and that
+        # property should be readable at the step rather than held by a default
+        # nobody chose.
+        run: >-
+          pytest tests/integration/dbt/test_branch_coverage.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TZ: UTC
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run the dbt constraint-mutation gate
+        # Its own invocation for a harder reason than the gate above it. This
+        # suite calls `attached_warehouse()`, which opens an in-memory DuckDB
+        # and ATTACHes the warehouse READ_ONLY -- a *different configuration*
+        # for the same file, which DuckDB refuses outright when dbt-duckdb
+        # already holds it open read-write. Every other suite in that directory
+        # calls run_dbt(), and dbt stays imported for the life of the
+        # interpreter, so sharing a process is not slow here: it does not work.
+        # The suite says so itself, via assert_no_in_process_dbt(), rather than
+        # surfacing as a lock error six frames down.
+        #
+        # It mutates 216 branches and runs each model's own data tests against
+        # the mutant, in about seven seconds, entirely inside the in-memory
+        # database -- the warehouse this job built is never written to, so the
+        # steps around it still describe what dbt produced.
+        run: >-
+          pytest tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TZ: UTC
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123

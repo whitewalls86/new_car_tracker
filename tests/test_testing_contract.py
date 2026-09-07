@@ -1199,8 +1199,10 @@ PRODUCTION_SQL_MANIFEST: tuple[str, ...] = (
     "scraper/sql/insert_detail_artifact_event.sql",
     "scraper/sql/insert_results_artifact_event.sql",
     "scraper/sql/upsert_blocked_cooldown.sql",
+    "scripts/sql/insert_fixture_tracked_models.sql",
     "scripts/sql/select_available_capture_months.sql",
     "scripts/sql/select_corpus_sample.sql",
+    "scripts/sql/select_enabled_search_keys.sql",
     "shared/sql/insert_artifact_event.sql",
     "shared/sql/insert_blocked_cooldown_cleared_event.sql",
     "shared/sql/insert_compression_dictionary.sql",
@@ -2169,6 +2171,27 @@ TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
     for subject in (
         "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
+    )
+) + tuple(
+    # Plan 162 Stage S's constraint-mutation gate. These three are the case
+    # ``tests/sql_bindings.py`` cannot reach, and the reason is not effort: what
+    # they interpolate is **a whole model's compiled SQL, and then that SQL with
+    # one branch deleted**. There is no call-site constant to read the bindings
+    # from, because the bindings are generated -- 23 model bodies and 216
+    # mutants of them, none of which exists until dbt has compiled and the
+    # enumerator has run. A statement whose renderings are enumerable at Layer 0
+    # would not be here; these are not, and saying so is what the ledger is for.
+    #
+    # They still execute, against the in-memory database the gate mutates in,
+    # and a rendering that will not run is what
+    # ``test_no_mutant_failed_to_execute`` exists to catch -- so the schema
+    # check ``PREPARE`` would give them is done by execution instead, on every
+    # one of the 216.
+    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 7))
+    for subject in (
+        "tests/sql/integration/dbt/test_constraint_mutation/count_failing_rows.sql",
+        "tests/sql/integration/dbt/test_constraint_mutation/count_relation_rows.sql",
+        "tests/sql/integration/dbt/test_constraint_mutation/materialize_relation.sql",
     )
 )
 

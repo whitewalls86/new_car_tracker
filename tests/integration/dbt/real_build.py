@@ -187,8 +187,15 @@ def refuse_writes(sql: str) -> None:
 _COMPILED = DBT_DIR / "target" / "compiled"
 
 
-def attached_warehouse(alias: str = "built"):
+def attached_warehouse(alias: str | None = None):
     """An in-memory database with the warehouse attached **read-only**.
+
+    **The alias defaults to the warehouse file's own stem, and has to.** dbt
+    names the catalog after ``DUCKDB_PATH``, so every compiled statement in
+    ``target/`` says ``"<stem>"."main"."<relation>"`` -- attaching under any
+    other name leaves all of that unresolvable, and a caller replaying compiled
+    SQL would have to rewrite every relation reference in it rather than only
+    the one it means to redirect.
 
     Plan 162 Stage S. Two gates need to read what ``dbt build`` produced, and
     one of them -- the constraint mutation gate -- also needs somewhere to
@@ -213,11 +220,14 @@ def attached_warehouse(alias: str = "built"):
     under a different configuration. :func:`assert_no_in_process_dbt` states
     that rather than leaving it to a lock error nobody can read.
     """
+    warehouse = Path(os.environ["DUCKDB_PATH"])
+    alias = alias or warehouse.stem
     connection = duckdb.connect(":memory:")
     _configure_s3(connection)
-    connection.execute(
-        f"ATTACH ? AS {alias} (READ_ONLY)", [os.environ["DUCKDB_PATH"]]
-    )
+    # ATTACH takes no bind parameter -- DuckDB's parser rejects `ATTACH ?`
+    # outright -- so the path is inlined, with `'` doubled the way SQL asks.
+    path = str(warehouse).replace("'", "''")
+    connection.execute(f"ATTACH '{path}' AS {alias} (READ_ONLY)")
     connection.execute(f"USE {alias}.main")
     return connection
 

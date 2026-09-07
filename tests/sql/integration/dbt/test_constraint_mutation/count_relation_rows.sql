@@ -1,0 +1,12 @@
+-- How many rows a relation holds.
+--
+-- Plan 162 Stage S. Used on the unmutated baseline, to tell a model that
+-- computes nothing from one whose constraints simply pass -- a `not_null` over
+-- an empty relation is trivially true, so a constraint on a zero-row model is
+-- arithmetically indistinguishable from a decorative one and is the opposite
+-- thing. The relation is a name the harness generates, which is what makes this
+-- a template rather than a statement.
+--
+-- No braces in this comment beyond the placeholder: the whole file goes
+-- through str.format.
+SELECT count(*) FROM {relation}

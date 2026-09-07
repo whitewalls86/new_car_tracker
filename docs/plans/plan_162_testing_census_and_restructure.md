@@ -1411,10 +1411,18 @@ with a regex proxy — not a parse, and expected to be low by construction — a
 put `int_listing_volatility_features` at ~48 against 3 unit tests,
 `int_listing_observation_fingerprints` at ~37 against 5, and `mart_deal_scores`
 at ~33 against 4. **Re-counted 2026-09-06 from a real parse of dbt's compiled
-SQL: 46, 33 and 34 respectively, against a total of 250 branch points across
-the 23 models.** The proxy was close and its ranking was right, which is worth
+SQL: 46, 33 and 34 respectively, against a total of 216 branch points across
+the 23 models on a cold compile, and 311 once both compile phases are
+counted.** The proxy was close and its ranking was right, which is worth
 recording because it is the rarer outcome in this plan — three of the four
-other numbers this stage was scoped by did not survive measurement. **The models
+other numbers this stage was scoped by did not survive measurement.
+
+**A fifth did not either, and it was this section's own.** Scoping put the
+total at 250 by counting with a regex; the enumerator says 216. The proxy had
+counted every `filter (where ...)` twice, once as an aggregate filter and again
+as a `where` conjunct. It is recorded here rather than quietly corrected
+because the error is this plan's recurring subject, committed by this plan's
+own author, and caught by the instrument the stage was building. **The models
 holding the most logic are the least proportionally covered, and every
 instrument in this repository reports them as covered.**
 
@@ -1682,14 +1690,14 @@ scope to attach to and are recorded unprobeable with the reason, and unit-test
 probes must ride in the `dbt-models` job rather than a bare compile, because
 `get_fixture_sql` reads the real relation's columns and errors without it.
 
-**3. Every branch counts the same.** 74 of the 250 are `coalesce` fallbacks and
-48 of those are `coalesce(field, '')` field normalizations inside the two
-fingerprint concats, which raised the option of filtering them out or
+**3. Every branch counts the same.** 73 of the 216 a cold compile yields are
+`coalesce` fallbacks, and 48 of those are `coalesce(field, '')` field
+normalizations inside the two fingerprint concats, which raised the option of filtering them out or
 weighting them by kind. Both were rejected: a filter is a judgement that
 shrinks the denominator, which is the defect this plan has now found in four
 separate instruments, and a field that is never null in the fixture is a field
 the fingerprint has never been shown to distinguish on. The obligation is both
-arms of all 250.
+arms of every one of them.
 
 **4. The constraint gate mutates only inside the model that declares the
 constraint.** Mutating across models and rebuilding the downstream subtree was

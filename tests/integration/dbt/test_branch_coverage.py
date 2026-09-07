@@ -6,7 +6,7 @@ than reading a list somebody maintains. This module runs it: for each branch, a
 probe counts the rows that took each arm against the warehouse a real
 ``dbt build`` just produced.
 
-**Seeded full, and the number is the point.** 100 of the 299 probeable branch
+**Seeded full, and the number is the point.** 88 of the 308 probeable branch
 points had one arm no row ever took when this gate landed. Every entry deleted
 from :data:`BRANCH_COVERAGE_WAIVERS` is one branch whose second arm some fixture
 scenario, selector or unit test now reaches.
@@ -281,8 +281,6 @@ BRANCH_COVERAGE_WAIVERS: frozenset[str] = frozenset({
     "int_listing_observation_runs.ordered.coalesce_fallback.4@incremental",
     "int_listing_observation_runs.ordered.coalesce_fallback.5@full",
     "int_listing_observation_runs.ordered.coalesce_fallback.5@incremental",
-    "int_listing_state_fingerprints.<final>.where_conjunct.0@full",
-    "int_listing_state_fingerprints.<final>.where_conjunct.0@incremental",
     "int_listing_state_fingerprints.fingerprinted.coalesce_fallback.0@full",
     "int_listing_state_fingerprints.fingerprinted.coalesce_fallback.0@incremental",
     "int_listing_state_fingerprints.fingerprinted.coalesce_fallback.12@full",
@@ -302,32 +300,14 @@ BRANCH_COVERAGE_WAIVERS: frozenset[str] = frozenset({
     "mart_block_rate.<final>.where_conjunct.0",
     "mart_cooldown_event_funnel.bucketed.where_conjunct.1",
     "mart_cooldown_event_funnel.bucketed.where_conjunct.2",
-    "mart_deal_scores.<final>.case_arm.2",
-    "mart_deal_scores.<final>.case_else.0",
-    "mart_deal_scores.dealer_inventory.where_conjunct.0",
     "mart_deal_scores.price_percentiles.where_conjunct.0",
-    "mart_deal_scores.price_percentiles.where_conjunct.1",
     "mart_deal_scores.scored.case_arm.0",
     "mart_deal_scores.scored.case_arm.1",
     "mart_deal_scores.scored.case_arm.2",
-    "mart_deal_scores.scored.coalesce_fallback.0",
-    "mart_deal_scores.scored.coalesce_fallback.1",
-    "mart_deal_scores.scored.coalesce_fallback.2",
     "mart_deal_scores.scored.coalesce_fallback.3",
-    "mart_deal_scores.scored.coalesce_fallback.4",
-    "mart_deal_scores.scored.coalesce_fallback.5",
-    "mart_deal_scores.scored.coalesce_fallback.6",
-    "mart_deal_scores.scored.coalesce_fallback.7",
-    "mart_deal_scores.scored.greatest_least.0",
-    "mart_deal_scores.scored.greatest_least.1",
-    "mart_deal_scores.scored.greatest_least.4",
     "mart_deal_scores.scored.greatest_least.5",
     "mart_deal_scores.scored.nullif.0",
-    "mart_deal_scores.scored.outer_join.1",
-    "mart_deal_scores.scored.outer_join.2",
-    "mart_deal_scores.scored.outer_join.3",
     "mart_deal_scores.scored.where_conjunct.0",
-    "mart_deal_scores.scored.where_conjunct.1",
     "mart_detail_batch_outcomes.<final>.where_conjunct.0",
     "mart_inventory_coverage.<final>.where_conjunct.0",
     "mart_price_freshness_trend.<final>.agg_filter.1",
