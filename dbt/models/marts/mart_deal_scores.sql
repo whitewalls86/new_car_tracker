@@ -90,8 +90,20 @@ scored as (
         b.national_p25_price,
         b.national_avg_discount_pct,
 
-        -- National price percentile (0 = cheapest, 1 = most expensive)
-        coalesce(pctl.national_price_percentile, 0.75) as national_price_percentile,
+        -- National price percentile (0 = cheapest, 1 = most expensive).
+        --
+        -- No coalesce here (or in the scoring term below), and its absence is
+        -- deliberate. `price_percentiles` is this same relation under this
+        -- same `price > 0` filter, `v.vin` is non-null upstream
+        -- (int_latest_observation filters `vin17 is not null`, and the
+        -- contract's not_null asserts it), and `percent_rank()` cannot be
+        -- NULL over a partition a row belongs to -- so every row surviving
+        -- the WHERE below joins its own percentile row and the old
+        -- `coalesce(..., 0.75)` fallback was an arm no row could ever take.
+        -- If the join key or either filter is relaxed, unmatched rows come
+        -- back as NULL percentiles and NULL deal scores rather than silently
+        -- scoring as 0.75 -- which is the honest failure.
+        pctl.national_price_percentile                 as national_price_percentile,
 
         -- Dealer inventory depth
         coalesce(di.dealer_inventory_count, 0)         as dealer_inventory_count,
@@ -117,8 +129,10 @@ scored as (
                 (v.msrp - v.price)::numeric / nullif(v.msrp, 0) * 350
             ))
 
-            -- National price percentile (30 pts): lower = better deal
-            + (1 - coalesce(pctl.national_price_percentile, 0.75)) * 30
+            -- National price percentile (30 pts): lower = better deal.
+            -- Unguarded for the reason on the display column above: the
+            -- percentile join is total for every row this WHERE keeps.
+            + (1 - pctl.national_price_percentile) * 30
 
             -- Days on market (15 pts): capped at 90 days
             + least(coalesce(v.days_on_market, 0), 90) / 90.0 * 15
