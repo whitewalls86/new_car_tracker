@@ -1,30 +1,35 @@
 # Plan 170: Container Image Reclaim Policy
 
-## Status
+## What this plan is for
 
-**Build order, ahead of [Plan 125](plan_125_duckdb_to_iceberg_migration.md).**
+Old container images accumulate on the production host with no rule for when
+they may be deleted, and the one command that would reclaim the space cannot
+tell an image kept deliberately — for a rollback, or for a service paused rather
+than retired — from one that is simply waste. Sets two retention rules, one for
+images and a more aggressive one for build cache, and schedules a job that
+derives what is safe to delete rather than guessing at it, reporting for a while
+before it removes anything.
+
+## The case
+
 Written 2026-09-01 from a read-only pass over production taken while answering a
 question about which prune command was safe to run. Image content accumulates in
-`/var/lib/containerd` with no retention rule, and the one command that would
-reclaim it — `docker image prune -a` — cannot tell an image that is paused by
-decision from one that is garbage.
+`/var/lib/containerd` with no retention rule, and `docker image prune -a` cannot
+tell an image that is paused by decision from one that is garbage.
 
-Priority **82 (high)**. Effort **S** — the keep-set derivation is a reading
-exercise over a manifest that already exists, and the scheduled job copies a
-shape the fleet already runs.
-
-The reclaim policy is not a new idea. `docs/runbooks/runbook_storage_maintenance.md`
-already names it as unowned:
+The reclaim policy is not a new idea.
+`docs/runbooks/runbook_storage_maintenance.md` already names it as unowned:
 
 > Reclaim policy is undecided and wants its own slice: rollback depends on
 > previous images being present, so `docker system prune -a` stays on the §3
 > list below.
 
-This plan is that slice. It is sequenced ahead of Plan 125 because Plan 125 is
-what productionizes the largest images the fleet has ever carried, and a reclaim
+This plan is that slice. It is sequenced ahead of
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md) because Plan 125 is what
+productionizes the largest images the fleet has ever carried, and a reclaim
 policy written after they land is a policy written under pressure.
 
-## The measurement
+### The measurement
 
 Taken 2026-09-01 from the production host, read-only.
 
@@ -84,7 +89,7 @@ treats all ten identically.
 That is the whole defect: **the safety information exists, and the tool that does
 the deleting cannot read it.**
 
-## Why now, and not after Plan 125
+### Why now, and not after Plan 125
 
 `cartracker-lakehouse:latest` is 2.07 GB today. The deployed copy was built
 2026-07-15 and predates Plan 125 Gate A — it carries neither `hadoop-aws` nor
@@ -99,7 +104,7 @@ two multi-gigabyte images and rebuilds them on an ARM64 host — where rebuilds 
 slow — wants its reclaim rule decided beforehand. Deciding it afterwards means
 deciding it while `/` is filling.
 
-## The trend, resolved 2026-09-01
+### The trend, resolved 2026-09-01
 
 The storage runbook recorded `/` at **72% with `/var/lib/containerd` at 29 GB** on
 2026-08-29. The reading above, three days later, is **53% and 20 GB**. The ~9 GB
@@ -121,7 +126,7 @@ Two conclusions, and the second was not anticipated when this plan was drafted.
 
 **The trend is monotonic, not sawtooth.** Nothing scheduled reclaims this space.
 The apparent drop was a person intervening by hand, which is precisely the toil a
-scheduled policy replaces — and it means the Stage 0 escape hatch that would have
+scheduled policy replaces — and it means the Stage A escape hatch that would have
 shrunk this plan into a step in Plan 142's procedure is **closed**.
 
 **There are two monotonic pools and build cache is the faster one.** BuildKit
@@ -167,9 +172,50 @@ the growth was known to be a problem before this plan was written, and it is wha
 will show whether the reclaim rule works. This plan adds a policy to an
 already-measured quantity — it does not need to build the measurement.
 
+### Files
+
+- `airflow/dags/` — the scheduled job, in the `prune_task_logs` shape
+- `maintenance-running-set.txt` — read, not modified; the classes are the input
+- `docs/runbooks/runbook_storage_maintenance.md` — §2's table currently measures
+  `/var/lib/docker`; it needs the containerd path and the policy this plan sets
+- `archiver/processors/disk_usage.py` — **read only.** `/var/lib/containerd` is
+  already on the watchlist at line 55; this plan consumes that series and adds
+  nothing to it
+
+### Out of scope
+
+- **Making any image smaller.** `cartracker-lakehouse` is 2 GB because PySpark
+  bundles 322 MB of jars and Spark needs a 224 MB JRE. Two reductions were
+  identified while measuring — dropping `aws-java-sdk-bundle` once Plan 125
+  Gate D's reader inventory confirms nothing reads plain `s3a://` Parquet
+  (−268 MB), and replacing the lakehouse target's `COPY . .` with the targeted
+  copies its own `mlflow` target already uses (−105 MB). **Both belong to
+  Plan 125**, not here. This plan governs what is kept, not what is built.
+- **Rebuilding the stale lakehouse image.** It predates Gate A and must be
+  rebuilt before Gate C/D, which is Plan 125's business.
+- **`docker volume prune`, in any form.** `/var/lib/docker/volumes` is a symlink
+  to `/mnt/data/docker-volumes` (Plan 105) and volumes are 51.78 GB with 69 MB
+  reclaimable. The runbook's prohibition stands and this plan does not touch it.
+- **Rebuilding the build cache deliberately.** This plan discards cache; warming
+  it, or deciding a build should be cached differently, is not its business.
+
 ## Stages
 
-### Stage 0 — Decide the two retention rules
+Sequenced before [`docs/PLAN_DOCUMENT.md`](../PLAN_DOCUMENT.md) landed; adopted
+stage letters on 2026-09-07. No Linear issue carries a legacy number yet:
+
+| Legacy | Stage | | Legacy | Stage |
+|:---:|:---:|---|:---:|:---:|
+| 0 | **A** | | 2 | **C** |
+| 1 | **B** | | | |
+
+| Order | Stage | What it delivers | State | Issue |
+|---:|:---:|---|---|---|
+| 1 | [**A**](#stage-a--decide-the-two-retention-rules) | Two retention rules, one per pool, each with its measurement | `next` | -- |
+| 2 | [**B**](#stage-b--derive-the-keep-set-and-report-without-deleting) | The derived keep-set, running report-only against production | `--` | -- |
+| 3 | [**C**](#stage-c--schedule-it) | The scheduled job, reclaiming what Stage B predicted | `--` | -- |
+
+### Stage A — Decide the two retention rules
 
 **The trend half of this stage is already answered** — see "The trend, resolved
 2026-09-01" above. Growth is monotonic in both pools, nothing scheduled reclaims
@@ -193,7 +239,7 @@ rule.
 **Exit:** two retention rules, each with the measurement it came from, and — for
 the image rule — the rollback window it buys.
 
-### Stage 1 — Derive the keep-set, and report without deleting
+### Stage B — Derive the keep-set, and report without deleting
 
 Build the keep-set from container references plus the manifest's non-running
 classes. Run it against production in report-only mode across at least one deploy
@@ -206,7 +252,7 @@ known members and the job should find exactly those four.
 **Exit:** report-only output matching the manifest's classification with no
 unexplained entries, across at least one deploy.
 
-### Stage 2 — Schedule it
+### Stage C — Schedule it
 
 `prune_task_logs` (Plan 135 Stage 5d) is the shape: a `PythonOperator` behind
 `deploy_intent_sensor`, `max_active_runs=1`, tagged `maintenance`/`storage`, on a
@@ -215,36 +261,9 @@ weekly off-peak cron. Reuse it rather than inventing a second maintenance idiom.
 Schedule clear of `disk_usage`'s Sunday slow walk, which already runs 20+ minutes
 against the high-inode volumes.
 
-**Exit:** the job runs on schedule, reclaims what Stage 1 predicted, and the
+**Exit:** the job runs on schedule, reclaims what Stage B predicted, and the
 existing `/var/lib/containerd` panel shows the reclaim as a step rather than a
 continued climb.
-
-## Files
-
-- `airflow/dags/` — the scheduled job, in the `prune_task_logs` shape
-- `maintenance-running-set.txt` — read, not modified; the classes are the input
-- `docs/runbooks/runbook_storage_maintenance.md` — §2's table currently measures
-  `/var/lib/docker`; it needs the containerd path and the policy this plan sets
-- `archiver/processors/disk_usage.py` — **read only.** `/var/lib/containerd` is
-  already on the watchlist at line 55; this plan consumes that series and adds
-  nothing to it
-
-## Out of scope
-
-- **Making any image smaller.** `cartracker-lakehouse` is 2 GB because PySpark
-  bundles 322 MB of jars and Spark needs a 224 MB JRE. Two reductions were
-  identified while measuring — dropping `aws-java-sdk-bundle` once Plan 125
-  Gate D's reader inventory confirms nothing reads plain `s3a://` Parquet
-  (−268 MB), and replacing the lakehouse target's `COPY . .` with the targeted
-  copies its own `mlflow` target already uses (−105 MB). **Both belong to
-  Plan 125**, not here. This plan governs what is kept, not what is built.
-- **Rebuilding the stale lakehouse image.** It predates Gate A and must be
-  rebuilt before Gate C/D, which is Plan 125's business.
-- **`docker volume prune`, in any form.** `/var/lib/docker/volumes` is a symlink
-  to `/mnt/data/docker-volumes` (Plan 105) and volumes are 51.78 GB with 69 MB
-  reclaimable. The runbook's prohibition stands and this plan does not touch it.
-- **Rebuilding the build cache deliberately.** This plan discards cache; warming
-  it, or deciding a build should be cached differently, is not its business.
 
 ## Success criteria
 
@@ -265,7 +284,7 @@ continued climb.
 Two ways, and they point in opposite directions. `maintenance-running-set.txt` is
 Plan 142's artifact and is this plan's central input — without it there is no safe
 automated prune. But Plan 142 is in closeout and owes no code, so this plan must
-consume the manifest without modifying it. If Stage 0 finds that windows already
+consume the manifest without modifying it. If Stage A finds that windows already
 flatten the growth, the right outcome is a step in Plan 142's procedure rather
 than a new scheduled job, and this plan should say so and stop.
 
@@ -291,5 +310,5 @@ as where the result becomes visible. Plan 135's own scope was making storage
 ### Plan 152 — scheduled worker lifecycle
 
 Plan 152 owns one-shot execution and the narrow launch authority. If it lands
-first, Stage 2 should use that mechanism rather than a `PythonOperator`. It is not
+first, Stage C should use that mechanism rather than a `PythonOperator`. It is not
 a blocker in either direction — the job is small enough to port.

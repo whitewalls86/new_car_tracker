@@ -6,15 +6,11 @@ Gets logs from the services that currently produce none into one searchable
 place, deciding service by service what is worth collecting before turning any
 of it on — so a failure in an unlogged component stops being invisible.
 
-## Status
+## The case
 
-**BUILD ORDER, written 2026-08-25.** Priority **70 (medium)**. Effort **S plus a
-7-day volume observation**.
+Split out of the Plan 141 logging health check, and dependent on Plan 141,
+which creates the source-policy registry this plan revises.
 
-Split out of the Plan 141 logging health check. Depends on Plan 141, which
-creates the source-policy registry this plan revises.
-
-## Problem
 
 [`docker-compose.yml`](../../docker-compose.yml) declares 34 services. 28 are in
 the default profile, and 26 remain after the one-shots (`flyway`,
@@ -60,7 +56,15 @@ a ten-minute unfiltered sample of three Airflow containers produced 486 lines.
 Adding services without measuring them is how that happened. This plan
 therefore measures before it admits.
 
-## Principles
+## Design
+
+Every one of the 18 uncovered services gets a written classification with a
+measured volume figure before any of them is admitted, so an exclusion is a
+decision rather than residue. Admission is then incremental and reversible: a
+service enters with a drop policy attached and leaves again if seven days of
+real volume contradict its projection.
+
+### Principles
 
 1. **Exclusion is a decision with a reason.** Plan 141 makes every service have
    an answer; this plan revisits the answers that were never really chosen.
@@ -76,7 +80,7 @@ therefore measures before it admits.
    full request paths. A retention and redaction policy is a precondition for
    admitting it, not a follow-up.
 
-## Non-goals
+### Non-goals
 
 - The source-policy registry format, the completeness test, and parsing — all
   Plan 141. This plan supplies revised *entries*, not the mechanism.
@@ -89,7 +93,37 @@ therefore measures before it admits.
 - Adding an ingestion path for Airflow DAG/task files, which remain local under
   Plan 135's 30-day policy.
 
-## Stage 0 — Decide every exclusion on its merits
+### Test and verification contract
+
+- The Plan 141 completeness test continues to pass with the revised entries; no
+  second registry is created.
+- Every exclusion entry carries a non-empty reason, enforced by test, following
+  the pattern already used by Plan 140's healthcheck deny list in
+  [`tests/test_observability_config.py`](../../tests/test_observability_config.py).
+- Fixtures for each newly admitted format assert parsed labels or explicit drop.
+- A test asserts `loki` and `promtail` are never admitted, with the feedback-loop
+  reason recorded inline.
+- A test asserts admitted-service labels in Compose and registry entries agree,
+  so a label cannot be added without a policy.
+
+## Stages
+
+Sequenced before [`docs/PLAN_DOCUMENT.md`](../PLAN_DOCUMENT.md) landed; adopted
+stage letters on 2026-09-07 when its work was chunked into issues. No issue
+carries a legacy number yet, so the mapping matters only to inbound prose:
+
+| Legacy | Stage | | Legacy | Stage |
+|:---:|:---:|---|:---:|:---:|
+| 0 | **A** | | 2 | **C** |
+| 1 | **B** | | | |
+
+| Order | Stage | What it delivers | State | Issue |
+|---:|:---:|---|---|---|
+| 1 | [**A**](#stage-a--decide-every-exclusion-on-its-merits) | Every exclusion decided on its merits, with measured volume | `next` | -- |
+| 2 | [**B**](#stage-b--admit-the-accepted-services) | The accepted services admitted, each with its drop policy | `--` | -- |
+| 3 | [**C**](#stage-c--observe-for-seven-days) | Seven days of real volume, and a keep/narrow/remove per service | `--` | -- |
+
+### Stage A — Decide every exclusion on its merits
 
 Read-only, and the substance of this plan.
 
@@ -107,50 +141,53 @@ Read-only, and the substance of this plan.
    settings — the useful content may not be emitted at all today, which would
    make this a Postgres configuration change before it is a Promtail one.
 
-### Stage 0 gate
+**Exit:** every one of the 18 uncovered services has a written classification --
+admit, admit with a drop policy, or exclude with a written reason -- and a
+measured lines/day and bytes/day figure taken from `docker logs` over a window
+that included a scrape cycle and a dbt run. "Not currently labeled" is not a
+reason. Services whose useful content is not emitted today are recorded as
+configuration work, not as ingestion work, and `caddy`'s PII answer and
+`postgres`'s `log_min_duration_statement` reading are both written down.
 
-Every one of the 18 has a written classification with a measured volume figure.
-Services whose useful content is not currently emitted are recorded as
-configuration work, not as ingestion work.
+Nothing is deployed in this stage, so its exit is a document, not a diff.
 
-## Stage 1 — Admit the accepted services
+### Stage B — Admit the accepted services
 
-1. Add `promtail.enable=true` only to services classified **admit** in Stage 0.
+1. Add `promtail.enable=true` only to services classified **admit** in Stage A.
 2. Give each an ingestion policy in Plan 141's registry — parsing, severity
-   mapping, and any drop rule — with its Stage 0 reason attached.
+   mapping, and any drop rule — with its Stage A reason attached.
 3. Apply drop policies at ingestion so Promtail's drop counters attribute each
    policy separately, following the pattern Plan 141 establishes.
 4. Deploy by recreating Promtail unless a Compose label changed, in which case
    recreate the labeled service too.
 
-## Stage 2 — Observe for seven days
+**Exit:** every service Stage A classified **admit** is reaching Loki with its
+ingestion policy applied, each drop rule attributes to its own Promtail counter,
+and no service Stage A excluded has gained a stream. This stage starts Stage C's
+seven-day clock, so it is the last point at which the admitted set can change
+without restarting that window.
+
+### Stage C — Observe for seven days
 
 1. Measured lines/day and bytes/day per newly admitted service against the
-   Stage 0 projection.
+   Stage A projection.
 2. Recomputed 90-day Loki footprint and disk headroom against Plan 135's bounds.
 3. Confirmation that each new stream's drop policy is doing the expected amount
    of work and no more.
 4. One representative error per admitted service proven to reach the error
    view.
 
-### Stage 2 decision
+#### Stage C decision
 
 Per admitted service: **keep**, **narrow the filter**, or **remove**. A service
-whose seven-day volume exceeds its Stage 0 projection by a stated margin is
+whose seven-day volume exceeds its Stage A projection by a stated margin is
 narrowed or removed rather than absorbed.
 
-## Test and verification contract
-
-- The Plan 141 completeness test continues to pass with the revised entries; no
-  second registry is created.
-- Every exclusion entry carries a non-empty reason, enforced by test, following
-  the pattern already used by Plan 140's healthcheck deny list in
-  [`tests/test_observability_config.py`](../../tests/test_observability_config.py).
-- Fixtures for each newly admitted format assert parsed labels or explicit drop.
-- A test asserts `loki` and `promtail` are never admitted, with the feedback-loop
-  reason recorded inline.
-- A test asserts admitted-service labels in Compose and registry entries agree,
-  so a label cannot be added without a policy.
+**Exit:** seven days observed, with a recorded keep/narrow/remove decision per
+admitted service, a recomputed 90-day Loki footprint inside Plan 135's bounds,
+and one representative error per admitted service proven to reach the error
+view. A projection missed by more than its stated margin is acted on here, not
+carried.
 
 ## Relationship to other plans
 
@@ -158,7 +195,7 @@ narrowed or removed rather than absorbed.
   test, and the parsing contract. This plan is the first substantive revision of
   its contents and should not start before it lands.
 - **Plan 135 set the bounds** this plan spends against. Its retention and disk
-  caps are the budget; Stage 2 verifies the spend fits.
+  caps are the budget; Stage C verifies the spend fits.
 - **Plan 140 owns healthchecks.** Its service set and this one differ on
   purpose; neither test may be rewritten to match the other.
 - **Plan 141 Stage 1 supplies application log structure.** That is a separate
@@ -182,8 +219,8 @@ narrowed or removed rather than absorbed.
 
 ## Rollback and safe stopping points
 
-- **After Stage 0:** classifications recorded, no runtime change. This is a
+- **After Stage A:** classifications recorded, no runtime change. This is a
   legitimate finish if every answer is "exclude".
-- **After Stage 1:** remove the labels and registry entries; Promtail returns to
+- **After Stage B:** remove the labels and registry entries; Promtail returns to
   its Plan 141 state.
-- **After Stage 2:** the per-service decision is the durable output.
+- **After Stage C:** the per-service decision is the durable output.
