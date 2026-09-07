@@ -511,6 +511,33 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: dbt build (DuckDB — empty data compilation check)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
@@ -806,6 +833,33 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
 
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/snapshot_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: dbt build (DuckDB — production-shaped data)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
@@ -942,6 +996,33 @@ jobs:
         run: python scripts/seed_lake_snapshot_fixture.py
         env:
           PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123

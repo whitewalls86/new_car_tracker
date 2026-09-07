@@ -1,0 +1,165 @@
+# Plan 162 Stage S, exit 2 — branch coverage for the staging models.
+#
+# WHY THIS IS IN A `coverage/` SUBDIRECTORY RATHER THAN A SECOND FILE BESIDE
+# ../unit_tests.yml. **Do not "tidy" it by renaming the file or flattening the
+# directory.** The branch-coverage instrument matches the literal string
+# `unit_tests.yml` in both directions: branch_probe.py's compiled_unit_tests()
+# finds declarations with `rglob("unit_tests.yml")`, and branch_list.py's
+# compiled_model_paths() excludes compiled paths containing `unit_tests.yml`.
+# A file named anything else contributes zero measured coverage AND has its
+# compiled tests enumerated as phantom models. See the fuller note at the top of
+# ../../marts/coverage/unit_tests.yml, where both halves were measured.
+#
+# dbt reads every .yml under models/, so a subdirectory keeps the filename the
+# instrument needs while leaving ../unit_tests.yml free of concurrent edits.
+#
+# Every test in this file exists to take a named branch in BOTH directions and
+# to assert what the model actually produces for the inputs that get it there.
+#
+# The source fixtures below are `format: sql` rather than the dict form for the
+# reason documented at the top of models/intermediate/unit_tests.yml: dbt builds
+# a dict fixture by introspecting the mocked input's relation, and these sources
+# are Parquet in MinIO reached through an on-run-start external registration.
+# Spelling the columns out keeps the fixture independent of that.
+
+unit_tests:
+
+  # ---------------------------------------------------------------------------
+  # stg_observations — the vin17 validity guard
+  #
+  # Branches: <final>.case_arm.0, <final>.case_else.0.
+  #
+  # The guard is three conjuncts — `vin is not null`, `length(vin) = 17`, and a
+  # `^[A-Z0-9]{17}$` match on upper(vin) — and the CASE has exactly two arms, so
+  # the accept path and the reject path are the whole model. Each of the three
+  # rejects below fails a different conjunct, which is what makes the ELSE arm
+  # an assertion about the guard rather than about one bad string.
+  # ---------------------------------------------------------------------------
+
+  - name: test_observations_vin17_guard_accepts_only_a_clean_17_character_vin
+    description: >
+      A 17-character alphanumeric VIN is upper-cased into vin17; a null VIN, a
+      VIN of the wrong length either way, and a 17-character VIN carrying a
+      non-alphanumeric character all yield vin17 = NULL. `vin` itself is
+      untouched in every case — the guard adds a column, it does not clean one.
+    model: stg_observations
+    given:
+      - input: source('silver', 'observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint)                          as artifact_id,
+                 cast('L-VALID' as varchar)                 as listing_id,
+                 cast('detail' as varchar)                  as source,
+                 cast('active' as varchar)                  as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp)                    as written_at,
+                 cast('jhmfc1f39ke000001' as varchar)       as vin,
+                 cast(null as integer)                      as price,
+                 cast(null as varchar)                      as make,
+                 cast(null as varchar)                      as model,
+                 cast(null as varchar)                      as "trim",
+                 cast(null as smallint)                     as "year",
+                 cast(null as integer)                      as mileage,
+                 cast(null as integer)                      as msrp,
+                 cast(null as varchar)                      as stock_type,
+                 cast(null as varchar)                      as fuel_type,
+                 cast(null as varchar)                      as body_style,
+                 cast(null as varchar)                      as dealer_name,
+                 cast(null as varchar)                      as dealer_zip,
+                 cast(null as varchar)                      as dealer_city,
+                 cast(null as varchar)                      as dealer_state,
+                 cast(null as varchar)                      as customer_id,
+                 cast(null as varchar)                      as canonical_detail_url,
+                 cast(null as varchar)                      as financing_type,
+                 cast(null as varchar)                      as seller_zip,
+                 cast(null as varchar)                      as seller_customer_id,
+                 cast(null as smallint)                     as page_number,
+                 cast(null as smallint)                     as position_on_page,
+                 cast(null as varchar)                      as trid,
+                 cast(null as varchar)                      as isa_context,
+                 cast(null as varchar)                      as body,
+                 cast(null as varchar)                      as condition
+          -- null VIN: fails `vin is not null`
+          union all select 2, 'L-NULL', 'srp', null,
+                 cast('2026-01-10 12:00:00+00' as timestamp), null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null
+          -- 16 characters: fails `length(vin) = 17`
+          union all select 3, 'L-SHORT', 'srp', null,
+                 cast('2026-01-10 12:00:00+00' as timestamp), null,
+                 '1HGCM82633A00434', null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null
+          -- 18 characters: fails `length(vin) = 17` from the other side
+          union all select 4, 'L-LONG', 'srp', null,
+                 cast('2026-01-10 12:00:00+00' as timestamp), null,
+                 '1HGCM82633A0043456', null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null
+          -- 17 characters but a hyphen: fails only the ^[A-Z0-9]{17}$ match
+          union all select 5, 'L-PUNCT', 'srp', null,
+                 cast('2026-01-10 12:00:00+00' as timestamp), null,
+                 '1HGCM82633A-04345', null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {listing_id: "L-VALID", vin: "jhmfc1f39ke000001", vin17: "JHMFC1F39KE000001"}
+        - {listing_id: "L-NULL",  vin: null,                vin17: null}
+        - {listing_id: "L-SHORT", vin: "1HGCM82633A00434",  vin17: null}
+        - {listing_id: "L-LONG",  vin: "1HGCM82633A0043456", vin17: null}
+        - {listing_id: "L-PUNCT", vin: "1HGCM82633A-04345", vin17: null}
+
+  # ---------------------------------------------------------------------------
+  # stg_price_events — the four-conjunct WHERE
+  #
+  # Branches: <final>.where_conjunct.0 (price > 0), .1 (price is not null),
+  #           .2 (event_type != 'deleted'), .3 (vin is not null).
+  #
+  # Each rejected row below fails exactly one conjunct, so the test says which
+  # guard removed it rather than only that something did. `price = 0` and
+  # `price is null` are deliberately separate rows: `not (price > 0)` is NULL
+  # when price is NULL, so a null price does not exercise the `price > 0` guard
+  # in either direction and a single row could not stand for both.
+  # ---------------------------------------------------------------------------
+
+  - name: test_price_events_rejects_each_guard_independently
+    description: >
+      Only the row that satisfies all four conjuncts survives, and its vin is
+      upper-cased. The four rejects each fail one conjunct: a null VIN, a
+      'deleted' event, a null price, and a zero price.
+    model: stg_price_events
+    given:
+      - input: source('ops_events', 'price_observation_events')
+        format: sql
+        rows: |
+          select cast(1 as bigint)                          as event_id,
+                 cast('L-KEEP' as varchar)                  as listing_id,
+                 cast('jhmfc1f39ke000001' as varchar)       as vin,
+                 cast(30000 as integer)                     as price,
+                 cast('honda' as varchar)                   as make,
+                 cast('crv' as varchar)                     as model,
+                 cast(11 as bigint)                         as artifact_id,
+                 cast('upserted' as varchar)                as event_type,
+                 cast('detail' as varchar)                  as source,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as event_at
+          -- fails `vin is not null`
+          union all select 2, 'L-NOVIN', null, 30000, 'honda', 'crv', 12,
+                 'upserted', 'detail', cast('2026-01-10 12:00:00+00' as timestamp)
+          -- fails `event_type != 'deleted'` and nothing else
+          union all select 3, 'L-DELETED', 'JHMFC1F39KE000003', 30000, 'honda',
+                 'crv', 13, 'deleted', 'detail',
+                 cast('2026-01-10 12:00:00+00' as timestamp)
+          -- fails `price is not null`
+          union all select 4, 'L-NOPRICE', 'JHMFC1F39KE000004', null, 'honda',
+                 'crv', 14, 'upserted', 'detail',
+                 cast('2026-01-10 12:00:00+00' as timestamp)
+          -- fails `price > 0`
+          union all select 5, 'L-ZERO', 'JHMFC1F39KE000005', 0, 'honda', 'crv',
+                 15, 'upserted', 'detail',
+                 cast('2026-01-10 12:00:00+00' as timestamp)
+    expect:
+      rows:
+        - {event_id: 1, listing_id: "L-KEEP", vin: "JHMFC1F39KE000001",
+           price: 30000, event_type: "upserted", source: "detail"}

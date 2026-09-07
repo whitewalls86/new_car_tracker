@@ -1,0 +1,715 @@
+# Unit tests added by Plan 162 Stage S, exit 2 — the run/cadence/feature models.
+#
+# Why this file is called unit_tests.yml and lives in a subdirectory
+# -----------------------------------------------------------------------------
+# DO NOT rename this to `unit_tests_runs_and_features.yml` and flatten it back
+# into ../. The filename is load-bearing in both directions, and the failure is
+# silent in one of them:
+#
+#   * tests/dbt/branch_probe.py::compiled_unit_tests() finds unit tests by
+#     `rglob("unit_tests.yml")` — an exact filename match. Under any other name
+#     these tests compile, run and pass while contributing ZERO branch coverage.
+#   * tests/dbt/branch_list.py::compiled_model_paths() excludes compiled paths
+#     containing "unit_tests.yml". Under any other name this file's compiled
+#     output is enumerated as if it were a set of extra MODELS, and every
+#     branch of every mocked input is filed as an uncovered branch of a model
+#     that does not exist.
+#
+# dbt reads every .yml under models/ regardless of directory, so a subdirectory
+# keeps the required filename while leaving ../unit_tests.yml free to be edited
+# by somebody else. The directory holds no models; it exists only to make the
+# name available a second time.
+#
+# Everything the header of ../unit_tests.yml says about `format: sql` fixtures
+# applies here unchanged.
+#
+# On the `is_incremental: true` tests below
+# -----------------------------------------------------------------------------
+# Seven models wrap a Plan 123 late-arrival lookback in `{% if is_incremental()
+# %}`, and that SQL does not exist at all in a cold compile — so no unit test
+# that leaves is_incremental false can reach it, whatever its `given` rows say.
+# dbt's `overrides.macros.is_incremental: true` plus a mocked `- input: this`
+# renders the warm form and lets the lookback be exercised against a target
+# relation the test supplies. Two tests per model are needed rather than one:
+# the `coalesce(max(...), timestamp '1900-01-01')` cold-start fallback is a
+# property of the whole target relation, not of a row, so its two arms are
+# "target empty" and "target populated" and only one of them can hold in any
+# single test.
+
+unit_tests:
+
+  # ---------------------------------------------------------------------------
+  # int_benchmarks — what the cohort filters actually exclude
+  # ---------------------------------------------------------------------------
+
+  - name: test_benchmarks_excludes_null_attributes_and_nonpositive_price
+    description: >
+      Five VINs enter the join and only two reach the aggregate: one is dropped
+      for a NULL make, one for a NULL model, and one for current_price = 0.
+      The two survivors (30k and 20k) fix every percentile, and the
+      national_avg_discount_pct shows the msrp > 0 guard doing its job — the
+      survivor with msrp = 0 contributes NULL to the average rather than a
+      division by zero, so the discount is 25.00 (VIN 1 alone) and not 12.50.
+    model: int_benchmarks
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "BMK0000000000001", make: "honda", model: "crv", msrp: 40000}
+          - {vin17: "BMK0000000000002", make: "honda", model: "crv", msrp: 0}
+          - {vin17: "BMK0000000000003", make: null, model: "crv", msrp: 30000}
+          - {vin17: "BMK0000000000004", make: "honda", model: null, msrp: 30000}
+          - {vin17: "BMK0000000000005", make: "honda", model: "crv", msrp: 30000}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "BMK0000000000001", current_price: 30000}
+          - {vin: "BMK0000000000002", current_price: 20000}
+          - {vin: "BMK0000000000003", current_price: 25000}
+          - {vin: "BMK0000000000004", current_price: 25000}
+          - {vin: "BMK0000000000005", current_price: 0}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", national_listing_count: 2,
+           national_avg_price: 25000, national_median_price: 25000,
+           national_p10_price: 21000, national_p25_price: 22500,
+           national_p75_price: 27500, national_p90_price: 29000,
+           national_avg_discount_pct: 25.00}
+
+  # ---------------------------------------------------------------------------
+  # int_latest_observation — the carousel rank and the NULL-make exclusion
+  # ---------------------------------------------------------------------------
+
+  - name: test_latest_observation_carousel_ranks_last_and_null_make_excluded
+    description: >
+      Two VINs. The first is seen only by the carousel, twice: the source-rank
+      CASE has no arm for 'carousel' and falls to its ELSE, so both rows rank 3
+      and recency alone decides — the later fetch wins. The second VIN has a
+      detail observation with a NULL make (an unlisted detail page returns no
+      vehicle JSON) and an SRP observation with one; the detail row is dropped
+      by the `make is not null` filter before ranking, so the SRP row wins even
+      though detail outranks SRP. That is the documented intent of the filter,
+      and it is only visible when the higher-priority row is the one removed.
+    model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('LC1' as string) as listing_id,
+                 cast('carousel' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('CARO000000000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast('Carousel-Older' as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 2, 'LC1', 'carousel', null, cast('2026-01-11 10:00:00+00' as timestamp), null, null, 'CARO000000000001', null, 'Carousel-Newer', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          union all select 3, 'LC2', 'detail',   null, cast('2026-01-12 10:00:00+00' as timestamp), null, null, 'CARO000000000002', null, null,             null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          union all select 4, 'LC2', 'srp',      null, cast('2026-01-09 10:00:00+00' as timestamp), null, null, 'CARO000000000002', null, 'Srp-Make',       null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {vin17: "CARO000000000001", artifact_id: 2, source: "carousel",
+           make: "Carousel-Newer"}
+        - {vin17: "CARO000000000002", artifact_id: 4, source: "srp",
+           make: "Srp-Make"}
+
+  - name: test_latest_observation_incremental_lookback_skips_untouched_vin
+    description: >
+      The warm form of the model, reached with is_incremental overridden true
+      and a target relation supplied as `this`. The target's max(fetched_at) is
+      2026-02-10, so the three-day lookback admits only VINs observed on or
+      after 2026-02-07: the VIN last seen on 2026-01-01 is not recomputed and
+      does not appear in the output at all. The row with a NULL vin17 is
+      excluded by affected_vins' own guard before the window is even applied.
+    model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('LI1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-02-10 00:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('LATINC0000000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast('Fresh-Make' as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 2, 'LI2', 'detail', null, cast('2026-01-01 00:00:00+00' as timestamp), null, null, 'LATINC0000000002', null, 'Stale-Make', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          union all select 3, 'LI3', 'srp',    null, cast('2026-02-10 00:00:00+00' as timestamp), null, null, null,               null, 'No-Vin-Make', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+      - input: this
+        rows:
+          - {vin17: "LATINC0000000001", fetched_at: "2026-02-10 00:00:00+00"}
+    expect:
+      rows:
+        - {vin17: "LATINC0000000001", artifact_id: 1, source: "detail",
+           make: "Fresh-Make"}
+
+  - name: test_latest_observation_incremental_cold_target_admits_every_vin
+    description: >
+      The same warm SQL against an EMPTY target, which is the first incremental
+      run. max(fetched_at) over no rows is NULL, so the coalesce falls back to
+      1900-01-01 and the lookback window opens onto the whole history: the VIN
+      last seen on 2026-01-01 is recomputed here where the previous test skipped
+      it. This is the arm of the cold-start guard that no populated target can
+      show, which is why it needs its own test rather than another `given` row.
+    model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('LI1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-02-10 00:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('LATINC0000000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast('Fresh-Make' as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 2, 'LI2', 'detail', null, cast('2026-01-01 00:00:00+00' as timestamp), null, null, 'LATINC0000000002', null, 'Stale-Make', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+      - input: this
+        rows: []
+    expect:
+      rows:
+        - {vin17: "LATINC0000000001", artifact_id: 1, source: "detail",
+           make: "Fresh-Make"}
+        - {vin17: "LATINC0000000002", artifact_id: 2, source: "detail",
+           make: "Stale-Make"}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_observation_runs — the observation_state_key null normalization
+  # ---------------------------------------------------------------------------
+
+  - name: test_observation_runs_null_price_mileage_and_state_open_their_own_run
+    description: >
+      One listing observed by detail (price/mileage/listing_state all present),
+      then twice by SRP with all three NULL, then by detail again with the
+      original values. observation_state_key coalesces each field to '' before
+      hashing, so the two SRP rows share a key with each other and NOT with the
+      detail rows: three runs, not one and not four. This is what the coalesces
+      in `ordered` are for — without them concat_ws would drop the NULLs and
+      md5('30000|100|active') would collide with md5 of a shorter string — and
+      no other test in the suite gives this model a NULL price, mileage or
+      listing_state.
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "LOR1", vin17: "OBSRUN0000000001", artifact_id: 1, source: "detail",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {listing_id: "LOR1", vin17: null, artifact_id: 2, source: "srp",
+             fetched_at: "2026-01-02 00:00:00+00",
+             price: null, mileage: null, listing_state: null}
+          - {listing_id: "LOR1", vin17: null, artifact_id: 3, source: "srp",
+             fetched_at: "2026-01-03 00:00:00+00",
+             price: null, mileage: null, listing_state: null}
+          - {listing_id: "LOR1", vin17: "OBSRUN0000000001", artifact_id: 4, source: "detail",
+             fetched_at: "2026-01-04 00:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+    expect:
+      rows:
+        - {listing_id: "LOR1", vin17: "OBSRUN0000000001",
+           price: 30000, mileage: 100, listing_state: "active",
+           run_started_at: "2026-01-01 00:00:00+00", run_ended_at: "2026-01-01 00:00:00+00",
+           observation_count: 1, detail_observation_count: 1, srp_observation_count: 0,
+           carousel_observation_count: 0, distinct_source_count: 1,
+           detail_seen: true, srp_seen: false, carousel_seen: false,
+           run_duration_hours: 0,
+           next_observation_started_at: "2026-01-02 00:00:00+00",
+           hours_until_next_observation: 24, is_open_run: false}
+        - {listing_id: "LOR1", vin17: null,
+           price: null, mileage: null, listing_state: null,
+           run_started_at: "2026-01-02 00:00:00+00", run_ended_at: "2026-01-03 00:00:00+00",
+           observation_count: 2, detail_observation_count: 0, srp_observation_count: 2,
+           carousel_observation_count: 0, distinct_source_count: 1,
+           detail_seen: false, srp_seen: true, carousel_seen: false,
+           run_duration_hours: 24,
+           next_observation_started_at: "2026-01-04 00:00:00+00",
+           hours_until_next_observation: 24, is_open_run: false}
+        - {listing_id: "LOR1", vin17: "OBSRUN0000000001",
+           price: 30000, mileage: 100, listing_state: "active",
+           run_started_at: "2026-01-04 00:00:00+00", run_ended_at: "2026-01-04 00:00:00+00",
+           observation_count: 1, detail_observation_count: 1, srp_observation_count: 0,
+           carousel_observation_count: 0, distinct_source_count: 1,
+           detail_seen: true, srp_seen: false, carousel_seen: false,
+           run_duration_hours: 0,
+           next_observation_started_at: null,
+           hours_until_next_observation: null, is_open_run: true}
+
+  - name: test_observation_runs_incremental_lookback_limits_affected_listings
+    description: >
+      Warm form. The target's max(run_ended_at) is 2026-02-10, so the three-day
+      lookback marks only the listing observed on 2026-02-10 as affected; the
+      listing last observed on 2026-01-01 is not recomputed and produces no row.
+      The inner join to affected_listings is what enforces that, and it exists
+      only in the incremental compile.
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "LORI1", vin17: "OBSINC0000000001", artifact_id: 1, source: "detail",
+             fetched_at: "2026-02-10 00:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {listing_id: "LORI2", vin17: "OBSINC0000000002", artifact_id: 2, source: "detail",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 20000, mileage: 200, listing_state: "active"}
+      - input: this
+        rows:
+          - {listing_id: "LORI1", run_ended_at: "2026-02-10 00:00:00+00"}
+    expect:
+      rows:
+        - {listing_id: "LORI1", vin17: "OBSINC0000000001",
+           price: 30000, mileage: 100, listing_state: "active",
+           run_started_at: "2026-02-10 00:00:00+00", run_ended_at: "2026-02-10 00:00:00+00",
+           observation_count: 1, detail_observation_count: 1, srp_observation_count: 0,
+           carousel_observation_count: 0, distinct_source_count: 1,
+           run_duration_hours: 0, is_open_run: true,
+           next_observation_started_at: null, hours_until_next_observation: null}
+
+  - name: test_observation_runs_incremental_cold_target_recomputes_every_listing
+    description: >
+      The same warm SQL against an empty target: max(run_ended_at) is NULL, the
+      coalesce falls back to 1900-01-01, and both listings are affected — the
+      2026-01-01 listing that the previous test excluded now has its run
+      recomputed. The pair of tests is the only way to see both arms of that
+      fallback, because emptiness is a property of the target relation rather
+      than of any row in it.
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "LORI1", vin17: "OBSINC0000000001", artifact_id: 1, source: "detail",
+             fetched_at: "2026-02-10 00:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {listing_id: "LORI2", vin17: "OBSINC0000000002", artifact_id: 2, source: "detail",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 20000, mileage: 200, listing_state: "active"}
+      - input: this
+        rows: []
+    expect:
+      rows:
+        - {listing_id: "LORI1", vin17: "OBSINC0000000001",
+           price: 30000, mileage: 100, listing_state: "active",
+           observation_count: 1, detail_observation_count: 1, is_open_run: true}
+        - {listing_id: "LORI2", vin17: "OBSINC0000000002",
+           price: 20000, mileage: 200, listing_state: "active",
+           observation_count: 1, detail_observation_count: 1, is_open_run: true}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_state_runs — the affected-VIN lookback
+  # ---------------------------------------------------------------------------
+
+  - name: test_state_runs_incremental_lookback_limits_affected_vins
+    description: >
+      Warm form. The target's max(run_ended_at) is 2026-02-10, so only the VIN
+      fingerprinted on or after 2026-02-07 is affected; the VIN last
+      fingerprinted on 2026-01-01 keeps whatever runs the target already holds
+      and is not re-emitted here.
+    model: int_listing_state_runs
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('int_listing_state_fingerprints')
+        rows:
+          - {vin17: "STRINC0000000001", listing_id: "LS1", artifact_id: 1,
+             fetched_at: "2026-02-10 00:00:00+00", parsed_fingerprint: "fp_recent",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {vin17: "STRINC0000000002", listing_id: "LS2", artifact_id: 2,
+             fetched_at: "2026-01-01 00:00:00+00", parsed_fingerprint: "fp_old",
+             price: 20000, mileage: 200, listing_state: "active"}
+      - input: this
+        rows:
+          - {vin17: "STRINC0000000001", run_ended_at: "2026-02-10 00:00:00+00"}
+    expect:
+      rows:
+        - {vin17: "STRINC0000000001", listing_id: "LS1", parsed_fingerprint: "fp_recent",
+           listing_state: "active",
+           run_started_at: "2026-02-10 00:00:00+00", run_ended_at: "2026-02-10 00:00:00+00",
+           artifact_count: 1, run_duration_hours: 0, is_open_run: true,
+           next_state_started_at: null, hours_until_change: null}
+
+  - name: test_state_runs_incremental_cold_target_recomputes_every_vin
+    description: >
+      The same warm SQL against an empty target. max(run_ended_at) is NULL, the
+      1900-01-01 fallback applies, and both VINs are recomputed — including the
+      2026-01-01 one the populated-target test excluded.
+    model: int_listing_state_runs
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('int_listing_state_fingerprints')
+        rows:
+          - {vin17: "STRINC0000000001", listing_id: "LS1", artifact_id: 1,
+             fetched_at: "2026-02-10 00:00:00+00", parsed_fingerprint: "fp_recent",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {vin17: "STRINC0000000002", listing_id: "LS2", artifact_id: 2,
+             fetched_at: "2026-01-01 00:00:00+00", parsed_fingerprint: "fp_old",
+             price: 20000, mileage: 200, listing_state: "active"}
+      - input: this
+        rows: []
+    expect:
+      rows:
+        - {vin17: "STRINC0000000001", listing_id: "LS1", parsed_fingerprint: "fp_recent",
+           artifact_count: 1, is_open_run: true}
+        - {vin17: "STRINC0000000002", listing_id: "LS2", parsed_fingerprint: "fp_old",
+           artifact_count: 1, is_open_run: true}
+
+  # ---------------------------------------------------------------------------
+  # int_price_history — the affected-VIN lookback
+  # ---------------------------------------------------------------------------
+
+  - name: test_price_history_incremental_lookback_admits_only_recent_vins
+    description: >
+      Warm form. The target's max(last_seen_at) is 2026-02-10, so the three-day
+      lookback admits only the VIN with an event on or after 2026-02-07. The VIN
+      whose last event was 2026-01-01 is left alone — its aggregates in the
+      target are still correct, and recomputing every VIN on every run is
+      precisely what Plan 123 Phase 3 stopped doing.
+    model: int_price_history
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('stg_price_events')
+        format: sql
+        rows: |
+          select 'PHINCR000000000A1' as vin, 100 as price, cast('2026-02-10 00:00:00+00' as timestamp) as event_at
+          union all select 'PHINCR000000000A1', 90,  cast('2026-02-11 00:00:00+00' as timestamp)
+          union all select 'PHINCR000000000B2', 200, cast('2026-01-01 00:00:00+00' as timestamp)
+      - input: this
+        rows:
+          - {vin: "PHINCR000000000A1", last_seen_at: "2026-02-10 00:00:00+00"}
+    expect:
+      rows:
+        - {vin: "PHINCR000000000A1", current_price: 90, first_price: 100,
+           min_price: 90, max_price: 100, total_price_observations: 2,
+           price_drop_count: 1, price_increase_count: 0,
+           first_seen_at: "2026-02-10 00:00:00+00", last_seen_at: "2026-02-11 00:00:00+00"}
+
+  - name: test_price_history_incremental_cold_target_recomputes_every_vin
+    description: >
+      The same warm SQL against an empty target: max(last_seen_at) is NULL, the
+      coalesce falls back to 1900-01-01, and the 2026-01-01 VIN the previous
+      test excluded is aggregated here. First-run behaviour is meant to match a
+      full rebuild exactly, and this is the assertion that says so.
+    model: int_price_history
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('stg_price_events')
+        format: sql
+        rows: |
+          select 'PHINCR000000000A1' as vin, 100 as price, cast('2026-02-10 00:00:00+00' as timestamp) as event_at
+          union all select 'PHINCR000000000A1', 90,  cast('2026-02-11 00:00:00+00' as timestamp)
+          union all select 'PHINCR000000000B2', 200, cast('2026-01-01 00:00:00+00' as timestamp)
+      - input: this
+        rows: []
+    expect:
+      rows:
+        - {vin: "PHINCR000000000A1", current_price: 90, first_price: 100,
+           total_price_observations: 2, price_drop_count: 1, price_increase_count: 0}
+        - {vin: "PHINCR000000000B2", current_price: 200, first_price: 200,
+           total_price_observations: 1, price_drop_count: 0, price_increase_count: 0}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_volatility_features — what a feature row looks like when the
+  # optional joins miss
+  # ---------------------------------------------------------------------------
+
+  - name: test_volatility_features_optional_joins_miss_and_match_side_by_side
+    description: >
+      Two VINs through the same query, one matching every optional join and one
+      matching none of them. VOL5 has price events, a price-history row, a
+      benchmark for its make/model and an open all-source observation run. VOL4
+      has none: no price events at all, no int_price_history row, a make/model
+      absent from int_benchmarks, and only a CLOSED observation run, which
+      open_observation_runs filters away. Every left join therefore null-extends
+      for VOL4, and the assertions below are the model's stated defaults —
+      counts coalesce to 0, current_price and price_vs_make_model_median stay
+      NULL, and the row is kept rather than dropped. A NULL-vin17 SRP row is
+      included to show two things at once: vin_listing_meta discards it (VOL4's
+      make/model/customer_id come only from its detail rows) while srp_latest
+      does not, so days_since_srp_seen is still 6.
+    model: int_listing_volatility_features
+    overrides:
+      vars:
+        as_of_at: "2026-02-01 00:00:00+00"
+    given:
+      - input: ref('int_listing_state_runs')
+        rows:
+          - {vin17: "VOL4", listing_id: "LV1", parsed_fingerprint: "fp_a",
+             listing_state: "active",
+             run_started_at: "2026-01-20 00:00:00+00", run_ended_at: "2026-01-25 00:00:00+00",
+             artifact_count: 2, run_duration_hours: 120, is_open_run: true,
+             next_state_started_at: null, hours_until_change: null}
+          - {vin17: "VOL5", listing_id: "LV2", parsed_fingerprint: "fp_b",
+             listing_state: "active",
+             run_started_at: "2026-01-28 00:00:00+00", run_ended_at: "2026-01-30 00:00:00+00",
+             artifact_count: 3, run_duration_hours: 48, is_open_run: true,
+             next_state_started_at: null, hours_until_change: null}
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select 'VOL4' as vin17, 'LV1' as listing_id, 'detail' as source,
+                 cast('2026-01-20 00:00:00+00' as timestamp) as fetched_at,
+                 'D900' as customer_id, 'ford' as make, 'ranger' as model
+          union all select 'VOL4', 'LV1', 'detail', cast('2026-01-25 00:00:00+00' as timestamp), 'D900', 'ford', 'ranger'
+          -- an SRP row with no resolved VIN: excluded from vin_listing_meta by
+          -- its `vin17 is not null` guard, but still counted by srp_latest
+          union all select null,   'LV1', 'srp',    cast('2026-01-26 00:00:00+00' as timestamp), null, null, null
+          union all select 'VOL5', 'LV2', 'detail', cast('2026-01-28 00:00:00+00' as timestamp), 'D901', 'honda', 'crv'
+          union all select 'VOL5', 'LV2', 'detail', cast('2026-01-30 00:00:00+00' as timestamp), 'D901', 'honda', 'crv'
+      - input: ref('stg_price_events')
+        format: sql
+        rows: |
+          select 'VOL5' as vin, 20000 as price, cast('2026-01-20 00:00:00+00' as timestamp) as event_at
+          union all select 'VOL5', 19000, cast('2026-01-29 00:00:00+00' as timestamp)
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "VOL5", current_price: 19000,
+             price_drop_count: 1, price_increase_count: 0,
+             first_price: 20000, min_price: 19000, max_price: 20000,
+             total_price_observations: 2}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 1,
+             national_avg_price: 25000, national_median_price: 25000,
+             national_avg_discount_pct: null}
+      - input: ref('int_listing_observation_runs')
+        rows:
+          - {listing_id: "LV1", vin17: "VOL4",
+             run_started_at: "2026-01-10 00:00:00+00", run_ended_at: "2026-01-15 00:00:00+00",
+             observation_count: 2, detail_observation_count: 2, srp_observation_count: 0,
+             carousel_observation_count: 0, distinct_source_count: 1,
+             detail_seen: true, srp_seen: false, carousel_seen: false,
+             is_open_run: false}
+          - {listing_id: "LV2", vin17: "VOL5",
+             run_started_at: "2026-01-29 00:00:00+00", run_ended_at: "2026-01-30 00:00:00+00",
+             observation_count: 4, detail_observation_count: 2, srp_observation_count: 2,
+             carousel_observation_count: 0, distinct_source_count: 2,
+             detail_seen: true, srp_seen: true, carousel_seen: false,
+             is_open_run: true}
+    expect:
+      rows:
+        - {vin17: "VOL4", listing_id: "LV1",
+           first_seen_at: "2026-01-20 00:00:00+00",
+           latest_fetched_at: "2026-01-25 00:00:00+00",
+           total_state_changes: 0, listing_id_change_count: 1,
+           days_since_last_state_change: 12,
+           unchanged_observation_streak: 2,
+           listing_state_change_count: 0,
+           current_price: null,
+           price_change_count_7d: 0, price_change_count_30d: 0,
+           price_vs_make_model_median: null,
+           listing_days_on_market: 12,
+           dealer_avg_run_length_hours: null, dealer_median_run_length_hours: null,
+           make_model_avg_run_length_hours: null, make_model_median_run_length_hours: null,
+           recent_srp_seen_at: "2026-01-26 00:00:00+00", days_since_srp_seen: 6,
+           all_source_run_started_at: null,
+           days_since_last_all_source_change: null,
+           all_source_unchanged_observation_streak: 0,
+           all_source_detail_observation_count: 0,
+           all_source_srp_observation_count: 0,
+           all_source_carousel_observation_count: 0,
+           all_source_non_detail_refresh_seen: false}
+        - {vin17: "VOL5", listing_id: "LV2",
+           first_seen_at: "2026-01-28 00:00:00+00",
+           latest_fetched_at: "2026-01-30 00:00:00+00",
+           total_state_changes: 0, listing_id_change_count: 1,
+           days_since_last_state_change: 4,
+           unchanged_observation_streak: 3,
+           listing_state_change_count: 0,
+           current_price: 19000,
+           price_change_count_7d: 1, price_change_count_30d: 1,
+           price_vs_make_model_median: 0.76,
+           listing_days_on_market: 4,
+           dealer_avg_run_length_hours: null, dealer_median_run_length_hours: null,
+           make_model_avg_run_length_hours: null, make_model_median_run_length_hours: null,
+           recent_srp_seen_at: null, days_since_srp_seen: null,
+           all_source_run_started_at: "2026-01-29 00:00:00+00",
+           days_since_last_all_source_change: 3,
+           all_source_unchanged_observation_streak: 4,
+           all_source_detail_observation_count: 2,
+           all_source_srp_observation_count: 2,
+           all_source_carousel_observation_count: 0,
+           all_source_non_detail_refresh_seen: true}
+
+  - name: test_volatility_features_state_transitions_and_nonpositive_benchmark_median
+    description: >
+      One VIN with four runs on one listing: active, active, unavailable,
+      active(open). listing_state_change_count counts only the transitions where
+      the state actually differs from the previous run's — so the second run,
+      whose fingerprint changed but whose listing_state did not, is NOT a state
+      change, and the answer is 2 rather than 3. The three closed runs (24h, 48h,
+      24h) give the dealer and make/model baselines: mean 32, median 24, with
+      the open run correctly excluded from both. The benchmark row supplies
+      national_median_price = 0, which is the guard the ratio's CASE exists for:
+      price_vs_make_model_median comes back NULL instead of dividing by zero.
+    model: int_listing_volatility_features
+    overrides:
+      vars:
+        as_of_at: "2026-02-01 00:00:00+00"
+    given:
+      - input: ref('int_listing_state_runs')
+        rows:
+          - {vin17: "VOL6", listing_id: "LV3", parsed_fingerprint: "fp_a",
+             listing_state: "active",
+             run_started_at: "2026-01-05 00:00:00+00", run_ended_at: "2026-01-06 00:00:00+00",
+             artifact_count: 2, run_duration_hours: 24, is_open_run: false,
+             next_state_started_at: "2026-01-06 00:00:00+00", hours_until_change: 0}
+          - {vin17: "VOL6", listing_id: "LV3", parsed_fingerprint: "fp_b",
+             listing_state: "active",
+             run_started_at: "2026-01-06 00:00:00+00", run_ended_at: "2026-01-08 00:00:00+00",
+             artifact_count: 1, run_duration_hours: 48, is_open_run: false,
+             next_state_started_at: "2026-01-08 00:00:00+00", hours_until_change: 0}
+          - {vin17: "VOL6", listing_id: "LV3", parsed_fingerprint: "fp_c",
+             listing_state: "unavailable",
+             run_started_at: "2026-01-08 00:00:00+00", run_ended_at: "2026-01-09 00:00:00+00",
+             artifact_count: 1, run_duration_hours: 24, is_open_run: false,
+             next_state_started_at: "2026-01-09 00:00:00+00", hours_until_change: 0}
+          - {vin17: "VOL6", listing_id: "LV3", parsed_fingerprint: "fp_d",
+             listing_state: "active",
+             run_started_at: "2026-01-09 00:00:00+00", run_ended_at: "2026-01-30 00:00:00+00",
+             artifact_count: 5, run_duration_hours: 504, is_open_run: true,
+             next_state_started_at: null, hours_until_change: null}
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select 'VOL6' as vin17, 'LV3' as listing_id, 'detail' as source,
+                 cast('2026-01-05 00:00:00+00' as timestamp) as fetched_at,
+                 'D902' as customer_id, 'toyota' as make, 'rav4' as model
+          union all select 'VOL6', 'LV3', 'detail', cast('2026-01-30 00:00:00+00' as timestamp), 'D902', 'toyota', 'rav4'
+      - input: ref('stg_price_events')
+        format: sql
+        rows: |
+          select 'VOL6' as vin, 22000 as price, cast('2026-01-05 00:00:00+00' as timestamp) as event_at
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "VOL6", current_price: 22000,
+             price_drop_count: 0, price_increase_count: 0,
+             first_price: 22000, min_price: 22000, max_price: 22000,
+             total_price_observations: 1}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "toyota", model: "rav4", national_listing_count: 1,
+             national_avg_price: 0, national_median_price: 0,
+             national_avg_discount_pct: null}
+      - input: ref('int_listing_observation_runs')
+        rows: []
+    expect:
+      rows:
+        - {vin17: "VOL6", listing_id: "LV3",
+           first_seen_at: "2026-01-05 00:00:00+00",
+           latest_fetched_at: "2026-01-30 00:00:00+00",
+           total_state_changes: 3, listing_id_change_count: 1,
+           days_since_last_state_change: 23,
+           unchanged_observation_streak: 5,
+           listing_state_change_count: 2,
+           current_price: 22000,
+           price_change_count_7d: 0, price_change_count_30d: 0,
+           price_vs_make_model_median: null,
+           listing_days_on_market: 27,
+           dealer_avg_run_length_hours: 32.0, dealer_median_run_length_hours: 24.0,
+           make_model_avg_run_length_hours: 32.0, make_model_median_run_length_hours: 24.0,
+           recent_srp_seen_at: null, days_since_srp_seen: null,
+           all_source_run_started_at: null,
+           days_since_last_all_source_change: null,
+           all_source_unchanged_observation_streak: 0,
+           all_source_detail_observation_count: 0,
+           all_source_srp_observation_count: 0,
+           all_source_carousel_observation_count: 0,
+           all_source_non_detail_refresh_seen: false}

@@ -1,0 +1,270 @@
+# The two fingerprint models in their WARM form, which nothing else tests
+# -----------------------------------------------------------------------------
+# Plan 162 Stage S. Every other unit test in this project pins
+# `is_incremental: false`, so the `{% if is_incremental() %}` lookback window in
+# int_listing_state_fingerprints and int_listing_observation_fingerprints — the
+# late-arrival watermark, and the reject filters as they are ordered *inside*
+# that warm WHERE clause — was never rendered by a unit test at all. These four
+# tests render it, with `overrides: {macros: {is_incremental: true}}` and the
+# target relation supplied by `- input: this`.
+#
+# Why two tests per model and not one. The watermark is
+# `coalesce(max(fetched_at), timestamp '1900-01-01')` over the WHOLE target
+# relation, so `max(...) is null` is a property of that relation and not of a
+# row: exactly one of its arms can hold in any single test. The cold-start test
+# mocks `this` as EMPTY (the fallback fires) and the warm test mocks it with a
+# row (the fallback does not). Neither is redundant — the cold-start case is a
+# state production reaches once, on the very first build, and then never again.
+#
+# The cold-start tests each carry a row dated 1899-12-01, before
+# `timestamp '1900-01-01'` minus the lookback. It is there to pin the fallback's
+# VALUE and not merely its existence: a fallback of, say, the current date would
+# still be non-null and would still let the ordinary rows through, and only a
+# row below the floor distinguishes the two.
+#
+# The fixture form is `format: sql` with the full 33-column select list, for the
+# reason documented at the top of ../unit_tests.yml: stg_observations is
+# ephemeral on the spark target, and a dict fixture would need to introspect a
+# relation that never materializes. `this` fixtures ARE dict-form — the target
+# is a materialized table on every engine, so the introspection those rely on
+# works, and spelling out ten columns to say "one row exists" would obscure the
+# single field (fetched_at) the watermark actually reads.
+
+unit_tests:
+
+  # ---------------------------------------------------------------------------
+  # int_listing_observation_fingerprints — warm-form source_rows filter
+  # ---------------------------------------------------------------------------
+
+  - name: test_observation_fingerprints_incremental_cold_start_scans_from_1900
+    description: "First incremental build: empty target, so the watermark falls back to 1900-01-01 and every source row from then on is scanned; the source and listing_id filters still reject"
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        rows: []
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast('active' as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001A' as string) as vin17,
+                 cast(30000 as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(100 as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          -- rejected: listing_id is null (the row key would be artifact_id alone)
+          union all select 2, null, 'detail', 'active', cast('2026-01-10 12:30:00+00' as timestamp), null, null, 'VALIDVIN00000002A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: source is not one of detail/srp/carousel
+          union all select 3, 'L3', 'dealer_inventory', 'active', cast('2026-01-10 13:00:00+00' as timestamp), null, null, 'VALIDVIN00000003A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: below the cold-start floor of 1900-01-01 minus 3 days
+          union all select 4, 'L4', 'srp', 'active', cast('1899-12-01 00:00:00+00' as timestamp), null, null, 'VALIDVIN00000004A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          union all select 5, 'L5', 'carousel', 'active', cast('2026-01-10 14:00:00+00' as timestamp), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {artifact_id: 1, listing_id: "L1", source: "detail"}
+        - {artifact_id: 5, listing_id: "L5", source: "carousel"}
+
+  - name: test_observation_fingerprints_incremental_warm_watermark_bounds_the_scan
+    description: "Non-empty target: the watermark is max(fetched_at) minus the lookback, so an older source row is not rescanned; the source and listing_id filters still reject"
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        rows:
+          - {observation_id: "existing", artifact_id: 900, listing_id: "L900", fetched_at: "2026-01-10 12:00:00"}
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast('active' as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001A' as string) as vin17,
+                 cast(30000 as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(100 as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          -- rejected: nine days older than the target's max fetched_at, so outside the 3-day lookback
+          union all select 2, 'L2', 'detail', 'active', cast('2026-01-01 12:00:00+00' as timestamp), null, null, 'VALIDVIN00000002A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: listing_id is null, inside the window though it is
+          union all select 3, null, 'detail', 'active', cast('2026-01-10 13:00:00+00' as timestamp), null, null, 'VALIDVIN00000003A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: source is not one of detail/srp/carousel, inside the window though it is
+          union all select 4, 'L4', 'dealer_inventory', 'active', cast('2026-01-10 13:30:00+00' as timestamp), null, null, 'VALIDVIN00000004A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {artifact_id: 1, listing_id: "L1", source: "detail"}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_state_fingerprints — warm-form source_rows filter
+  # ---------------------------------------------------------------------------
+
+  - name: test_state_fingerprints_incremental_cold_start_scans_from_1900
+    description: "First incremental build: empty target, so the watermark falls back to 1900-01-01 and every detail row from then on is scanned; the source and vin17 filters still reject"
+    model: int_listing_state_fingerprints
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        rows: []
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast('active' as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001A' as string) as vin17,
+                 cast(30000 as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(100 as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          -- rejected: this model is detail-only
+          union all select 2, 'L2', 'srp', 'active', cast('2026-01-10 12:30:00+00' as timestamp), null, null, 'VALIDVIN00000002A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: no resolved VIN
+          union all select 3, 'L3', 'detail', 'active', cast('2026-01-10 13:00:00+00' as timestamp), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: below the cold-start floor of 1900-01-01 minus 3 days
+          union all select 4, 'L4', 'detail', 'active', cast('1899-12-01 00:00:00+00' as timestamp), null, null, 'VALIDVIN00000004A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {artifact_id: 1, listing_id: "L1", vin17: "VALIDVIN00000001A"}
+
+  # The duplicate-artifact_id row here is doing a second job. `artifact_row_number
+  # = 1` in the model's final SELECT is the dedupe that makes the merge strategy
+  # safe on Iceberg -- and until this test it had no false arm anywhere except in
+  # whatever the synthetic fixture happened to contain, which is exactly the kind
+  # of dependency Stage S is trying to remove. Two rows for one artifact_id,
+  # both inside the lookback window, give it one here.
+  - name: test_state_fingerprints_incremental_warm_watermark_bounds_the_scan
+    description: "Non-empty target: the watermark is max(fetched_at) minus the lookback, so an older detail row is not rescanned; inside the window the freshest row per artifact_id wins"
+    model: int_listing_state_fingerprints
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        rows:
+          - {artifact_id: 900, listing_id: "L900", vin17: "VALIDVIN00000900A", fetched_at: "2026-01-10 12:00:00"}
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast('active' as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001A' as string) as vin17,
+                 cast(30000 as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(100 as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          -- deduped away: same artifact_id as the row above and inside the window, but a day older,
+          -- so artifact_row_number = 2 and the 30000 price above is the one that survives
+          union all select 1, 'L1', 'detail', 'active', cast('2026-01-09 12:00:00+00' as timestamp), null, null, 'VALIDVIN00000001A', 31000, null, null, null, null, 100, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          -- rejected: nine days older than the target's max fetched_at, so outside the 3-day lookback
+          union all select 2, 'L2', 'detail', 'active', cast('2026-01-01 12:00:00+00' as timestamp), null, null, 'VALIDVIN00000002A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {artifact_id: 1, listing_id: "L1", vin17: "VALIDVIN00000001A", price: 30000, fetched_at: "2026-01-10 12:00:00"}
