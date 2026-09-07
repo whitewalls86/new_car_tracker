@@ -169,13 +169,19 @@ def test_no_probe_failed_to_execute():
 
 
 def test_every_branch_is_exercised_by_a_dbt_unit_test():
-    """Exit 2. **A unit test, specifically -- not the union of everything.**
+    """Exit 2. **Unit tests, specifically -- not the union with the fixture.**
 
     The gate below asks whether anything at all reaches a branch. This asks
-    whether a *unit test* does, and they are different questions with different
-    answers: measured 2026-09-07, unit tests reached 148 of 308 measurable
-    branches and the union reached 200. A branch the fixture covers and no unit
-    test covers passes the gate below and fails here, which is the whole point.
+    whether the *unit-test suite* does, and they are different questions with
+    different answers: measured 2026-09-07, unit tests reached 148 of 308
+    measurable branches and the union reached 200. A branch the fixture covers
+    and no unit test covers passes the gate below and fails here, which is the
+    whole point.
+
+    Within the suite, arms union across tests: ``merge(units)`` takes the max
+    of each arm per branch id, so two tests taking one arm apiece satisfy this
+    gate. What it holds is that the suite as a whole exercises both arms with
+    mocked inputs -- not that any single test straddles the boundary.
 
     **Why unit tests carry exhaustiveness.** They are the only list that can
     construct a state production has never produced -- a selector finds rows and
@@ -198,7 +204,7 @@ def test_every_branch_is_exercised_by_a_dbt_unit_test():
         and result.branch.id not in UNIT_TEST_WAIVERS
     )
     assert not missing, (
-        "these dbt model branches have no unit test taking both arms. Add one to "
+        "these dbt model branches have no unit tests taking both arms. Add one to "
         "the model's unit_tests.yml with `given` rows that reach each side -- a "
         "unit test can construct inputs production has never produced, which is "
         "why this obligation sits here and not on the fixture:\n  "

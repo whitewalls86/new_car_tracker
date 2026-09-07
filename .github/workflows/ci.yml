@@ -503,7 +503,16 @@ jobs:
         # materializes int_listing_state_runs/int_latest_observation against real
         # data. Written under the reserved 2099 partition so it never collides
         # with the empty-schema compilation seed above.
-        run: python scripts/seed_lake_snapshot_fixture.py
+        #
+        # --postgres-url is the other half of the fixture: two of dbt's six
+        # sources resolve through postgres_scan(), and ops.tracked_models is
+        # written by the processing service in production and by nothing in
+        # this job. Left unseeded, int_active_make_models inner-joins an empty
+        # table and five models build over an empty world -- the exact state
+        # test_models_are_not_vacuous.py exists to refuse, in this job.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000
@@ -993,7 +1002,13 @@ jobs:
           MINIO_BUCKET: bronze
 
       - name: Seed lake snapshot fixture data
-        run: python scripts/seed_lake_snapshot_fixture.py
+        # --postgres-url so the Postgres-backed sources carry rows here too:
+        # this job's build feeds the SQL contract tests that read main.mart_*,
+        # and a mart built over an unseeded ops.tracked_models is empty, which
+        # turns every assertion over it vacuous.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000
@@ -1374,7 +1389,12 @@ jobs:
       - name: Seed lake snapshot fixture data
         # The archiver's selector and cohort tests run their SQL against
         # production-shaped Parquet; this is where that Parquet comes from.
-        run: python scripts/seed_lake_snapshot_fixture.py
+        # --postgres-url seeds the Postgres half of the same fixture, so the
+        # source-table world this job tests against matches the one the dbt
+        # jobs build from.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000

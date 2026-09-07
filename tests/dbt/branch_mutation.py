@@ -283,10 +283,34 @@ def compiled_tests_for(model: str, compiled_root: Path) -> list[tuple[str, str]]
 
 
 def retarget(sql: str, model: str, replacement: str) -> str:
-    """Point a compiled statement at *replacement* instead of *model*."""
-    return _RELATION.sub(
-        lambda m: replacement if m.group(1) == model else m.group(0), sql
-    )
+    """Point a compiled statement at *replacement* instead of *model*.
+
+    Raises when nothing was substituted, because the failure is otherwise
+    silent in the worst way: ``attached_warehouse()`` aliases the catalog to
+    the warehouse file's own stem, so an untouched statement still resolves --
+    to the REAL relation, read-only -- executes cleanly, and reports zero
+    failing rows. A rendering change that stops emitting quoted three-part
+    names (a ``quoting:`` config, a dbt-duckdb upgrade, another target) would
+    drift every constraint to decorative at once, with every step green.
+    """
+    count = 0
+
+    def _swap(match: re.Match) -> str:
+        nonlocal count
+        if match.group(1) == model:
+            count += 1
+            return replacement
+        return match.group(0)
+
+    out = _RELATION.sub(_swap, sql)
+    if count == 0:
+        raise ValueError(
+            f"retarget substituted nothing: the compiled test references no "
+            f'quoted three-part relation named "{model}". Its rendering has '
+            f"drifted from what _RELATION matches, and running it as-is would "
+            f"assert against the real relation instead of the mutant."
+        )
+    return out
 
 
 def source_columns_for(tree: exp.Expression, column: str) -> list[str]:

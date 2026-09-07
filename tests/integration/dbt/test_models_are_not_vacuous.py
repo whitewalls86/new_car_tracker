@@ -43,6 +43,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from tests.sql_loader import queries
@@ -81,7 +82,12 @@ def _row_counts() -> dict[str, int]:
                 row = connection.execute(
                     SQL("count_model_rows").format(relation=f'main."{model}"')
                 ).fetchone()
-            except Exception:  # noqa: BLE001 - absence is the finding, not an error
+            except duckdb.CatalogException:
+                # Absence is the finding. Only the catalog miss maps to -1: an
+                # IOException from an unreachable MinIO or a bad S3 credential
+                # must stay loud, or a broken connection reads as "the build
+                # skipped four models" -- the exact conflation the branch gate's
+                # test_no_probe_failed_to_execute exists to refuse.
                 counts[model] = -1
                 continue
             counts[model] = int(row[0]) if row else 0

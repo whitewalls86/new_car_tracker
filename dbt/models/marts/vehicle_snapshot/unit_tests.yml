@@ -9,14 +9,15 @@
 # the only way to add a second declaration file the instrument still sees
 # without colliding with the marts one.
 #
-# Why one test with two VINs rather than two tests with one each. The instrument
-# asks whether a *single* unit test took both arms of a branch: `covered_ids`
-# filters `both_arms` per probe result, and unit-test results are not merged
-# across tests before that. ../unit_tests.yml already has
-# `test_srp_only_recent_inferred_active` and
-# `test_srp_only_old_inferred_unlisted` — one row apiece, so each sees exactly
-# one side of the guard and neither closes the branch. The two cases have to
-# meet inside one `given`.
+# Why one test with two VINs rather than two tests with one each. Not because
+# the instrument requires it — `_measure()` merges unit-test results across
+# tests (`tuple(merge(units))` takes the max of each arm per branch id), so two
+# tests taking one arm apiece would satisfy the gate. It is a design choice:
+# ../unit_tests.yml's `test_srp_only_recent_inferred_active` and
+# `test_srp_only_old_inferred_unlisted` each see one side of the guard, and a
+# reader of either alone cannot tell the guard discriminates. One `given` that
+# straddles the boundary is the test that fails if the comparison flips, and it
+# documents the 7-day cut in a single place.
 #
 # Why `overrides.macros.now_ts` is not optional here. The guard is
 # `now()`-relative, so a fixture written against wall-clock time stops
@@ -28,11 +29,15 @@ unit_tests:
 
   - name: test_srp_only_recency_splits_active_from_unlisted
     description: >
-      Two SRP-only VINs, identical but for last_seen_at, straddling the 7-day
-      recency guard. Neither has a detail observation, so the outer coalesce
-      falls through to the inferred CASE for both: the VIN last seen 2 days
-      before the pinned now() is 'active', the one last seen 26 days before it
-      is 'unlisted'. One `given` reaching both arms is what closes
+      Two SRP-only VINs straddling the 7-day recency guard. Neither has a
+      detail observation, so the outer coalesce falls through to the inferred
+      CASE for both: the VIN observed 2 days before the pinned now() is
+      'active', the one observed 26 days before it is 'unlisted'. The active
+      VIN's price events are deliberately stale — its last price event is 14
+      days old, outside the window its observation is inside — so this test
+      fails if the guard slips back to reading price-event recency
+      (int_price_history.last_seen_at), which is the defect repaired on
+      2026-09-07. One `given` reaching both arms is what closes
       mart_vehicle_snapshot.<final>.case_arm.1 and .case_else.0.
     model: mart_vehicle_snapshot
     overrides:
@@ -49,14 +54,16 @@ unit_tests:
              fetched_at: "2025-12-20 12:00:00+00"}
       - input: ref('int_price_history')
         rows:
-          # last_seen_at 2 days before the pinned now() — inside the window.
+          # Price events 14+ days stale while the VIN's observation (above) is
+          # 2 days fresh. The split is the point: 'active' must come from the
+          # observation, and reading last_seen_at here would say 'unlisted'.
           - {vin: "SRPRECENTACTIVE01", current_price: 30000,
-             price_observed_at: "2026-01-13 12:00:00+00",
+             price_observed_at: "2026-01-01 12:00:00+00",
              first_price: 31000, min_price: 30000, max_price: 31000,
              price_drop_count: 1, price_increase_count: 0,
              total_price_observations: 2,
-             first_seen_at: "2026-01-05 12:00:00+00",
-             last_seen_at: "2026-01-13 12:00:00+00"}
+             first_seen_at: "2025-12-28 12:00:00+00",
+             last_seen_at: "2026-01-01 12:00:00+00"}
           # last_seen_at 26 days before the pinned now() — outside it.
           - {vin: "SRPOLDUNLISTED001", current_price: 21000,
              price_observed_at: "2025-12-20 12:00:00+00",
@@ -113,4 +120,4 @@ unit_tests:
         - {vin: "SRPOLDUNLISTED001", listing_state: "unlisted", price: 21000,
            days_on_market: 31}
         - {vin: "SRPRECENTACTIVE01", listing_state: "active", price: 30000,
-           days_on_market: 10}
+           days_on_market: 18}
