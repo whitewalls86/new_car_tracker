@@ -144,8 +144,48 @@ def _vin17(tag: str) -> str:
     return (tag.upper() + "0" * 17)[:17]
 
 
+#: The date every ``_ts()`` literal below is written against. Changing it moves
+#: the whole fixture in time without changing a single scenario, because every
+#: timestamp is expressed relative to it.
+FIXTURE_EPOCH = datetime(2026, 8, 1, tzinfo=timezone.utc)
+
+
+def _fixture_shift(now: Optional[datetime] = None) -> timedelta:
+    """How far to move the fixture so its newest data is always recent.
+
+    **The fixture's timestamps used to be absolute, and that rotted.** Plan 162
+    Stage S found ``mart_vehicle_snapshot.sql``'s ``'active'`` arm dead: it gates
+    on ``last_seen_at >= now() - interval '7 days'`` and the fixture's newest row
+    was written in July 2026, so the arm had been unreachable for weeks and
+    nothing noticed. It was covered the day it was written and silently stopped
+    being covered as the calendar moved -- which is the failure mode this stage
+    exists to catch, sitting inside the fixture the stage measures with.
+
+    Shifting rather than rewriting is what keeps the scenarios intact: every
+    relationship the fixture encodes -- this observation four days after that
+    one, this price change inside a 7-day window and that one outside it -- is a
+    *difference* between two timestamps, and a constant shift preserves all of
+    them. Only the distance to ``now()`` changes, which is the one thing that was
+    wrong.
+
+    Truncated to whole days so a seed and the assertions that read it agree for
+    the whole of a day. A fixture seeded yesterday and asserted against today is
+    a reseed, not a supported state.
+    """
+    today = (now or datetime.now(timezone.utc)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return today - FIXTURE_EPOCH
+
+
+#: Computed once at import so every timestamp in one process shares one shift,
+#: rather than drifting if the clock crosses midnight mid-run.
+_SHIFT = _fixture_shift()
+
+
 def _ts(*args: int) -> datetime:
-    return datetime(*args, tzinfo=timezone.utc)
+    """A fixture timestamp, written against :data:`FIXTURE_EPOCH` and shifted."""
+    return datetime(*args, tzinfo=timezone.utc) + _SHIFT
 
 
 # ===========================================================================
