@@ -111,6 +111,29 @@ UNDELIVERED = (
         ),
         since=date(2026, 9, 8),
     ),
+    Undelivered(
+        "MLFLOW_TRACKING_URI",
+        consumer="scripts/log_lakehouse_experiment_provenance.py",
+        reason=(
+            "Plan 112 Gate B, restored to this branch after Stage V removed it "
+            "from master as in-development. It configures the provenance "
+            "*client* -- where that script logs its runs -- not the server; "
+            "`docker-compose.mlflow.yml` sets the standalone stack's own "
+            "backend store. Unset, it falls back to a local file store, so a "
+            "bare host needs no server at all."
+        ),
+        since=date(2026, 9, 8),
+    ),
+    Undelivered(
+        "PROVENANCE_ENV",
+        consumer="scripts/log_lakehouse_experiment_provenance.py",
+        reason=(
+            "the environment tag recorded on each provenance run -- local, vm "
+            "or ci. Same script and the same shape as the entry above, "
+            "defaulted to `local` when unset."
+        ),
+        since=date(2026, 9, 8),
+    ),
 )
 
 
@@ -188,7 +211,7 @@ UNDOCUMENTED = (
 #: the number is what review argues about. Lower them when a stage wires or
 #: deletes a variable; never raise one to fit an entry that could have been
 #: fixed instead.
-UNDELIVERED_CEILING = 1
+UNDELIVERED_CEILING = 3
 UNDOCUMENTED_CEILING = 4
 
 
@@ -339,7 +362,7 @@ def test_every_undocumented_declaration_names_a_file_that_interpolates_it():
 def test_neither_ledger_grows_without_the_ceiling_moving():
     """A new declaration is not a quiet tuple append.
 
-    Both tiers opened small and examined -- one member and four. The value of
+    Both tiers stay small and examined -- three members and four. The value of
     that is entirely in it staying argued over, and a ceiling is what makes the
     diff say so.
     """
