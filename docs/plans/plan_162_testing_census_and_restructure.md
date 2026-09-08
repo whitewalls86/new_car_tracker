@@ -43,6 +43,20 @@ caught the same way — while scoping Stage P. Twice is a pattern, and both are
 left on the record rather than quietly corrected: this plan's own subject
 matter, happening to this plan, in the one section that asserts it will not.
 
+**Three times, now.** Read again on 2026-09-07 while scoping the contract stages
+below, by the same method: **the live total is 25**, and the table above is
+missing two tuples entirely. `TEST_SQL_TEMPLATE_WAIVERS` (5) arrived with
+Stage X and `DBT_CONTRACT_WAIVERS` arrived with Stage S, was seeded at 23 and
+drained to 0 in two days. The live split is `INLINE_SQL_WAIVERS` 13,
+`SQL_LITERAL_WAIVERS` 6, `TEST_SQL_TEMPLATE_WAIVERS` 5, `DUPLICATE_SQL_WAIVERS`
+1, everything else empty.
+
+The third instance is not the same error as the first two. Those were a number
+that had moved; this is a *shape* that had moved — new rules brought new tuples,
+and a hand-written table cannot know about a tuple nobody told it about. The
+repair is the same either way and it is the one this plan keeps arriving at:
+read the tuples, do not read the paragraph.
+
 | Rule | Waivers | Gap |
 |---|---|---|
 | CI invocation | 4 → **0** | [G1](../TESTING.md#the-gap-list) (3), G2 (1) — both closed by Stage B |
@@ -2238,6 +2252,234 @@ Plan 125 Gate D, and the aggregation — a per-job artifact and a gate job — w
 lands with or after Stage Q and takes the replacement of the Layer 2 name-match
 reading with it.
 
+### The service data contracts, Stages Y to AD
+
+**Added 2026-09-07, from the conversation that closed Stage W.** Six stages,
+one subject, and the subject is the one Stage W turned out to be the first
+instance of: **a test can only avoid authoring both halves of a contract if
+there is a place it must go to find out what its options are.**
+`shared/db_vocabularies.py` is that place for the words the database owns.
+Nothing is that place for anything else.
+
+**Every measurement below was taken on 2026-09-07** and none of it is recorded
+anywhere else; the numbers are the reason these are six stages rather than one
+sentence in Stage W's record.
+
+**Each seeds its own waiver tuple and drains it**, which is Stage S's pattern —
+`DBT_CONTRACT_WAIVERS` was seeded fully waived at 23 of 23 on 2026-09-05 and
+drained to 0 on 2026-09-07. Stage W did not do this: it repaired all 33 of its
+sites outright and so contributed nothing to the plan's progress meter, which
+is the only reason the completion criterion looked unable to describe this
+work. It can. The stages below use it.
+
+**The lettering runs past Z into AA.** `I` and `O` were skipped as always.
+
+#### Stage Y: a route declares the statuses it can return
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G21
+
+**85 routes across seven services; 42 produce a status code they never
+declare.** Concentrated in `ops` (26), then `archiver` (7), and three each in
+`dbt_runner`, `processing` and `scraper`. The codes are 303 (13), 503 (15),
+409 (11), 500 (10), 400 (5), 404 (5), 422 (3), 403 (1).
+
+**The OpenAPI schema is not a weak contract here, it is a false one.** Every
+service declares exactly `200` and `422` — FastAPI's defaults — while the
+suite asserts 303, 307, 308, 400, 401, 403, 404, 409, 422, 500 and 503 across
+**137 assertions**. Every real code is raised inside a handler body and
+surfaces nowhere a machine can read.
+
+So this stage mostly writes down what already happens, and the rule is the
+familiar shape: the codes a route **declares** must equal the codes its body
+can **produce**, both directions, the produced set derived by reading
+`HTTPException`, `Response` and the redirect classes out of the handler. An
+undeclared code fails; a declared code nothing raises fails too.
+
+**It is 42 judgement calls, not 42 edits**, and that is the cost: for each
+route someone decides whether a `500` is part of the contract or an accident of
+implementation. That decision is worth making once and then holding by a
+mechanism, which is the whole argument for the stage.
+
+**Nothing downstream works without it.** A contract artifact generated today
+would faithfully record the false claim that every endpoint returns 200 or 422.
+
+**Exit:** every route's declared codes equal the codes its handler can produce,
+asserted both ways; `RESPONSE_CODE_WAIVERS` seeded at 42 and drained to 0;
+demonstrated by an undeclared code failing.
+
+#### Stage Z: the contract is generated, committed and gated
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G22 · **Blocked by:** Stage Y
+
+**A contract nobody generates is a document, and this plan exists because
+`ARCHITECTURE.md:179` was accurate in April 2026 and quietly false by August.**
+A certified hand-written contract is that failure wearing a suit.
+
+So the artifact is **generated from each running app and committed**, and a
+job regenerates and diffs it. You cannot forget to update a generated file; you
+can only fail to notice it changed, and the diff is what makes noticing
+mandatory. Adding a route, changing a response model, changing a status code
+all move the file, and the reviewer's job is to say "yes, I meant that".
+
+**The mechanism already exists here in miniature** and its docstring makes the
+argument: `scripts/public_surface_gate.py` holds a commit that edits README or
+`info.html` until the surface has been read, keyed on a digest of the staged
+content so re-staging reopens the gate. *"A check you must remember is weaker
+than one you cannot forget."* This is that, pointed at seven services instead
+of two files.
+
+**The fiddly part is normalisation.** The schema carries operation IDs and
+ordering that move for reasons nobody cares about — `ops/routers/public.py`
+already emits duplicate-operation-ID warnings — so the committed artifact is a
+normalised projection, and what it drops is a decision to record rather than a
+default to inherit.
+
+**Exit:** every service has a committed contract artifact; a change to any
+service that is not reflected in its artifact fails; the normalisation names
+what it drops and why; demonstrated by an unreflected route change failing.
+
+#### Stage AA: a test may not invent another service's response
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G23 · **Blocked by:** Stage Z
+
+**37 fabricated HTTP status codes across 6 test modules** — `{200: 26, 403: 9,
+400: 1, 500: 1}` — and the seams they replace are `ops.coordination_drain.
+requests.get`, `ops.coordination_release.requests.get`,
+`scrape_listings.requests.post` and `notifications.requests.post`.
+
+**This is Stage W's defect at the HTTP boundary**, and it behaves the same way.
+A test of *our own* endpoint asserting an impossible code is self-correcting —
+`TestClient` runs the real route and the assertion goes red. A test of a
+*caller* invents both the status code and the body of a service it never calls,
+so it passes for any pair its author picks. If `archiver` starts returning 202,
+`ops`'s test still fabricates 200, still passes, and production breaks.
+
+The rule is Stage W's third rule one layer up: the caller's fabricated codes
+must be codes the callee can produce, with the pairing derived rather than
+declared — the caller names the service in a `<NAME>_URL` constant, and Stage W
+proved that pairing is derivable and that an undetermined owner must fail
+rather than be skipped.
+
+**28 of the 37 are ours. The other 9 are `cars.com`**, and they are Stage AB.
+
+**Exit:** no test fabricates a response for a service this repository owns;
+`FABRICATED_RESPONSE_WAIVERS` seeded at 28 and drained to 0; demonstrated by a
+fabricated code the callee cannot return failing.
+
+#### Stage AB: what we do not own is recorded and replayed
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G24
+
+**9 fabricated `cars.com` responses**, mostly the 403 in
+`tests/scraper/processors/test_scrape_detail.py`. There is no code in this
+repository to derive them from, so Stage AA's rule cannot reach them.
+
+**The pattern is already established here, twice**:
+`scripts/verify_promtail_contract.py` and
+`scripts/verify_container_health_docker_contract.py` each replay a recorded
+corpus through the real thing in a dedicated CI job — *"one corpus, two
+consumers, neither importing the other"*. The fast tests get the recording; the
+job catches the real service changing underneath it.
+
+**Airflow is the cheap half and should not wait.** `airflow/dags/
+notifications.py:71` compares a task state against the literal `"failed"`, a
+word Airflow owns. CI already installs real Airflow in a venv and runs a suite
+in it, so asserting `"failed"` is a real member of `TaskInstanceState` is three
+lines in an existing job.
+
+**`git` and `markdown-it` are deliberately excluded.** Their vocabularies are
+restated too — `fetch.prune`, `heading_open` — but a stale one there makes a
+script error out. This class is about silence, and those are not silent.
+
+**Exit:** every external vocabulary this repository depends on is either
+replayed against the real thing in CI or declared out of scope with the reason;
+demonstrated by a recorded corpus that has drifted failing.
+
+#### Stage AC: the database makes a stale read loud
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G25
+
+**The hole this closes is live and was measured, not inferred.** On 2026-09-07
+the Layer 2 suite was run against a Flyway-migrated Postgres with
+`artifacts_queue.status`'s `retry` renamed to `retry_later` in the migration
+and in `shared/db_vocabularies.py`, and with the test seeds updated so the run
+got past its own fixtures. **240 passed.** Five production statements were
+still filtering on `'retry'` — `processing/sql/claim_artifact.sql`,
+`claim_artifacts.sql`, `archiver/sql/delete_cleanup_candidates.sql` and
+`get_queue_cleanup_candidates.sql` among them — which in production means the
+claimer silently stops picking up retry artifacts and the cleanup job silently
+stops clearing stuck rows, with a green suite.
+
+**The pattern behind that result generalises.** Writes are caught, because the
+constraint rejects them. Rowcount-asserted updates are caught: the same
+experiment against `coordination_state.phase` failed two tests on
+`assert cur.rowcount == 1`. **Read filters are caught by nothing.**
+
+**92 such literals across 52 `.sql` files**, 22 of them in `dbt/models/`, which
+the local run could not reach at all — those 35 skips are the DuckDB half.
+
+**A checker is the wrong instrument, and this was verified rather than
+assumed.** Against a `text` column with a `CHECK`, a stale filter returns
+`(0 rows)`. Against a Postgres `ENUM`, it raises `invalid input value for enum
+phase: "draining"` — parameterised as well as literal. Converting the 18
+constrained columns to enum types closes this for `.sql` files, for dbt models,
+and for code nobody has written yet, at the database rather than in a linter.
+
+**It does not subsume Stage W, and the reason is measured.** psycopg2 returns
+an enum column to Python as a plain `str`, so `state["phase"] == "draining"`
+stays silently false after a rename, enum or no enum. The enum makes the
+*query* loud and does nothing about the *comparison*. Those are the 33 sites
+Stage W repaired.
+
+**This stage must update Stage W's reader**, which parses `CHECK (<column> IN
+(...))` and will match nothing once the columns are enum types.
+`test_the_check_constraint_corpus_is_not_empty` is what stops that being
+silent — the corpus would fall to 0 against a floor of 10 and fail loudly — but
+the reader is part of this stage's work, not a surprise for it to discover.
+
+**Exit:** the 18 constrained columns are enum-typed; Stage W's corpus reader
+reads `CREATE TYPE … AS ENUM`; a stale literal in a `.sql` file or a dbt model
+fails; demonstrated by the `retry_later` mutation above now failing where it
+passed.
+
+#### Stage AD: a fixture cannot fabricate a row the database would reject
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G26
+
+**481 test-side copies of a database-owned value, and the split is the
+finding**: **183 (38%)** are in `tests/integration/`, and they are **already
+policed** — during Stage AC's experiment, stale seeds were rejected with
+`CheckViolation` before the test could assert anything. The database refuses to
+let those tests exist outside the contract. **298 (61%) are unit tests** that
+build a dict in memory, and nothing checks them at all.
+
+**That is where the useless test actually lives.** CAR-82's instance was an
+in-memory dict with a made-up status. So the class is not "a test that retypes a
+value" — it is **a test that fabricates data the database would have
+rejected**, which is 298 sites and not 481.
+
+The heaviest are `tests/scripts/oneoff/test_reconcile_april_detail.py` (84),
+`tests/ops/routers/test_coordination.py` (38), `tests/scripts/
+test_host_maintenance.py` (31) and `tests/processing/test_batch_functions.py`
+(20).
+
+**The mechanism is probably a fixture factory rather than a rule** — rows built
+through something that validates against the vocabulary, so a fabricated row
+that could not exist fails at construction rather than being linted afterwards.
+That is a design question this stage opens rather than one it inherits.
+
+**Seeding 298 waivers takes the plan's live total from 25 to roughly 400 before
+it falls.** That is honest — the census opened at 120 — but it makes progress
+read as a spike rather than a slope, and anyone glancing at the number
+mid-programme will misread it. If that is too coarse, the natural split is by
+whether the fixture crosses a service boundary, because that is where the
+useless tests are.
+
+**Exit:** a unit fixture cannot carry a value the owning column forbids;
+`FABRICATED_ROW_WAIVERS` seeded at its measured count and drained to 0;
+demonstrated by a fabricated row failing at construction.
+
+
 ## Success criteria
 
 **1. The waiver list is empty.** All 120 entries deleted, each by the repair it
@@ -3531,12 +3773,52 @@ a wider scan: a `status=` expression the reader cannot follow **fails** instead
 of narrowing the set silently.
 
 **Two limits stated rather than closed.** The tests hold their own copies — 115
-comparisons and 366 seeds across 49 modules — but that is duplication, not the
-both-halves defect, and the production repair is what made the difference:
-production's half now comes from the enum, so a test seeding `phase="draining"`
-supplies one side and *fails* when they disagree. Eight did, under the rename
-mutation. And `sensors.py` reads its phases positionally out of a query result,
-so no column name appears; the link is derivable through
-`deploy_intent_gate.sql`'s `SELECT` list, the loose membership alternative was
-tried and produces a false positive on `notifications.py`, and closing it
-properly is the next stage's.
+comparisons and 366 seeds across 49 modules. *This entry first read that those
+were "duplication, not the both-halves defect", on the strength of eight tests
+failing loudly under the rename mutation. Re-measured 2026-09-07 while scoping
+[Stage AD](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject),
+that is true of 183 of them and false of 298.* The **183 in
+`tests/integration/`** are policed already, and by the contract rather than by
+this stage: stale seeds are rejected with `CheckViolation` before the test can
+assert anything. The **298 unit tests** build a dict in memory and are checked
+by nothing — which is exactly where CAR-82's own instance lived. The class is
+not *a test that retypes a value*; it is **a test that fabricates data the
+database would have rejected**, and this stage does not reach it. And
+`sensors.py` reads its phases positionally out of a query result, so no column
+name appears; the link is derivable through `deploy_intent_gate.sql`'s `SELECT`
+list, the loose membership alternative was tried and produces a false positive
+on `notifications.py`, and closing it properly is the next stage's.
+
+**What this stage covers, as a matrix rather than as prose**, because the prose
+above was written before the surfaces were separated and reads as though the
+class were closed. One row of it is.
+
+| Where a stale word hides | `CHECK` today | ENUM (Stage AC) | Stage W |
+|---|---|---|---|
+| A Python comparison on a fetched value | silent | **silent** | **caught** |
+| A Python write of a bad value | loud | loud | — |
+| A read filter in a `.sql` file | **silent** | **loud** | no |
+| A read filter in a dbt model | **silent** | **loud** | no |
+| Any write, anywhere | loud | loud | — |
+| An in-memory test fixture | silent | silent | no |
+
+**The first row is why this stage is not made redundant by
+[Stage AC](#stage-ac-the-database-makes-a-stale-read-loud), and it was measured
+rather than argued.** psycopg2 returns an enum column to Python as a plain
+`str`, so after a rename `state["phase"] == "draining"` evaluates `False` with
+no error, while the same filter inside SQL raises `invalid input value for
+enum`. The database can make the *query* loud and can do nothing about the
+*comparison*. Those are the 33 sites this stage repaired.
+
+**The coupling runs the other way too.** Stage AC must update this stage's
+corpus reader, which parses `CHECK (<column> IN (...))` and will match nothing
+once those columns are enum types. It cannot do so silently:
+`test_the_check_constraint_corpus_is_not_empty` would find 0 against a floor of
+10 and fail. That guard went in on general principle and this is the first
+concrete thing it catches.
+
+**And this stage should have seeded a waiver tuple rather than repairing all 33
+sites outright.** Repairing them was right for the work; contributing nothing to
+the plan's progress meter was not, and it is the only reason the completion
+criterion looked unable to describe the contract stages. Stages Y to AD each
+seed and drain, which is Stage S's pattern and this plan's own answer.
