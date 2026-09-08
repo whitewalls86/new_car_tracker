@@ -1,19 +1,72 @@
 """Unit tests for ops/routers/snapshots.py — Plan 120 Gate F download API."""
+import hashlib
+from contextlib import contextmanager
+
 import pytest
 
+from ops.queries import SELECT_MACHINE_TOKEN, TOUCH_MACHINE_TOKEN_LAST_USED
 from ops.routers import snapshots
 
 BASE = "/admin/snapshots/adaptive-refresh"
 AUTH = {"Authorization": "Bearer test-token"}
 
+# Captured before the autouse fixture below replaces them. The lifecycle tests
+# assert on the real lookup, and calling these directly is how they reach past
+# the stub the route tests need — clearer than a fixture that undoes another
+# fixture, and it keeps those tests honest about testing a function rather than
+# a route.
+REAL_RESOLVE_MACHINE_TOKEN = snapshots._resolve_machine_token
+REAL_MACHINE_TOKENS_EXIST = snapshots._machine_tokens_exist
+
+
+def _row(name="ci", scope="read", is_revoked=False, is_expired=False):
+    """A row shaped like select_machine_token.sql's result."""
+    return {
+        "name": name, "scope": scope,
+        "is_revoked": is_revoked, "is_expired": is_expired,
+    }
+
+
+@pytest.fixture
+def machine_tokens(mocker):
+    """Stand in for `ops.machine_tokens` and hand back the cursor it was asked.
+
+    Patches the router's `db_cursor` rather than psycopg2 so a test states the
+    row the table returns and nothing else has to be true. The returned mock is
+    where a test reads back what was executed and with which parameters.
+    """
+    cursor = mocker.MagicMock()
+
+    @contextmanager
+    def fake_cursor(*args, **kwargs):
+        yield cursor
+
+    mocker.patch.object(snapshots, "db_cursor", fake_cursor)
+    return cursor
+
 
 @pytest.fixture(autouse=True)
 def _token(mocker):
-    """Configure a known token set for every test in this module."""
+    """Authenticate `test-token` as the `ci` caller, through the table.
+
+    Route tests run against the storage this router will have once the
+    environment fallback is deleted, not the one it is being retired from —
+    asserting the auth path against a form on its way out would mean rewriting
+    them again on the next deploy.
+
+    Stubbing the seam is also what keeps them honest: `mock_client` mocks
+    `psycopg2.connect`, so an unstubbed lookup gets a `MagicMock` back, and a
+    `MagicMock` is truthy — every string would authenticate as a caller whose
+    name is a mock.
+    """
+    mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", ())
     mocker.patch.object(
-        snapshots, "SNAPSHOT_TOKENS",
-        (snapshots.SnapshotToken(name="ci", scope="read", token="test-token"),),
+        snapshots, "_resolve_machine_token",
+        side_effect=lambda presented: (
+            snapshots.SnapshotToken("ci", "read") if presented == "test-token" else None
+        ),
     )
+    mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=True)
 
 
 # ---------------------------------------------------------------------------
@@ -34,32 +87,53 @@ class TestAuth:
         assert resp.status_code == 401
 
     def test_unconfigured_token_is_503(self, mock_client, mocker):
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", ())
+        mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=False)
+        resp = mock_client.get(f"{BASE}/latest", headers=AUTH)
+        assert resp.status_code == 503
+
+    def test_an_unreachable_table_is_a_503_not_a_403(self, mock_client, mocker, machine_tokens):
+        """The caller presented a perfectly good token. Blaming it for the
+        database being down points the person debugging at the one component
+        that was healthy."""
+        machine_tokens.execute.side_effect = RuntimeError("connection refused")
+        assert REAL_MACHINE_TOKENS_EXIST() is False
+
+        mocker.patch.object(snapshots, "_machine_tokens_exist", REAL_MACHINE_TOKENS_EXIST)
         resp = mock_client.get(f"{BASE}/latest", headers=AUTH)
         assert resp.status_code == 503
 
 
 class TestNamedTokens:
-    """Plan 162: one entry per caller, so revocation and attribution are per-caller."""
+    """Plan 162: one entry per caller, so revocation and attribution are
+    per-caller. Plan 173 moved those entries into rows."""
 
-    def test_any_entry_in_the_set_authenticates(self, mock_client, mocker):
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots.SnapshotToken("ci", "read", "ci-token"),
-            snapshots.SnapshotToken("mlflow", "read", "mlflow-token"),
-        ))
+    def test_any_caller_in_the_table_authenticates(self, mock_client, mocker):
+        live = {"ci-token": "ci", "mlflow-token": "mlflow"}
+        mocker.patch.object(
+            snapshots, "_resolve_machine_token",
+            side_effect=lambda presented: (
+                snapshots.SnapshotToken(live[presented], "read")
+                if presented in live else None
+            ),
+        )
         mocker.patch.object(snapshots, "read_json", return_value={"snapshot_id": "s1"})
-        for token in ("ci-token", "mlflow-token"):
+        for token in live:
             resp = mock_client.get(
                 f"{BASE}/latest", headers={"Authorization": f"Bearer {token}"},
             )
             assert resp.status_code == 200, token
 
-    def test_removing_one_entry_revokes_only_that_caller(self, mock_client, mocker):
+    def test_revoking_one_caller_leaves_the_others_alone(self, mock_client, mocker):
         """The property the whole design exists for. A shared string cannot do
-        this: revoking CI would take the laptop and the MLflow rehearsal with it."""
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots.SnapshotToken("mlflow", "read", "mlflow-token"),
-        ))
+        this: revoking CI would take the laptop and the MLflow rehearsal with
+        it."""
+        mocker.patch.object(
+            snapshots, "_resolve_machine_token",
+            side_effect=lambda presented: (
+                snapshots.SnapshotToken("mlflow", "read")
+                if presented == "mlflow-token" else None
+            ),
+        )
         mocker.patch.object(snapshots, "read_json", return_value={"snapshot_id": "s1"})
 
         revoked = mock_client.get(
@@ -71,6 +145,21 @@ class TestNamedTokens:
         assert revoked.status_code == 403
         assert survivor.status_code == 200
 
+    def test_revocation_takes_effect_without_a_restart(self, mock_client, mocker):
+        """Plan 173's exit condition, in miniature. The environment form could
+        not do this at all: `.env` is read at import, so revoking meant an SSH
+        and a container restart. Here the same process serves a 200 and then a
+        403 with nothing reloaded between them.
+
+        The production demonstration is an `UPDATE ... SET revoked_at = now()`
+        against a live token — this asserts the mechanism that makes it work,
+        which is that nothing about the credential is cached in the module."""
+        mocker.patch.object(snapshots, "read_json", return_value={"snapshot_id": "s1"})
+        assert mock_client.get(f"{BASE}/latest", headers=AUTH).status_code == 200
+
+        mocker.patch.object(snapshots, "_resolve_machine_token", return_value=None)
+        assert mock_client.get(f"{BASE}/latest", headers=AUTH).status_code == 403
+
     def test_the_caller_name_is_logged_and_the_token_is_not(self, mock_client, mocker, caplog):
         mocker.patch.object(snapshots, "read_json", return_value={"snapshot_id": "s1"})
         with caplog.at_level("INFO", logger="pipeline_ops"):
@@ -79,11 +168,12 @@ class TestNamedTokens:
         assert "caller=ci" in logged
         assert "test-token" not in logged
 
-    def test_the_legacy_unnamed_token_still_works(self, mock_client, mocker):
-        """Deploying this change must not lock out an existing .env, or the
-        upgrade needs a container restart and a config edit in lockstep."""
+    def test_the_legacy_unnamed_token_still_parses(self):
+        """Deploying Plan 162 must not have locked out an existing .env, or the
+        upgrade needed a container restart and a config edit in lockstep. Goes
+        with the rest of the fallback on Plan 173's second deploy."""
         parsed = snapshots._parse_token_set("", "old-single-token")
-        assert parsed == (snapshots.SnapshotToken("legacy", "read", "old-single-token"),)
+        assert parsed == (snapshots._EnvToken("legacy", "read", "old-single-token"),)
 
 
 class TestScopes:
@@ -91,7 +181,7 @@ class TestScopes:
     that needs it — Plan 108's deploy trigger, which mounts the Docker socket —
     cannot be reached by a credential issued for downloads."""
 
-    def test_a_read_token_is_refused_by_a_write_route(self, mocker):
+    def test_a_read_token_is_refused_by_a_write_route(self):
         from fastapi import HTTPException
 
         dependency = snapshots.require_snapshot_token("write")
@@ -103,9 +193,10 @@ class TestScopes:
     def test_a_write_token_may_also_read(self, mocker):
         """Otherwise one caller needs two credentials, which is the arrangement
         people work around rather than follow."""
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots.SnapshotToken("deployer", "write", "w-token"),
-        ))
+        mocker.patch.object(
+            snapshots, "_resolve_machine_token",
+            return_value=snapshots.SnapshotToken("deployer", "write"),
+        )
         assert snapshots.require_snapshot_token("read")(
             authorization="Bearer w-token",
         ) is None
@@ -113,7 +204,7 @@ class TestScopes:
             authorization="Bearer w-token",
         ) is None
 
-    def test_the_refusal_names_scopes_not_the_token(self, mocker):
+    def test_the_refusal_names_scopes_not_the_token(self):
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as excinfo:
@@ -131,24 +222,225 @@ class TestStorageSeam:
     """`_resolve_token` and `_tokens_configured` are the only two functions that
     know where credentials live. Everything above them reads the returned entry.
 
-    These tests are what a later move to table-backed tokens lands against: swap
-    the two bodies, and if the auth path still passes, the swap did not change
-    behaviour. They assert against the seam rather than through a route, which
-    is the point — the route should not be able to tell.
+    These are what Plan 173's move landed against: the two bodies were swapped
+    and the auth path did not change, which is what the seam was extracted for.
+    They assert against the seam rather than through a route, which is the point
+    — the route should not be able to tell.
     """
 
-    def test_resolve_returns_the_matching_entry(self, mocker):
-        entry = snapshots.SnapshotToken("mlflow", "read", "m-token")
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (entry,))
+    def test_resolve_returns_the_matching_caller(self, mocker):
+        entry = snapshots.SnapshotToken("mlflow", "read")
+        mocker.patch.object(snapshots, "_resolve_machine_token", return_value=entry)
         assert snapshots._resolve_token("m-token") is entry
 
-    def test_resolve_returns_none_for_an_unknown_token(self):
+    def test_resolve_returns_none_for_an_unknown_token(self, mocker):
+        mocker.patch.object(snapshots, "_resolve_machine_token", return_value=None)
         assert snapshots._resolve_token("nope") is None
 
-    def test_resolve_compares_every_entry_without_stopping_early(self, mocker):
-        """The timing property, asserted rather than left to a comment. An early
-        exit leaks nothing about a token's value but does leak which caller
-        presented it, through how long the response took."""
+    def test_a_resolved_caller_carries_no_token(self):
+        """The field was dropped with the environment form. A credential kept on
+        the object handed to every route is one a later change logs by
+        accident."""
+        assert snapshots.SnapshotToken._fields == ("name", "scope")
+
+    def test_configured_is_a_separate_question_from_resolution(self, mocker):
+        """503 and 403 answer different questions and must not collapse into
+        one: "this deployment has no tokens" is an operator's problem, "your
+        token is wrong" is the caller's."""
+        mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=False)
+        mocker.patch.object(snapshots, "_resolve_machine_token", return_value=None)
+        assert snapshots._tokens_configured() is False
+        assert snapshots._resolve_token("anything") is None
+
+        mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=True)
+        assert snapshots._tokens_configured() is True
+
+
+# ---------------------------------------------------------------------------
+# The credential table — Plan 173
+# ---------------------------------------------------------------------------
+
+class TestTokenDigest:
+    def test_the_stored_form_is_sha256_hex(self):
+        assert snapshots.token_digest("abc") == hashlib.sha256(b"abc").hexdigest()
+
+    def test_the_plaintext_is_not_recoverable_from_it(self):
+        """Stating the property the column exists for: a pg_dump, a screenshot
+        of pgAdmin or a stray query result hands over nothing usable."""
+        assert snapshots.token_digest("secret") != "secret"
+        assert len(snapshots.token_digest("secret")) == 64
+
+
+class TestMachineTokenLifecycle:
+    """`expires_at`, `revoked_at` and `last_used_at` — what a row carries that
+    an environment variable never could."""
+
+    def test_a_live_row_authenticates_as_its_caller(self, machine_tokens):
+        machine_tokens.fetchone.return_value = _row(name="ci", scope="read")
+        assert REAL_RESOLVE_MACHINE_TOKEN("t") == snapshots.SnapshotToken("ci", "read")
+
+    def test_an_unknown_digest_resolves_to_nothing(self, machine_tokens):
+        machine_tokens.fetchone.return_value = None
+        assert REAL_RESOLVE_MACHINE_TOKEN("t") is None
+
+    def test_a_revoked_row_is_refused(self, machine_tokens, caplog):
+        machine_tokens.fetchone.return_value = _row(is_revoked=True)
+        with caplog.at_level("WARNING", logger="pipeline_ops"):
+            assert REAL_RESOLVE_MACHINE_TOKEN("t") is None
+        assert "revoked" in caplog.text
+
+    def test_an_expired_row_is_refused(self, machine_tokens, caplog):
+        machine_tokens.fetchone.return_value = _row(is_expired=True)
+        with caplog.at_level("WARNING", logger="pipeline_ops"):
+            assert REAL_RESOLVE_MACHINE_TOKEN("t") is None
+        assert "expired" in caplog.text
+
+    def test_the_refusal_reason_is_logged_but_the_caller_is_told_nothing(
+        self, mock_client, mocker, machine_tokens,
+    ):
+        """A revoked credential and a token that was never issued are different
+        events in the log and the same 403 on the wire. The distinction is for
+        whoever reads the log later, not for whoever is holding the token."""
+        machine_tokens.fetchone.return_value = _row(name="ci", is_revoked=True)
+        mocker.patch.object(snapshots, "_resolve_machine_token", REAL_RESOLVE_MACHINE_TOKEN)
+
+        resp = mock_client.get(f"{BASE}/latest", headers=AUTH)
+        assert resp.status_code == 403
+        assert "revoked" not in resp.json()["detail"]
+
+    def test_the_lookup_never_sends_the_plaintext_to_the_database(self, machine_tokens):
+        """The whole point of the column being a digest. A parameter carrying
+        the token would put it in the statement log of anything watching."""
+        machine_tokens.fetchone.return_value = _row()
+        REAL_RESOLVE_MACHINE_TOKEN("plaintext-token")
+
+        statement, params = machine_tokens.execute.call_args_list[0].args
+        assert statement is SELECT_MACHINE_TOKEN
+        assert params == (snapshots.token_digest("plaintext-token"),)
+        assert "plaintext-token" not in params
+
+    def test_a_lookup_failure_falls_through_rather_than_raising(self, machine_tokens, caplog):
+        """A 500 from the auth path would take the route down for a caller whose
+        credential is fine. The 503 for an unreachable database is
+        _tokens_configured's to raise, and it runs first."""
+        machine_tokens.execute.side_effect = RuntimeError("boom")
+        with caplog.at_level("WARNING", logger="pipeline_ops"):
+            assert REAL_RESOLVE_MACHINE_TOKEN("t") is None
+        assert "lookup failed" in caplog.text
+
+
+class TestLastUsedAt:
+    """Most of why the table is worth building. Revocation is trivial; knowing
+    whether anything still depends on a credential is not."""
+
+    def test_a_successful_resolution_records_the_use(self, machine_tokens):
+        machine_tokens.fetchone.return_value = _row()
+        REAL_RESOLVE_MACHINE_TOKEN("t")
+
+        statements = [call.args[0] for call in machine_tokens.execute.call_args_list]
+        # Identity against the imported constant, not a substring of it: a
+        # substring match would go on passing after the statement's WHERE
+        # clause — which is the throttle — were dropped.
+        assert statements == [SELECT_MACHINE_TOKEN, TOUCH_MACHINE_TOKEN_LAST_USED]
+
+    def test_a_refused_credential_records_nothing(self, machine_tokens):
+        """`last_used_at` answers "is anything still *authenticating* with
+        this". A revoked row that kept moving would say a dead credential is
+        live, which is the one answer that would make revoking it look unsafe."""
+        machine_tokens.fetchone.return_value = _row(is_revoked=True)
+        REAL_RESOLVE_MACHINE_TOKEN("t")
+
+        assert len(machine_tokens.execute.call_args_list) == 1
+
+    def test_the_throttle_window_is_bound_not_interpolated(self, machine_tokens):
+        """It reaches the statement as a parameter, so the SQL file names no
+        window of its own and the two cannot drift."""
+        machine_tokens.fetchone.return_value = _row()
+        REAL_RESOLVE_MACHINE_TOKEN("t")
+
+        statement, params = machine_tokens.execute.call_args_list[1].args
+        assert statement is TOUCH_MACHINE_TOKEN_LAST_USED
+        assert params == (snapshots.token_digest("t"), snapshots.LAST_USED_THROTTLE)
+
+    def test_a_failed_bookkeeping_write_does_not_refuse_the_caller(
+        self, machine_tokens, caplog,
+    ):
+        """A stale answer to "is anything still using this" is a far better
+        outcome than a download that fails because a timestamp would not
+        update."""
+        machine_tokens.fetchone.return_value = _row(name="ci", scope="read")
+        machine_tokens.execute.side_effect = [None, RuntimeError("boom")]
+
+        with caplog.at_level("WARNING", logger="pipeline_ops"):
+            resolved = REAL_RESOLVE_MACHINE_TOKEN("t")
+        assert resolved == snapshots.SnapshotToken("ci", "read")
+        assert "last_used_at update failed" in caplog.text
+
+
+class TestConfiguredFromTheTable:
+    def test_a_live_row_makes_the_deployment_configured(self, machine_tokens):
+        machine_tokens.fetchone.return_value = (True,)
+        assert REAL_MACHINE_TOKENS_EXIST() is True
+
+    def test_no_live_row_makes_it_unconfigured(self, machine_tokens):
+        """A deployment whose only credential expired overnight reports itself
+        unconfigured, which is true, rather than refusing every caller as though
+        each had presented a bad token."""
+        machine_tokens.fetchone.return_value = (False,)
+        assert REAL_MACHINE_TOKENS_EXIST() is False
+
+    def test_an_unreadable_table_is_unconfigured_not_an_exception(
+        self, machine_tokens, caplog,
+    ):
+        machine_tokens.execute.side_effect = RuntimeError("connection refused")
+        with caplog.at_level("WARNING", logger="pipeline_ops"):
+            assert REAL_MACHINE_TOKENS_EXIST() is False
+        assert "configuration check failed" in caplog.text
+
+
+class TestEnvironmentFallback:
+    """Plan 173's second deploy deletes every test in this class along with the
+    code they cover. They exist because the first deploy cannot: the first
+    table-backed token cannot be issued through an interface that already
+    requires one, so the environment set stays live while the callers are
+    repointed."""
+
+    def test_an_environment_entry_still_authenticates(self, mocker):
+        mocker.patch.object(snapshots, "_resolve_machine_token", return_value=None)
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
+            snapshots._EnvToken("local", "read", "env-token"),
+        ))
+        assert snapshots._resolve_token("env-token") == snapshots.SnapshotToken(
+            "local", "read",
+        )
+
+    def test_the_table_is_asked_first(self, mocker):
+        """So a caller that has been reissued authenticates as its row while its
+        old entry is still sitting in `.env` — which is the entire window the
+        fallback exists for."""
+        mocker.patch.object(
+            snapshots, "_resolve_machine_token",
+            return_value=snapshots.SnapshotToken("ci", "write"),
+        )
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
+            snapshots._EnvToken("ci", "read", "shared-token"),
+        ))
+        assert snapshots._resolve_token("shared-token").scope == "write"
+
+    def test_an_environment_entry_alone_counts_as_configured(self, mocker):
+        """Otherwise the deploy that introduces the table 503s every caller
+        until the first token is issued — and the token cannot be issued through
+        a route that is 503ing."""
+        mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=False)
+        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
+            snapshots._EnvToken("local", "read", "env-token"),
+        ))
+        assert snapshots._tokens_configured() is True
+
+    def test_the_scan_compares_every_entry_without_stopping_early(self, mocker):
+        """The timing property of the environment form, asserted rather than
+        left to a comment. The table form needs no equivalent: one indexed probe
+        on a digest has no per-entry comparison to leak which caller called."""
         calls: list[str] = []
 
         def counting_compare(presented, stored):
@@ -157,42 +449,29 @@ class TestStorageSeam:
 
         mocker.patch.object(snapshots.secrets, "compare_digest", counting_compare)
         mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots.SnapshotToken("first", "read", "a"),
-            snapshots.SnapshotToken("second", "read", "b"),
-            snapshots.SnapshotToken("third", "read", "c"),
+            snapshots._EnvToken("first", "read", "a"),
+            snapshots._EnvToken("second", "read", "b"),
+            snapshots._EnvToken("third", "read", "c"),
         ))
 
         # Matching the *first* entry must still compare the other two.
-        snapshots._resolve_token("a")
+        snapshots._resolve_env_token("a")
         assert calls == ["a", "b", "c"]
-
-    def test_configured_is_a_separate_question_from_resolution(self, mocker):
-        """503 and 403 answer different questions and must not collapse into
-        one: "this deployment has no tokens" is an operator's problem, "your
-        token is wrong" is the caller's."""
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", ())
-        assert snapshots._tokens_configured() is False
-        assert snapshots._resolve_token("anything") is None
-
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots.SnapshotToken("ci", "read", "t"),
-        ))
-        assert snapshots._tokens_configured() is True
 
 
 class TestTokenSetParsing:
     def test_parses_named_scoped_entries(self):
         parsed = snapshots._parse_token_set("ci:read:abc,mlflow:write:def", "")
         assert parsed == (
-            snapshots.SnapshotToken("ci", "read", "abc"),
-            snapshots.SnapshotToken("mlflow", "write", "def"),
+            snapshots._EnvToken("ci", "read", "abc"),
+            snapshots._EnvToken("mlflow", "write", "def"),
         )
 
     def test_a_token_may_contain_colons(self):
         """Split on the first two colons only — otherwise a passphrase-style
         token silently becomes a truncated one that never matches."""
         parsed = snapshots._parse_token_set("ci:read:a:b:c", "")
-        assert parsed == (snapshots.SnapshotToken("ci", "read", "a:b:c"),)
+        assert parsed == (snapshots._EnvToken("ci", "read", "a:b:c"),)
 
     @pytest.mark.parametrize("raw", ["notoken", "ci:read", "ci::abc", ":read:abc", "ci:read:"])
     def test_malformed_entries_are_dropped_not_raised(self, raw, caplog):

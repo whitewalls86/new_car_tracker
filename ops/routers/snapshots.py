@@ -11,11 +11,19 @@ Auth is a standalone bearer token, independent of the cookie/session admin auth
 in ops/routers/auth.py — CI callers (and scripts/download_lake_snapshot.py) have
 no browser session to present.
 
-**Tokens are named and scoped**, configured as a set rather than a single
-string, because three callers are heading for this route: CI, a developer's
+**Tokens are named, scoped, and live in `ops.machine_tokens`** — one row per
+caller, because three callers are heading for this route: CI, a developer's
 laptop, and the Plan 112 MLflow rehearsal. One shared string gives none of what
 having three callers needs — you cannot revoke one without breaking the others,
 and the access log cannot say which one it was.
+
+**A row carries what an environment variable cannot: an expiry, a revocation
+and a last-used timestamp.** Revocation is not the hard part — an `UPDATE` is
+trivial, and it takes effect on the next request with no restart. Standing in
+front of a credential in six months and deciding whether anything still uses it
+is the hard part, and `last_used_at` is the only thing here that can answer it.
+Only a digest is stored, so a `pg_dump`, a screenshot of pgAdmin or a stray
+query result hands over nothing usable. Plan 173.
 
 The scope exists ahead of any endpoint that reads it, and deliberately so. Every
 entry is `read` today because every route here is read-only. It is in the format
@@ -28,6 +36,7 @@ credential that could reach it is effectively root on the host. A read token
 that cannot write is the difference between a leaked download credential and
 arbitrary container control.
 """
+import hashlib
 import logging
 import os
 import re
@@ -37,6 +46,13 @@ from typing import Any, Dict, NamedTuple, Optional, Tuple
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ops.queries import (
+    SELECT_ACTIVE_MACHINE_TOKEN_EXISTS,
+    SELECT_MACHINE_TOKEN,
+    TOUCH_MACHINE_TOKEN_LAST_USED,
+)
+from shared.db import db_cursor
+from shared.db_vocabularies import MachineTokenScope
 from shared.minio import object_size, open_stream, read_json
 
 logger = logging.getLogger("pipeline_ops")
@@ -46,6 +62,16 @@ router = APIRouter(prefix="/admin/snapshots/adaptive-refresh", tags=["snapshots"
 ALIAS_PREFIX = "ci_snapshots/adaptive_refresh"
 LATEST_KEY = f"{ALIAS_PREFIX}/latest.json"
 
+# ── The environment fallback, and why it is still here ───────────────────────
+#
+# Everything from here to SNAPSHOT_TOKENS is Plan 173's second deploy waiting to
+# happen, and it survives the first one for a chicken-and-egg reason rather than
+# a cautious one: the first table-backed token cannot be issued through an
+# interface that requires a table-backed token. So the environment set stays
+# live while the tokens are issued and CI and the laptop are repointed, and the
+# deploy after that deletes this block, the two `.env` keys and the two
+# docker-compose lines together.
+#
 # `name:scope:token` entries, comma separated. The name is for attribution in
 # the access log and is never secret; the token never reaches a log line.
 #
@@ -61,22 +87,55 @@ SNAPSHOT_DOWNLOAD_TOKENS = os.environ.get("SNAPSHOT_DOWNLOAD_TOKENS", "")
 # once every caller has a named entry.
 SNAPSHOT_DOWNLOAD_TOKEN = os.environ.get("SNAPSHOT_DOWNLOAD_TOKEN", "")
 
+# How stale `last_used_at` may get before a request refreshes it. Bound as a
+# parameter into touch_machine_token_last_used.sql, which names no window of its
+# own, so there is one place to change this.
+#
+# The column exists to answer "is anything still using this credential" before
+# somebody revokes it. That question tolerates being minutes stale and does not
+# justify a write per download.
+LAST_USED_THROTTLE = "5 minutes"
+
 # `write` implies `read`: a caller trusted to mutate is trusted to observe, and
 # the alternative — issuing two credentials to one caller — is the arrangement
 # people work around rather than follow.
+#
+# The two scope *values* are the database's, and read from there rather than
+# retyped: `ops.machine_tokens.scope` carries a CHECK, so a third scope arrives
+# by migration and this table is where it has to be granted. What stays here is
+# the implication, which is policy the column cannot express.
 _SCOPE_GRANTS: Dict[str, frozenset] = {
-    "read": frozenset({"read"}),
-    "write": frozenset({"read", "write"}),
+    MachineTokenScope.READ: frozenset({MachineTokenScope.READ}),
+    MachineTokenScope.WRITE: frozenset({MachineTokenScope.READ, MachineTokenScope.WRITE}),
 }
 
 
 class SnapshotToken(NamedTuple):
+    """An authenticated caller — who it is and what it may do.
+
+    Carries no token. It once did, back when the credential *was* the string in
+    the environment, and dropping the field is what makes the storage swap
+    honest: the auth path above :func:`_resolve_token` reads ``name`` and
+    ``scope`` and never had a use for the third field. A credential kept on the
+    object every route handler receives is one a later change can log by
+    accident.
+    """
+    name: str
+    scope: str
+
+
+class _EnvToken(NamedTuple):
+    """A parsed `name:scope:token` entry from the environment.
+
+    Private, and holds the plaintext because that form has nowhere else to keep
+    it. Deleted with the rest of the fallback on Plan 173's second deploy.
+    """
     name: str
     scope: str
     token: str
 
 
-def _parse_token_set(raw: str, legacy: str) -> Tuple[SnapshotToken, ...]:
+def _parse_token_set(raw: str, legacy: str) -> Tuple[_EnvToken, ...]:
     """Parse `name:scope:token` entries, dropping and reporting malformed ones.
 
     A bad entry is a warning naming its **position and name**, never its value,
@@ -84,7 +143,7 @@ def _parse_token_set(raw: str, legacy: str) -> Tuple[SnapshotToken, ...]:
     down at import and lock every caller out. The caller behind the bad entry
     gets a 403, which is the loud half of the signal.
     """
-    entries: list[SnapshotToken] = []
+    entries: list[_EnvToken] = []
     for position, item in enumerate(raw.split(","), start=1):
         item = item.strip()
         if not item:
@@ -103,14 +162,14 @@ def _parse_token_set(raw: str, legacy: str) -> Tuple[SnapshotToken, ...]:
                 position, name, scope,
             )
             continue
-        entries.append(SnapshotToken(name=name, scope=scope, token=token))
+        entries.append(_EnvToken(name=name, scope=scope, token=token))
 
     if legacy:
-        entries.append(SnapshotToken(name="legacy", scope="read", token=legacy))
+        entries.append(_EnvToken(name="legacy", scope="read", token=legacy))
     return tuple(entries)
 
 
-SNAPSHOT_TOKENS: Tuple[SnapshotToken, ...] = _parse_token_set(
+SNAPSHOT_TOKENS: Tuple[_EnvToken, ...] = _parse_token_set(
     SNAPSHOT_DOWNLOAD_TOKENS, SNAPSHOT_DOWNLOAD_TOKEN,
 )
 
@@ -137,37 +196,139 @@ _ARCHIVE_KEY_RE = re.compile(
 # Auth
 # ---------------------------------------------------------------------------
 
+def token_digest(presented: str) -> str:
+    """The stored form of a token: SHA-256, hex.
+
+    Public because :mod:`scripts.issue_machine_token` computes the digest it
+    inserts, and this is the only definition of what "the digest" means. Two
+    copies that disagree would mean no issued token ever authenticates — an
+    import is the cheaper failure mode than a duplicated one-liner.
+    """
+    return hashlib.sha256(presented.encode("utf-8")).hexdigest()
+
+
 def _tokens_configured() -> bool:
     """Whether any credential exists at all — a 503, not a 403.
 
     Separate from :func:`_resolve_token` because the two answer different
     questions and produce different statuses: "this deployment has no tokens"
     is an operator's problem, "your token is wrong" is the caller's.
+
+    Either source counts, so the deployment that introduces the table is
+    configured by its `.env` alone and the deployment after the fallback is
+    deleted is configured by its rows alone.
     """
-    return bool(SNAPSHOT_TOKENS)
+    return bool(SNAPSHOT_TOKENS) or _machine_tokens_exist()
+
+
+def _machine_tokens_exist() -> bool:
+    """Whether `ops.machine_tokens` holds a credential that is still usable.
+
+    An unreadable table answers False rather than raising, which lands the
+    caller on :func:`_tokens_configured`'s 503. A database this route cannot
+    reach is an operator's problem too, and it is emphatically not the caller's
+    token being wrong.
+    """
+    try:
+        with db_cursor(error_context="Machine token configuration check") as cur:
+            cur.execute(SELECT_ACTIVE_MACHINE_TOKEN_EXISTS)
+            row = cur.fetchone()
+    except Exception:
+        logger.warning("machine token configuration check failed", exc_info=True)
+        return False
+    return bool(row and row[0])
 
 
 def _resolve_token(presented: str) -> Optional[SnapshotToken]:
-    """Return the entry *presented* matches, or None.
+    """Return the caller *presented* authenticates as, or None.
 
     **This function and the one above are the storage seam.** Everything around
-    them — the scope grants, the timing property, the logging, every test — is
-    written against the returned entry, not against where it came from. Moving
-    credentials out of environment variables and into a table is then one
-    function body rather than a change to the auth path.
+    them — the scope grants, the logging, every test — is written against the
+    returned entry, not against where it came from, which is what made moving
+    credentials out of environment variables into a table two function bodies
+    rather than a change to the auth path.
+
+    The table is asked first and the environment set second, so a caller that
+    has been reissued authenticates as its row even while its old entry is
+    still in `.env`. The fallback disappears on Plan 173's second deploy and
+    this becomes the table alone.
+    """
+    matched = _resolve_machine_token(presented)
+    if matched is not None:
+        return matched
+    return _resolve_env_token(presented)
+
+
+def _resolve_machine_token(presented: str) -> Optional[SnapshotToken]:
+    """Look *presented* up in `ops.machine_tokens`, honouring its lifecycle.
+
+    One indexed probe on the digest, with no per-entry comparison — which is
+    what hashing bought over the environment set's deliberate full scan, rather
+    than something reimplemented on top of it.
+
+    A revoked or expired row is refused and **says which in the log**, while the
+    caller gets the same 403 as an unknown token. The distinction is for whoever
+    reads the log later; the response deliberately does not carry it.
+    """
+    digest = token_digest(presented)
+    try:
+        with db_cursor(error_context="Machine token lookup", dict_cursor=True) as cur:
+            cur.execute(SELECT_MACHINE_TOKEN, (digest,))
+            row = cur.fetchone()
+    except Exception:
+        # Falls through to the environment set, and to a 403 once that is gone.
+        # Never a 500: the database being unreachable is already reported as a
+        # 503 by _tokens_configured, which runs first.
+        logger.warning("machine token lookup failed", exc_info=True)
+        return None
+
+    if row is None:
+        return None
+    if row["is_revoked"]:
+        logger.warning("machine token caller=%s refused: revoked", row["name"])
+        return None
+    if row["is_expired"]:
+        logger.warning("machine token caller=%s refused: expired", row["name"])
+        return None
+
+    _record_last_used(digest)
+    return SnapshotToken(name=row["name"], scope=row["scope"])
+
+
+def _record_last_used(digest: str) -> None:
+    """Refresh `last_used_at`, at most once per :data:`LAST_USED_THROTTLE`.
+
+    The throttle is in the statement's WHERE, so the engine decides whether to
+    write and concurrent requests through one credential do not each write.
+
+    A failure here is logged and swallowed. A credential that has already
+    authenticated must not be refused because its bookkeeping write failed —
+    the cost of that is a stale answer to "is anything still using this", which
+    is strictly better than a download that 500s.
+    """
+    try:
+        with db_cursor(error_context="Machine token last-used") as cur:
+            cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (digest, LAST_USED_THROTTLE))
+    except Exception:
+        logger.warning("machine token last_used_at update failed", exc_info=True)
+
+
+def _resolve_env_token(presented: str) -> Optional[SnapshotToken]:
+    """Match *presented* against the environment set. Deleted on the next deploy.
 
     The loop compares every entry with no early exit. Breaking on the first
     match leaks nothing about a token's value but does leak which caller
-    presented it, through response time.
+    presented it, through response time. The table form has no equivalent loop
+    to protect, which is the point of storing a digest.
     """
     matched: Optional[SnapshotToken] = None
     for entry in SNAPSHOT_TOKENS:
         if secrets.compare_digest(presented, entry.token):
-            matched = entry
+            matched = SnapshotToken(name=entry.name, scope=entry.scope)
     return matched
 
 
-def require_snapshot_token(required_scope: str = "read"):
+def require_snapshot_token(required_scope: str = MachineTokenScope.READ):
     """Build a dependency asserting the caller holds a token granting *required_scope*.
 
     A factory rather than a plain dependency so a route declares what it needs —

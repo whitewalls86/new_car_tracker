@@ -7,8 +7,10 @@ renames, dropped tables, type mismatches) — not to validate business logic.
 """
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import psycopg2
 import pytest
 
 from ops import coordination_drain
@@ -33,6 +35,7 @@ from ops.queries import (
     INSERT_COMPLETION_RECEIPT,
     INSERT_COORDINATION_RELEASE_EVIDENCE,
     INSERT_COORDINATION_STATE_EVENT,
+    INSERT_MACHINE_TOKEN,
     INSERT_SEARCH_CONFIG,
     MARK_ROTATION_SLOT_QUEUED,
     MARK_SEARCH_CONFIG_QUEUED,
@@ -43,6 +46,7 @@ from ops.queries import (
     REQUEST_DEPLOY_COORDINATION,
     RETIRE_SEARCH_CONFIG,
     SELECT_ACCESS_REQUESTS,
+    SELECT_ACTIVE_MACHINE_TOKEN_EXISTS,
     SELECT_AUTHORIZED_USERS,
     SELECT_COMPLETION_RECEIPT,
     SELECT_COORDINATION_STATE,
@@ -54,6 +58,7 @@ from ops.queries import (
     SELECT_LAST_QUEUED_AT,
     SELECT_LEGACY_SEARCH_CONFIG,
     SELECT_LIVE_COOLDOWN_LISTINGS,
+    SELECT_MACHINE_TOKEN,
     SELECT_NEXT_ROTATION_SLOT,
     SELECT_PENDING_CLEARED_LISTINGS,
     SELECT_PENDING_REQUEST_DETAILS,
@@ -69,12 +74,14 @@ from ops.queries import (
     SELECT_USER_ROLE,
     SET_DEPLOY_INTENT,
     TOGGLE_SEARCH_CONFIG_ENABLED,
+    TOUCH_MACHINE_TOKEN_LAST_USED,
     UPDATE_SEARCH_CONFIG,
     UPDATE_USER_ROLE,
     UPSERT_AUTHORIZED_USER,
 )
 from ops.routers.coordination import _TRANSITIONS, COORDINATION_LOCK_ID
 from ops.routers.deploy import STALE_LOCK_MINUTES
+from ops.routers.snapshots import token_digest
 from shared.query_loader import load_query
 from tests.sql_loader import queries
 
@@ -1169,3 +1176,173 @@ class TestBlockedCooldownReconcileStatement:
             ).fetchall()
         }
         assert not (counted & cleared)
+
+
+# ============================================================================
+# snapshots.py — machine credentials (Plan 173)
+# ============================================================================
+
+class TestMachineTokenStatements:
+    """The four statements behind `ops.machine_tokens`.
+
+    Three of them encode a lifecycle rule in SQL rather than in Python — the
+    expiry comparison, the active-row predicate and the throttle window — so
+    running them against a real engine is the only thing that checks the rule
+    rather than just the column names.
+    """
+
+    @pytest.fixture
+    def issued(self, cur):
+        """Issue a credential through the production statement and return its
+        digest. The connection rolls back, so nothing survives the test."""
+        digest = token_digest(f"layer2-{uuid.uuid4().hex}")
+        cur.execute(
+            INSERT_MACHINE_TOKEN, ("layer2", "read", digest, "Layer 2", None),
+        )
+        return digest
+
+    def test_issuing_returns_the_row_the_script_prints(self, cur):
+        digest = token_digest(f"layer2-{uuid.uuid4().hex}")
+        expires_at = datetime.now(timezone.utc) + timedelta(days=365)
+        cur.execute(
+            INSERT_MACHINE_TOKEN, ("ci", "read", digest, "Layer 2", expires_at),
+        )
+        row = cur.fetchone()
+        # scripts/issue_machine_token.py prints id, name, scope and expires_at
+        # by key, so the projection is the contract.
+        assert set(row) == {"id", "name", "scope", "created_at", "expires_at"}
+        assert row["name"] == "ci"
+        assert row["expires_at"] == expires_at
+
+    def test_a_live_credential_resolves_and_is_neither_revoked_nor_expired(
+        self, cur, issued,
+    ):
+        cur.execute(SELECT_MACHINE_TOKEN, (issued,))
+        row = cur.fetchone()
+        # The router reads all four by key.
+        assert set(row) == {"name", "scope", "is_revoked", "is_expired"}
+        assert row["name"] == "layer2"
+        assert row["is_revoked"] is False
+        assert row["is_expired"] is False
+
+    def test_an_unknown_digest_resolves_to_no_row(self, cur):
+        cur.execute(SELECT_MACHINE_TOKEN, (token_digest("never-issued"),))
+        assert cur.fetchone() is None
+
+    def test_revoking_flips_the_verdict_the_router_reads(self, cur, issued):
+        """The exit condition's mechanism: an UPDATE, and the very next lookup
+        refuses. Nothing is cached and nothing restarts."""
+        cur.execute(SQL("revoke_machine_token"), (issued,))
+        cur.execute(SELECT_MACHINE_TOKEN, (issued,))
+        assert cur.fetchone()["is_revoked"] is True
+
+    def test_a_past_expiry_reads_as_expired(self, cur):
+        digest = token_digest(f"expired-{uuid.uuid4().hex}")
+        cur.execute(
+            INSERT_MACHINE_TOKEN,
+            ("stale", "read", digest, "Layer 2",
+             datetime.now(timezone.utc) - timedelta(seconds=1)),
+        )
+        cur.execute(SELECT_MACHINE_TOKEN, (digest,))
+        row = cur.fetchone()
+        assert row["is_expired"] is True
+        assert row["is_revoked"] is False
+
+    def test_a_future_expiry_does_not(self, cur):
+        digest = token_digest(f"fresh-{uuid.uuid4().hex}")
+        cur.execute(
+            INSERT_MACHINE_TOKEN,
+            ("fresh", "read", digest, "Layer 2",
+             datetime.now(timezone.utc) + timedelta(days=1)),
+        )
+        cur.execute(SELECT_MACHINE_TOKEN, (digest,))
+        assert cur.fetchone()["is_expired"] is False
+
+    def test_the_digest_is_unique(self, cur, issued):
+        """It is the lookup key, so two rows sharing one would make which caller
+        authenticates a matter of row order."""
+        with pytest.raises(psycopg2.errors.UniqueViolation):
+            cur.execute(
+                INSERT_MACHINE_TOKEN, ("dupe", "read", issued, "Layer 2", None),
+            )
+
+    def test_an_unknown_scope_is_refused_by_the_constraint(self, cur):
+        """The router's grant table names two scopes. A third could otherwise be
+        inserted by hand and would then fail closed at every route with nothing
+        to say why."""
+        with pytest.raises(psycopg2.errors.CheckViolation):
+            cur.execute(
+                INSERT_MACHINE_TOKEN,
+                ("bad", "admin", token_digest(uuid.uuid4().hex), "Layer 2", None),
+            )
+
+    def test_a_live_row_makes_the_deployment_configured(self, cur, issued):
+        cur.execute(SELECT_ACTIVE_MACHINE_TOKEN_EXISTS)
+        assert cur.fetchone()["configured"] is True
+
+    def test_revoking_every_row_makes_it_unconfigured(self, cur, issued):
+        """503 rather than 403 once the last credential is gone: the caller
+        holding a retired token did nothing wrong, and the operator did."""
+        cur.execute(SQL("revoke_all_machine_tokens"))
+        cur.execute(SELECT_ACTIVE_MACHINE_TOKEN_EXISTS)
+        assert cur.fetchone()["configured"] is False
+
+
+class TestMachineTokenThrottle:
+    """`last_used_at`'s write is conditional in the engine, so the condition is
+    only really checked here."""
+
+    @pytest.fixture
+    def issued(self, cur):
+        digest = token_digest(f"throttle-{uuid.uuid4().hex}")
+        cur.execute(
+            INSERT_MACHINE_TOKEN, ("throttle", "read", digest, "Layer 2", None),
+        )
+        return digest
+
+    def test_the_first_use_records_a_timestamp(self, cur, issued):
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "5 minutes"))
+        assert cur.rowcount == 1
+
+        cur.execute(SQL("select_machine_token_last_used"), (issued,))
+        assert cur.fetchone()["last_used_at"] is not None
+
+    def test_a_second_use_inside_the_window_writes_nothing(self, cur, issued):
+        """The reason the column is affordable at all. Without the WHERE this is
+        a write on every authenticated download."""
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "5 minutes"))
+        cur.execute(SQL("select_machine_token_last_used"), (issued,))
+        first = cur.fetchone()["last_used_at"]
+
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "5 minutes"))
+        assert cur.rowcount == 0
+
+        cur.execute(SQL("select_machine_token_last_used"), (issued,))
+        assert cur.fetchone()["last_used_at"] == first
+
+    def test_a_use_past_the_window_refreshes_it(self, cur, issued):
+        """Minutes-stale is the trade this column makes; never refreshing at all
+        would be a different and much worse one — a credential that reads as
+        unused is a credential somebody revokes."""
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "5 minutes"))
+        cur.execute(SQL("backdate_machine_token_last_used"), (issued,))
+        cur.execute(SQL("select_machine_token_last_used"), (issued,))
+        backdated = cur.fetchone()["last_used_at"]
+
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "5 minutes"))
+        assert cur.rowcount == 1
+
+        cur.execute(SQL("select_machine_token_last_used"), (issued,))
+        assert cur.fetchone()["last_used_at"] > backdated
+
+    def test_the_window_is_honoured_as_given(self, cur, issued):
+        """It arrives as a parameter, so the statement holds no window of its
+        own and cannot drift from the router's LAST_USED_THROTTLE."""
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "5 minutes"))
+        cur.execute(SQL("backdate_machine_token_last_used"), (issued,))
+
+        # One hour stale: inside a two-hour window, outside a one-minute one.
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "2 hours"))
+        assert cur.rowcount == 0
+        cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (issued, "1 minute"))
+        assert cur.rowcount == 1

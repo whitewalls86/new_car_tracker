@@ -25,6 +25,13 @@ INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH = _q("insert_blocked_cooldown_events_batch"
 SELECT_COORDINATION_STATE_METRICS = _q("select_coordination_state_metrics")
 SELECT_USER_ROLE = _q("select_user_role")
 
+# Machine credentials (ops/routers/snapshots.py and scripts/issue_machine_token.py,
+# Plan 173). The service reads the first three; only the issuance script writes.
+SELECT_MACHINE_TOKEN = _q("select_machine_token")
+SELECT_ACTIVE_MACHINE_TOKEN_EXISTS = _q("select_active_machine_token_exists")
+TOUCH_MACHINE_TOKEN_LAST_USED = _q("touch_machine_token_last_used")
+INSERT_MACHINE_TOKEN = _q("insert_machine_token")
+
 # Coordination state machine (ops/routers/coordination.py, Plan 142)
 ACQUIRE_COORDINATION_LOCK = _q("acquire_coordination_lock")
 SELECT_COORDINATION_STATE = _q("select_coordination_state")
