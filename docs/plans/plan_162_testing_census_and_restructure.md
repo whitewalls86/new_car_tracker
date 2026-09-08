@@ -383,8 +383,8 @@ moved it to the end without making it a different stage.
 | 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `done` | CAR-83 |
 | 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `done` | CAR-79 |
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
-| 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `next` | CAR-82 |
-| 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-88 |
+| 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
+| 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `next` | CAR-88 |
 | 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `—` | — |
 | 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | — |
@@ -1980,7 +1980,7 @@ one suite. Demonstrated by an undeclared skip failing a run, not asserted.
 
 ### Stage V: a variable the environment documents reaches the service that reads it
 
-**Legacy:** Stage 14 · **Issue:** CAR-88 · **State:** `—`
+**Legacy:** Stage 14 · **Issue:** CAR-88 · **State:** `next`
 
 **Found 2026-09-04, deploying this plan's own change.** Stage P's credential
 work added `SNAPSHOT_DOWNLOAD_TOKENS` to `.env.example` and to
@@ -2038,7 +2038,7 @@ Demonstrated by an unwired key failing, not asserted.
 
 ### Stage W: a test may not supply both halves of a contract
 
-**Legacy:** Stage 15 · **Issue:** CAR-82 · **State:** `next`
+**Legacy:** Stage 15 · **Issue:** CAR-82 · **State:** `done`
 
 **Found 2026-09-04, closing Stage P.** `check_snapshot_result` in the export
 DAG accepted only `{"created"}` as a successful non-dry-run status. The exporter
@@ -3752,10 +3752,12 @@ skipped across the touched suites against a Flyway-migrated postgres:16.
 
 ### Stage W — a test may not supply both halves of a contract
 
-**Legacy:** Stage 15 · **Issue:** CAR-82 · **Measured:** 2026-09-07
+**Legacy:** Stage 15 · **Issue:** CAR-82 · **Closed:** 2026-09-08
 
-*Implemented and demonstrated; not yet closed. Numbers, transcripts, the
-rejected design and the two stated limits are in
+**Cost:** estimate 2 points → **actual 1** — one session, four commits, and a
+full rebuild after the first design was rejected.
+
+*Numbers, transcripts, the rejected design and the two stated limits are in
 [plan_162_stage_W_evidence.md](../evidence/plan_162_stage_W_evidence.md).*
 
 **Built once as a registry and rejected, and the rejection is the useful part.**
@@ -3866,3 +3868,36 @@ sites outright.** Repairing them was right for the work; contributing nothing to
 the plan's progress meter was not, and it is the only reason the completion
 criterion looked unable to describe the contract stages. Stages Y to AD each
 seed and drain, which is Stage S's pattern and this plan's own answer.
+
+**Exit met, with clause 2 narrowed rather than dropped.** *"A test that restates
+a member as a literal rather than deriving it fails"* holds for the forms this
+stage declares reachable and not otherwise: the **183** copies in
+`tests/integration/` are policed by the constraint itself — a stale seed is
+rejected with `CheckViolation` before the test can assert anything, observed
+during the Stage AC experiment — and the **298** in-memory copies are policed by
+nothing. That residue is [G26](../TESTING.md#the-gap-list) and
+[Stage AD](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject).
+Clause 3 is what permits the narrowing, and the matrix above is the plain
+statement it asks for.
+
+**A regression this stage introduced, and caught before merge rather than after.**
+The repair replaced a hand-ordered list with `sorted(RequestableRole)`, which is
+alphabetical, silently reordering the access-request form's role dropdown from
+least-privileged-first to `observer, power_user, viewer`. That list is the
+`roles` context for seven template responses. **Nothing asserts the order, so
+the suite was green and CI was green** — a silent regression shipped by a change
+whose entire subject is silent regressions. It was found by asking what the
+repair had changed that no test looks at, before pushing. Fixed at the
+declaration rather than the call site: `RequestableRole` now declares its own
+members least-privileged first and the router takes `list(RequestableRole)`, so
+the order and the completeness are one fact instead of two that can disagree.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work — both still read *"More than 3,000 tests run in CI"* at
+3,801, and this stage added no migration against their *"40+ versioned Flyway
+migrations"*.
+
+PR #389, CI run 34190151416 green at `d2a6293` — including the jobs no local
+run reaches: the Layer 2 suite's DuckDB half, `dbt model tests (real build)`,
+`Service integration tests (Postgres)`, the Airflow metadata contracts and the
+SQL execution coverage gate. Locally 3,801 passed / 694 deselected.
