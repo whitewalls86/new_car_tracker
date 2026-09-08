@@ -391,8 +391,8 @@ moved it to the end without making it a different stage.
 | 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
 | 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
 | 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
-| 27 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
-| 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | unassigned |
+| 27 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
+| 28 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
 | 29 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 
 `State` takes the five values [the plan-document
@@ -2536,7 +2536,7 @@ demonstrated by a fabricated row failing at construction.
 
 ### Stage AE: configuration is what Compose delivers, and everything else is a constant
 
-**Issue:** unassigned · **State:** `backlog`
+**Issue:** CAR-109 · **State:** `backlog`
 
 **Found 2026-09-08, closing Stage V.** That stage asserts `.env.example`
 against `docker-compose*.yml` in both directions, and its corpus is those two
