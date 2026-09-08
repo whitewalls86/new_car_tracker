@@ -3,9 +3,9 @@
 ## What this plan is for
 
 Docker build cache grows about 780 MB a day on the production host and nothing
-reclaims it. Makes each deploy prune the cache it just produced, under a size
-cap, rather than scheduling a job. Images need no retention rule; what protects
-the deliberately paused ones needs testing and a written home.
+reclaims it. Makes each deploy discard the cache it just produced, rather than
+scheduling a job. Images need no retention rule; what protects the deliberately
+paused ones needs testing and a written home.
 
 ## The case
 
@@ -260,19 +260,33 @@ paths on this host are exactly two lines: `scripts/deploy.sh:25` and
 `scripts/redeploy.sh:617`. So the reclaim belongs to the producer, not to a
 clock.
 
-Add `docker builder prune --keep-storage 4GB -f` after each, positioned **after
-health verification** and made non-fatal, so a prune failure can never fail a
-deploy. Size cap rather than `--filter until=Nh`: the cap is chosen from disk
-headroom, which is the quantity that matters, and it self-tunes against a deploy
-cadence that a day-count cannot anticipate.
+~~Add `docker builder prune --keep-storage 4GB -f` after each~~ — **the size cap
+was removed on 2026-09-08 after two production runs showed it enforcing
+nothing.** What ships is `docker builder prune -a -f`: the cache is discarded
+whole, positioned **after health verification** and made non-fatal, so a prune
+failure can never fail a deploy. The measurements are in
+[`## Record`](#stage-b--make-the-deploy-clean-up-after-itself-2026-09-08); the
+short version is that nothing in production reads build cache, so there is
+nothing for a cap to protect.
 
-Straight to pruning, no report-only pass — `--keep-storage` fails safe by
-construction, and `--keep-storage` against the containerd snapshotter is itself
-unverified, so the first real run is the verification.
+Stage B also grew a **pre-flight disk guard**, which the stage as written did
+not anticipate. A build that would run `/` below the reviewed floor does not
+start. It is scoped here rather than in its own plan because it is the same two
+scripts, the same session and the same measurements.
 
-**Exit:** a deploy leaves the build cache at or under 4 GB, the next deploy still
-hits cache for the layers it did not change, and `/var/lib/containerd` turns over
-from a ramp to a sawtooth on the panel.
+**Exit** — restated 2026-09-08, because the original named a quantity this plan
+no longer sets:
+
+1. A deploy leaves the build cache at **zero**.
+2. The next deploy builds cold without meaningfully lengthening the deploy —
+   measured as operator wall-clock, since the build runs *before*
+   `_prepare_coordination` and so is not paid in parked DAGs.
+3. `/var/lib/containerd` turns over from a ramp to a sawtooth on the panel.
+
+~~a deploy leaves the build cache at or under 4 GB~~ and ~~the next deploy still
+hits cache for the layers it did not change~~ are struck: the first names the
+cap that was removed, and the second asks whether a cache we now discard on
+purpose was retained.
 
 ### Stage C — Make the keep-set legible, and do the one-time image sweep
 
@@ -454,3 +468,114 @@ That promotion is also why this entry first recorded "no": it was verified
 against this branch's copy of `project-updates.json`, which predated the
 renumbering. The published set can change without this plan's row being edited,
 so the check has to read a freshly fetched `master`, not the working tree.
+
+
+### Stage B — Make the deploy clean up after itself (2026-09-08)
+
+Shipped, deployed and verified the same day, across four PRs — #390, #391,
+#392 and #397 — because the rule Stage A decided did not work and each failure
+had to be measured before the next attempt.
+
+**What ships.** `docker builder prune -a -f` in both build paths, after health
+verification, guarded by `|| echo`. Plus a pre-flight check that refuses to
+start a build when `/` is below `HOST_DISK_FLOORS["bytes_available"]`.
+
+**Stage A's size cap is superseded. It never enforced anything, at any value.**
+
+| Run | Command | Result |
+|---|---|---|
+| 1 | `--keep-storage 4GB -f` | 7.52 → 5.72 GB, **cap never reached** |
+| 2 | `-a --keep-storage 4GB -f` | 6.00 GB resident, **0 B reclaimed** |
+| 3 | `-a -f` | 6.00 GB → **0**, 6.381 GB reclaimed |
+
+Run 1 is explicable: without `all`, BuildKit's sweep skips `internal`,
+`frontend` and *shared* records, and 1.46 GB of the survivors were
+`Shared=True`, so the eligible set ran out above the cap. **Run 2 is not.**
+`all` should have made the whole 6.00 GB eligible against a 4 GB cap.
+`cache/manager.go` says `keepBytes` binds (`if opt.keepBytes != 0 &&
+opt.totalSize < opt.keepBytes { return }`) and that eviction is least-recently-
+used first, which predicts ~2 GB reclaimed. Nothing was.
+
+No model fits both runs. Rather than keep changing flags against production,
+the policy stopped depending on the flag. `test_no_size_cap_came_back` carries
+both numbers in its failure message, because a cap reads as obviously prudent
+and is exactly what someone reintroduces in good faith.
+
+**The cache was worth about two seconds.** Cold build 23.7s against 21.7s warm,
+for `ops`. The fastest `ops` build ever observed was 5.9s, but that was a
+redeploy with no code change; on any deploy that ships something, `COPY . .`
+invalidates and the difference is ~2s. Notably `pip install` did not hit cache
+in the warm run either — it precedes `COPY . .` and should have — which,
+alongside `WARN: Docker Compose is configured to build using Bake, but buildx
+isn't installed`, suggests the classic builder's cache reuse on this host is
+poor generally. **The build cache here was buying very little under any
+policy**, which is the finding underneath the finding.
+
+**Result on the host.** `/` 63% → **50%**, free 19 → **25 GB**,
+`/var/lib/containerd` 24,926 → **18,814 MiB**. Free space now returns to the
+same floor after every deploy instead of declining; the sawtooth is visible
+without waiting for the panel.
+
+**The disk floor is measured, not inherited.**
+
+| | Consumed |
+|---|---:|
+| CI, x86, no images at all | 4.48 GiB (ceiling) |
+| Production, ARM64, bases held | **4.22 GiB** (2m13s, 13 services) |
+
+The runner over-estimates by ~6%, so it bounds the host tightly enough to watch
+per-PR. `HOST_DISK_FLOORS["bytes_available"]` is 2.4x the measured worst case,
+~1.6x once Plan 125 returns `cartracker-lakehouse`.
+
+**That measurement corrected the premise the guard was argued from.** The
+stated risk was images doubling — new layers written while the old ones stay
+resident. That is not what happens: of the host's 4.22 GiB, **3.65 GiB was
+build cache** and new image layers added ~0.6 GB, because most rebuilt layers
+deduplicated against ones already present. The guard is still right; the reason
+given for it was wrong.
+
+**Two things this stage got wrong and had to fix.**
+
+The CI footprint job shipped claiming it would catch `cartracker-lakehouse`
+growing under Plan 125. It cannot: `docker compose build` reads
+`docker-compose.yml`, and lakehouse and mlflow live in their own compose files,
+so the largest image in the fleet is exactly what that instrument cannot see.
+Now recorded as a named blind spot for Gate C to inherit.
+
+`test_falling_below_the_floor_refuses_rather_than_warns` was **blind when
+written** — a file-wide search for `exit 1|return 1`, which both scripts carry
+elsewhere, so a guard changed to return success still passed. Mutation testing
+caught it; reading would not have.
+
+**Reproduction.** All read-only except the deploys themselves:
+
+```
+curl -s --unix-socket /var/run/docker.sock \
+  'http://localhost/v1.52/system/df?type=build-cache'    # size, Shared, LastUsedAt
+df -B1 --output=avail /                                   # sampled every 2s during a build
+sudo du -s -x --block-size=1M /var/lib/containerd
+```
+
+**A side effect Stage C inherits.** A full-fleet `docker compose build` was run
+on the host to measure the ARM64 footprint. It moved every `:latest` tag, so
+the previous generation of all 13 images was orphaned on top of the 11
+unreferenced images already there (6.92 GB, of which ~4.07 GB is deliberate
+`aux-paused`/`on-demand`). Stage C's sweep set is therefore larger than the
+~2.8 GB this plan estimated, and should be re-measured rather than trusted.
+
+**Cost:** estimate 1 → actual 3. The estimate assumed the rule was decided and
+only needed typing; three of the four PRs exist because it was not.
+
+**Public surfaces: yes.** First recorded here as "no", on the reasoning that the
+summary described the policy above the level the cap change reached. That was
+wrong — the published sentence said the deploy prunes the cache it produced
+*"under a size cap"*, and Stage B removed the cap, so the roadmap was carrying a
+promise this stage had just falsified. Caught while writing this entry, by
+reading `project-updates.json` rather than trusting the reasoning.
+
+`under a size cap` is struck and the projection regenerated. This is the second
+consecutive Stage of this plan to get its public-surface answer wrong on the
+first pass, in opposite directions: Stage A said "no" against a stale copy of
+the projection, and Stage B said "no" against a stale reading of its own
+summary. **The check is to open the published file and read the sentence**, not
+to reason about whether the change was big enough to reach it.
