@@ -627,9 +627,9 @@ MUTATIONS = [
             ),
             _edit(
                 "docker-compose.yml",
-                "      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}",
+                "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
                 "      # HARNESS_UNWIRED_KEY is delivered here\n"
-                "      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}",
+                "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
             ),
         ),
         [".env.example", "docker-compose.yml"],
@@ -640,9 +640,9 @@ MUTATIONS = [
         "a key declared undelivered is wired into Compose after all",
         lambda: _edit(
             "docker-compose.yml",
-            "      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}",
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
             "      SCRAPER_RESULTS_BASE_URL: ${SCRAPER_RESULTS_BASE_URL:-}\n"
-            "      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}",
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
         ),
         ["docker-compose.yml"],
         [],
@@ -664,9 +664,9 @@ MUTATIONS = [
         "a Compose service interpolates a variable .env.example never documents",
         lambda: _edit(
             "docker-compose.yml",
-            "      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}",
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
             "      HARNESS_NEW_SECRET: ${HARNESS_NEW_SECRET}\n"
-            "      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}",
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
         ),
         ["docker-compose.yml"],
         [],
