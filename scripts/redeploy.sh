@@ -153,7 +153,7 @@
 # Plan 170 Stage B — the ninth decision, added 2026-09-08 because nothing
 # reclaimed the build cache this script produces.
 #
-# 9. A build prunes the cache it just produced. Build cache grew 2.04 -> 7.52
+# 9. A build discards the cache it just produced. Build cache grew 2.04 -> 7.52
 #    GB in 8 days on this host (~783 MB/day) while images stayed flat, so it
 #    is ~90% of all storage growth, and the only two things that build here
 #    are this script and scripts/deploy.sh — CI builds on GitHub runners and
@@ -163,38 +163,37 @@
 #    reclaimed in early September was a person running `docker builder prune`
 #    by hand, twice, which is the toil this replaces.
 #
-#    A size cap, not `--filter until=Nh`. The age distribution is
-#    deploy-shaped rather than smooth — `until=72h` would have reclaimed 6.83
-#    GB on 2026-09-08 and 0 GB four days earlier — so a day-count reclaims
-#    everything or nothing depending on when it happens to run. 4GB is picked
-#    from headroom on `/`, which is the quantity that actually matters.
+#    Discarded whole, with no size cap, and that is the second answer rather
+#    than the first. Stage A specified `--keep-storage 4GB`; it was deployed
+#    and measured twice on 2026-09-08 and did not enforce anything:
 #
-#    Post-health, and only in the build path. `--restart` builds nothing and
-#    so has nothing to reclaim. Post-health because `LastUsedAt` refreshes on
-#    a cache *hit*, not just on creation: everything the finished build touched
-#    is stamped now, so the live working set survives the cap and the
-#    superseded tail does not.
+#      run 1  `--keep-storage 4GB -f`      7.52 -> 5.72 GB, cap never reached
+#      run 2  `-a --keep-storage 4GB -f`   6.00 GB present, 0 B reclaimed
+#
+#    Run 1 was explicable — without `all`, BuildKit skips `internal`,
+#    `frontend` and shared records, and the eligible set ran out above the
+#    cap. Run 2 is not: `all` should have made the whole 6 GB eligible against
+#    a 4 GB cap. No model fits both runs, and rather than keep changing flags
+#    against production the policy stopped depending on the one that does not
+#    work.
+#
+#    Nothing in production reads build cache. It is a pure speed optimisation:
+#    the saved result of a build step, kept so the next build can skip it.
+#    Discarding it costs the next build its time and costs nothing else, and
+#    the build runs *before* `_prepare_coordination` below — outside the
+#    deploy-intent window — so that time is not paid in parked DAGs. CI
+#    rebuilds every service from cold in about 90 seconds.
+#
+#    Still post-health, and the reason is now stronger than the original one.
+#    A deploy that fails before the health gate never reaches this line, so
+#    the cache it just built survives for the retry. Pruning before the build
+#    would discard exactly what makes the second attempt fast.
 #
 #    Non-fatal, and that is the whole point of the `|| echo`. Under `set -e` a
 #    failing prune is a failed deploy, which by decision 3 means MUTATED=1 and
 #    deploy intent HELD — every gated DAG parked because a *cleanup* step
 #    failed after the fleet was already healthy. Reclaiming disk must never be
 #    able to do that.
-#
-#    `-a`, without which the cap is inert. Measured on the first production
-#    run, 2026-09-08: `--keep-storage 4GB` alone reclaimed 1.906 GB and
-#    stopped at 5.72 GB, having never reached the cap. BuildKit's sweep skips
-#    `internal` and `frontend` records and every *shared* one unless `all` is
-#    set (`cache/manager.go`), and 1.46 GB of what survived was `Shared=True`.
-#    The eligible set was exhausted before the cap could bind, so no value of
-#    `--keep-storage` would have enforced anything.
-#
-#    `-a` does not mean "delete it all". The two flags compose: the sweep
-#    exits early once total size falls below `keepBytes`, and when a cap is
-#    set it deletes least-recently-used first. So the cap retains the 4 GB the
-#    fleet touched most recently — which is why post-build placement above is
-#    load-bearing rather than cosmetic. The live working set is the newest
-#    thing in the store at that moment.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -680,8 +679,8 @@ else
 
     PHASE="done"
     # Decision 9. Build path only, after health, and it cannot fail the deploy.
-    echo "Pruning build cache back to the 4GB cap..."
-    docker builder prune -a --keep-storage 4GB -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
+    echo "Discarding the build cache this deploy produced..."
+    docker builder prune -a -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
 
     echo "Done — every pollable service reported healthy."
     _print_follower_notes "$@"
