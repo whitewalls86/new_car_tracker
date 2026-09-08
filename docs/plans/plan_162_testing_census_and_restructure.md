@@ -3463,3 +3463,80 @@ changed by this work — the collection count did not move.
 
 PR #383, CI run 34181659530 green at `b695283`; locally 441 passed / 35
 skipped across the touched suites against a Flyway-migrated postgres:16.
+
+### Stage W — a test may not supply both halves of a contract
+
+**Legacy:** Stage 15 · **Issue:** CAR-82 · **Measured:** 2026-09-07
+
+*Implemented and demonstrated; not yet closed. Numbers, transcripts, the
+rejected design and the two stated limits are in
+[plan_162_stage_W_evidence.md](../evidence/plan_162_stage_W_evidence.md).*
+
+**Built once as a registry and rejected, and the rejection is the useful part.**
+The first implementation was a curated tuple of cross-module contracts, each
+naming a producer, a consumer and a derivation, with one parametrized meta-test
+per entry. It worked and it was demonstrated failing. It was also **the thing
+this plan exists against**: `DORMANT_SUITES` and `DECLARED_SKIPS` are lists that
+work because each is compared against a *derived population* — directories on
+disk, skips pytest reported — so an unlisted member fails. The registry had no
+derived population, so nothing could say a third contract existed. One instance
+and no mechanism, at n=2. Commit `ca74ba3`, reset away, reachable in the reflog.
+
+**The rebuild's first derived pass found the third instance two files from one
+the registry covered.** `airflow/dags/sensors.py:95` checks the coordination
+phases, owned by a Flyway `CHECK` in `V043`, guarded only by
+`test_coordination_admission.py` asserting the literal appears in `sensors.py`'s
+*source text* — the paraphrase shape the contract warns about.
+
+**The census was wrong before it was right, and the error was the subject.** It
+first counted closed sets *in production* — 110, with 104 having a member
+restated under `tests/` — and asked who restates them; structurally that gives
+87 "cross-module contracts" dominated by `ok`, `error`, `year`, `price`. From
+that reading a curated list looks inevitable. The right subject is the **guard**:
+where a module tests an incoming value against a locally written literal.
+
+**262 such comparisons, in three buckets, and only one reachable.** Owned by git,
+markdown-it or Airflow — unreachable, nothing here owns them. Owned by the
+module's own package — reachable but nothing can drift. **Owned by another
+artifact here — the defect class**, and its owner corpus is derivable: **18
+`CHECK` columns in `db/migrations/` holding 14 distinct vocabularies**. Of 83
+comparisons naming a constrained column, **33 restate a member**; the other 50
+are `ok`, `success`, `unknown`, `locked` and must not be touched.
+
+**Membership is the whole discriminator, and the alternative was watched
+failing.** By column name alone the rule produced 9 false positives —
+`result.status == "ok"` reading as a claim about `artifacts_queue.status`. A
+module→constant→`.sql`→table derivation fixed those and cost a chain of
+machinery while **missing 11 sites in `scripts/host_maintenance.py`**, which
+reads the vocabulary over HTTP. Inverting the test to "the literal is a member"
+removed all 9 and recovered the 11, so the machinery was deleted.
+
+**What ships is two rules that do not work apart**, plus
+`shared/db_vocabularies.py` holding each vocabulary once as a `StrEnum`. One
+compares that module to the migrations in both directions and requires equality;
+the other fails a bare literal that is a member. A migration rename leaves the
+second green — the literal stops being a member, so the comparison leaves scope
+— and that vacuity was observed, not argued. **All 33 sites were repaired**
+across 8 modules, and the completed rename then propagated with **zero call-site
+edits**: two migration files and one enum member.
+
+**A third rule closes the instance the stage came from**, where the owner is a
+service and not a constraint. `airflow/dags/` is the one place here where the
+import that would remove the copy is impossible — compose mounts three
+directories into the Airflow containers — so both halves are derived instead:
+the service from the module's own `<NAME>_URL` constant, the module from the
+shared basename. Reintroducing `acceptable = {"created"}` fails it, naming the
+exporter's five statuses. The known reader hole is closed by a guard rather than
+a wider scan: a `status=` expression the reader cannot follow **fails** instead
+of narrowing the set silently.
+
+**Two limits stated rather than closed.** The tests hold their own copies — 115
+comparisons and 366 seeds across 49 modules — but that is duplication, not the
+both-halves defect, and the production repair is what made the difference:
+production's half now comes from the enum, so a test seeding `phase="draining"`
+supplies one side and *fails* when they disagree. Eight did, under the rename
+mutation. And `sensors.py` reads its phases positionally out of a query result,
+so no column name appears; the link is derivable through
+`deploy_intent_gate.sql`'s `SELECT` list, the loose membership alternative was
+tried and produces a false positive on `notifications.py`, and closing it
+properly is the next stage's.

@@ -34,6 +34,7 @@ from ops.queries import (
     UPSERT_AUTHORIZED_USER,
 )
 from shared.db import db_cursor
+from shared.db_vocabularies import RequestableRole, UserRole
 
 from .auth import _hash_email
 
@@ -53,7 +54,10 @@ ROLE_LABELS = {
     "viewer": "Viewer",
 }
 
-REQUESTABLE_ROLES = ["viewer", "observer", "power_user"]
+# The database owns these three: `access_requests.requested_role` carries a
+# CHECK that omits `admin`, deliberately -- an admin is granted, never
+# requested. Derived rather than retyped so the omission cannot drift.
+REQUESTABLE_ROLES = sorted(RequestableRole)
 
 
 def _notify_access_request(email_hash: str, requested_role: str) -> None:
@@ -80,7 +84,7 @@ def _notify_access_request(email_hash: str, requested_role: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _redirect_for_role(role: str) -> RedirectResponse:
-    if role in ("admin", "power_user", "observer"):
+    if role in frozenset(UserRole) - {UserRole.VIEWER}:
         return RedirectResponse(url="/admin", status_code=303)
     return RedirectResponse(url="/dashboard", status_code=303)
 

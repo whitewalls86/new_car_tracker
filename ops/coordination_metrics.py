@@ -7,6 +7,7 @@ from prometheus_client.core import GaugeMetricFamily
 from ops.coordination_drain import _airflow_gate_observations
 from ops.queries import SELECT_COORDINATION_STATE_METRICS
 from shared.db import db_cursor
+from shared.db_vocabularies import CoordinationPhase
 
 
 class CoordinationCollector:
@@ -84,7 +85,7 @@ class CoordinationCollector:
 
             gate_count = 0
             gate_is_known = True
-            if phase == "draining":
+            if phase == CoordinationPhase.DRAINING:
                 evidence = _airflow_gate_observations(
                     frozenset(state["scope"]), state["generation"]
                 )

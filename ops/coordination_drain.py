@@ -16,6 +16,7 @@ from ops.queries import (
     SELECT_RUNNING_DETAIL_CLAIMS,
 )
 from shared.db import db_cursor
+from shared.db_vocabularies import CoordinationPhase
 from shared.job_counter import job_snapshot
 
 ACTIVE_AIRFLOW_STATES = (
@@ -257,7 +258,7 @@ def collect_drain_status(state: dict[str, Any]) -> dict[str, Any]:
         if item["status"] == "unknown"
         or (item["status"] == "known" and item["count"] > 0)
     ]
-    drained = state.get("phase") == "draining" and not blockers
+    drained = state.get("phase") == CoordinationPhase.DRAINING and not blockers
     return {
         "phase": state.get("phase"),
         "scope": sorted(scope),

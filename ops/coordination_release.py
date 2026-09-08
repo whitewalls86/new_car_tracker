@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from container_health.expected import EXPECTED_SERVICES, HEALTHCHECK_EXEMPT_SERVICES
+from shared.db_vocabularies import CoordinationKind, CoordinationPhase
 
 HTTP_TIMEOUT_SECONDS = 3
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
@@ -253,7 +254,10 @@ def _auxiliary_still_stopped(_: dict[str, Any]) -> dict[str, str]:
 
 def _coordination_expected(state: dict[str, Any]) -> dict[str, str]:
     gate = "coordination_expected"
-    if state.get("phase") != "validating" or state.get("kind") != "host_maintenance":
+    if (
+        state.get("phase") != CoordinationPhase.VALIDATING
+        or state.get("kind") != CoordinationKind.HOST_MAINTENANCE
+    ):
         return _failed(gate, "coordination is not validating host maintenance")
     return _passed(gate)
 

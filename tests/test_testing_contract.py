@@ -77,6 +77,7 @@ import yaml
 from archiver.processors.lake_snapshot_export_cache import INCLUDED_TABLES
 from archiver.processors.lake_source_audit import SOURCE_TABLE_SPECS
 from scripts.seed_lake_snapshot import dbt_source_tables
+from shared.db_vocabularies import DB_VOCABULARIES
 from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
 from tests.plugins.declared_skips import (
     DECLARED_SKIP_CEILING,
@@ -3779,3 +3780,433 @@ def test_no_waiver_is_listed_twice(rule, waivers):
     subjects = [waiver.subject for waiver in waivers]
     duplicated = sorted({s for s in subjects if subjects.count(s) > 1})
     assert not duplicated, f"{rule} waivers listed more than once: {duplicated}"
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage W -- a checker may not retype a vocabulary the database owns.
+#
+# `check_snapshot_result` accepted only {"created"} while the exporter returns
+# "exported", and the test that should have caught it seeded the status itself.
+# Stage P repaired that instance. The class is wider and the census is in
+# docs/evidence/plan_162_stage_W_evidence.md: 262 literal comparisons across
+# production Python, of which the ones that can drift are the ones keyed on a
+# vocabulary some *other* artifact owns.
+#
+# `db/migrations/` is the largest such owner and the only one that is closed:
+# `CHECK (<column> IN (...))` is enforced by Postgres, so it is not one opinion
+# about the vocabulary, it is the vocabulary. That makes both sides of these
+# two rules derivable, which is the whole reason they are rules and not a
+# registry of contracts somebody remembered to add.
+# ---------------------------------------------------------------------------
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+_CREATE_TABLE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.]+)(.*?);",
+    re.IGNORECASE | re.DOTALL,
+)
+_CHECK_IN = re.compile(
+    r"CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.IGNORECASE | re.DOTALL
+)
+_SQL_STRING = re.compile(r"'([^']*)'")
+
+#: A floor under the derived owner corpus, far below the 18 it finds. A rule
+#: whose population comes from a regex fails open when the regex stops
+#: matching -- a set difference over an empty corpus is empty -- and this is
+#: the same guard `test_the_production_sql_corpus_is_not_empty` puts under the
+#: SQL rules for the same reason.
+_DB_VOCABULARY_FLOOR = 10
+
+
+def _without_sql_comments(text: str) -> str:
+    """Comment prose contains `FROM the` and `CHECK (` often enough to matter."""
+    return _SQL_LINE_COMMENT.sub(" ", _SQL_BLOCK_COMMENT.sub(" ", text))
+
+
+@lru_cache(maxsize=None)
+def check_constrained_columns() -> dict[tuple[str, str], frozenset[str]]:
+    """Every ``CHECK (<column> IN (...))`` in ``db/migrations/``, by table.
+
+    Read from the migrations rather than from a live database on purpose: this
+    is a Layer 0 rule and needs no engine, and the migrations are what a fresh
+    deployment gets. A constraint added by anything other than a migration is
+    invisible here, which is correct -- there is no such path.
+    """
+    found: dict[tuple[str, str], set[str]] = {}
+    for path in sorted((REPO_ROOT / "db" / "migrations").glob("*.sql")):
+        body = _without_sql_comments(path.read_text(encoding="utf-8"))
+        for table, definition in _CREATE_TABLE.findall(body):
+            for column, values in _CHECK_IN.findall(definition):
+                members = set(_SQL_STRING.findall(values))
+                if members:
+                    found.setdefault((table.split(".")[-1], column), set()).update(
+                        members
+                    )
+    return {key: frozenset(values) for key, values in found.items()}
+
+
+def test_the_check_constraint_corpus_is_not_empty():
+    """The floor under the rule below, and the reason it is not decoration.
+
+    Both rules that follow are set comparisons against this corpus. An empty
+    corpus makes both of them pass while checking nothing, so a regex that
+    stops matching -- a migration written with a different `CHECK` spelling,
+    a directory that moved -- has to fail here rather than quietly disarm the
+    two rules downstream.
+    """
+    owners = check_constrained_columns()
+    assert len(owners) >= _DB_VOCABULARY_FLOOR, (
+        f"only {len(owners)} CHECK-constrained column(s) found under "
+        f"db/migrations/, against a floor of {_DB_VOCABULARY_FLOOR}. Either the "
+        f"reader stopped matching or the constraints were dropped; both are "
+        f"failures, and the second is a much larger one."
+    )
+
+
+def test_every_check_constrained_column_has_one_declared_vocabulary():
+    """``shared/db_vocabularies.py`` is a copy, and this is what makes it safe.
+
+    Both directions, because each catches a different way the copy rots. A
+    ``CHECK`` with no vocabulary is a value set production types by hand at
+    every call site -- the state this stage found. A vocabulary naming a column
+    that no longer carries a constraint is a declaration nobody is reading.
+
+    And then equality, which is the direction that actually bites: a migration
+    that renames a value fails here until this module moves with it, and the
+    rule below is what makes every call site move too.
+    """
+    owners = check_constrained_columns()
+    declared = set(DB_VOCABULARIES)
+
+    undeclared = sorted(set(owners) - declared)
+    assert not undeclared, (
+        f"{len(undeclared)} CHECK-constrained column(s) with no vocabulary in "
+        f"shared/db_vocabularies.py: {undeclared}. Postgres already enforces "
+        f"the values; declaring them is what stops production retyping them "
+        f"one call site at a time."
+    )
+    orphaned = sorted(declared - set(owners))
+    assert not orphaned, (
+        f"{len(orphaned)} vocabulary/vocabularies in shared/db_vocabularies.py "
+        f"naming a column with no CHECK constraint: {orphaned}. Either the "
+        f"migration dropped it -- in which case nothing enforces these values "
+        f"any more and that is the finding -- or the name is wrong."
+    )
+    for key in sorted(owners):
+        table, column = key
+        assert frozenset(DB_VOCABULARIES[key]) == owners[key], (
+            f"{table}.{column}: the migration permits {sorted(owners[key])} and "
+            f"{DB_VOCABULARIES[key].__name__} declares "
+            f"{sorted(str(member) for member in DB_VOCABULARIES[key])}. The "
+            f"migration is the owner -- Postgres rejects a write outside it -- "
+            f"so this module is what moves."
+        )
+
+
+_COMPARISONS = (ast.In, ast.NotIn, ast.Eq, ast.NotEq)
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+_QUOTED_KEY = re.compile(r"""['"]([^'"]*)['"]""")
+
+
+def _literal_strings(node: ast.AST) -> list[str] | None:
+    """The string literals in *node*, or ``None`` if it is not all literals."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.Set, ast.Tuple, ast.List)):
+        found = []
+        for element in node.elts:
+            if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                found.append(element.value)
+            else:
+                return None
+        return found or None
+    return None
+
+
+def _subject_names(node: ast.AST) -> set[str]:
+    """Every identifier and quoted key in the expression being compared.
+
+    ``state["phase"]`` names ``phase`` as a subscript, ``current.get("kind")``
+    names ``kind`` as an argument, and a bare ``role`` names it directly. All
+    three are the same question -- which column is this value -- so the
+    expression is unparsed and read for both identifiers and quoted strings
+    rather than matched shape by shape.
+    """
+    text = ast.unparse(node)
+    return set(_IDENTIFIER.findall(text)) | set(_QUOTED_KEY.findall(text))
+
+
+def _database_vocabulary_retypings() -> list[str]:
+    """Every literal comparison that restates a value the database owns.
+
+    **Two conditions, and the second is what makes the rule usable.** The
+    expression must name a CHECK-constrained column, *and* the literal must be
+    a member of that column's vocabulary. Naming alone is far too loose:
+    ``status`` and ``kind`` are the most reused words in the repository, and
+    scoping by name only, ``result.status == "ok"`` in ``ops/routers/deploy.py``
+    reads as a claim about ``artifacts_queue.status``. Measured over the whole
+    corpus that is 83 comparisons naming a constrained column and **33** whose
+    literal is actually a member -- the other 50 are `ok`, `success`,
+    `unknown`, `locked`, vocabularies that belong to something else and that
+    this rule must not touch.
+
+    A membership test is what separates them, and it costs nothing in strength:
+    a literal that is not in the vocabulary cannot be a copy of it.
+    """
+    owners: dict[str, set[str]] = {}
+    for (_table, column), values in check_constrained_columns().items():
+        owners.setdefault(column, set()).update(values)
+
+    found = []
+    for path in production_python_files():
+        relative = _relative(path)
+        if relative == "shared/db_vocabularies.py":
+            continue
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        # A module-level or local name bound to a collection of literals is the
+        # same retyping one step removed -- `REQUESTABLE_ROLES = ("observer",
+        # ...)` then `role not in REQUESTABLE_ROLES`. Reported at the
+        # comparison, because that is where the column name appears.
+        literal_collections: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                members = _literal_strings(node.value)
+                if members:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            literal_collections[target.id] = members
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                continue
+            if not isinstance(node.ops[0], _COMPARISONS):
+                continue
+            right = node.comparators[0]
+            members = _literal_strings(right)
+            if members is None and isinstance(right, ast.Name):
+                members = literal_collections.get(right.id)
+            if members is None:
+                continue
+            names = _subject_names(node.left)
+            for column in sorted(owners):
+                if column not in names:
+                    continue
+                retyped = sorted(set(members) & owners[column])
+                if retyped:
+                    found.append(
+                        f"{relative}:{node.lineno} compares {column} against "
+                        f"{retyped}, which db/migrations/ owns"
+                    )
+                break
+    return found
+
+
+def test_no_module_retypes_a_database_vocabulary_it_could_import():
+    """The half that makes the declared vocabulary reach the call sites.
+
+    Without it, ``shared/db_vocabularies.py`` is a fifteenth copy: the rule
+    above would hold it equal to the constraint while every ``==
+    "draining"`` in the repository went on being its own copy, and a rename
+    would move the migration and the module together and leave the call sites
+    behind. **That is the failure mode this stage exists to close**, one level
+    down from where Stage P found it.
+
+    It is also what makes the pair non-vacuous. On its own this rule passes the
+    moment a migration renames a value -- the old literal stops being a member,
+    so the comparison stops being in scope and nothing fails. The rule above is
+    what fails in that instant, and this one is what makes the repair reach
+    further than one file.
+    """
+    retypings = _database_vocabulary_retypings()
+    assert not retypings, (
+        f"{len(retypings)} comparison(s) restate a value db/migrations/ owns "
+        f"instead of importing it from shared/db_vocabularies.py:\n  "
+        + "\n  ".join(retypings)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage W -- the other owner, and the instance the stage came from.
+#
+# `db/migrations/` owns the vocabularies above and a service's HTTP response
+# owns this one. The export DAG's `check_snapshot_result` accepted only
+# {"created"} while `archiver/processors/export_ci_lake_snapshot.py` returns
+# "exported": a DAG-triggered export would have published its archive and both
+# pointers and then failed the task.
+#
+# **`airflow/dags/` is the one place in this repository where the import that
+# would remove the copy is impossible**, and that is a fact about the deploy
+# rather than a preference: docker-compose.yml mounts `airflow/dags`,
+# `airflow/sql` and `airflow/plugins` into the Airflow containers and nothing
+# else, and `airflow/dags/dag_queries.py` records at length why mounting
+# `shared/` would put unimportable modules on the DAG tree's path. So the DAG
+# must restate the vocabulary, and what it restates has to be checked.
+#
+# Both halves are derived. The service comes from the module's own
+# `<NAME>_URL = "http://<host>:<port>"` constant, and the module that answers
+# for it is the one with the same basename -- the convention the tree already
+# follows for seven of its DAGs. A DAG that checks a status and resolves to no
+# counterpart fails here rather than being skipped, because "we could not tell
+# who owns this" is the state the defect lived in.
+# ---------------------------------------------------------------------------
+_SERVICE_URL = re.compile(
+    r"^([A-Z][A-Z0-9_]*)_URL\s*=\s*[\"']http://([a-z0-9_-]+):", re.MULTILINE
+)
+_DAG_SUPPORT_MODULES = frozenset(
+    {"coordination_contract", "dag_queries", "notifications", "pools", "sensors"}
+)
+
+
+def _emitted_statuses(path: Path) -> frozenset[str]:
+    """Every string *path* can put in a ``status=`` field.
+
+    Two shapes reach it and both have to be read. Most are a literal keyword;
+    the rest are returned by a helper and arrive through a local, as
+    ``status=failure_status``. A reader that saw only the first returns a set
+    short of ``coverage_failed`` -- which is what the single-instance repair
+    did, silently, for four days.
+
+    So an expression this cannot follow **fails** rather than being dropped. An
+    incomplete emitted set only makes the subset check below stricter, never
+    weaker, so this guard is not load-bearing for correctness -- it is here
+    because a reader that quietly narrows is the defect this stage is about,
+    wearing the instrument's uniform.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    produced_by: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            called = getattr(node.value.func, "id", None) or getattr(
+                node.value.func, "attr", ""
+            )
+            for target in node.targets:
+                if isinstance(target, ast.Name) and called in functions:
+                    produced_by[target.id] = called
+
+    found: set[str] = set()
+    unresolved: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "status":
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                found.add(value.value)
+            elif isinstance(value, ast.Name) and value.id in produced_by:
+                found |= {
+                    inner.value.value
+                    for inner in ast.walk(functions[produced_by[value.id]])
+                    if isinstance(inner, ast.Return)
+                    and isinstance(inner.value, ast.Constant)
+                    and isinstance(inner.value.value, str)
+                }
+            else:
+                unresolved.append(f"line {value.lineno}: status={ast.unparse(value)}")
+    assert not unresolved, (
+        f"{_relative(path)} passes a status this reader cannot follow to a "
+        f"literal: {unresolved}. The emitted set it returns is short, and a "
+        f"short set makes the check below fail on a status the service really "
+        f"does return."
+    )
+    return frozenset(found)
+
+
+def _dag_status_checks() -> dict[str, frozenset[str]]:
+    """Per DAG module, the statuses its checker will let through."""
+    accepted: dict[str, set[str]] = {}
+    for path in sorted((REPO_ROOT / "airflow" / "dags").glob("*.py")):
+        if path.stem in _DAG_SUPPORT_MODULES:
+            continue
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        literal_collections: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                members = _literal_strings(node.value)
+                if members:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            literal_collections.setdefault(target.id, []).extend(members)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                continue
+            if not isinstance(node.ops[0], _COMPARISONS):
+                continue
+            if "status" not in _subject_names(node.left):
+                continue
+            right = node.comparators[0]
+            members = _literal_strings(right)
+            if members is None and isinstance(right, ast.Name):
+                members = literal_collections.get(right.id)
+            if members:
+                accepted.setdefault(path.stem, set()).update(members)
+    return {stem: frozenset(values) for stem, values in accepted.items()}
+
+
+def _dag_counterpart(stem: str, source: str) -> list[Path]:
+    """The production module that answers for *stem*, via its own service URL."""
+    packages = {
+        host.replace("-", "_") for _name, host in _SERVICE_URL.findall(source)
+    }
+    packages = {
+        package for package in packages if (REPO_ROOT / package / "__init__.py").is_file()
+    }
+    return sorted(
+        path
+        for package in packages
+        for path in (REPO_ROOT / package).rglob(f"{stem}.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+def test_every_dag_status_check_accepts_only_statuses_its_service_emits():
+    """The assertion that would have caught it, with neither half written here.
+
+    A status the DAG accepts and the service never returns is a branch that can
+    only ever fail, which is exactly what ``created`` was -- and the test that
+    should have caught it seeded ``{"status": "created"}`` itself, so it passed
+    for any string its author picked.
+    """
+    for stem, accepted in sorted(_dag_status_checks().items()):
+        source = (REPO_ROOT / "airflow" / "dags" / f"{stem}.py").read_text(
+            encoding="utf-8"
+        )
+        counterparts = _dag_counterpart(stem, source)
+        assert len(counterparts) == 1, (
+            f"airflow/dags/{stem}.py checks a status against {sorted(accepted)} "
+            f"and this rule cannot tell which module produces it: it resolved "
+            f"{[_relative(path) for path in counterparts]}. A DAG that checks a "
+            f"status names one service in a `<NAME>_URL` constant and shares a "
+            f"basename with the module behind it; an undetermined owner is the "
+            f"state the defect this rule exists for lived in, so it fails here."
+        )
+        emitted = _emitted_statuses(counterparts[0])
+        unreachable = sorted(accepted - emitted)
+        assert not unreachable, (
+            f"airflow/dags/{stem}.py accepts {unreachable}, which "
+            f"{_relative(counterparts[0])} never returns. It returns "
+            f"{sorted(emitted)}."
+        )
+
+
+def test_the_dag_status_rule_has_something_to_check():
+    """A floor, for the same reason every other derived rule here has one.
+
+    This rule reads DAG modules for a shape. A rename in the DAG tree, or a
+    checker rewritten to compare something other than ``status``, empties the
+    population -- and a loop over nothing passes. The number is 1 because that
+    is what the repository holds, and it is the DAG this stage came from.
+    """
+    checks = _dag_status_checks()
+    assert checks, (
+        "no DAG module checks a status against literals any more. Either the "
+        "checker moved and this rule is reading the wrong shape, or the last "
+        "one was deleted; the first is a broken instrument and the second is a "
+        "change worth noticing."
+    )
