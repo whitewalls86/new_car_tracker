@@ -164,7 +164,7 @@ overbuilt.
 
 | Order | Stage | What it delivers | Estimate | State | Issue |
 |---:|:---:|---|---:|---|---|
-| 1 | [**A**](#stage-a--machine-credentials-in-a-table-with-a-lifecycle) | Machine credentials in a table, with a lifecycle | 1 | `next` | -- |
+| 1 | [**A**](#stage-a--machine-credentials-in-a-table-with-a-lifecycle) | Machine credentials in a table, with a lifecycle | 1 | `done` | CAR-95 |
 
 ### Stage A — Machine credentials in a table, with a lifecycle
 
@@ -183,3 +183,151 @@ been reissued one; `SNAPSHOT_DOWNLOAD_TOKENS` and `SNAPSHOT_DOWNLOAD_TOKEN` are
 gone from the code and the production `.env`; and a token's plaintext exists in
 no database, log or shell history. Demonstrated by revoking a live token and
 observing the next request refused **without a restart** — not asserted.
+
+## Public summary
+
+**Machine credential lifecycle** — Moved the API keys that automated callers
+use from a configuration file into the database, where each one can expire, be
+switched off instantly, and show when it was last used — so a credential can be
+retired without guessing what still depends on it.
+
+## Record
+
+### Stage A — Machine credentials in a table, with a lifecycle (2026-09-08)
+
+Both deploys ran on 2026-09-08. Production was at `2597fc0` before and
+`a6d6319` after; every reading below was taken against the production VM unless
+it says otherwise.
+
+**Deploy 1 — the table.**
+
+**The migration needed its own step.** `redeploy.sh` runs `up -d --no-deps`, so
+flyway never runs from it. V051 was applied by `docker compose up flyway` from
+`/opt/cartracker` — *"Successfully applied 1 migration to schema public, now at
+version v051"*, from `Current version of schema public: 050`.
+
+**The four `REVOKE`s in V051 are load-bearing, and that was measured rather
+than assumed.** On production,
+`SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE
+table_schema = 'ops' AND table_name = 'machine_tokens'` returns `cartracker`
+only. Against a control: a table created in `ops` with no revokes, on a locally
+Flyway-migrated Postgres 16, was granted to `scraper_user`, `viewer`,
+`dbt_user` and `airflow_app_user` — the four `ALTER DEFAULT PRIVILEGES` grants
+this schema applies to anything `cartracker` creates. Stating intent as an
+absence of GRANTs, the way `authorized_users` does in `public`, would have
+silently failed here. That finding is the origin of
+[Plan 178](plan_178_role_grant_scoping.md).
+
+**The container was asked what it loaded rather than the pull being trusted.**
+`docker compose exec -T ops python -c` reported `SnapshotToken._fields ==
+('name', 'scope')`, `LAST_USED_THROTTLE == '5 minutes'`, both
+`_resolve_machine_token` and `_machine_tokens_exist` present,
+`len(SNAPSHOT_TOKENS) == 2` (the environment fallback still live, as designed),
+and `_machine_tokens_exist() is False` before any token was issued.
+
+**The auth path was intact before any credential existed.** Against
+`https://cartracker.info/admin/snapshots/adaptive-refresh/latest`: a bad bearer
+token returned **403**, a missing header **401**. Neither was a 500, so the
+table lookup ran and fell through to the environment set rather than erroring.
+
+**Two callers, not three.** `ci` and `desktop-windows` were issued through
+`scripts/issue_machine_token.py` inside the ops container — both `read`, both
+`created_by=andrew`, both expiring 2027-09-08. The Mac named in
+[the case](#the-case) was not issued one; two callers was a decision taken on
+the day, not an omission, and a third is one command away when it needs one.
+
+**A table-backed credential authenticates in production.** `curl` with the
+`desktop-windows` token returned **200** at 18:16:10Z.
+
+**Attribution is per caller.** After three requests from `desktop-windows`,
+`SELECT name, last_used_at FROM ops.machine_tokens` gave
+`desktop-windows = 18:16:10` and `ci = NULL`. A shared credential could not
+produce that difference, which is the property the naming exists for.
+
+**The throttle holds, on both callers independently.** `desktop-windows`'
+three requests landed at 18:16:10, 18:16:35 and 18:16:35 and `last_used_at`
+stayed at 18:16:10. `ci` authenticated at 18:36:27 and again at 18:39:13 and
+stayed at 18:36:27. One write per caller per five-minute window, against six
+authenticated requests.
+
+**No plaintext anywhere it was looked for.** Both rows satisfy
+`length(token_sha256) = 64` and `token_sha256 ~ '^[0-9a-f]{64}$'`. The token was
+piped over `ssh` stdin into `grep -c -F -f -` against
+`docker logs cartracker-ops --since 24h` and `docker logs cartracker-postgres
+--since 24h`: **0 occurrences in each**. It went over stdin specifically so it
+never entered a command line or a terminal transcript.
+
+**Revocation is refused on the next request, with no restart.** The exit's one
+clause that had to be demonstrated rather than asserted:
+
+| Time | Action | Result |
+|---|---|---|
+| 18:16:10 | `GET /latest`, `desktop-windows` | **200** |
+| 18:36:52 | `UPDATE ops.machine_tokens SET revoked_at = now()` | 1 row |
+| 18:36:59 | the same token, the same container | **403**, `{"detail":"invalid token"}` |
+| — | `UPDATE ... SET revoked_at = NULL` | 1 row |
+| — | the same token again | **200** |
+
+`docker inspect -f '{{.State.StartedAt}} {{.RestartCount}}' cartracker-ops`
+read `2026-09-08T18:04:22Z` and `restartCount=0` throughout, so nothing
+reloaded between the 200 and the 403 — or between the 403 and the 200, which
+also shows the lookup is cached in neither direction. The log recorded
+`machine token caller=desktop-windows refused: revoked` while the caller was
+told only `invalid token`: the reason is in the log, and the distinction
+between a retired credential and one that never existed is not on the wire.
+
+**CI spends the credential.** `ci.last_used_at` moved to 18:36:27 — from the
+push-to-master run when [PR #396](https://github.com/whitewalls86/new_car_tracker/pull/396)
+merged, **not** from the `workflow_dispatch` at 18:37:33, which was dispatched
+afterwards and authenticated again at 18:39:13. The dispatched run concluded
+`success` with *"dbt build against a production snapshot: success"*, which is
+the job that reads `CARTRACKER_SNAPSHOT_TOKEN`. A dispatch was needed because a
+docs-only pull request cannot exercise it: `SNAPSHOT_DBT_TRIGGERS` in
+`scripts/ci_change_scope.py` names `dbt/`, `db/migrations/`, the pin file,
+`ci.yml` and four snapshot scripts, and an evidence commit touches none of them.
+
+**Deploy 2 — retiring the fallback.**
+
+**Production was stripped before the code merged, deliberately.** Removing
+`SNAPSHOT_DOWNLOAD_TOKENS` from `/opt/cartracker/.env` (backed up to
+`.env.bak-plan173-20260908-184144`) and recreating `ops` at 18:42:17Z put the
+exit's `.env` clause beyond doubt *before* the merge rather than after it, and
+made the code removal a cleanup that changes no behaviour. An env change is
+Compose config drift, so this needed `redeploy.sh ops` — a bare `docker
+restart` would not have re-read it.
+
+**The table carries production alone.** After that recreate the container
+reported `len(SNAPSHOT_TOKENS) == 0` and `_tokens_configured() is True`, and a
+download returned **200** with the fallback holding no credentials at all. One
+nuance the reading exposes: `SNAPSHOT_DOWNLOAD_TOKENS` was still *present* in
+the container's environment as an empty string, because `docker-compose.yml`
+declared it with a `${…:-}` default — the key is gone from `.env`, the parsed
+set is empty, and the Compose line itself goes with this stage's merge.
+
+**The removal broke a mutation, which is the harness working.** Deleting the
+Compose line staled three anchors in
+`scripts/verify_testing_contract_mutations.py`, landed by Plan 162 Stage V
+hours earlier, and the harness refused rather than skipping: *"The mutation has
+gone stale, which means it has stopped testing anything."* Re-anchored on
+`RESEND_API_KEY`, and verified by re-running rather than by the error
+disappearing — all 13 mutations report `CAUGHT`, including the three that
+moved.
+
+**Public surfaces:** no mechanism, name or quantity either surface states
+was changed by this work. `README.md`'s *"Bearer-token authenticated, for CI
+and local scripts"* survives unchanged — the storage moved, the mechanism and
+the callers did not.
+
+**Against the exit, every clause:** a table-backed token authenticates in
+production — met. Every caller reissued — met for the two callers that exist,
+with the Mac deliberately not issued. `SNAPSHOT_DOWNLOAD_TOKENS` and
+`SNAPSHOT_DOWNLOAD_TOKEN` gone from the code and the production `.env` — met.
+A token's plaintext in no database, log or shell history — met for the two logs
+checked, and the digests confirm the database never held it. Demonstrated by
+revoking a live token and observing the next request refused without a restart
+— met, above.
+
+**Cost against estimate:** estimated 1, and the coding was about that. The
+production sequence was the larger half and is not reflected in the number —
+two deploys, seven services, a migration applied out of band, and the deploy-2
+strip ordered ahead of its own merge.

@@ -45,6 +45,14 @@
   ],
   "completed": [
     {
+      "plan": "173",
+      "title": "Machine credential lifecycle",
+      "date": "2026-09-08",
+      "state": "completed",
+      "summary": "Moved the API keys that automated callers use from a configuration file into the database, where each one can expire, be switched off instantly, and show when it was last used — so a credential can be retired without guessing what still depends on it.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_173_machine_credential_lifecycle.md"
+    },
+    {
       "plan": "175",
       "title": "Commit gate bundling hole",
       "date": "2026-09-04",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "Plans had grown into documents answering four questions at once, with no rule for what belonged where or when evidence was written down. They now follow a contract: a plan gains one section as it advances, and automated checks refuse to publish work that skipped one.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
-    },
-    {
-      "plan": "129",
-      "title": "Trained dictionary compression for raw HTML",
-      "date": "2026-09-03",
-      "state": "completed",
-      "summary": "Cut stored detail-page HTML to about 5% of its original size while preserving lossless, independently readable artifacts and compatibility with older captures.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_129_zstd_dictionary_compression.md"
     }
   ]
 }
