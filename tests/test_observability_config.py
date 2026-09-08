@@ -129,12 +129,64 @@ class TestPrometheusAndLokiConfig:
             name for name, service in compose["services"].items()
             if service.get("labels", {}).get("promtail.enable") == "true"
         }
-        assert selected == {
-            "oauth2-proxy",
-            "airflow-dag-processor",
-            "airflow-scheduler",
-            "airflow-apiserver",
-        }
+        # Plan 154 Stage B replaced a hardcoded copy of this set with the
+        # registry itself, which is what the plan's contract actually asks for:
+        # a label cannot be added without a policy, and a policy cannot be
+        # written without a label, because the two are asserted equal.
+        assert selected == SELECTED_STDOUT_SERVICES
+
+        # Principle 4, asserted rather than only written down: the collector and
+        # its store never ingest themselves, because Promtail shipping its own
+        # errors to Loki -- and Loki shipping the errors it raises handling them
+        # -- is a loop that amplifies exactly when something is already wrong.
+        assert not selected & {"loki", "promtail"}
+        for service in ("loki", "promtail"):
+            assert (
+                SOURCE_POLICY[service].route is IngestionRoute.INTENTIONAL_EXCLUSION
+            )
+
+    def test_each_container_stdout_drop_rule_has_its_own_counter(self):
+        """Plan 154 Stage B: a shared reason makes two policies one number.
+
+        `logentry_dropped_lines_total` is labelled by reason, so two rules
+        sharing one reason are indistinguishable in the only place a drop is
+        counted -- and Stage C has to judge each policy separately. The
+        application-file jobs deliberately share
+        `application_file_unclassified` across six services because it is one
+        policy applied six times; within the container-stdout job every rule is
+        its own policy, so every reason there must be distinct.
+        """
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text(encoding="utf-8")
+        )
+        job = next(
+            item for item in doc["scrape_configs"]
+            if item["job_name"] == "docker-operations"
+        )
+
+        def reasons(stages):
+            for stage in stages:
+                for key, body in stage.items():
+                    if not isinstance(body, dict):
+                        continue
+                    if "drop_counter_reason" in body:
+                        yield body["drop_counter_reason"]
+                    if "stages" in body:
+                        yield from reasons(body["stages"])
+
+        found = list(reasons(job["pipeline_stages"]))
+        assert found, "the container-stdout job dropped its drop rules"
+        assert len(found) == len(set(found)), (
+            f"drop reasons collide and would aggregate into one counter: {found}"
+        )
+
+        # The model raises for a service it does not know, so this also pins
+        # that every reason the config can emit is one the fixtures can reach.
+        assert {
+            "postgres_unparsed_record",
+            "postgres_routine_server_log",
+            "postgres_continuation_record",
+        } <= set(found)
 
     def test_stage_5_retention_is_single_90_day_policy(self):
         loki = yaml.safe_load((_REPO_ROOT / "loki" / "loki.yml").read_text(encoding="utf-8"))

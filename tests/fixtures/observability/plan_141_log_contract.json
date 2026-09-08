@@ -7,7 +7,9 @@
     "The gunicorn supervisor and {file.py:line} task-logger cases are upstream default formats, not lines observed in that window; they exist because those are the shapes the parser most needs to catch and the sample could not supply. Stage 4 confirms them against real output.",
     "oauth_lifecycle_severity_wins_over_status is synthetic: it is a single line matching both oauth patterns, and it exists only to pin which of the two sets the level.",
     "Traceback continuation lines are intentionally excluded; the initiating bracketed ERROR or CRITICAL record is retained.",
-    "Every container_stdout case here was replayed through grafana/promtail:3.5.8 with -dry-run -stdin against this repository's pipeline stages; the retained set and labels below are what Go produced."
+    "Every container_stdout case here was replayed through grafana/promtail:3.5.8 with -dry-run -stdin against this repository's pipeline stages; the retained set and labels below are what Go produced.",
+    "Plan 154 Stage B added the postgres and trawl cases. Every postgres line except postgres_panic_constructed is a verbatim production capture. No WARNING occurred naturally in the twenty days of log available on 2026-09-07, so one was induced on 2026-09-08 with `BEGIN; BEGIN; ROLLBACK;` -- which writes nothing -- rather than fabricated. PANIC cannot be induced without crashing the server, so it stays a shape-preserving construction; POSTGRES_LEVEL_MAP would otherwise have an untested branch.",
+    "trawl_tab_space_fallback_stays_info pins a decision rather than a parse: the fallback fires only after the primary solve method failed, and it is deliberately INFO so it cannot make WARNING trawl's routine level. Plan 155 Stage 0 item 4 holds the reasoning and the escalation rule that replaces it."
   ],
   "cases": [
     {
@@ -163,6 +165,83 @@
       "source_type": "container_stdout",
       "line": "[2026/08/25 14:02:34] [oauthproxy.go:176] Error: fixture session refresh failed GET - \"/oauth2/auth\" HTTP/1.1 \"fixture-agent\" 401 13 0.001",
       "expected": {"retained": true, "level": "ERROR", "status": "401", "error_panel": true}
+    },
+    {
+      "name": "postgres_fatal_role_missing",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "2026-09-07 18:03:06.493 UTC [1733041] FATAL:  role \"postgres\" does not exist",
+      "expected": {"retained": true, "level": "ERROR", "error_panel": true}
+    },
+    {
+      "name": "postgres_error_relation_missing",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "2026-09-07 18:04:38.726 UTC [1733206] ERROR:  relation \"dag_run\" does not exist at character 98",
+      "expected": {"retained": true, "level": "ERROR", "error_panel": true}
+    },
+    {
+      "name": "postgres_warning_transaction_in_progress",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "2026-09-08 02:57:36.900 UTC [1838811] WARNING:  there is already a transaction in progress",
+      "expected": {"retained": true, "level": "WARNING", "error_panel": true}
+    },
+    {
+      "name": "postgres_panic_constructed",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "2026-09-07 20:56:00.733 UTC [34] PANIC:  could not write to file \"pg_wal/xlogtemp.34\"",
+      "expected": {"retained": true, "level": "CRITICAL", "error_panel": true}
+    },
+    {
+      "name": "postgres_checkpoint_log_dropped",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "2026-09-07 20:56:00.733 UTC [34] LOG:  checkpoint starting: time",
+      "expected": {"retained": false, "drop_reason": "postgres_routine_server_log", "error_panel": false}
+    },
+    {
+      "name": "postgres_statement_continuation_dropped",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "2026-08-18 04:31:08.351 UTC [646] STATEMENT:  SELECT state, count(*) FROM task_instance WHERE task_id = check_deploy_intent AND start_date >= 2026-08-18 04:18:07+00 GROUP BY state ORDER BY state;",
+      "expected": {"retained": false, "drop_reason": "postgres_continuation_record", "error_panel": false}
+    },
+    {
+      "name": "postgres_unparsed_record_dropped",
+      "service": "postgres",
+      "source_type": "container_stdout",
+      "line": "PostgreSQL Database directory appears to contain a database; Skipping initialization",
+      "expected": {"retained": false, "drop_reason": "postgres_unparsed_record", "error_panel": false}
+    },
+    {
+      "name": "trawl_cf_clearance_obtained",
+      "service": "trawl",
+      "source_type": "container_stdout",
+      "line": "[challenge] cf_clearance obtained",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+    },
+    {
+      "name": "trawl_tab_space_fallback_stays_info",
+      "service": "trawl",
+      "source_type": "container_stdout",
+      "line": "[challenge] Turnstile keyboard Tab+Space attempted",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+    },
+    {
+      "name": "trawl_still_on_challenge_page",
+      "service": "trawl",
+      "source_type": "container_stdout",
+      "line": "[challenge] cf_clearance set but still on challenge page — navigating to original URL",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+    },
+    {
+      "name": "trawl_pool_rolling_replacement",
+      "service": "trawl",
+      "source_type": "container_stdout",
+      "line": "[pool] browser 0 rolling replacement installed (total: 3)",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
     }
   ]
 }
