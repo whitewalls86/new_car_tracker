@@ -385,13 +385,13 @@ moved it to the end without making it a different stage.
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `next` | CAR-88 |
-| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `—` | — |
+| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `—` | CAR-104 |
 | 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
-| 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | — |
-| 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | — |
-| 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | — |
-| 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | — |
-| 27 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | — |
+| 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
+| 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
+| 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
+| 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
+| 27 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
 | 28 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 
 `State` takes the five values [the plan-document
@@ -432,9 +432,18 @@ whatever Stage U has not already supplied"*. Stage U has since shipped. Whether
 anything is left is the first question that stage asks, not an assumption this
 table should make for it.
 
-**The six new stages carry no `Legacy` and no `Issue`.** They were not in the
-2026-09-04 renumbering, and their Linear issues are created when they start —
-not now, because [an issue created early is an issue that rots](../../.claude/skills/ticket-now/SKILL.md).
+**The six new stages carry no `Legacy`.** They were not in the 2026-09-04
+renumbering. The `Issue` cells were empty when this table was written and are
+filled as the issue set lands — grouped by
+[`plan-start`](../../.claude/skills/plan-start/SKILL.md)'''s rule, one issue per
+deploy-requiring stage and one per bundled run of locally-verified ones.
+
+*This paragraph first claimed the issues are created only when a stage starts,
+citing `ticket-now` for it. **That skill says no such thing and the claim is
+backwards** — `plan-start` creates a plan'''s whole issue set up front, in
+`Backlog` with no cycle, and `fill-cycle` seeds them into one later. A
+fabricated citation inside the plan whose subject is documents that drift from
+their mechanisms, left on the record rather than quietly deleted.*
 **The stage sections below run in letter order, not work order**, so a stage is
 found by its name rather than by remembering where it sits today. `Order` is the
 only thing that says what comes next, which is the point of it being a column.
