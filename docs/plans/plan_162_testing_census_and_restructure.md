@@ -392,7 +392,8 @@ moved it to the end without making it a different stage.
 | 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
 | 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
 | 27 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
-| 28 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+| 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | unassigned |
+| 29 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -2532,6 +2533,111 @@ useless tests are.
 `FABRICATED_ROW_WAIVERS` seeded at its measured count and drained to 0;
 demonstrated by a fabricated row failing at construction.
 
+
+### Stage AE: configuration is what Compose delivers, and everything else is a constant
+
+**Issue:** unassigned · **State:** `backlog`
+
+**Found 2026-09-08, closing Stage V.** That stage asserts `.env.example`
+against `docker-compose*.yml` in both directions, and its corpus is those two
+files. It therefore says nothing about a default chosen in Python, which is
+where most of this repository's configuration actually lives.
+
+**Measured across production Python: 76 distinct environment names read, and
+39 that neither `.env.example` nor any Compose file mentions.** Twenty are
+covered by Stage V's rule. Seventeen more are set as *literals* in a Compose
+`environment:` block -- `PGHOST`, `DATABASE_URL`, `SCRAPER_URL` -- so they are
+delivered, just not operator-configurable. The remaining 39 exist only in the
+code that reads them.
+
+**None of them is a provisioning defect, and that was measured rather than
+assumed.** Every one has a concrete fallback and **not one is read through
+`os.environ[...]`**, so no absent variable can fail a fresh provision. Two that
+first looked like exceptions were not: `DISK_USAGE_ROOT_PREFIX` and
+`DISK_USAGE_VOLUME_PREFIX` reach their defaults through the
+`os.environ.get(X) or DEFAULT_X` idiom at `disk_usage.py:287-290` rather than a
+`.get` default. So this stage is not about a variable that fails to arrive. It
+is about where configuration is allowed to live.
+
+**The 39 are not one kind of thing, and treating them as one is what makes the
+split feel unmaintainable.** Twelve are configuration by any reading: six
+topology defaults that are simply the deployed value compiled into Python
+(`LOKI_URL = http://loki:3100` in `ops/coordination_release.py`,
+`PROMETHEUS_URL`, `CONTAINER_HEALTH_URL`, `AIRFLOW_HOME`, `RAW_BASE`,
+`LOG_PATH`), two archiver safety flags that gate behaviour per service, and
+four DuckDB memory and thread limits that are the real levers on a struggling
+VM. The rest are calibration constants and cadences -- pack and prune batch
+sizes, byte targets, progress intervals.
+
+**`PACK_PRUNE_INODES_PER_OBJECT` is the clearest of those and is worth stating
+exactly**, because it is what shows the two kinds apart. MinIO stores each
+object as a directory plus an `xl.meta`, so deleting one frees about two
+inodes; Plan 131 Stage 0a measured the figure across the bucket at **2.24**. It
+is used once, at `delete_packed_source_html.py:632`, to print
+`inodes_freed_estimated` beside the `inodes_freed_measured` the filesystem
+actually reports. A measured constant feeding one cosmetic estimate is not a
+knob, and exposing it as an environment variable invites someone to change a
+number whose derivation lives in a plan document.
+
+**The line, stated so that it needs no judgement to apply:** configuration is
+what Compose delivers. Everything else is a constant and stops being an
+environment variable at all. Membership is decided by whether a service
+delivers the value, not by anyone's view of whether an operator might want it,
+which is what makes the split survive the people who made it.
+
+**Moving a default is not a safe edit, and the order matters.** A variable left
+as `os.environ.get("X", "2GB")` while Compose gains `X: ${X:-}` returns the
+**empty string**, not `"2GB"` -- the key now exists. That is Stage P's failure
+mode a third time: a value that looks wired, a container that comes up healthy,
+and a wrong value invisible from outside. So a variable that moves has its
+default removed from Python and its read made strict **in the same change**,
+with Compose the single owner. Thirty-six of the 39 use the fragile
+`.get(name, default)` form today; only `disk_usage.py` uses the idiom that
+survives an empty value.
+
+**Then the rule, and it is one rule rather than a policy.** No production
+module reads an environment variable with an inline default: AST-walk
+`production_python_files()` -- the corpus the SQL and import rules already use
+-- and fail on `os.environ.get(X, d)` and `getenv(X, d)`. What survives is
+`os.environ[X]`, and the second clause is that a variable read strictly must be
+delivered by its service's Compose block. That clause reuses the interpolation
+parser [Stage V](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it)
+committed rather than deriving Compose references a second time, because two
+parsers that could disagree about what Compose delivers is the defect this
+plan keeps finding in other clothes.
+
+**The waiver is seeded, drained, and then deleted.** The rule has 39 violations
+the day it is written, so it lands with a waiver tuple at that count and the
+stage drains it to zero -- Stage S's pattern, and this plan does not leave
+things on waivers. What is decided here is what happens to the empty tuple, and
+this plan has done it both ways deliberately: `CI_INVOCATION_WAIVERS` stays
+empty so a new violation fails on append, while the SQL-execution gate's ledger
+was deleted so that restoring the escape hatch is a diff that has to argue for
+itself. **This one is deleted**, for the reason that gate gave: an empty ledger
+and no ledger differ in exactly one way, which is what the next violation costs
+to admit, and here it should cost an argument rather than a tuple append.
+
+**The cost is the module-scope reads, not the line count.** These are module
+level -- `DUCKDB_MEMORY_LIMIT = os.environ.get(...)` at
+`delete_packed_source_html.py:123`. Made strict, a missing variable raises
+`KeyError` at **import**, which breaks every test and tool that imports the
+module rather than only those exercising the behaviour. Either a conftest
+supplies the service defaults or the read defers into the function. That choice
+is this stage's design question and it is larger than the 39 edits.
+
+**Estimate: not sized.** The triage is done -- roughly twelve move and the rest
+are deletions -- but the module-scope decision above is what sizes it, and the
+twelve that become Compose configuration can only be proven by a deploy, so
+this stage is production-gated in the way [Stage V](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it)
+was expected to be and was not.
+
+**Exit:** no production module reads an environment variable with an inline
+default; every variable read strictly is delivered by its service's Compose
+block; each of the 39 has been moved to Compose or reduced to a constant, with
+its read made strict in the same change as its default moved; the waiver tuple
+has drained to zero and been deleted; and the twelve that moved are verified by
+asking a deployed container what it loaded, not by asking whether it is up.
+Demonstrated by an inline default failing, not asserted.
 
 ## Success criteria
 
