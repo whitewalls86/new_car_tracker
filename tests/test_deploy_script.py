@@ -740,6 +740,13 @@ class TestBuildCachePrune:
                     f"{name}'s prune omits -f, so it blocks on a confirmation "
                     "prompt no deploy is watching"
                 )
+                assert re.search(r"(?<![\w-])-a(?![\w-])|--all", line), (
+                    f"{name}'s prune omits -a, which makes --keep-storage inert. "
+                    "Measured on the first production run, 2026-09-08: without "
+                    "it BuildKit protects internal, frontend and shared records, "
+                    "the eligible set was exhausted at 5.72 GB, and the 4GB cap "
+                    "was never reached. No cap value enforces anything without -a."
+                )
 
     def test_the_build_paths_agree_on_the_cap(self):
         """Two scripts, one number. Without this they are two copies that drift."""
