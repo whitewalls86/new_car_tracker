@@ -1,13 +1,11 @@
 """Unit tests for scripts/seed_lake_snapshot.py (Plan 120, Phase 4)."""
 from __future__ import annotations
 
-import io
 import json
 import tarfile
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
-import zstandard as zstd
 
 from scripts.lake_snapshot_common import (
     ChecksumMismatchError,
@@ -21,22 +19,10 @@ from shared.lake_snapshot_postgres import (
     UnknownSnapshotTableError,
 )
 from shared.queries import REPLACE_POSTGRES_SNAPSHOT_TABLE
+from tests.scripts.conftest import make_tar_zst
 
 LOCAL_POSTGRES_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
-
-def _make_tar_zst(archive_path, files, raw_members=None):
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tar:
-        for name, content in files.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(content)
-            tar.addfile(info, io.BytesIO(content))
-        for info, content in raw_members or []:
-            tar.addfile(info, io.BytesIO(content) if content is not None else None)
-    compressed = zstd.ZstdCompressor(level=3).compress(buf.getvalue())
-    archive_path.write_bytes(compressed)
-    return archive_path
 
 
 def _build_snapshot(tmp_path, files=None, raw_members=None, tables=None):
@@ -50,7 +36,7 @@ def _build_snapshot(tmp_path, files=None, raw_members=None, tables=None):
     }
     snapshot_dir = tmp_path / "snapshot"
     snapshot_dir.mkdir()
-    archive = _make_tar_zst(snapshot_dir / "snapshot.tar.zst", files, raw_members)
+    archive = make_tar_zst(snapshot_dir / "snapshot.tar.zst", files, raw_members)
     manifest = {
         "snapshot_id": "adaptive-refresh-2026-07-07-000000",
         "archive": {

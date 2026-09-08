@@ -5,10 +5,8 @@ Validates the UPDATE logic directly against a real DB — no Airflow machinery
 needed. Seeds a stale row (> 48h) and a recent row (< 48h), runs the exact
 SQL the DAG uses, then asserts only the stale row was nulled.
 """
-import os
 from pathlib import Path
 
-import psycopg2
 import pytest
 from psycopg2.extras import RealDictCursor
 
@@ -16,8 +14,6 @@ from shared.query_loader import load_query
 from tests.sql_loader import queries
 
 SQL = queries(__file__)
-
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 
 # Read through ``shared.query_loader``, not with ``read_text``, and the
 # difference is the whole of Plan 162 Stage X's recorder: ``SqlText`` carries
@@ -28,20 +24,10 @@ _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 _SQL = load_query(Path(__file__).parents[3] / "airflow" / "sql", "delete_stale_emails")
 
 
-def _get_conn():
-    from urllib.parse import urlparse
-    url = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-    p = urlparse(url)
-    return psycopg2.connect(
-        host=p.hostname, port=p.port or 5432,
-        dbname=p.path.lstrip("/"), user=p.username, password=p.password,
-    )
-
-
 @pytest.fixture()
-def db():
+def db(db_conn_factory):
     """Autocommit connection for seeding and verification."""
-    conn = _get_conn()
+    conn = db_conn_factory()
     conn.autocommit = True
     yield conn.cursor(cursor_factory=RealDictCursor)
     conn.close()

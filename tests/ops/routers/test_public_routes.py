@@ -7,21 +7,11 @@ the two files a crawler asks for before anything else.
 """
 import json
 import re
-from types import MappingProxyType
 
 import pytest
 
-from ops.public_stats import PresentationSnapshot
 from ops.routers import public
-
-
-def _presentation(stats=None, *, status="ok", stale=False):
-    return PresentationSnapshot(
-        stats=MappingProxyType(stats or {}),
-        status=status,
-        stale=stale,
-        last_success_at="2026-08-18T18:00:00Z" if stats else None,
-    )
+from tests.ops.conftest import make_presentation
 
 
 @pytest.fixture
@@ -29,7 +19,7 @@ def landing(mock_client, mocker):
     """The landing page, with a snapshot that does not touch the database."""
     mocker.patch(
         "ops.routers.info.public_stats_cache.get",
-        return_value=_presentation({"active_listings": 500}),
+        return_value=make_presentation({"active_listings": 500}),
     )
     return mock_client.get("/").text
 
@@ -60,7 +50,7 @@ class TestCanonicalRoot:
     def test_the_redirect_is_one_hop_and_ends_on_the_page(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/info")
@@ -78,7 +68,7 @@ class TestCanonicalRoot:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/", follow_redirects=False)

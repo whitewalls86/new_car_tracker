@@ -1,18 +1,8 @@
 import re
-from types import MappingProxyType
 
-from ops.public_stats import PresentationSnapshot
 from ops.routers.info import _fmt_stat
 from ops.static_assets import STATIC_DIR
-
-
-def _presentation(stats=None, *, status="ok", stale=False):
-    return PresentationSnapshot(
-        stats=MappingProxyType(stats or {}),
-        status=status,
-        stale=stale,
-        last_success_at="2026-08-18T18:00:00Z" if stats else None,
-    )
+from tests.ops.conftest import make_presentation
 
 
 class TestFmtStat:
@@ -41,7 +31,7 @@ class TestInfoEndpoint:
         }
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(stats),
+            return_value=make_presentation(stats),
         )
 
         response = mock_client.get("/")
@@ -60,7 +50,7 @@ class TestInfoEndpoint:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/")
@@ -70,7 +60,7 @@ class TestInfoEndpoint:
     def test_partial_snapshot_returns_200_and_omits_missing_fields(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/")
@@ -83,7 +73,7 @@ class TestInfoEndpoint:
         stats = {"analytics_data_through_iso": "2026-08-18T17:00:00Z"}
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(stats, status="failed", stale=True),
+            return_value=make_presentation(stats, status="failed", stale=True),
         )
 
         response = mock_client.get("/")
@@ -94,7 +84,7 @@ class TestInfoEndpoint:
     def test_empty_snapshot_keeps_narrative_available(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(status="not_ready", stale=True),
+            return_value=make_presentation(status="not_ready", stale=True),
         )
 
         response = mock_client.get("/")
@@ -106,7 +96,7 @@ class TestInfoEndpoint:
     def test_request_path_does_not_touch_storage_or_upstream(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 1}),
+            return_value=make_presentation({"active_listings": 1}),
         )
         duckdb_connect = mocker.patch(
             "duckdb.connect", side_effect=AssertionError("DuckDB must not be queried")
@@ -216,7 +206,7 @@ class TestLandingPageStructure:
     def test_sections_appear_in_the_plans_order(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = _body_only(mock_client.get("/").text)
@@ -233,7 +223,7 @@ class TestLandingPageStructure:
     def test_the_data_journey_names_its_stages_in_order(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         # The stylesheet carries data-layer selectors too, and they sit above the
@@ -256,7 +246,7 @@ class TestLandingPageStructure:
         """An SVG carrying the page's central explanation owes a text equivalent."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         flat = _flat(mock_client.get("/").text)
@@ -277,7 +267,7 @@ class TestLandingPageStructure:
         """Stage 3a's rule, met on the way in rather than retrofitted."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         flat = _flat(mock_client.get("/").text)
@@ -301,7 +291,7 @@ class TestLandingPageStructure:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         flat = _flat(mock_client.get("/").text)
@@ -321,7 +311,7 @@ class TestLandingPageStructure:
         """Gate 0 row 7. Processing writes the HOT row and its event together."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -336,7 +326,7 @@ class TestLandingPageStructure:
         """Gate 0 row 8. dbt reads the events; the ops view makes the decision."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -349,7 +339,7 @@ class TestLandingPageStructure:
         """Truth contract §2: nothing may imply the public dashboard reads Iceberg."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -367,7 +357,7 @@ class TestLandingPageStructure:
     ):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -401,7 +391,7 @@ class TestLandingPageStructure:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -424,7 +414,7 @@ class TestLandingPageStructure:
     def test_no_barred_phrase_survives_on_the_page(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text.lower()
@@ -438,7 +428,7 @@ class TestLandingPageStructure:
         """Gate 0 row 1. Three different values rendered on one page load before."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -457,7 +447,7 @@ class TestLandingPageStructure:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = _body_only(mock_client.get("/").text)
@@ -480,7 +470,7 @@ class TestLandingPageStructure:
         """Goal 6: the page stays useful when the marts are locked or unavailable."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(status="not_ready", stale=True),
+            return_value=make_presentation(status="not_ready", stale=True),
         )
 
         body = _body_only(mock_client.get("/").text)
@@ -530,7 +520,7 @@ class TestTheLandingPageIsSameOrigin:
     ):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         html = mock_client.get("/").text
@@ -549,7 +539,7 @@ class TestTheLandingPageIsSameOrigin:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         html = mock_client.get("/").text
@@ -564,7 +554,7 @@ class TestTheLandingPageIsSameOrigin:
         """Eleven Simple Icons plus the dbt mark, which was already on-origin."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         html = mock_client.get("/").text
@@ -588,7 +578,7 @@ class TestTheLandingPageIsSameOrigin:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         html = mock_client.get("/").text
@@ -615,7 +605,7 @@ class TestTheLandingPageIsSameOrigin:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         html = mock_client.get("/").text
