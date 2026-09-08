@@ -39,6 +39,8 @@ SELECTED_STDOUT_SERVICES: Final = frozenset(
         "airflow-scheduler",
         "airflow-dag-processor",
         "oauth2-proxy",
+        "postgres",
+        "trawl",
     }
 )
 AIRFLOW_SERVICES: Final = frozenset(
@@ -72,6 +74,26 @@ OAUTH_ACCESS_PATTERN: Final = (
 OAUTH_LIFECYCLE_LEVEL_PATTERN: Final = (
     r"^\[[^\]]+\]\s+\[[^\]]+\]\s+(?P<oauth_level>Warning|ERROR|Error):"
 )
+# Plan 154 Stage A measured `log_line_prefix = '%m [%p] '`, which puts the
+# severity immediately after the pid:
+#   2026-08-29 05:55:28.001 UTC [1733041] FATAL:  too many connections for ...
+# Continuation records (DETAIL, HINT, STATEMENT, CONTEXT) match this shape too
+# and fall through to the unclassified drop, exactly as Airflow's traceback
+# continuations already do -- consistent rather than a new exception.
+POSTGRES_SEVERITY_PATTERN: Final = (
+    r"^\d{4}-\d{2}-\d{2} [\d:.]+ \w+ \[\d+\] (?P<pg_level>[A-Z0-9]+):"
+)
+# PANIC is a server-level failure; FATAL only ends one session, and Stage A
+# found most FATALs are ad-hoc `psql` sessions guessing at role names. Mapping
+# FATAL to CRITICAL would have made an operator typo page someone.
+POSTGRES_LEVEL_MAP: Final = {
+    "WARNING": "WARNING",
+    "ERROR": "ERROR",
+    "FATAL": "ERROR",
+    "PANIC": "CRITICAL",
+}
+# The 288 daily `LOG:` checkpoint records postgres-exporter already covers.
+POSTGRES_DROPPED_LEVELS: Final = frozenset({"LOG", "DEBUG", "INFO", "NOTICE"})
 
 
 class IngestionRoute(str, Enum):
@@ -162,9 +184,13 @@ SOURCE_POLICY: Final[dict[str, SourcePolicy]] = {
         "Successful auth chatter is dropped because it repeats user and request metadata.",
     ),
     "postgres": _policy(
-        IngestionRoute.INTENTIONAL_EXCLUSION,
-        "Database health and capacity are covered by postgres-exporter metrics.",
-        _NO_LOKI,
+        IngestionRoute.SELECTED_STDOUT,
+        "Retain WARNING and above; drop the 288 daily LOG checkpoint records "
+        "postgres-exporter already covers. Plan 154 Stage A found the residue "
+        "is where a 16-hour broken hourly job and the metrics_user exhaustion "
+        "that blinded postgres-exporter itself were both recorded unseen.",
+        "Statement text can carry literals, so only severity is labelled and "
+        "DETAIL/HINT/STATEMENT continuation records are dropped unclassified.",
     ),
     "flaresolverr": _policy(
         IngestionRoute.INTENTIONAL_EXCLUSION,
@@ -177,9 +203,14 @@ SOURCE_POLICY: Final[dict[str, SourcePolicy]] = {
         _NO_LOKI,
     ),
     "trawl": _policy(
-        IngestionRoute.INTENTIONAL_EXCLUSION,
-        "Solver efficacy is covered by bounded outcome counters and alerts.",
-        _NO_LOKI,
+        IngestionRoute.SELECTED_STDOUT,
+        "Retain every line at INFO and drop none: the solve rate is a ratio of "
+        "cf_clearance obtained against attempts, so dropping the routine "
+        "attempt would remove the denominator. Plan 154 Stage A measured 324 "
+        "lines and 23 KB a day across seven shapes -- cheap enough that the "
+        "counters which stayed silent through the 2026-08-14 outage are not "
+        "worth trusting over the log itself.",
+        "Solver mechanics and challenge URLs only; no listing or user data.",
     ),
     "minio": _policy(
         IngestionRoute.INTENTIONAL_EXCLUSION,
@@ -316,6 +347,31 @@ def classify_line(service: str, source: str, line: str) -> IngestionDecision:
         labels["level"] = level
         if level in {"DEBUG", "INFO"}:
             return IngestionDecision(False, labels, "airflow_non_actionable_control_plane")
+        return IngestionDecision(True, labels)
+
+    if service == "postgres":
+        match = re.search(POSTGRES_SEVERITY_PATTERN, line)
+        if match is None:
+            return IngestionDecision(False, labels, "postgres_unparsed_record")
+        pg_level = match.group("pg_level")
+        if pg_level in POSTGRES_DROPPED_LEVELS:
+            return IngestionDecision(False, labels, "postgres_routine_server_log")
+        level = POSTGRES_LEVEL_MAP.get(pg_level)
+        if level is None:
+            # DETAIL, HINT, STATEMENT, CONTEXT and any severity Postgres adds
+            # later. Retaining these without a level would break the contract
+            # that every retained record carries one. Counted separately from
+            # an unparsed record so the two stay tellable apart.
+            return IngestionDecision(False, labels, "postgres_continuation_record")
+        labels["level"] = level
+        return IngestionDecision(True, labels)
+
+    if service == "trawl":
+        # Stage A: not one of 324 daily lines carries a severity token, so
+        # there is nothing to parse. Every line is INFO and none is dropped --
+        # see Plan 155 Stage 0 item 4 for why the Tab+Space fallback is not
+        # promoted to WARNING here.
+        labels["level"] = "INFO"
         return IngestionDecision(True, labels)
 
     if service == "oauth2-proxy":

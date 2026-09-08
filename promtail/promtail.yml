@@ -113,6 +113,73 @@ scrape_configs:
                       source: path
                       expression: '^/oauth2/auth(?:\?.*)?$'
                       drop_counter_reason: oauth2_successful_auth_subrequest
+      # Plan 154 Stage B. `log_line_prefix = '%m [%p] '` puts the severity
+      # straight after the pid. Parse it, drop the routine server log, then map
+      # what remains onto the normalized levels. Kept identical to
+      # POSTGRES_SEVERITY_PATTERN and POSTGRES_LEVEL_MAP in
+      # shared/log_ingestion_policy; the fixture tests assert the pair agree.
+      - match:
+          selector: '{service="postgres"}'
+          stages:
+            - regex:
+                expression: '^\d{4}-\d{2}-\d{2} [\d:.]+ \w+ \[\d+\] (?P<pg_level>[A-Z0-9]+):'
+            - labels:
+                pg_level:
+      - match:
+          selector: '{service="postgres", pg_level=""}'
+          action: drop
+          drop_counter_reason: postgres_unparsed_record
+      # The 288 daily checkpoint records postgres-exporter already covers.
+      - match:
+          selector: '{service="postgres", pg_level=~"LOG|DEBUG|INFO|NOTICE"}'
+          action: drop
+          drop_counter_reason: postgres_routine_server_log
+      - match:
+          selector: '{service="postgres"}'
+          stages:
+            # FATAL ends one session; PANIC ends the server. Stage A found most
+            # FATALs are ad-hoc psql sessions guessing at role names, so FATAL
+            # maps to ERROR rather than CRITICAL.
+            - match:
+                selector: '{pg_level="WARNING"}'
+                stages:
+                  - template:
+                      source: level
+                      template: WARNING
+            - match:
+                selector: '{pg_level=~"ERROR|FATAL"}'
+                stages:
+                  - template:
+                      source: level
+                      template: ERROR
+            - match:
+                selector: '{pg_level="PANIC"}'
+                stages:
+                  - template:
+                      source: level
+                      template: CRITICAL
+            - labels:
+                level:
+            - labeldrop:
+                - pg_level
+      # DETAIL, HINT, STATEMENT and CONTEXT parse but carry no severity of their
+      # own. Counted apart from an unparsed record so the two stay tellable.
+      - match:
+          selector: '{service="postgres", level=""}'
+          action: drop
+          drop_counter_reason: postgres_continuation_record
+      # Not one of trawl's 324 daily lines carries a severity token, so there is
+      # nothing to parse and nothing is dropped: the solve rate is a ratio, and
+      # dropping the routine attempt would remove its denominator. Plan 155
+      # Stage 0 item 4 holds why the Tab+Space fallback is not WARNING here.
+      - match:
+          selector: '{service="trawl"}'
+          stages:
+            - template:
+                source: level
+                template: INFO
+            - labels:
+                level:
       - labels:
           stream:
 
