@@ -17,16 +17,22 @@ models:
       First run and `--full-refresh` rebuild the complete table.
     config:
       tags: ["feature_daily", "backtest"]
+      contract:
+        enforced: true
+      on_schema_change: fail
     columns:
       - name: vin17
+        data_type: string
         description: Validated 17-character VIN — primary key for downstream VIN-grained models.
         data_tests:
           - not_null
       - name: listing_id
+        data_type: string
         description: Listing identifier active when this artifact was fetched.
         data_tests:
           - not_null
       - name: artifact_id
+        data_type: bigint
         description: >
           Source artifact identifier — durable row identity and incremental
           unique_key. A source batch with more than one row for the same
@@ -36,10 +42,12 @@ models:
           - not_null
           - unique
       - name: fetched_at
+        data_type: timestamptz
         description: Timestamp when this detail artifact was fetched.
         data_tests:
           - not_null
       - name: parsed_fingerprint
+        data_type: string
         description: >
           md5 hash of 18 business-state fields: listing_id, vin17, price, mileage, msrp,
           make, model, vehicle_trim, model_year, stock_type, fuel_type, body_style,
@@ -52,8 +60,11 @@ models:
         data_tests:
           - not_null
       - name: price
+        data_type: integer
         description: Parsed listing price — denormalized from stg_observations.
       - name: mileage
+        data_type: integer
         description: Parsed mileage — denormalized from stg_observations.
       - name: listing_state
+        data_type: string
         description: Listing state (active/unavailable/unknown) — denormalized from stg_observations.

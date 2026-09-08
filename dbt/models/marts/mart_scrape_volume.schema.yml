@@ -14,32 +14,43 @@ models:
       just the new batch of rows.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
+      on_schema_change: fail
     columns:
       - name: scrape_volume_key
+        data_type: string
         description: "md5(concat_ws('|', hour, source)) — synthetic surrogate for the (hour, source) grain."
         data_tests:
           - not_null
           - unique
       - name: hour
+        data_type: timestamp
         data_tests:
           - not_null
       - name: source
+        data_type: string
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['srp', 'detail', 'carousel']
       - name: artifact_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: observation_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: unique_listings
+        data_type: bigint
         data_tests:
           - not_null
       - name: valid_vin_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: vin_extraction_pct
+        data_type: double
         description: "Populated only for source='detail'. Null for srp and carousel."

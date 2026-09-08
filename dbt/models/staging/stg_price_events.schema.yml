@@ -8,25 +8,41 @@ models:
       One row per event — the source for all price history and benchmark calculations.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: event_id
+        data_type: bigint
         data_tests:
           - not_null
           - unique
       - name: listing_id
+        data_type: string
         data_tests:
           - not_null
       - name: vin
+        data_type: string
         data_tests:
           - not_null
       - name: price
+        data_type: integer
         description: "Always > 0 — zero and null prices are filtered out at this layer."
         data_tests:
           - not_null
       - name: event_type
+        data_type: string
         description: "Delivery event type. 'deleted' rows are excluded by the WHERE clause."
         data_tests:
           - not_null
       - name: event_at
+        data_type: timestamptz
         data_tests:
           - not_null
+      - name: make
+        data_type: string
+      - name: model
+        data_type: string
+      - name: artifact_id
+        data_type: bigint
+      - name: source
+        data_type: string

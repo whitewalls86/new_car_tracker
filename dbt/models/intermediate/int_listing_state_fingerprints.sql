@@ -76,8 +76,11 @@ fingerprinted as (
         artifact_id,
         fetched_at,
         md5(concat_ws('|',
+            -- vin17 uncoalesced: source_rows filters it non-null, and the
+            -- model's not_null constraint on vin17 is what defends that. A
+            -- fallback here would only decide how an impossible NULL hashes.
             coalesce(listing_id,                       ''),
-            coalesce(vin17,                            ''),
+            vin17,
             coalesce({{ cast_to_string('price') }},      ''),
             coalesce({{ cast_to_string('mileage') }},    ''),
             coalesce({{ cast_to_string('msrp') }},       ''),

@@ -56,6 +56,24 @@ def _write(relative: str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _delete(relative: str) -> None:
+    """Remove a file the snapshot list will restore afterwards.
+
+    The rule this serves is about the corpus *shrinking*, which no edit can
+    express -- the file has to actually leave the tree. Restoration works
+    because the harness snapshots content and writes it back, recreating the
+    file; a deleted path must therefore always appear in its mutation's
+    snapshot list.
+    """
+    path = REPO_ROOT / relative
+    if not path.is_file():
+        raise AssertionError(
+            f"cannot delete {relative}: it is not on disk. The mutation has "
+            f"gone stale, which means it has stopped testing anything."
+        )
+    path.unlink()
+
+
 # (assertion that should notice, what changed, how to change it, files to
 # snapshot before changing, files that only exist during the mutation)
 _TEST_SQL = REPO_ROOT / "tests" / "sql" / "integration" / "sql" / "test_ops_views"
@@ -453,12 +471,12 @@ MUTATIONS = [
     ),
     (
         "test_every_dbt_model_declares_an_enforced_contract",
-        "a model gains an enforced contract and its G20 waiver goes stale",
+        "a model drops its enforced contract and nothing waives it",
         lambda: _edit(
             "dbt/models/staging/stg_dealers.schema.yml",
-            '    config:\n      tags: ["hourly_core"]',
             '    config:\n      tags: ["hourly_core"]\n'
             "      contract:\n        enforced: true",
+            '    config:\n      tags: ["hourly_core"]',
         ),
         ["dbt/models/staging/stg_dealers.schema.yml"],
         [],
@@ -527,6 +545,51 @@ MUTATIONS = [
             "run: python scripts/check_sql_execution_coverage.py --report",
         ),
         [".github/workflows/ci.yml"],
+        [],
+    ),
+    # ----------------------------------------------------------------------
+    # Plan 162 Stage S. Four rules guard the carved-out CI gates and the
+    # source lists they read; each is mutated in the direction it exists to
+    # catch.
+    # ----------------------------------------------------------------------
+    (
+        "test_every_ignored_path_is_invoked_by_another_step_in_the_same_job",
+        "the dedicated step that runs an --ignored gate is deleted",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "pytest tests/integration/dbt/test_branch_coverage.py",
+            "echo skipping the branch coverage gate",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_the_sql_corpus_shrinks_only_by_naming_the_model_that_absorbed_it",
+        "a production .sql file leaves the corpus with nothing naming its absorber",
+        lambda: _delete("scripts/sql/select_enabled_search_keys.sql"),
+        ["scripts/sql/select_enabled_search_keys.sql"],
+        [],
+    ),
+    (
+        "test_the_non_empty_gate_reconciles_with_the_dbt_source_list",
+        "a table joins the Postgres snapshot allowlist that no dbt source reads",
+        lambda: _edit(
+            "shared/lake_snapshot_postgres.py",
+            '    ("ops", "tracked_models"),',
+            '    ("ops", "tracked_models"),\n    ("ops", "widget_queue"),',
+        ),
+        ["shared/lake_snapshot_postgres.py"],
+        [],
+    ),
+    (
+        "test_the_snapshot_writer_and_the_source_auditor_include_the_same_tables",
+        "a table leaves the snapshot writer and stays in the audit specs",
+        lambda: _edit(
+            "archiver/processors/lake_snapshot_export_cache.py",
+            '    "blocked_cooldown_events",\n',
+            "",
+        ),
+        ["archiver/processors/lake_snapshot_export_cache.py"],
         [],
     ),
 ]

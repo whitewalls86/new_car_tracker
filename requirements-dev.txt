@@ -10,3 +10,4 @@ zstandard
 pyyaml
 prometheus-fastapi-instrumentator
 markdown-it-py
+sqlglot

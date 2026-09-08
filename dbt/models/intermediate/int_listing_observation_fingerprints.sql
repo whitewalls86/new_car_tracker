@@ -78,7 +78,9 @@ fingerprinted as (
     select
         md5(concat_ws('|',
             {{ cast_to_string('artifact_id') }},
-            coalesce(listing_id, '')
+            -- listing_id, uncoalesced: source_rows filters it non-null and the
+            -- model's not_null constraint is what defends that, not a fallback.
+            listing_id
         ))                              as observation_id,
         artifact_id,
         listing_id,
@@ -87,9 +89,22 @@ fingerprinted as (
         fetched_at,
         written_at,
         md5(concat_ws('|',
-            coalesce(listing_id,                       ''),
+            -- listing_id and source carry no coalesce, deliberately:
+            -- `source_rows` above filters both non-null, so a fallback there is
+            -- unreachable -- and the guarantee is not the coalesce's to keep.
+            -- If that filter is relaxed, this model's own `not_null` constraint
+            -- on the column fails the build by name, which is louder than a
+            -- NULL quietly hashing as ''.
+            --
+            -- vin17 KEEPS its coalesce, and the asymmetry is the point:
+            -- source_rows does *not* filter vin17, so it is genuinely nullable
+            -- here (this is the all-source model; only the detail-only sibling
+            -- requires a VIN). concat_ws skips a NULL rather than rendering it
+            -- empty, so dropping this one would shorten the hash for every
+            -- VIN-less observation and silently re-fingerprint them.
+            listing_id,
             coalesce(vin17,                            ''),
-            coalesce(source,                           ''),
+            source,
             coalesce({{ cast_to_string('price') }},      ''),
             coalesce({{ cast_to_string('mileage') }},    ''),
             coalesce({{ cast_to_string('model_year') }}, ''),

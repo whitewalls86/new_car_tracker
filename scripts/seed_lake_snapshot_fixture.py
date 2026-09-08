@@ -81,7 +81,8 @@ Two design rules make this safe to share:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -100,6 +101,17 @@ from archiver.processors.flush_staging_events import (
     _VIN_TO_LISTING_EVENTS_SCHEMA as _VIN_TO_LISTING_WRITER_SCHEMA,
 )
 from shared.minio import BUCKET, ensure_bucket, get_s3fs
+from shared.query_loader import load_query
+
+SQL_DIR = Path(__file__).resolve().parent / "sql"
+SELECT_ENABLED_SEARCH_KEYS = load_query(SQL_DIR, "select_enabled_search_keys")
+INSERT_FIXTURE_TRACKED_MODELS = load_query(SQL_DIR, "insert_fixture_tracked_models")
+
+#: Where the two Postgres-backed dbt sources live. A keyword argument rather
+#: than a constant in the statements, so Layer 2 can point them at a fixture
+#: schema without a second copy of the SQL.
+OPS_SCHEMA = "ops"
+CONFIG_SCHEMA = "public"
 
 # Reserved partition. Everything lands under 2099, which no production flush or
 # other CI seed writes to.
@@ -132,8 +144,108 @@ def _vin17(tag: str) -> str:
     return (tag.upper() + "0" * 17)[:17]
 
 
+#: The date every ``_ts()`` literal below is written against. Changing it moves
+#: the whole fixture in time without changing a single scenario, because every
+#: timestamp is expressed relative to it.
+FIXTURE_EPOCH = datetime(2026, 8, 1, tzinfo=timezone.utc)
+
+
+def _fixture_shift(now: Optional[datetime] = None) -> timedelta:
+    """How far to move the fixture so its newest data is always recent.
+
+    **The fixture's timestamps used to be absolute, and that rotted.** Plan 162
+    Stage S found ``mart_vehicle_snapshot.sql``'s ``'active'`` arm dead: it gates
+    on ``last_seen_at >= now() - interval '7 days'`` and the fixture's newest row
+    was written in July 2026, so the arm had been unreachable for weeks and
+    nothing noticed. It was covered the day it was written and silently stopped
+    being covered as the calendar moved -- which is the failure mode this stage
+    exists to catch, sitting inside the fixture the stage measures with.
+
+    Shifting rather than rewriting is what keeps the scenarios intact: every
+    relationship the fixture encodes -- this observation four days after that
+    one, this price change inside a 7-day window and that one outside it -- is a
+    *difference* between two timestamps, and a constant shift preserves all of
+    them. Only the distance to ``now()`` changes, which is the one thing that was
+    wrong.
+
+    Truncated to whole days so a seed and the assertions that read it agree for
+    the whole of a day. A fixture seeded yesterday and asserted against today is
+    a reseed, not a supported state.
+    """
+    today = (now or datetime.now(timezone.utc)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return today - FIXTURE_EPOCH
+
+
+#: Computed once at import so every timestamp in one process shares one shift,
+#: rather than drifting if the clock crosses midnight mid-run.
+_SHIFT = _fixture_shift()
+
+#: Where the base seed records the shift it was written under. **The shift is
+#: per-process, and that is the hazard this marker closes**: CI seeds the base
+#: fixture in one process and asserts (or seeds later phases) in another, so a
+#: run that crosses 00:00 UTC between the two computes shifts one day apart --
+#: the assertion windows sit a day off the data, and the OBSFP correction
+#: scenario's deliberate fetched_at tie breaks, silently. Deliberately outside
+#: `silver_normalized/` and `ops_normalized/`, so no Parquet glob, source audit
+#: or dbt source ever sees it.
+_SHIFT_MARKER_KEY = f"{BUCKET}/lake_snapshot_fixture/shift_marker.json"
+
+
+def _write_shift_marker() -> None:
+    import json
+
+    with get_s3fs().open(_SHIFT_MARKER_KEY, "w") as handle:
+        json.dump(
+            {"shift_days": _SHIFT.days,
+             "fixture_epoch": FIXTURE_EPOCH.date().isoformat()},
+            handle,
+        )
+
+
+def seeded_shift_days() -> Optional[int]:
+    """The shift the base fixture on MinIO was seeded under, or None if absent."""
+    import json
+
+    s3 = get_s3fs()
+    if not s3.exists(_SHIFT_MARKER_KEY):
+        return None
+    with s3.open(_SHIFT_MARKER_KEY, "r") as handle:
+        return int(json.load(handle)["shift_days"])
+
+
+def assert_shift_matches() -> None:
+    """Refuse to read or extend a fixture seeded under a different day's shift.
+
+    Called by every non-base :func:`seed` phase and by the tests that derive
+    windows from :func:`_ts`, so a day-crossing between the seeding process and
+    this one fails as a sentence naming the repair -- reseed -- instead of as
+    an assertion quietly measuring data a day out of alignment.
+    """
+    seeded = seeded_shift_days()
+    if seeded is None:
+        raise RuntimeError(
+            "the MinIO fixture carries no shift marker, so it either predates "
+            "the marker or was never seeded. Reseed the base phase "
+            "(python scripts/seed_lake_snapshot_fixture.py) before reading it "
+            "or seeding a later phase."
+        )
+    if seeded != _SHIFT.days:
+        raise RuntimeError(
+            f"the base fixture was seeded under a shift of {seeded} days and "
+            f"this process computed {_SHIFT.days} -- the clock crossed midnight "
+            f"UTC between the two. Every relationship inside the seeded data is "
+            f"intact, but this process's _ts() values sit "
+            f"{_SHIFT.days - seeded:+d} day(s) off it, which breaks the "
+            f"deliberate fetched_at ties and the derived windows. Reseed the "
+            f"base fixture and rerun."
+        )
+
+
 def _ts(*args: int) -> datetime:
-    return datetime(*args, tzinfo=timezone.utc)
+    """A fixture timestamp, written against :data:`FIXTURE_EPOCH` and shifted."""
+    return datetime(*args, tzinfo=timezone.utc) + _SHIFT
 
 
 # ===========================================================================
@@ -235,6 +347,13 @@ OBSFP_CORRECTION_FIXED_PRICE = 23500
 # base rows ends up the actual global max(fetched_at). (Rows added for other
 # scenarios earlier in this file, e.g. the dbt-equivalence VINs, top out at
 # 2026-07-03 and are unrelated to this cluster.)
+# The base-phase same-artifact reparse pair (see _dedupe_collision_rows). Its
+# artifact id sits in the 900xx range with the dbt-equivalence artifacts, its
+# fetched_at with their early-July cluster.
+VIN_DEDUPE_PAIR = _vin17("DEDUPEPAIR")
+LISTING_DEDUPE_PAIR = "LDEDUPE"
+ARTIFACT_DEDUPE_PAIR = 90071
+
 VIN_FP_TARGET = _vin17("FPTARGT")
 LISTING_FP_TARGET = "L50"
 ARTIFACT_FP_ANCHOR = 500
@@ -583,6 +702,43 @@ def _observation_fingerprint_rows() -> List[Dict[str, Any]]:
     ]
 
 
+def _dedupe_collision_rows() -> List[Dict[str, Any]]:
+    """A same-artifact reparse pair, so the fingerprint dedupes are demonstrable.
+
+    Both fingerprint models guarantee their `unique` key with a
+    ``row_number() = 1`` dedupe, and the base fixture held no partition with
+    more than one row -- so when the constraint-mutation gate started measuring
+    against the base build alone (rather than the state left behind by the
+    incremental suites' second waves), dropping either dedupe produced no
+    duplicate and both `unique` tests read as decorative. That is a fact about
+    the fixture, not about the constraints: production reparses an artifact and
+    lands a second observation row with the same artifact_id and listing_id,
+    which is exactly what this pair is.
+
+    Two rows, one artifact, one listing, distinct fetched_at (so both models'
+    orderings pick a deterministic winner) and distinct prices (a genuine
+    correction, not a duplicate byte-for-byte). With the dedupes intact each
+    model emits one row per key; with either dedupe mutated away, both rows
+    surface and the model's own `unique` test kills the mutant.
+
+    Unlisted, with no price events, and a fetched_at weeks stale -- a detail
+    row's state is taken directly, so the VIN publishes as 'unlisted' and
+    stays out of mart_deal_scores' scored population and the freshness
+    trend's active-only counts. Its prices still travel through the
+    fingerprints, which is all the scenario needs.
+    """
+    return [
+        _obs_row(VIN_DEDUPE_PAIR, listing_id=LISTING_DEDUPE_PAIR,
+                 artifact_id=ARTIFACT_DEDUPE_PAIR, source="detail",
+                 fetched_at=_ts(2026, 7, 2, 12), written_at=_ts(2026, 7, 2, 12),
+                 price=27000, listing_state="unlisted"),
+        _obs_row(VIN_DEDUPE_PAIR, listing_id=LISTING_DEDUPE_PAIR,
+                 artifact_id=ARTIFACT_DEDUPE_PAIR, source="detail",
+                 fetched_at=_ts(2026, 7, 2, 13), written_at=_ts(2026, 7, 2, 13),
+                 price=26500, listing_state="unlisted"),
+    ]
+
+
 def _detail_fingerprint_incremental_base_rows() -> List[Dict[str, Any]]:
     """Base-phase rows for int_listing_state_fingerprints' real-build
     incremental test (see build_detail_fingerprint_incremental_rows below)."""
@@ -709,6 +865,7 @@ def build_silver_rows() -> List[Dict[str, Any]]:
         _dbt_equivalence_rows()
         + _selector_scenario_rows()
         + _observation_fingerprint_rows()
+        + _dedupe_collision_rows()
         + _detail_fingerprint_incremental_base_rows()
         + _listing_state_runs_base_rows()
         + _scrape_volume_base_rows()
@@ -938,12 +1095,51 @@ def build_price_event_rows() -> List[Dict[str, Any]]:
         (201, LISTING_PH_AFFECTED, VIN_PH_AFFECTED, 5000, 39000, PH_AFFECTED_EVENT_2),
         (202, LISTING_PH_STABLE, VIN_PH_STABLE, 5003, 15000, PH_STABLE_EVENT),
     ]
+    # Prices for the benchmark VINs, and the reason they are here.
+    #
+    # Plan 162 Stage S. Every price event above names a VIN that either does not
+    # appear in the observations at all or appears with a short-form VIN that
+    # `stg_observations`' 17-character guard nulls -- so `int_price_history` and
+    # `int_latest_observation` shared no `vin17` and their join produced nothing.
+    # `int_benchmarks` inner-joins them and built empty; `mart_vehicle_snapshot`
+    # left-joins them, so every row it produced carried a null price, and
+    # `mart_deal_scores`' `price > 0` filter then emptied it too. Two of the 23
+    # models computed nothing and the build reported success.
+    #
+    # The DENSE VINs are the right ones to price: they exist to make one
+    # make/model group dense enough for stable percentiles
+    # (`benchmark_dense_make_model`), which is exactly what `int_benchmarks`
+    # aggregates. Prices fan out so the percentiles differ from the mean rather
+    # than collapsing onto it, which is what makes a percentile assertion able
+    # to fail.
+    #
+    # These carry their own make/model rather than riding the Honda/Civic
+    # default below, because the SPARSE VINs are a Rare Bird group and labelling
+    # their price events Honda/Civic would put two different make/models on one
+    # VIN -- fixture data that contradicts itself is worse than fixture data
+    # that is missing.
+    benchmark_prices = [
+        dict(event_id=300 + i, listing_id=f"LDENSE{i}", vin=f"DENSE{i:012d}",
+             artifact_id=2000 + i, price=18000 + (i * 250),
+             make="Honda", model="Civic", event_type="upserted", source="detail",
+             event_at=_ts(2026, 7, 2))
+        for i in range(20)
+    ] + [
+        # One priced SPARSE VIN each, so the sparse benchmark group is a group
+        # rather than an absence -- the dense/sparse contrast is the point of
+        # both selectors.
+        dict(event_id=330 + i, listing_id=f"LSPARSE{i}", vin=f"SPARSE{i:011d}",
+             artifact_id=3000 + i, price=41000 + (i * 1000),
+             make="Rare", model="Bird", event_type="upserted", source="detail",
+             event_at=_ts(2026, 7, 2))
+        for i in range(2)
+    ]
     return [
         dict(event_id=eid, listing_id=lid, vin=vin, artifact_id=aid, price=price,
              make="Honda", model="Civic", event_type="upserted", source="detail",
              event_at=event_at)
         for (eid, lid, vin, aid, price, event_at) in specs
-    ]
+    ] + benchmark_prices
 
 
 def build_cooldown_event_rows() -> List[Dict[str, Any]]:
@@ -1083,13 +1279,91 @@ PHASES = (
 )
 
 
+def fixture_make_models(rows: Optional[Iterable[Dict[str, Any]]] = None) -> List[Tuple[str, str]]:
+    """The distinct (make, model) pairs this fixture's observations carry.
+
+    Derived from the fixture rather than kept beside it, so a make added to a
+    scenario reaches ``int_active_make_models`` -- and therefore
+    ``mart_vehicle_snapshot`` and ``mart_deal_scores`` -- without anyone
+    remembering to edit a second list. That is the whole reason this is a
+    function and not a tuple of literals: the defect it repairs was a
+    hand-maintained source list going stale against the data.
+    """
+    observations = list(rows if rows is not None else build_silver_rows())
+    pairs = {
+        (str(row["make"]).lower(), str(row["model"]).lower())
+        for row in observations
+        if row.get("make") and row.get("model")
+    }
+    return sorted(pairs)
+
+
+def seed_postgres_sources(
+    connection,
+    *,
+    ops_schema: str = OPS_SCHEMA,
+    config_schema: str = CONFIG_SCHEMA,
+    rows: Optional[Iterable[Dict[str, Any]]] = None,
+) -> int:
+    """Seed ``tracked_models`` so the Postgres-backed dbt sources are not empty.
+
+    **Four of dbt's six sources are Parquet and two are Postgres**, and this
+    seeder wrote only the Parquet half. ``ops.tracked_models`` is written in
+    production by the processing service and by nothing in the dbt path, so it
+    was empty on every fixture build: ``int_active_make_models`` inner-joins it
+    and yielded nothing, ``mart_vehicle_snapshot`` inner-joins that, and five of
+    the 23 models built over an empty world while the build reported success and
+    their ``not_null`` tests passed vacuously.
+
+    Returns the number of rows inserted. Raises if no search config is enabled,
+    because a seed that silently inserted nothing would leave exactly the empty
+    world it exists to prevent -- which is the failure being repaired, one table
+    over.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(SELECT_ENABLED_SEARCH_KEYS.format(schema=config_schema))
+        search_keys = [row[0] for row in cursor.fetchall()]
+        if not search_keys:
+            raise RuntimeError(
+                f"{config_schema}.search_configs has no enabled row, so every "
+                f"tracked_models row this seeds would be filtered out by "
+                f"int_active_make_models' join and five models would still "
+                f"build empty. Seed or enable a search config first."
+            )
+
+        pairs = fixture_make_models(rows)
+        if not pairs:
+            raise RuntimeError(
+                "the fixture's observations carry no make/model pair, so "
+                "int_active_make_models would still be empty."
+            )
+
+        statement = INSERT_FIXTURE_TRACKED_MODELS.format(schema=ops_schema)
+        inserted = 0
+        for search_key in search_keys:
+            for make, model in pairs:
+                cursor.execute(
+                    statement,
+                    {"search_key": search_key, "make": make, "model": model},
+                )
+                inserted += cursor.rowcount
+    connection.commit()
+    return inserted
+
+
 def seed(phase: str = "base") -> List[str]:
     """Upload fixture data for the given phase. Returns the written keys."""
     if phase not in PHASES:
         raise ValueError(f"unknown phase {phase!r}; expected one of {PHASES}")
     ensure_bucket()
     if phase == "base":
-        return [_seed_silver(build_silver_rows())] + _seed_ops()
+        keys = [_seed_silver(build_silver_rows())] + _seed_ops()
+        # Written after the data, so a marker's existence implies a seeded base.
+        _write_shift_marker()
+        return keys
+    # Later phases extend the base in place, and their rows only relate to it
+    # correctly when both were written under the same day's shift.
+    assert_shift_matches()
     if phase == "observation_fingerprint_incremental":
         return [
             _seed_silver(
@@ -1146,10 +1420,25 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=PHASES, default="base")
+    parser.add_argument(
+        "--postgres-url", dest="postgres_url", default="",
+        help="Also seed the two Postgres-backed dbt sources. Omitted, they are "
+             "left alone and five models build over an empty world.",
+    )
     args = parser.parse_args()
 
     for key in seed(phase=args.phase):
         print(f"Uploaded s3://{BUCKET}/{key} (phase={args.phase})")
+
+    if args.postgres_url:
+        import psycopg2
+
+        connection = psycopg2.connect(args.postgres_url)
+        try:
+            inserted = seed_postgres_sources(connection)
+        finally:
+            connection.close()
+        print(f"Seeded {inserted} ops.tracked_models rows (phase={args.phase})")
 
 
 if __name__ == "__main__":

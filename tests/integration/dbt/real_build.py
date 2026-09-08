@@ -36,6 +36,7 @@ that is all this does.
 
 import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import duckdb
@@ -183,6 +184,151 @@ def refuse_writes(sql: str) -> None:
         )
 
 
+_COMPILED = DBT_DIR / "target" / "compiled"
+
+
+def attached_warehouse(alias: str | None = None):
+    """An in-memory database with the warehouse attached **read-only**.
+
+    **The alias defaults to the warehouse file's own stem, and has to.** dbt
+    names the catalog after ``DUCKDB_PATH``, so every compiled statement in
+    ``target/`` says ``"<stem>"."main"."<relation>"`` -- attaching under any
+    other name leaves all of that unresolvable, and a caller replaying compiled
+    SQL would have to rewrite every relation reference in it rather than only
+    the one it means to redirect.
+
+    Plan 162 Stage S. Two gates need to read what ``dbt build`` produced, and
+    one of them -- the constraint mutation gate -- also needs somewhere to
+    materialize a mutated model so it can run that model's own data tests
+    against it. Writing the mutant into the warehouse is not an option: these
+    suites assert against the build, and a relation created mid-run makes every
+    later assertion describe something else.
+
+    So the warehouse is attached ``READ_ONLY`` and the mutants live in the
+    in-memory database instead. **The immutability comes from the attach mode
+    rather than from a wrapper somebody has to remember to use**, which is the
+    difference that matters -- :class:`ReadOnlyConnection` protects the same
+    property by inspecting statements, and only for callers who go through it.
+
+    Mutants are disposable by construction: they exist in a process-local
+    database that vanishes when the connection closes, so a crashed run leaves
+    no stray relation behind for the census tests to trip over.
+
+    **The one precondition**: no dbt invocation may have run in this process.
+    dbt-duckdb caches its adapter and holds the warehouse open read-write for
+    the life of the interpreter, and DuckDB refuses a second handle to one file
+    under a different configuration. :func:`assert_no_in_process_dbt` states
+    that rather than leaving it to a lock error nobody can read.
+    """
+    warehouse = Path(os.environ["DUCKDB_PATH"])
+    alias = alias or warehouse.stem
+    connection = duckdb.connect(":memory:")
+    _configure_s3(connection)
+    # ATTACH takes no bind parameter -- DuckDB's parser rejects `ATTACH ?`
+    # outright -- so the path is inlined, with `'` doubled the way SQL asks.
+    path = str(warehouse).replace("'", "''")
+    connection.execute(f"ATTACH '{path}' AS {alias} (READ_ONLY)")
+    connection.execute(f"USE {alias}.main")
+    return connection
+
+
+def assert_no_in_process_dbt() -> None:
+    """Fail with the reason, rather than with a lock error six frames deep."""
+    if "dbt.adapters.duckdb" in sys.modules:
+        raise AssertionError(
+            "dbt has been invoked in this process, so it holds DUCKDB_PATH open "
+            "read-write and no second handle can be opened under a different "
+            "configuration. This suite must run in its own pytest invocation, "
+            "separate from the real-build suites that call run_dbt()."
+        )
+
+
+def _configure_s3(connection) -> None:
+    """Point a connection at MinIO, so Parquet-backed views resolve.
+
+    Four of the 23 models materialize as views over Parquet rather than as
+    tables, so a connection without these settings reads every mart and fails on
+    every ``stg_*``.
+    """
+    endpoint = os.environ.get("MINIO_ENDPOINT")
+    if not endpoint:
+        return
+    connection.execute("INSTALL httpfs")
+    connection.execute("LOAD httpfs")
+    connection.execute(
+        "SET s3_endpoint=?",
+        [endpoint.replace("https://", "").replace("http://", "")],
+    )
+    connection.execute("SET s3_access_key_id=?",
+                       [os.environ.get("MINIO_ROOT_USER", "cartracker")])
+    connection.execute("SET s3_secret_access_key=?",
+                       [os.environ.get("MINIO_ROOT_PASSWORD", "")])
+    connection.execute("SET s3_use_ssl=?", [endpoint.startswith("https://")])
+    connection.execute("SET s3_url_style=?", ["path"])
+
+
+def compiled_in_both_phases() -> tuple[Path, Path]:
+    """``(cold, incremental)`` compiled trees, captured after one build.
+
+    ``is_incremental()`` is false when a model's relation does not exist, so a
+    compile against an empty warehouse renders the cold form and a compile after
+    a build renders the incremental one -- and **the two differ for seven of the
+    23 models**, by the 39 lines of Plan 123 late-arrival lookback that only the
+    incremental form contains. Enumerating from one of them alone silently omits
+    the other's branches.
+
+    Capturing both would ordinarily mean dropping the models between compiles.
+    ``--full-refresh`` avoids that: it renders the cold form even where the
+    relation exists, so both trees come from one warehouse and one build, and
+    neither compile touches data.
+
+    Each tree is copied out because ``dbt compile`` overwrites ``target/``, so
+    the second run would otherwise destroy the first.
+    """
+    import shutil
+    import tempfile
+
+    captured = []
+    for extra in (["--full-refresh"], []):
+        run_dbt("compile", *extra)
+        parent = Path(tempfile.mkdtemp(prefix="dbt-compiled-"))
+        destination = parent / "compiled"
+        shutil.copytree(_COMPILED, destination)
+        # The manifest rides along because `compiled_model_paths` reads the
+        # model list from it rather than from filename convention, and it walks
+        # up from the compiled root to find it -- same rule as dbt/target/.
+        shutil.copy2(_COMPILED.parent / "manifest.json", parent / "manifest.json")
+        captured.append(destination / "cartracker" / "models")
+    return captured[0], captured[1]
+
+
 def analytics_con() -> ReadOnlyConnection:
-    """Open the DuckDB file the build writes, for reading only."""
-    return ReadOnlyConnection(duckdb.connect(os.environ["DUCKDB_PATH"]))
+    """Open the DuckDB file the build writes, for reading only.
+
+    **S3 is configured before the read-only wrapper goes on**, and it has to be
+    in that order: ``SET`` is not a ``SELECT``, so the wrapper refuses it.
+
+    Four of the 23 models materialize as views over Parquet in MinIO rather than
+    as tables in this file, so a connection without the httpfs settings can read
+    every mart and fails on every ``stg_*``. That was latent until Plan 162
+    Stage S queried the staging models -- and it failed in the worst available
+    way, because the caller saw an exception per branch rather than one obvious
+    error, and a caller that catalogued those exceptions would report a smaller
+    denominator instead of a broken connection.
+    """
+    connection = duckdb.connect(os.environ["DUCKDB_PATH"])
+    endpoint = os.environ.get("MINIO_ENDPOINT")
+    if endpoint:
+        connection.execute("INSTALL httpfs")
+        connection.execute("LOAD httpfs")
+        connection.execute(
+            "SET s3_endpoint=?",
+            [endpoint.replace("https://", "").replace("http://", "")],
+        )
+        connection.execute("SET s3_access_key_id=?",
+                           [os.environ.get("MINIO_ROOT_USER", "cartracker")])
+        connection.execute("SET s3_secret_access_key=?",
+                           [os.environ.get("MINIO_ROOT_PASSWORD", "")])
+        connection.execute("SET s3_use_ssl=?", [endpoint.startswith("https://")])
+        connection.execute("SET s3_url_style=?", ["path"])
+    return ReadOnlyConnection(connection)

@@ -17,17 +17,83 @@ models:
       would be wrong.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
+      on_schema_change: fail
     columns:
       - name: vin17
+        data_type: string
         data_tests:
           - not_null
           - unique
       - name: source
+        data_type: string
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['srp', 'detail', 'carousel']
       - name: make
+        data_type: string
         data_tests:
           - not_null
+      - name: artifact_id
+        data_type: bigint
+      - name: listing_id
+        data_type: string
+      - name: listing_state
+        data_type: string
+      - name: fetched_at
+        data_type: timestamptz
+      - name: written_at
+        data_type: timestamptz
+      - name: vin
+        data_type: string
+      - name: price
+        data_type: integer
+      - name: model
+        data_type: string
+      - name: vehicle_trim
+        data_type: string
+      - name: model_year
+        data_type: smallint
+      - name: mileage
+        data_type: integer
+      - name: msrp
+        data_type: integer
+      - name: stock_type
+        data_type: string
+      - name: fuel_type
+        data_type: string
+      - name: body_style
+        data_type: string
+      - name: dealer_name
+        data_type: string
+      - name: dealer_zip
+        data_type: string
+      - name: dealer_city
+        data_type: string
+      - name: dealer_state
+        data_type: string
+      - name: customer_id
+        data_type: string
+      - name: canonical_detail_url
+        data_type: string
+      - name: financing_type
+        data_type: string
+      - name: seller_zip
+        data_type: string
+      - name: seller_customer_id
+        data_type: string
+      - name: page_number
+        data_type: smallint
+      - name: position_on_page
+        data_type: smallint
+      - name: trid
+        data_type: string
+      - name: isa_context
+        data_type: string
+      - name: body
+        data_type: string
+      - name: condition
+        data_type: string

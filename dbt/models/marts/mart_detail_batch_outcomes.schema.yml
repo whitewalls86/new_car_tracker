@@ -9,22 +9,30 @@ models:
       One row per obs_date.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: obs_date
+        data_type: date
         data_tests:
           - not_null
           - unique
       - name: detail_observations
+        data_type: bigint
         data_tests:
           - not_null
       - name: detail_artifacts
+        data_type: bigint
         data_tests:
           - not_null
       - name: valid_vin_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: unique_vins_enriched
+        data_type: bigint
         data_tests:
           - not_null
       - name: extraction_yield
+        data_type: double
         description: "Null only if detail_observations = 0 (guard via nullif); always populated in practice."

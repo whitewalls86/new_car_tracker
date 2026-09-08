@@ -1,0 +1,123 @@
+# Plan 162 Stage S, exit 2 — the recency arms of mart_vehicle_snapshot's
+# listing_state inference.
+#
+# Why a separate declaration file rather than one more entry in
+# ../unit_tests.yml: the branch instrument
+# (tests/dbt/branch_probe.py::compiled_unit_tests) globs the literal filename
+# `unit_tests.yml` anywhere under models/, and dbt compiles a unit test to
+# `target/compiled/.../<its declaring file>/<test name>.sql`. A subdirectory is
+# the only way to add a second declaration file the instrument still sees
+# without colliding with the marts one.
+#
+# Why one test with two VINs rather than two tests with one each. Not because
+# the instrument requires it — `_measure()` merges unit-test results across
+# tests (`tuple(merge(units))` takes the max of each arm per branch id), so two
+# tests taking one arm apiece would satisfy the gate. It is a design choice:
+# ../unit_tests.yml's `test_srp_only_recent_inferred_active` and
+# `test_srp_only_old_inferred_unlisted` each see one side of the guard, and a
+# reader of either alone cannot tell the guard discriminates. One `given` that
+# straddles the boundary is the test that fails if the comparison flips, and it
+# documents the 7-day cut in a single place.
+#
+# Why `overrides.macros.now_ts` is not optional here. The guard is
+# `now()`-relative, so a fixture written against wall-clock time stops
+# exercising the recent arm the moment it ages past seven days — which is
+# exactly how these two branches went dead. Pinning the clock makes the test a
+# statement about the model rather than about the date it is run on.
+
+unit_tests:
+
+  - name: test_srp_only_recency_splits_active_from_unlisted
+    description: >
+      Two SRP-only VINs straddling the 7-day recency guard. Neither has a
+      detail observation, so the outer coalesce falls through to the inferred
+      CASE for both: the VIN observed 2 days before the pinned now() is
+      'active', the one observed 26 days before it is 'unlisted'. The active
+      VIN's price events are deliberately stale — its last price event is 14
+      days old, outside the window its observation is inside — so this test
+      fails if the guard slips back to reading price-event recency
+      (int_price_history.last_seen_at), which is the defect repaired on
+      2026-09-07. One `given` reaching both arms is what closes
+      mart_vehicle_snapshot.<final>.case_arm.1 and .case_else.0.
+    model: mart_vehicle_snapshot
+    overrides:
+      macros:
+        now_ts: "cast('2026-01-15 12:00:00+00' as TIMESTAMP WITH TIME ZONE)"
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "SRPRECENTACTIVE01", listing_id: "L1", source: "srp",
+             listing_state: null, make: "honda", model: "crv",
+             fetched_at: "2026-01-13 12:00:00+00"}
+          - {vin17: "SRPOLDUNLISTED001", listing_id: "L2", source: "srp",
+             listing_state: null, make: "honda", model: "crv",
+             fetched_at: "2025-12-20 12:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          # Price events 14+ days stale while the VIN's observation (above) is
+          # 2 days fresh. The split is the point: 'active' must come from the
+          # observation, and reading last_seen_at here would say 'unlisted'.
+          - {vin: "SRPRECENTACTIVE01", current_price: 30000,
+             price_observed_at: "2026-01-01 12:00:00+00",
+             first_price: 31000, min_price: 30000, max_price: 31000,
+             price_drop_count: 1, price_increase_count: 0,
+             total_price_observations: 2,
+             first_seen_at: "2025-12-28 12:00:00+00",
+             last_seen_at: "2026-01-01 12:00:00+00"}
+          # last_seen_at 26 days before the pinned now() — outside it.
+          - {vin: "SRPOLDUNLISTED001", current_price: 21000,
+             price_observed_at: "2025-12-20 12:00:00+00",
+             first_price: 21000, min_price: 21000, max_price: 21000,
+             price_drop_count: 0, price_increase_count: 0,
+             total_price_observations: 1,
+             first_seen_at: "2025-12-15 12:00:00+00",
+             last_seen_at: "2025-12-20 12:00:00+00"}
+      - input: ref('int_active_make_models')
+        rows:
+          - {make: "honda", model: "crv"}
+      # `format: sql` for the reason documented at the top of
+      # ../unit_tests.yml: stg_observations is ephemeral on the spark target,
+      # so there is no relation for dbt to introspect a dict fixture from.
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(null as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-13 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('SRPRECENTACTIVE01' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select null, 'L2', 'srp', null, cast('2025-12-20 12:00:00+00' as timestamp), null, null, 'SRPOLDUNLISTED001', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {vin: "SRPOLDUNLISTED001", listing_state: "unlisted", price: 21000,
+           days_on_market: 31}
+        - {vin: "SRPRECENTACTIVE01", listing_state: "active", price: 30000,
+           days_on_market: 18}

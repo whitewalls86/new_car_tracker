@@ -9,33 +9,45 @@ models:
       national_avg_discount_pct is null for make/models where no VIN has a known MSRP.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: make
+        data_type: string
         data_tests:
           - not_null
       - name: model
+        data_type: string
         data_tests:
           - not_null
       - name: national_listing_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: national_avg_price
+        data_type: integer
         data_tests:
           - not_null
       - name: national_median_price
+        data_type: integer
         data_tests:
           - not_null
       - name: national_p10_price
+        data_type: integer
         data_tests:
           - not_null
       - name: national_p25_price
+        data_type: integer
         data_tests:
           - not_null
       - name: national_p75_price
+        data_type: integer
         data_tests:
           - not_null
       - name: national_p90_price
+        data_type: integer
         data_tests:
           - not_null
       - name: national_avg_discount_pct
+        data_type: decimal(5,2)
         description: "Null when no VIN in the cohort has a non-zero MSRP."

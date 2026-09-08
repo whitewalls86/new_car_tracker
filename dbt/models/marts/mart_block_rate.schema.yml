@@ -10,23 +10,31 @@ models:
       One row per hour.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: hour
+        data_type: timestamp
         data_tests:
           - not_null
           - unique
       - name: new_blocks
+        data_type: bigint
         data_tests:
           - not_null
       - name: block_increments
+        data_type: bigint
         data_tests:
           - not_null
       - name: total_block_events
+        data_type: bigint
         data_tests:
           - not_null
       - name: unique_listings_blocked
+        data_type: bigint
         data_tests:
           - not_null
       - name: max_attempts_seen
+        data_type: integer
         data_tests:
           - not_null

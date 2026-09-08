@@ -1,0 +1,13 @@
+-- Materialize a model's compiled SQL, or a mutant of it, into the in-memory
+-- database the mutation gate works in.
+--
+-- Plan 162 Stage S. The body is generated -- it is a model's own compiled SQL,
+-- or that SQL with one branch deleted -- so this is a template rather than a
+-- statement, and the placeholders are what make it one. The warehouse itself is
+-- attached READ_ONLY and is never the target here: `memory.main` is the
+-- process-local database, so a mutant cannot outlive the run or be read by the
+-- suites that assert against what dbt actually built.
+--
+-- No braces in this comment beyond the placeholders: the whole file goes
+-- through str.format.
+CREATE OR REPLACE TABLE {relation} AS ({body})

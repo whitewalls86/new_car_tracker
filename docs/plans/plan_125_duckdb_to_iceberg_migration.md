@@ -1610,12 +1610,16 @@ VM tests:
 
 ### What Plan 162's testing contract adds to this gate list
 
-**Added 2026-09-01 by Plan 162 Stage L.** This plan's testing strategy predates
-[Plan 161's contract](plan_161_testing_contract.md) and [Plan
-162](plan_162_testing_census_and_restructure.md), so the four items below are
-recorded here rather than left to be rediscovered at each gate. None of them
-changes this plan's design; each names an obligation the contract now places on
-work this plan will do.
+**Added 2026-09-01 by Plan 162 Stage L. Items 5 and 6 added 2026-09-06 by Plan
+162 Stage S.** This plan's testing strategy predates [Plan 161's
+contract](plan_161_testing_contract.md) and [Plan
+162](plan_162_testing_census_and_restructure.md), so the six items below are
+recorded here rather than left to be rediscovered at each gate. Items 1 to 4
+change nothing in this plan's design; each names an obligation the contract now
+places on work this plan will do. **Item 5 is different — it names a
+materialization choice this plan already made that will silently disable a
+guard Plan 162 is about to land**, and it is the reason these are recorded here
+rather than only in Plan 162.
 
 **1. `--verify-table` is a convention, not a mechanism — and it guards the
 sharpest instance of the contract's central failure.**
@@ -1642,13 +1646,24 @@ it.** Plan 162 considered writing this rule and withdrew it — there is no
 selector yet, and a registry invented ahead of its subject is how this
 repository has been bitten before.
 
-**3. Execution recording must be captured before Gate D, not at it.** Plan 162
-Stage 11 scopes a recorder that logs which statement text executed against which
-engine. Its cross-engine assertion — "this ran on the engine production uses for
-it" — needs two live engines and belongs at this gate. **Its capture does not,
-and must not wait**: Gate D moves readers off `analytics.duckdb` one by one, and
-a baseline taken after that migration is not a baseline. The partially-migrated
-middle is exactly where a half-swapped reader looks green.
+**3. Execution recording must be captured before Gate D, not at it. —
+DISCHARGED 2026-09-06.** A recorder that logs which statement text executed
+against which engine was scoped by Plan 162 as Stage 11, which is now
+[Stage S](plan_162_testing_census_and_restructure.md#stage-s-answers-a-question-plan-161-did-not-ask);
+the recorder itself moved to
+[Stage X](plan_162_testing_census_and_restructure.md#stage-x-a-test-may-not-author-sql-either)
+on 2026-09-04, on the argument that recording what ran against which engine is a
+claim about every statement in the repository rather than about the dbt project.
+Its cross-engine assertion — "this ran on the engine production uses for it" —
+still needs two live engines and still belongs at this gate. **Its capture did
+not wait**: Gate D moves readers off `analytics.duckdb` one by one, and a
+baseline taken after that migration is not a baseline — the partially-migrated
+middle is exactly where a half-swapped reader looks green. Stage X closed on
+2026-09-06 with all 163 production `.sql` files recorded executing in CI, and
+the baseline is
+[`plan_162_stage_X_recorder_baseline_2026-09-05.md`](../evidence/plan_162_stage_X_recorder_baseline_2026-09-05.md),
+taken while DuckDB was still authoritative. This gate inherits it rather than
+owing it.
 
 **4. Gate D2's choice decides whether 26 `.sql` files change engine at all.**
 Measured 2026-09-01: 26 of 135 production `.sql` files are covered *only* by a
@@ -1660,6 +1675,51 @@ stem in the test's *text* and never inspects which fixture it takes. Under D2
 option 2 (DuckDB as a non-authoritative Iceberg reader/cache), which this plan
 calls the lower-risk first cut, `duckdb_con` stays correct and none of the 26
 moves. **The number is conditional on D2 and should not be quoted flat.**
+
+**5. Three models lose their enforced contract the moment Spark becomes
+authoritative, and nothing says so.** Plan 162 Stage S lands
+`contract: {enforced: true}` on all 23 dbt models, which is what makes
+`schema.yml` a backstop rather than documentation — dbt fails the build when a
+model's output stops matching its declared columns and types. Measured
+2026-09-06 against the pinned CI versions (`dbt-core==1.10.20`,
+`dbt-duckdb==1.10.1`): contracts are enforced on `table` and on `view`, and
+**silently unenforced on `ephemeral`**. Not an error and not a warning — a model
+materialized `ephemeral` with all three of its column types deliberately wrong
+built green through a downstream consumer, `PASS=1 WARN=0 ERROR=0`, because
+there is no materialization step for dbt to check against.
+
+`stg_observations`, `stg_price_events` and `stg_blocked_cooldown_events` are all
+declared `'ephemeral' if target.type == 'spark' else 'view'`, for the Gate B
+reason recorded in their own headers: a persisted Spark view re-qualifies the
+`parquet.`s3a://…`` reference against the view's own catalog and fails with
+`TABLE_OR_VIEW_NOT_FOUND`. That reasoning is sound and this item does not ask
+for it to be reversed. What it asks is that **the cost be paid deliberately at
+the gate that incurs it**: when Spark becomes authoritative, those three
+contracts stop being checked, the build stays green, and the only signal is
+that three of the repository's 23 models quietly return to documentation.
+Whatever Gate D or Gate E decides — a different materialization, an equivalent
+assertion outside dbt, or an accepted and recorded loss — it should be a
+decision rather than a discovery.
+
+**6. Gate 0's portability audit does not cover declared types, and Stage S
+needs it to.** The audit is a *cast* audit: it establishes that `::varchar` is a
+hard Spark parse error against `string`, that bare `::numeric` must become
+`cast(x as double)`, and that `::numeric(5,2)` maps to `decimal(5,2)`
+([Gate 0 audit outcomes](#audit-outcomes-that-change-the-plan)). It never
+enumerates the spellings a *declaration* needs, so `bigint`, `smallint`,
+`boolean`, `date`, `double` and the timestamp family are unverified on Spark.
+`dbt/models/sources.yml` already writes `data_type: timestamptz`, which is not
+a Spark type name at all — harmless today, because contracts do not apply to
+sources, and precisely the shape of the problem when they apply to models.
+
+Stage S declares all 307 model columns in DuckDB spellings and deliberately
+does not answer this, because the contract is enforced on the only production
+target either way and the question becomes due at Gate D rather than now.
+**What this gate owes is the table Stage S could not write**: each distinct
+declared type, round-tripped through both engines, with the spelling that is
+valid on both. Plan 162 Stage S's record will name the types actually in use
+once the `DESCRIBE` pass has run, so the input to that table arrives before it
+is needed.
 
 ## Risks
 

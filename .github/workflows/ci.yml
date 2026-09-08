@@ -503,9 +503,45 @@ jobs:
         # materializes int_listing_state_runs/int_latest_observation against real
         # data. Written under the reserved 2099 partition so it never collides
         # with the empty-schema compilation seed above.
-        run: python scripts/seed_lake_snapshot_fixture.py
+        #
+        # --postgres-url is the other half of the fixture: two of dbt's six
+        # sources resolve through postgres_scan(), and ops.tracked_models is
+        # written by the processing service in production and by nothing in
+        # this job. Left unseeded, int_active_make_models inner-joins an empty
+        # table and five models build over an empty world -- the exact state
+        # test_models_are_not_vacuous.py exists to refuse, in this job.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
@@ -522,6 +558,102 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
+      - name: Run the dbt branch-coverage gate
+        # Plan 162 Stage S. Its own pytest process, and the separation is the
+        # design rather than tidiness.
+        #
+        # **Ordering is load-bearing: the two gate steps run before the
+        # equivalence suite below, not after it.** That suite's real-build
+        # tests seed later fixture phases into the shared 2099 partition and
+        # rebuild a subset of models, leaving a warehouse no single `dbt build`
+        # produced — some models holding phase-2/3 rows beside marts still on
+        # phase 1, with the stg_* views reading the enlarged Parquet live.
+        # Measured here instead, the gates describe exactly what the build step
+        # above produced, which is the state the documented repro (`seed, build,
+        # run the gate alone`) reproduces.
+        #
+        # `test_incremental_models_real_build.py` and
+        # `test_observation_fingerprints_real_build.py` call `run_dbt()`, which
+        # invokes dbt **in-process** — Plan 139 Stage C measured that as ~3s of
+        # every 4.4s saved, and `tests/integration/dbt/real_build.py` argues the
+        # trade. What it costs is a lock: dbt-duckdb caches its adapter, so it
+        # holds DUCKDB_PATH open read-write for the life of the interpreter, and
+        # DuckDB refuses a second handle to one file under a *different*
+        # configuration. Which suite shares a pytest process with those two is
+        # therefore not a scheduling preference. It decides what a suite in that
+        # process is permitted to open.
+        #
+        # **Branch coverage would survive the shared process today**, and is
+        # split out anyway. `analytics_con()` opens the same path under the same
+        # configuration, which is the one thing dbt's open handle allows — so
+        # folding this back in goes green, which is exactly why someone would.
+        # The next gate on Stage S's list cannot: the constraint-mutation gate
+        # needs `attached_warehouse()`, a separate `:memory:` database with the
+        # warehouse ATTACHed READ_ONLY so a mutated model can be materialized
+        # somewhere that is not the warehouse under assertion, and READ_ONLY is
+        # precisely the different configuration DuckDB will not grant.
+        # `assert_no_in_process_dbt()` is there so that arrives as a sentence
+        # instead of a lock error six frames deep.
+        #
+        # **What breaks if the two are merged.** Nothing, on the commit that
+        # merges them. The seam is what is lost: the mutation gate then turns up
+        # needing a step that has to be carved back out of a passing one, and
+        # the argument for carving it has to be reconstructed from a DuckDB
+        # error message by whoever is unlucky enough to hit it. Split while it
+        # costs an --ignore and a step; not later, when it costs a bisect.
+        #
+        # It needs the build step's environment entire, not a subset:
+        # `compiled_in_both_phases()` runs `dbt compile --full-refresh` and then
+        # `dbt compile` to capture both renderings of the seven models whose
+        # incremental form differs from their cold one, and dbt's `on-run-start`
+        # hook reads Postgres on every invocation regardless of what is
+        # selected. TZ is pinned rather than inherited: GitHub runners are UTC
+        # already, so it changes nothing today — it is here because a pinned
+        # expectation that resolves to a timestamp is not a fact about the
+        # models if it also depends on the runner's clock offset, and that
+        # property should be readable at the step rather than held by a default
+        # nobody chose.
+        run: >-
+          pytest tests/integration/dbt/test_branch_coverage.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TZ: UTC
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run the dbt constraint-mutation gate
+        # Its own invocation for a harder reason than the gate above it. This
+        # suite calls `attached_warehouse()`, which opens an in-memory DuckDB
+        # and ATTACHes the warehouse READ_ONLY -- a *different configuration*
+        # for the same file, which DuckDB refuses outright when dbt-duckdb
+        # already holds it open read-write. Every other suite in that directory
+        # calls run_dbt(), and dbt stays imported for the life of the
+        # interpreter, so sharing a process is not slow here: it does not work.
+        # The suite says so itself, via assert_no_in_process_dbt(), rather than
+        # surfacing as a lock error six frames down.
+        #
+        # It mutates 216 branches and runs each model's own data tests against
+        # the mutant, in about seven seconds, entirely inside the in-memory
+        # database -- the warehouse this job built is never written to, so the
+        # steps around it still describe what dbt produced.
+        run: >-
+          pytest tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TZ: UTC
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: Run selector/dbt equivalence tests
         # Compares the real dbt build above against the Plan 120 selector SQL
         # over the same MinIO data — the coupling guard requested in Gate B
@@ -531,7 +663,18 @@ jobs:
         # once: this step is the critical path now that nothing else shares
         # its job, so the per-test breakdown has to stay readable in the log
         # rather than living only in a plan document that ages.
-        run: pytest tests/integration/dbt/ -v -m integration --durations=20
+        #
+        # The --ignore is the other half of the two gate steps above, and
+        # neither half works alone: this argument is a directory, so a file
+        # added to it joins this process by default, and the gates' whole
+        # reason for existing is that those two files must not. It also runs
+        # after them, deliberately — its real-build tests reseed and rebuild,
+        # and the gates must measure the untouched build.
+        run: >-
+          pytest tests/integration/dbt/
+          --ignore=tests/integration/dbt/test_branch_coverage.py
+          --ignore=tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
         env:
           PYTHONPATH: ${{ github.workspace }}
           DUCKDB_PATH: /tmp/ci_analytics.duckdb
@@ -711,6 +854,33 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
 
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/snapshot_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: dbt build (DuckDB — production-shaped data)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
@@ -844,9 +1014,42 @@ jobs:
           MINIO_BUCKET: bronze
 
       - name: Seed lake snapshot fixture data
-        run: python scripts/seed_lake_snapshot_fixture.py
+        # --postgres-url so the Postgres-backed sources carry rows here too:
+        # this job's build feeds the SQL contract tests that read main.mart_*,
+        # and a mart built over an unseeded ops.tracked_models is empty, which
+        # turns every assertion over it vacuous.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
@@ -1198,7 +1401,12 @@ jobs:
       - name: Seed lake snapshot fixture data
         # The archiver's selector and cohort tests run their SQL against
         # production-shaped Parquet; this is where that Parquet comes from.
-        run: python scripts/seed_lake_snapshot_fixture.py
+        # --postgres-url seeds the Postgres half of the same fixture, so the
+        # source-table world this job tests against matches the one the dbt
+        # jobs build from.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000
