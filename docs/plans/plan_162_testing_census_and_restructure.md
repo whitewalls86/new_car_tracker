@@ -368,8 +368,8 @@ moved it to the end without making it a different stage.
 | 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `done` | CAR-81 |
 | 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `done` | CAR-83 |
 | 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `done` | CAR-79 |
-| 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `next` | CAR-80 |
-| 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `—` | CAR-82 |
+| 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
+| 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `next` | CAR-82 |
 | 20 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 21 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-88 |
 | 22 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
@@ -1791,7 +1791,7 @@ spellings are DuckDB's; both Spark questions this stage uncovered are
 
 ### Stage T exists because this plan grew the suite
 
-**Legacy:** Stage 12 · **Issue:** CAR-80 · **State:** `next`
+**Legacy:** Stage 12 · **Issue:** CAR-80 · **State:** `done`
 
 **Added 2026-09-01, at the maintainer's suggestion, during Stage L.** Plan 162
 has spent nine stages adding tests -- Stage B put 73 orphaned ones into CI,
@@ -1980,7 +1980,7 @@ Demonstrated by an unwired key failing, not asserted.
 
 ### Stage W: a test may not supply both halves of a contract
 
-**Legacy:** Stage 15 · **Issue:** CAR-82 · **State:** `—`
+**Legacy:** Stage 15 · **Issue:** CAR-82 · **State:** `next`
 
 **Found 2026-09-04, closing Stage P.** `check_snapshot_result` in the export
 DAG accepted only `{"created"}` as a successful non-dry-run status. The exporter
@@ -3411,3 +3411,55 @@ derived (297 minus the two deletions — the CI log proves the gates pass but
 does not print the count). Full account with the recipe in
 [plan_162_stage_S_evidence.md](../evidence/plan_162_stage_S_evidence.md); CI
 run 34162171648 at `5b96948`.
+
+### Stage T — shared fixtures: what the suite duplicates
+
+**Legacy:** Stage 12 · **Issue:** CAR-80 · **Closed:** 2026-09-07
+
+**Cost:** estimate 2 points → **actual 1** — one session, one commit.
+
+All exits met, one with a confession attached: the exit requires re-measuring
+"against the same recipe that produced the table," and that recipe was never
+written down. It was re-derived — Plan 138 Stage 9's precedent — and is now
+recorded verbatim in
+[plan_162_stage_T_evidence.md](../evidence/plan_162_stage_T_evidence.md),
+which carries everything bulky about this stage. One row cross-checks exactly:
+the re-derived predicate reads 55 module-local seed helpers on the pre-stage
+tree, the number measured 2026-09-01.
+
+| | 2026-09-01 | before | after |
+|---|---:|---:|---:|
+| Tests collected | 3,988 | 4,483 | 4,483 |
+| Ad-hoc `INSERT`s in test modules | 96 | 2* | 2* |
+| Distinct read-back `SELECT`s | 161 | 0 | 0 |
+| Module-local seed helpers | 55 | 55 | **47** |
+| Helper names defined in >1 module | — | 52 | **43** |
+| …byte-identical | — | 19 | **12** |
+
+\* Stage X's deltas, observed rather than re-litigated; neither survivor is a
+seed (one is the contract's own mutation fixture, one a docstring).
+
+**Seven groups consolidated**, each into an existing natural home — the
+largest single deletion was `_get_conn` ×3, which re-derived a fixture the
+root conftest already had. Six duplicate seed `.sql` files deduped into
+conftest-owned copies on the way. **The 12 identical groups that remain are
+each a recorded decision**: twin test modules mirroring the parser that
+production itself duplicates, 2–5-line helpers below the consolidation floor,
+and one dormant suite. The ticket's flagship, `_insert_artifact` ×3, dissolved
+under Stage X into three visibly different statements — callers wanting
+different data, left alone.
+
+**The instrument the exit demands an answer about was found, and it is
+static, not the recorder**: Stage X's extraction made "two helpers execute the
+same statement" a textual property — normalized content equality over
+`tests/sql/` (43 identical groups across 96 of 385 files, 7 sharing no
+filename). Recorded as available, not made a rule: per-module seeds are Stage
+X's deliberate convention, and PREPARE already fails every copy on drift. For
+helpers that execute no SQL, no mechanical instrument exists; that half leaves
+prose behind.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work — the collection count did not move.
+
+PR #383, CI run 34181659530 green at `b695283`; locally 441 passed / 35
+skipped across the touched suites against a Flyway-migrated postgres:16.
