@@ -96,6 +96,17 @@ worth of logs *usable by a person*, it belongs here.
    Plans 141/142/154, or whether the question is blocked.
 3. Discard questions that a Prometheus metric already answers better. Logs are
    not the right instrument for rates that a counter already tracks.
+4. Carry the one question Plan 154 Stage B deferred here rather than answering
+   at ingestion: **is the Turnstile solver degrading?** `trawl` emits
+   `Turnstile keyboard Tab+Space attempted` only after the primary shadow-DOM
+   method has failed, so its rate against `cf_clearance obtained` is an
+   escalation signal that *leads* a collapse rather than coinciding with it.
+   Stage B labels every `trawl` line `INFO` and drops none of them precisely so
+   this ratio is computable here; labelling the fallback `WARNING` at ingestion
+   was considered and rejected, because at 12% of `trawl`'s lines it would have
+   made `WARNING` the routine level and dulled the genuine partial failures.
+   The 2026-08-14 outage — the solver at 0% after 22 days of uptime, caught
+   only by hand — is the case this question exists to catch earlier.
 
 ### Stage 0 gate
 
@@ -153,7 +164,10 @@ Conditional on Plan 141's formatter change landing a usable identifier.
   `generation` is the identifier the maintenance-window view in Stage 3 keys on.
 - **Plan 154 supplies the streams.** Its added services make Stage 1's per-service
   breakdown necessary; the two are complementary but neither blocks the other
-  once Plan 141 is in.
+  once Plan 141 is in. Stage B also hands this plan one specific rule rather
+  than implementing it at ingestion, recorded as Stage 0 item 4 — a deliberate
+  choice to keep a discrimination that needs a ratio in the place that can
+  compute one.
 - **Plan 151 owns tracing.** If Stage 3 concludes that a shared log identifier
   is insufficient for real correlation, that finding is input to Plan 151's
   Stage C decision and is not solved here.
