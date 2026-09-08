@@ -164,19 +164,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
-      # Both halves, and the plural one is why: a variable in `.env` reaches a
-      # container only if the service names it here. Plan 162 added
-      # SNAPSHOT_DOWNLOAD_TOKENS to `.env.example` and the router without this
-      # line, so the router silently fell back to the legacy single token and a
-      # healthy redeploy looked identical to a working one.
-      #
-      # Both lines are Plan 173's second deploy waiting to happen. Credentials
-      # live in `ops.machine_tokens` now; these survive one deploy only because
-      # the first table-backed token cannot be issued through an interface that
-      # already requires one. They go with the parsing block in
-      # ops/routers/snapshots.py and the two keys in `.env`.
-      SNAPSHOT_DOWNLOAD_TOKENS: ${SNAPSHOT_DOWNLOAD_TOKENS:-}
-      SNAPSHOT_DOWNLOAD_TOKEN: ${SNAPSHOT_DOWNLOAD_TOKEN:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8060/health', timeout=5)"]
       interval: 30s

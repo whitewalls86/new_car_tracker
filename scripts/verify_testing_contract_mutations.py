@@ -26,11 +26,24 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST = "tests/test_testing_contract.py"
 
+#: Every module holding contract rules this harness proves can fail. A rule in
+#: its own module is still a contract rule, and the baseline has to run it --
+#: a mutation measured against a suite that never collected its assertion
+#: reports CAUGHT for the wrong reason. ``tests/test_env_example_wiring.py`` is
+#: Plan 162 Stage V's and joined on 2026-09-08.
+TESTS = (TEST, "tests/test_env_example_wiring.py")
+
 
 def _pytest(node: str | None = None) -> tuple[int, str]:
-    target = TEST if node is None else f"{TEST}::{node}"
+    # A node containing `::` names its own module; a bare name belongs to
+    # `TEST`, which is where most of them still live. That is what keeps the
+    # entries written before a second module existed working unchanged.
+    if node is None:
+        targets = list(TESTS)
+    else:
+        targets = [node if "::" in node else f"{TEST}::{node}"]
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", target, "-q", "--no-header",
+        [sys.executable, "-m", "pytest", *targets, "-q", "--no-header",
          "-p", "no:cacheprovider"],
         cwd=REPO_ROOT, capture_output=True, text=True,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
@@ -590,6 +603,94 @@ MUTATIONS = [
             "",
         ),
         ["archiver/processors/lake_snapshot_export_cache.py"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
+        "a key is documented in .env.example that no Compose service delivers",
+        lambda: _edit(
+            ".env.example",
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog",
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog\nHARNESS_UNWIRED_KEY=change_me",
+        ),
+        [".env.example"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
+        "the same key, named only in a docker-compose.yml comment",
+        lambda: (
+            _edit(
+                ".env.example",
+                "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog",
+                "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog\nHARNESS_UNWIRED_KEY=change_me",
+            ),
+            _edit(
+                "docker-compose.yml",
+                "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
+                "      # HARNESS_UNWIRED_KEY is delivered here\n"
+                "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
+            ),
+        ),
+        [".env.example", "docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py::test_no_undelivered_key_is_quietly_wired",
+        "a key declared undelivered is wired into Compose after all",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
+            "      SCRAPER_RESULTS_BASE_URL: ${SCRAPER_RESULTS_BASE_URL:-}\n"
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py"
+        "::test_every_undelivered_declaration_names_a_consumer_that_reads_it",
+        "an Undelivered entry names a real file that does not read its key",
+        lambda: _edit(
+            "tests/test_env_example_wiring.py",
+            'consumer="scraper/processors/scrape_results.py"',
+            'consumer="scraper/app.py"',
+        ),
+        ["tests/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
+        "a Compose service interpolates a variable .env.example never documents",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
+            "      HARNESS_NEW_SECRET: ${HARNESS_NEW_SECRET}\n"
+            "      RESEND_API_KEY: ${RESEND_API_KEY:-}",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
+        "the $$ escape strip is removed, so $${HOSTNAME} reads as interpolated",
+        lambda: _edit(
+            "tests/test_env_example_wiring.py",
+            '_REFERENCE.findall(_ESCAPED.sub("", node))',
+            "_REFERENCE.findall(node)",
+        ),
+        ["tests/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "test_the_fixture_relation_corpus_is_not_empty",
+        "the shadowing _CREATE_TABLE comes back and empties the corpus",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            "_CREATE_TABLE_BODY = re.compile(",
+            "_CREATE_TABLE = re.compile(",
+        ),
+        ["tests/test_testing_contract.py"],
         [],
     ),
 ]

@@ -38,10 +38,8 @@ arbitrary container control.
 """
 import hashlib
 import logging
-import os
 import re
-import secrets
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -61,31 +59,6 @@ router = APIRouter(prefix="/admin/snapshots/adaptive-refresh", tags=["snapshots"
 
 ALIAS_PREFIX = "ci_snapshots/adaptive_refresh"
 LATEST_KEY = f"{ALIAS_PREFIX}/latest.json"
-
-# ── The environment fallback, and why it is still here ───────────────────────
-#
-# Everything from here to SNAPSHOT_TOKENS is Plan 173's second deploy waiting to
-# happen, and it survives the first one for a chicken-and-egg reason rather than
-# a cautious one: the first table-backed token cannot be issued through an
-# interface that requires a table-backed token. So the environment set stays
-# live while the tokens are issued and CI and the laptop are repointed, and the
-# deploy after that deletes this block, the two `.env` keys and the two
-# docker-compose lines together.
-#
-# `name:scope:token` entries, comma separated. The name is for attribution in
-# the access log and is never secret; the token never reaches a log line.
-#
-# Split on the first two colons only, so a token may contain colons — base64 and
-# hex tokens do not, but a passphrase might. A comma cannot appear in a token,
-# which is the one constraint this format imposes and the reason a malformed
-# entry is reported by position rather than silently dropped.
-SNAPSHOT_DOWNLOAD_TOKENS = os.environ.get("SNAPSHOT_DOWNLOAD_TOKENS", "")
-
-# The single unnamed token this router accepted before Plan 162. Still honoured,
-# so deploying this change breaks nothing and the named set can be introduced by
-# a later `.env` edit rather than in lockstep with a container restart. Retire it
-# once every caller has a named entry.
-SNAPSHOT_DOWNLOAD_TOKEN = os.environ.get("SNAPSHOT_DOWNLOAD_TOKEN", "")
 
 # How stale `last_used_at` may get before a request refreshes it. Bound as a
 # parameter into touch_machine_token_last_used.sql, which names no window of its
@@ -123,55 +96,6 @@ class SnapshotToken(NamedTuple):
     name: str
     scope: str
 
-
-class _EnvToken(NamedTuple):
-    """A parsed `name:scope:token` entry from the environment.
-
-    Private, and holds the plaintext because that form has nowhere else to keep
-    it. Deleted with the rest of the fallback on Plan 173's second deploy.
-    """
-    name: str
-    scope: str
-    token: str
-
-
-def _parse_token_set(raw: str, legacy: str) -> Tuple[_EnvToken, ...]:
-    """Parse `name:scope:token` entries, dropping and reporting malformed ones.
-
-    A bad entry is a warning naming its **position and name**, never its value,
-    and never an exception: a typo in one entry must not take the whole router
-    down at import and lock every caller out. The caller behind the bad entry
-    gets a 403, which is the loud half of the signal.
-    """
-    entries: list[_EnvToken] = []
-    for position, item in enumerate(raw.split(","), start=1):
-        item = item.strip()
-        if not item:
-            continue
-        name, _, rest = item.partition(":")
-        scope, separator, token = rest.partition(":")
-        if not (name and separator and scope and token):
-            logger.warning(
-                "snapshot token entry %d is malformed (expected name:scope:token); ignoring",
-                position,
-            )
-            continue
-        if scope not in _SCOPE_GRANTS:
-            logger.warning(
-                "snapshot token entry %d (%s) names unknown scope %r; ignoring",
-                position, name, scope,
-            )
-            continue
-        entries.append(_EnvToken(name=name, scope=scope, token=token))
-
-    if legacy:
-        entries.append(_EnvToken(name="legacy", scope="read", token=legacy))
-    return tuple(entries)
-
-
-SNAPSHOT_TOKENS: Tuple[_EnvToken, ...] = _parse_token_set(
-    SNAPSHOT_DOWNLOAD_TOKENS, SNAPSHOT_DOWNLOAD_TOKEN,
-)
 
 # snapshot_id is used to build a MinIO key (aliases/{snapshot_id}.json) — no
 # path separators or ".." allowed.
@@ -214,11 +138,12 @@ def _tokens_configured() -> bool:
     questions and produce different statuses: "this deployment has no tokens"
     is an operator's problem, "your token is wrong" is the caller's.
 
-    Either source counts, so the deployment that introduces the table is
-    configured by its `.env` alone and the deployment after the fallback is
-    deleted is configured by its rows alone.
+    Answered from the table alone since Plan 173's second deploy retired the
+    environment set. A deployment whose only credential expired overnight
+    reports itself unconfigured, which is true, rather than refusing every
+    caller as though each had presented a bad token.
     """
-    return bool(SNAPSHOT_TOKENS) or _machine_tokens_exist()
+    return _machine_tokens_exist()
 
 
 def _machine_tokens_exist() -> bool:
@@ -248,15 +173,13 @@ def _resolve_token(presented: str) -> Optional[SnapshotToken]:
     credentials out of environment variables into a table two function bodies
     rather than a change to the auth path.
 
-    The table is asked first and the environment set second, so a caller that
-    has been reissued authenticates as its row even while its old entry is
-    still in `.env`. The fallback disappears on Plan 173's second deploy and
-    this becomes the table alone.
+    The table is the only source. It briefly shared the job with a
+    `name:scope:token` environment variable, for one deploy, because the first
+    table-backed token could not be issued through an interface that already
+    required one — that set was retired on 2026-09-08 once every caller held a
+    row.
     """
-    matched = _resolve_machine_token(presented)
-    if matched is not None:
-        return matched
-    return _resolve_env_token(presented)
+    return _resolve_machine_token(presented)
 
 
 def _resolve_machine_token(presented: str) -> Optional[SnapshotToken]:
@@ -311,21 +234,6 @@ def _record_last_used(digest: str) -> None:
             cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (digest, LAST_USED_THROTTLE))
     except Exception:
         logger.warning("machine token last_used_at update failed", exc_info=True)
-
-
-def _resolve_env_token(presented: str) -> Optional[SnapshotToken]:
-    """Match *presented* against the environment set. Deleted on the next deploy.
-
-    The loop compares every entry with no early exit. Breaking on the first
-    match leaks nothing about a token's value but does leak which caller
-    presented it, through response time. The table form has no equivalent loop
-    to protect, which is the point of storing a digest.
-    """
-    matched: Optional[SnapshotToken] = None
-    for entry in SNAPSHOT_TOKENS:
-        if secrets.compare_digest(presented, entry.token):
-            matched = SnapshotToken(name=entry.name, scope=entry.scope)
-    return matched
 
 
 def require_snapshot_token(required_scope: str = MachineTokenScope.READ):

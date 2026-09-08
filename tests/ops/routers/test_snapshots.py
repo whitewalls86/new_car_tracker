@@ -49,17 +49,14 @@ def machine_tokens(mocker):
 def _token(mocker):
     """Authenticate `test-token` as the `ci` caller, through the table.
 
-    Route tests run against the storage this router will have once the
-    environment fallback is deleted, not the one it is being retired from —
-    asserting the auth path against a form on its way out would mean rewriting
-    them again on the next deploy.
+    The table is the only storage there is, since Plan 173's second deploy
+    retired the environment set.
 
     Stubbing the seam is also what keeps them honest: `mock_client` mocks
     `psycopg2.connect`, so an unstubbed lookup gets a `MagicMock` back, and a
     `MagicMock` is truthy — every string would authenticate as a caller whose
     name is a mock.
     """
-    mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", ())
     mocker.patch.object(
         snapshots, "_resolve_machine_token",
         side_effect=lambda presented: (
@@ -167,13 +164,6 @@ class TestNamedTokens:
         logged = caplog.text
         assert "caller=ci" in logged
         assert "test-token" not in logged
-
-    def test_the_legacy_unnamed_token_still_parses(self):
-        """Deploying Plan 162 must not have locked out an existing .env, or the
-        upgrade needed a container restart and a config edit in lockstep. Goes
-        with the rest of the fallback on Plan 173's second deploy."""
-        parsed = snapshots._parse_token_set("", "old-single-token")
-        assert parsed == (snapshots._EnvToken("legacy", "read", "old-single-token"),)
 
 
 class TestScopes:
@@ -396,106 +386,6 @@ class TestConfiguredFromTheTable:
         with caplog.at_level("WARNING", logger="pipeline_ops"):
             assert REAL_MACHINE_TOKENS_EXIST() is False
         assert "configuration check failed" in caplog.text
-
-
-class TestEnvironmentFallback:
-    """Plan 173's second deploy deletes every test in this class along with the
-    code they cover. They exist because the first deploy cannot: the first
-    table-backed token cannot be issued through an interface that already
-    requires one, so the environment set stays live while the callers are
-    repointed."""
-
-    def test_an_environment_entry_still_authenticates(self, mocker):
-        mocker.patch.object(snapshots, "_resolve_machine_token", return_value=None)
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots._EnvToken("local", "read", "env-token"),
-        ))
-        assert snapshots._resolve_token("env-token") == snapshots.SnapshotToken(
-            "local", "read",
-        )
-
-    def test_the_table_is_asked_first(self, mocker):
-        """So a caller that has been reissued authenticates as its row while its
-        old entry is still sitting in `.env` — which is the entire window the
-        fallback exists for."""
-        mocker.patch.object(
-            snapshots, "_resolve_machine_token",
-            return_value=snapshots.SnapshotToken("ci", "write"),
-        )
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots._EnvToken("ci", "read", "shared-token"),
-        ))
-        assert snapshots._resolve_token("shared-token").scope == "write"
-
-    def test_an_environment_entry_alone_counts_as_configured(self, mocker):
-        """Otherwise the deploy that introduces the table 503s every caller
-        until the first token is issued — and the token cannot be issued through
-        a route that is 503ing."""
-        mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=False)
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots._EnvToken("local", "read", "env-token"),
-        ))
-        assert snapshots._tokens_configured() is True
-
-    def test_the_scan_compares_every_entry_without_stopping_early(self, mocker):
-        """The timing property of the environment form, asserted rather than
-        left to a comment. The table form needs no equivalent: one indexed probe
-        on a digest has no per-entry comparison to leak which caller called."""
-        calls: list[str] = []
-
-        def counting_compare(presented, stored):
-            calls.append(stored)
-            return presented == stored
-
-        mocker.patch.object(snapshots.secrets, "compare_digest", counting_compare)
-        mocker.patch.object(snapshots, "SNAPSHOT_TOKENS", (
-            snapshots._EnvToken("first", "read", "a"),
-            snapshots._EnvToken("second", "read", "b"),
-            snapshots._EnvToken("third", "read", "c"),
-        ))
-
-        # Matching the *first* entry must still compare the other two.
-        snapshots._resolve_env_token("a")
-        assert calls == ["a", "b", "c"]
-
-
-class TestTokenSetParsing:
-    def test_parses_named_scoped_entries(self):
-        parsed = snapshots._parse_token_set("ci:read:abc,mlflow:write:def", "")
-        assert parsed == (
-            snapshots._EnvToken("ci", "read", "abc"),
-            snapshots._EnvToken("mlflow", "write", "def"),
-        )
-
-    def test_a_token_may_contain_colons(self):
-        """Split on the first two colons only — otherwise a passphrase-style
-        token silently becomes a truncated one that never matches."""
-        parsed = snapshots._parse_token_set("ci:read:a:b:c", "")
-        assert parsed == (snapshots._EnvToken("ci", "read", "a:b:c"),)
-
-    @pytest.mark.parametrize("raw", ["notoken", "ci:read", "ci::abc", ":read:abc", "ci:read:"])
-    def test_malformed_entries_are_dropped_not_raised(self, raw, caplog):
-        """A typo in one entry must not take the router down at import and lock
-        every caller out — the blast radius of a config error is that one
-        caller's 403, not a fleet-wide 503."""
-        with caplog.at_level("WARNING", logger="pipeline_ops"):
-            assert snapshots._parse_token_set(raw, "") == ()
-        assert "malformed" in caplog.text
-
-    def test_an_unknown_scope_entry_is_dropped_and_named(self, caplog):
-        with caplog.at_level("WARNING", logger="pipeline_ops"):
-            assert snapshots._parse_token_set("ci:admin:abc", "") == ()
-        assert "unknown scope" in caplog.text
-        assert "abc" not in caplog.text
-
-    def test_a_malformed_entry_never_logs_its_value(self, caplog):
-        with caplog.at_level("WARNING", logger="pipeline_ops"):
-            snapshots._parse_token_set("ci:read", "")
-        assert "ci:read" not in caplog.text
-
-    def test_whitespace_and_empty_entries_are_tolerated(self):
-        parsed = snapshots._parse_token_set(" ci:read:abc , , mlflow:read:def ", "")
-        assert [entry.name for entry in parsed] == ["ci", "mlflow"]
 
 
 # ---------------------------------------------------------------------------
