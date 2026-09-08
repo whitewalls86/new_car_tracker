@@ -384,8 +384,8 @@ moved it to the end without making it a different stage.
 | 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `done` | CAR-79 |
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
-| 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `next` | CAR-88 |
-| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `—` | CAR-104 |
+| 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
+| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `next` | CAR-104 |
 | 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
@@ -1990,7 +1990,7 @@ one suite. Demonstrated by an undeclared skip failing a run, not asserted.
 
 ### Stage V: a variable the environment documents reaches the service that reads it
 
-**Legacy:** Stage 14 · **Issue:** CAR-88 · **State:** `next`
+**Legacy:** Stage 14 · **Issue:** CAR-88 · **State:** `done`
 
 **Found 2026-09-04, deploying this plan's own change.** Stage P's credential
 work added `SNAPSHOT_DOWNLOAD_TOKENS` to `.env.example` and to
@@ -4016,3 +4016,79 @@ PR #389, CI run 34190151416 green at `d2a6293` — including the jobs no local
 run reaches: the Layer 2 suite's DuckDB half, `dbt model tests (real build)`,
 `Service integration tests (Postgres)`, the Airflow metadata contracts and the
 SQL execution coverage gate. Locally 3,801 passed / 694 deselected.
+
+### Stage V — a variable the environment documents reaches the service that reads it
+
+**Legacy:** Stage 14 · **Issue:** CAR-88 · **Closed:** 2026-09-08
+
+**Cost:** estimate 1 point → **actual 1** — one session, three commits, and a
+scope change mid-stage that added the second direction.
+
+*The census both ways, the answer established for each key, and the six
+mutations watched failing are in
+[plan_162_stage_V_evidence.md](../evidence/plan_162_stage_V_evidence.md).*
+
+**Both directions landed, and the second was the larger defect.** The stage was
+written for Stage P's direction — a key `.env.example` documents that no Compose
+service delivers. Three failed it, with three different answers.
+`FASTAPI_ADMIN_KEY` was **deleted**: `git log -S` across all history shows it
+entered in `eb96c41` (2026-04-09) and never appeared in any file but
+`.env.example` and plan documents, so it was never wired because it was never
+read. `MLFLOW_TRACKING_URI` and `PROVENANCE_ENV` left the template as
+in-development Plan 112 Gate B variables, both read only by
+`scripts/log_lakehouse_experiment_provenance.py`, both with working defaults.
+
+**The reverse direction was added mid-stage, and Plan 142 had already found
+it.** `plan_142_planned_host_maintenance.md:812` records that `.env.example`
+documents none of the seven Airflow variables `docker-compose.yml` requires,
+counts "12 of the 42 variables Compose interpolates are missing in total", and
+declines the fix — wanting "either a full pass over the template or a test
+asserting every interpolated variable is documented". This stage did both.
+**Eight secrets required with no default were documented nowhere**, so a fresh
+provision got an empty Fernet key, an empty JWT secret and an empty Grafana
+admin password rather than a failure. `METRICS_DB_PASSWORD` is the sharpest:
+`docker-compose.yml:84-91` substitutes six role passwords into Flyway
+placeholders, creating each role with whatever is set, and the template
+documented three of the six.
+
+**References are read from parsed YAML values, never file text, and that is not
+a style choice.** `docker-compose.yml:169` names `SNAPSHOT_DOWNLOAD_TOKENS` in a
+comment three lines above the reference at `:172` that delivers it. A grep
+counts the comment, so a text-matching rule would have passed Stage P's defect
+on the day it was written — the mechanism meant to catch the class would have
+had the class built into it.
+
+**`$$` is Compose's escape, and missing it produced the census's one false
+positive.** `$${HOSTNAME}` in two Airflow health checks passes a literal
+`${HOSTNAME}` through to the container's own shell. Plan 142's 12 counted it;
+the 14 measured here does not.
+
+**The declared tier is named for what its members are, not for what the stage
+predicted.** The stage specified "script-only". Its one member,
+`SCRAPER_RESULTS_BASE_URL`, is read by `scraper/processors/scrape_results.py:34`
+— a production module inside a Compose service, taking a default production must
+never override — so the tier is `Undelivered`: documented, read by something,
+delivered to no container. It entered the corpus at all only because
+commented-out keys are counted, on the grounds that a `#` does not stop a file
+being read.
+
+**Both ledgers carry a third direction beyond the two `DORMANT_SUITES`
+established.** A declaration whose named consumer does not contain the key, or
+whose named Compose file does not interpolate the variable, fails rather than
+pointing nowhere. Each carries a ceiling so a new entry cannot be a quiet tuple
+append.
+
+**The stage did not turn production-gated**, which CAR-88 warned it might. Every
+documented-but-undelivered key resolved to delete-or-declare, nothing needed
+wiring into `docker-compose.yml`, and no Dockerfile copies `docs/` or
+`.env.example` — the merge is the whole delivery.
+
+**What it does not prove: delivery is not arrival.** The rule asserts that a
+service *names* the variable, which is the link Stage P broke, and cannot assert
+that the running container loaded a value. A key wired into Compose and left
+unset in the VM's `.env` still arrives empty with this file green.
+
+Public surfaces: `README.md`'s local quick start listed five things to edit
+before `docker compose up -d`, and the Airflow and Grafana secrets this stage
+added to the template were not among them. The line was corrected with this
+stage.
