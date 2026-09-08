@@ -34,6 +34,7 @@ from ops.queries import (
     UPSERT_AUTHORIZED_USER,
 )
 from shared.db import db_cursor
+from shared.db_vocabularies import RequestableRole, UserRole
 
 from .auth import _hash_email
 
@@ -53,7 +54,17 @@ ROLE_LABELS = {
     "viewer": "Viewer",
 }
 
-REQUESTABLE_ROLES = ["viewer", "observer", "power_user"]
+# The database owns these three: `access_requests.requested_role` carries a
+# CHECK that omits `admin`, deliberately -- an admin is granted, never
+# requested. Derived rather than retyped so the omission cannot drift.
+#
+# **Iteration order, not `sorted()`, because this is what the form renders.**
+# The vocabulary declares itself least-privileged first, which is the order the
+# request page has always offered; `sorted()` would put `observer` first on an
+# alphabetical accident, and nothing asserts the order, so that regression
+# would have shipped green. Taking the whole enum rather than listing members
+# also means a fourth requestable role reaches the form on its own.
+REQUESTABLE_ROLES = list(RequestableRole)
 
 
 def _notify_access_request(email_hash: str, requested_role: str) -> None:
@@ -80,7 +91,7 @@ def _notify_access_request(email_hash: str, requested_role: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _redirect_for_role(role: str) -> RedirectResponse:
-    if role in ("admin", "power_user", "observer"):
+    if role in frozenset(UserRole) - {UserRole.VIEWER}:
         return RedirectResponse(url="/admin", status_code=303)
     return RedirectResponse(url="/dashboard", status_code=303)
 

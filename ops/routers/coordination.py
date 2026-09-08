@@ -30,6 +30,7 @@ from ops.queries import (
 )
 from scripts.host_maintenance import HOST_VALIDATION_GATES
 from shared.db import UNREACHABLE_ERRORS, db_cursor, db_failure_cause
+from shared.db_vocabularies import CoordinationKind, CoordinationPhase
 from shared.job_counter import job_snapshot
 
 router = APIRouter(prefix="/coordination")
@@ -105,7 +106,10 @@ def _submit_host_evidence(payload: HostEvidenceRequest) -> tuple[str, dict[str, 
             if row is None:
                 return "error", None
             state = dict(row)
-            if state["phase"] != "validating" or state["kind"] != "host_maintenance":
+            if (
+                state["phase"] != CoordinationPhase.VALIDATING
+                or state["kind"] != CoordinationKind.HOST_MAINTENANCE
+            ):
                 return "conflict", {"reason": "coordination is not validating host maintenance"}
             if state["generation"] != payload.generation:
                 return "stale", {"reason": "evidence generation is stale"}
@@ -220,7 +224,7 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | str | 
     target_set = set(payload.targets)
     if len(target_set) != len(payload.targets):
         return "invalid", None
-    if payload.kind == "host_maintenance":
+    if payload.kind == CoordinationKind.HOST_MAINTENANCE:
         if target_set != {HOST_TARGET}:
             return "invalid", None
     elif HOST_TARGET in target_set:
@@ -362,7 +366,7 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
             if row is None:
                 return "error", None
             state = dict(row)
-            if state["phase"] == "none":
+            if state["phase"] == CoordinationPhase.NONE:
                 if payload.generation is None or payload.manifest_sha256 is None:
                     return "conflict", {"failing_gates": ["coordination_expected"]}
                 cur.execute(
@@ -373,7 +377,10 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
                 if receipt is not None:
                     return "ok", {"phase": "none", "generation": receipt["generation"]}
                 return "conflict", {"failing_gates": ["completion_receipt"]}
-            if state["phase"] != "validating" or state["kind"] != "host_maintenance":
+            if (
+                state["phase"] != CoordinationPhase.VALIDATING
+                or state["kind"] != CoordinationKind.HOST_MAINTENANCE
+            ):
                 return "conflict", {"failing_gates": ["coordination_expected"]}
             if not payload.confirm_complete:
                 return "conflict", {"failing_gates": ["operator_confirmation"]}
@@ -485,7 +492,7 @@ def _authorize() -> tuple[str, dict[str, Any] | None]:
             if row is None:
                 return "error", None
             state = {key: _iso(value) for key, value in dict(row).items()}
-            if state["phase"] != "draining":
+            if state["phase"] != CoordinationPhase.DRAINING:
                 log_refusal(
                     operation="authorize",
                     generation=state["generation"],

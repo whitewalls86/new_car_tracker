@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from shared.db_vocabularies import UserRole
 from shared.logging_setup import configure_logging
 
 from .coordination_metrics import COORDINATION_COLLECTOR
@@ -81,7 +82,7 @@ _OBSERVER_EXEMPT_PATHS = {"/auth/check", "/health"}
 @app.middleware("http")
 async def observer_readonly(request: Request, call_next) -> Response:
     role = request.headers.get("x-user-role", "")
-    if role == "observer" and request.method in _MUTATING_METHODS:
+    if role == UserRole.OBSERVER and request.method in _MUTATING_METHODS:
         if request.url.path not in _OBSERVER_EXEMPT_PATHS:
             return Response(status_code=403, content="Observers cannot make changes.")
     return await call_next(request)

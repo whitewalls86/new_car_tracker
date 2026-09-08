@@ -1,6 +1,6 @@
 ---
 name: testing-contract
-description: "Review a change against docs/TESTING.md before it is committed — run the mechanical assertions, then judge the four rules no test can check, saying plainly which half is which. Use when the user asks whether a change meets the testing contract, asks for a review of new or edited tests, or is about to commit a change that touches tests, a route, a .sql file, a service directory or a CI step. This skill reads and reports: it edits no file, adds no waiver, and refuses to certify the rules it cannot check rather than implying coverage it does not have."
+description: "Review a change against docs/TESTING.md before it is committed — run the mechanical assertions, then judge the three rules no test can check, saying plainly which half is which. Use when the user asks whether a change meets the testing contract, asks for a review of new or edited tests, or is about to commit a change that touches tests, a route, a .sql file, a service directory or a CI step. This skill reads and reports: it edits no file, adds no waiver, and refuses to certify the rules it cannot check rather than implying coverage it does not have."
 ---
 
 # Reviewing a change against the testing contract
@@ -12,7 +12,7 @@ three forms and they are the same contract:
 |---|---|---|
 | For a person | `docs/TESTING.md` | say what is right |
 | For CI | `tests/test_testing_contract.py` | fail on the mechanical rules |
-| For a coding agent | this skill | the seven, plus the four nobody can mechanise |
+| For a coding agent | this skill | the mechanical set, plus the three nobody can mechanise |
 
 The reason there are three is written into the plan that produced them:
 `ARCHITECTURE.md:179` described the suite accurately in April 2026 and was
@@ -23,11 +23,15 @@ in being honest about where that gap is.**
 
 ## Why this skill runs the test instead of re-checking it
 
-The seven mechanical rules are already implemented, once, in
-`tests/test_testing_contract.py`. Re-deriving any of them here would produce a
-second implementation that drifts from the first, and the first is the one CI
-runs — so a disagreement between them would be resolved in favour of the copy
-nobody reads.
+The mechanical rules are already implemented, once, and the *Asserted by*
+column of `docs/TESTING.md` is the index of where. Re-deriving any of them here
+would produce a second implementation that drifts from the first, and the first
+is the one CI runs — so a disagreement between them would be resolved in favour
+of the copy nobody reads.
+
+Most live in `tests/test_testing_contract.py`; one does not, because Plan 162
+Stage X put `PREPARE`-ing every `tests/sql/` statement in a Layer 2 suite that
+needs an engine. The number of files is not the number of rules.
 
 So: **run the test. Report what it says. Do not reason about its subject.**
 
@@ -51,6 +55,8 @@ is what tells you which parts of phase 3 apply:
 | a `tests/integration/<dir>` | a CI step must invoke it, or a waiver must say why not |
 | a CI step running pytest | it sets `PYTHONPATH` |
 | a mock, patch, or fixture | phase 3, all of it |
+| a `CHECK (<column> IN (...))` in a migration | it needs a vocabulary in `shared/db_vocabularies.py`, and no module may retype a member of it |
+| a DAG that checks a status a service returned | both halves must be derived — the DAG names the service in a `<NAME>_URL` constant and shares a basename with the module behind it |
 
 A change that touches none of these still gets phase 2, because a change can
 break a rule it does not mention — deleting the last test that requested a
