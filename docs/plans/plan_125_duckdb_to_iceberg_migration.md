@@ -17,6 +17,13 @@
 > on `PLANS.md` pointed at it.
 
 
+## What this plan is for
+
+The project's analytics tables live in one embedded database file that is also
+the only way to read them, so every dashboard and backtest is tied to a single
+engine and a single copy. Makes an open, versioned table format the canonical
+layer and reduces that file to a local cache.
+
 ## Status
 
 **Draft.** This plan is the next major lakehouse step after the paused Plan
