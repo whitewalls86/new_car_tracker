@@ -356,7 +356,51 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
     steps:
       - uses: actions/checkout@v4
+      # Plan 170 Stage B. The fleet's cold build footprint, measured where a
+      # full build already happens rather than by running one against the VM.
+      #
+      # This is a CEILING for the production host, never its number. A GitHub
+      # runner starts with no images at all, so this delta includes pulling
+      # every base image, which the VM already has; and the runner is x86
+      # while the VM is ARM64. Over-estimating is the safe direction for a
+      # headroom floor, but anything reading this must treat it as an upper
+      # bound.
+      #
+      # It is here to be watched over time. When an image grows -- Plan 125
+      # takes cartracker-lakehouse to roughly 2.34 GB on its next rebuild --
+      # the footprint moves on the PR that does it, not on the deploy that
+      # discovers the disk is full.
+      - name: Record free space before the build
+        run: |
+          avail_kb="$(df -k --output=avail / | tail -1 | tr -d ' ')"
+          echo "FOOTPRINT_BEFORE_KB=$avail_kb" >> "$GITHUB_ENV"
       - run: docker compose build
+      - name: Report the build footprint
+        if: always()
+        run: |
+          after_kb="$(df -k --output=avail / | tail -1 | tr -d ' ')"
+          used_kb=$(( FOOTPRINT_BEFORE_KB - after_kb ))
+          before_gib="$(awk -v k="$FOOTPRINT_BEFORE_KB" 'BEGIN{printf "%.2f", k/1048576}')"
+          after_gib="$(awk -v k="$after_kb" 'BEGIN{printf "%.2f", k/1048576}')"
+          used_gib="$(awk -v k="$used_kb" 'BEGIN{printf "%.2f", k/1048576}')"
+          {
+            echo "### Cold build footprint (ceiling)"
+            echo ""
+            echo "| | GiB |"
+            echo "|---|---:|"
+            echo "| Free before | $before_gib |"
+            echo "| Free after | $after_gib |"
+            echo "| **Consumed by the build** | **$used_gib** |"
+            echo ""
+            echo "Upper bound for the production host, not its number: this"
+            echo "runner starts with no images, so the figure includes pulling"
+            echo "every base image, and it is x86 while the VM is ARM64."
+            echo ""
+            echo '```'
+            docker system df 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "cold build footprint: $used_gib GiB (ceiling)"
 
   # ---------------------------------------------------------------------------
   # Plan 162 Stage E (Plan 139 Stages B and C) replaced one `dbt build + test`

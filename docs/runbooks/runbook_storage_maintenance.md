@@ -43,7 +43,7 @@ Baselines as of 2026-08-18: `/` at ~64%, `/mnt/data` at 41% bytes / 30% inodes.
 | Vacuum journald | `journalctl --vacuum-size=500M` | ~1.2 GiB | none |
 | Clear apt cache | `apt-get clean` | ~220 MiB | none |
 | Prune dangling images | `docker image prune` | ~0 today | low |
-| Prune build cache | `docker builder prune` | ~7 MiB today | low |
+| Prune build cache | `docker builder prune -a -f` | all of it (6.0 GB on 2026-09-08) | low — **and it is automatic now**, see below |
 
 > **This table has been measuring the wrong directory.** `/var/lib/docker` held
 > **714 MiB** on 2026-08-29 while `/var/lib/containerd` held **29 GiB** — Docker
@@ -54,9 +54,46 @@ Baselines as of 2026-08-18: `/` at ~64%, `/mnt/data` at 41% bytes / 30% inodes.
 > [Plan 142](../plans/plan_142_planned_host_maintenance.md)'s 10 GiB
 > `disk_headroom` floor. Add `du -xh -d1 /var/lib` to the monthly check.
 > `docker system df` does not return within 100 s on this host, which is its own
-> signal. Reclaim policy is undecided and wants its own slice: rollback depends
-> on previous images being present, so `docker system prune -a` stays on the
-> §3 list below.
+> signal.
+
+> **Build cache is no longer yours to reclaim by hand.** Decided by
+> [Plan 170](../plans/plan_170_container_image_reclaim_policy.md) Stage A and
+> shipped by Stage B on 2026-09-08: build cache grew **2.04 → 7.52 GB in 8
+> days** while images stayed flat, so it is ~90% of all growth — and it is
+> produced only by builds. `scripts/deploy.sh` and `scripts/redeploy.sh` are
+> the entire set of things that build on this host, so both now run
+> `docker builder prune -a -f` after health verification, non-fatal. Producer
+> and reclaim are the same event and no scheduled job exists. **If
+> `/var/lib/containerd` is ramping rather than sawtoothing, that is a defect
+> in the deploy scripts, not a window you are owed.**
+>
+> **Nothing in production reads build cache.** It is the saved result of a
+> build step, kept so the next build can skip it — a speed optimisation and
+> nothing else. Discarding it whole costs the next build its time and costs
+> nothing else, and the build runs *before* the deploy-intent drain, so that
+> time is not paid in parked DAGs. CI rebuilds every service from cold in
+> about 90 seconds.
+>
+> **There is deliberately no size cap, and that is the second answer.** Stage A
+> specified `--keep-storage 4GB`. It was deployed and measured twice on
+> 2026-09-08 and enforced nothing: `--keep-storage 4GB -f` took 7.52 → 5.72 GB
+> with the cap never reached, and `-a --keep-storage 4GB -f` reclaimed **0 B**
+> against 6.00 GB resident. The first is explicable — without `all` the sweep
+> skips internal, frontend and shared records — the second is not. No model
+> fits both runs, so the policy stopped depending on the flag rather than
+> tuning its value. **Do not reintroduce a cap without a measurement showing it
+> binds.**
+
+> **Images get no automated retention, and that is a decision.** They do not
+> accumulate — 21.03 → 20.97 GB across the same 8 days — and
+> `docker image ls -a -f dangling=true` returns **zero**, because Docker 29's
+> containerd store drops the old manifest when a tag moves. **The rollback
+> window is therefore already zero and no retention rule can raise it**; the
+> older wording here, that "rollback depends on previous images being
+> present", was measured false on 2026-09-08. `docker system prune -a` stays
+> on the §3 list anyway, but for the real reason: it would delete the images
+> this host keeps *paused on purpose*, which `maintenance-running-set.txt`
+> classifies `aux-paused` and `on-demand` and Docker cannot see.
 
 **Truncate, never `rm`, a live log file.** The Docker daemon holds an open
 handle; deleting the file frees nothing until the daemon is restarted, and the

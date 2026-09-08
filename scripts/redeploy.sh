@@ -148,6 +148,52 @@
 #    away. The ops API is fixed to name the cause (Plan 162 Stage K); this is
 #    the half that lets the operator read it. Same family as decision 7 — a
 #    failure that costs the wait and the diagnosis is two failures.
+#
+# ---------------------------------------------------------------------------
+# Plan 170 Stage B — the ninth decision, added 2026-09-08 because nothing
+# reclaimed the build cache this script produces.
+#
+# 9. A build discards the cache it just produced. Build cache grew 2.04 -> 7.52
+#    GB in 8 days on this host (~783 MB/day) while images stayed flat, so it
+#    is ~90% of all storage growth, and the only two things that build here
+#    are this script and scripts/deploy.sh — CI builds on GitHub runners and
+#    the `compose run` profiles use already-built images. Producer and reclaim
+#    are therefore the same event, and a scheduled job would poll a pool that
+#    only changes when somebody deploys. The 9 GB that appeared to be
+#    reclaimed in early September was a person running `docker builder prune`
+#    by hand, twice, which is the toil this replaces.
+#
+#    Discarded whole, with no size cap, and that is the second answer rather
+#    than the first. Stage A specified `--keep-storage 4GB`; it was deployed
+#    and measured twice on 2026-09-08 and did not enforce anything:
+#
+#      run 1  `--keep-storage 4GB -f`      7.52 -> 5.72 GB, cap never reached
+#      run 2  `-a --keep-storage 4GB -f`   6.00 GB present, 0 B reclaimed
+#
+#    Run 1 was explicable — without `all`, BuildKit skips `internal`,
+#    `frontend` and shared records, and the eligible set ran out above the
+#    cap. Run 2 is not: `all` should have made the whole 6 GB eligible against
+#    a 4 GB cap. No model fits both runs, and rather than keep changing flags
+#    against production the policy stopped depending on the one that does not
+#    work.
+#
+#    Nothing in production reads build cache. It is a pure speed optimisation:
+#    the saved result of a build step, kept so the next build can skip it.
+#    Discarding it costs the next build its time and costs nothing else, and
+#    the build runs *before* `_prepare_coordination` below — outside the
+#    deploy-intent window — so that time is not paid in parked DAGs. CI
+#    rebuilds every service from cold in about 90 seconds.
+#
+#    Still post-health, and the reason is now stronger than the original one.
+#    A deploy that fails before the health gate never reaches this line, so
+#    the cache it just built survives for the retry. Pruning before the build
+#    would discard exactly what makes the second attempt fast.
+#
+#    Non-fatal, and that is the whole point of the `|| echo`. Under `set -e` a
+#    failing prune is a failed deploy, which by decision 3 means MUTATED=1 and
+#    deploy intent HELD — every gated DAG parked because a *cleanup* step
+#    failed after the fleet was already healthy. Reclaiming disk must never be
+#    able to do that.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -632,6 +678,10 @@ else
     _begin_validation
 
     PHASE="done"
+    # Decision 9. Build path only, after health, and it cannot fail the deploy.
+    echo "Discarding the build cache this deploy produced..."
+    docker builder prune -a -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
+
     echo "Done — every pollable service reported healthy."
     _print_follower_notes "$@"
 fi
