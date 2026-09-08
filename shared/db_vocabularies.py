@@ -121,6 +121,23 @@ class CoordinationPhase(StrEnum):
     VALIDATING = "validating"
 
 
+class MachineTokenScope(StrEnum):
+    """``ops.machine_tokens.scope``.
+
+    **Declared least-privileged first, and the order is load-bearing.**
+    ``scripts/issue_machine_token.py`` offers these as ``--scope`` choices in
+    iteration order, so ``read`` is both the first thing an operator sees and
+    the default.
+
+    ``write`` implies ``read``; the grant table stating that lives in
+    ``ops/routers/snapshots.py``, because implication is the service's policy
+    and not something the column can express.
+    """
+
+    READ = "read"
+    WRITE = "write"
+
+
 class DetailScrapeClaimEvent(StrEnum):
     """``detail_scrape_claim_events.status``."""
 
@@ -184,6 +201,7 @@ DB_VOCABULARIES: dict[tuple[str, str], type[StrEnum]] = {
     ("coordination_state_events", "phase"): CoordinationPhase,
     ("coordination_state_events", "prior_phase"): CoordinationPhase,
     ("detail_scrape_claim_events", "status"): DetailScrapeClaimEvent,
+    ("machine_tokens", "scope"): MachineTokenScope,
     ("price_observation_events", "event_type"): PriceObservationEvent,
     ("price_observation_events", "source"): ObservationSource,
     ("silver_observation_events", "event_type"): SilverObservationEvent,

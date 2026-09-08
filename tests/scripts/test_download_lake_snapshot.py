@@ -198,14 +198,19 @@ class TestDownloadApiAgainstOpsRouter:
         }
         manifest["archive"]["path"] = alias["archive_key"]
 
-        # Plan 162: the router authenticates against a named, scoped token set.
-        # The downloader still presents a bare bearer string, which is the half
-        # of the contract this test exists to hold — a change to the server's
-        # token *format* must not change what the client sends.
+        # Plan 162 made the router's credentials named and scoped; Plan 173 moved
+        # them into `ops.machine_tokens`. The downloader still presents a bare
+        # bearer string through both, which is the half of the contract this test
+        # exists to hold — a change to the server's token *storage* must not
+        # change what the client sends.
         mocker.patch.object(
-            snapshots_router, "SNAPSHOT_TOKENS",
-            (snapshots_router.SnapshotToken("ci", "read", "test-token"),),
+            snapshots_router, "_resolve_machine_token",
+            side_effect=lambda presented: (
+                snapshots_router.SnapshotToken("ci", "read")
+                if presented == "test-token" else None
+            ),
         )
+        mocker.patch.object(snapshots_router, "_machine_tokens_exist", return_value=True)
 
         def fake_read_json(key):
             if key == "ci_snapshots/adaptive_refresh/latest.json":
