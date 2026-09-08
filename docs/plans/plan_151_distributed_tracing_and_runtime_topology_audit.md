@@ -156,11 +156,11 @@ old number and was updated with it:
 
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
-| 1 | [**A**](#stage-a--contract-and-experiment-design) | The telemetry contract, budgets, and the experiment's shape | `next` | -- |
-| 2 | [**B**](#stage-b--metrics-first-telemetry-pipeline) | The metrics-first pipeline, no trace retention | `--` | -- |
-| 3 | [**C**](#stage-c--declared-versus-observed-audit) | Runtime edges compared with Plan 142's declared graph, and the retention decision | `--` | -- |
-| 4 | [**D**](#stage-d--optional-bounded-tempo-proof) | Tempo, only on an affirmative Stage C decision | `--` | -- |
-| 5 | [**E**](#stage-e--observation-and-decision) | Seven days observed, and the keep/change/remove decision | `--` | -- |
+| 1 | [**A**](#stage-a--contract-and-experiment-design) | The telemetry contract, budgets, and the experiment's shape | `done` | -- |
+| 2 | [**B**](#stage-b--metrics-first-telemetry-pipeline) | The metrics-first pipeline, no trace retention | `canceled` | -- |
+| 3 | [**C**](#stage-c--declared-versus-observed-audit) | Runtime edges compared with Plan 142's declared graph, and the retention decision | `canceled` | -- |
+| 4 | [**D**](#stage-d--optional-bounded-tempo-proof) | Tempo, only on an affirmative Stage C decision | `canceled` | -- |
+| 5 | [**E**](#stage-e--observation-and-decision) | Seven days observed, and the keep/change/remove decision | `canceled` | -- |
 
 ### Stage A — Contract and experiment design
 
@@ -360,3 +360,75 @@ Broader instrumentation is a later decision, not an implicit Stage E task.
   remove the entire telemetry path.
 - **After Stage E:** the recorded keep/change/remove decision is the plan's
   durable output; no broader rollout is owed implicitly.
+
+## Public summary
+
+**Distributed tracing** — Costed a system for watching requests move between
+services, then decided against building it: a much cheaper check that reads the
+project's own configuration files answers the same question, and found 62
+undocumented connections between services on its first run.
+
+## Record
+
+### Stage A — Contract and experiment design (2026-09-08)
+
+Closed with the pipeline declined.
+[`docs/reference/plan_151_telemetry_contract.md`](../reference/plan_151_telemetry_contract.md)
+answers the stage's eight items for three selected paths, records the resource
+budget with abort thresholds, and carries the gate verdict.
+
+**All three gate conditions were met and the plan stopped anyway** — the gate
+asks whether the experiment is safe and affordable, and it is; §10 asks whether
+it is worth running. Stage A answered the plan's first question without
+deploying anything: a prototype deriving call edges from Compose `environment:`
+blocks and literal service URLs produced **77 edges against the registry's 37,
+of which 62 are undeclared**, in ~80 lines and at no runtime cost. That is the
+class of finding this plan had budgeted an OTLP collector and a seven-day soak
+to reach, so the pipeline's marginal contribution is "which edges are live", not
+"which edges exist". This is the plan's own Stage E **remove** outcome reached
+at Stage A, which the plan states is a successful exit.
+
+Measured on the production VM, 2026-09-08 20:14 UTC, all read-only:
+
+- 7,347 Prometheus head series, 1.4 GB TSDB at 30d retention, 188.7 MiB RSS, 11
+  targets all `up`; **~190 KB of TSDB per additional always-active series** over
+  the retention window, which is what makes the §6 budget defensible rather than
+  guessed;
+- 17.4 GiB RAM free and ~3 of 4 cores idle, so headroom was never the
+  constraint;
+- selected-path traffic **0.0227 req/s (1,961/day)**, ~200× under the ingestion
+  budget, which is why §7 chose 100% sampling rather than a rate.
+
+Four findings the stage did not set out to make: Prometheus does not scrape
+itself, so its own cardinality and ingestion are uncollected and no alert can be
+written over them (**F1**); server-side RED metrics already exist for all three
+candidate services with routes already templated in production, so span metrics
+would have duplicated them (**F2**); Docker volumes sit on the 27 GB root
+filesystem rather than the 147 GB data volume (**F3**); and the Airflow 3.2.0
+image carries no OpenTelemetry packages, so continuous propagation would have
+been a dependency change to the fleet's largest image (**F4**). F1 and F3
+outlive this plan and were reviewed and dismissed on 2026-09-08.
+
+The registry finding that reframed the stage: `compose_dependencies` models
+container startup order, not call topology. Asked directly, it reports `scraper`
+and `processing` as depended on by **nobody**, while Airflow calls them ~1,961
+times a day. [Plan 179](plan_179_derived_service_call_graph.md) was spun out to
+carry the static-derivation half.
+
+Verified by 52/52 `tests/test_planning_docs.py`, all internal links resolving,
+and every production number reproducible from the contract's §9.
+
+Cost: estimate 3 → actual 1 (−2). The exit was a document by design, and the
+static deriver answered the plan's question in one session rather than requiring
+the pipeline the estimate had assumed.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+### Stages B, C, D and E — canceled (2026-09-08)
+
+Canceled by the §10 decision, not by failure: the metrics-first pipeline, the
+declared-versus-observed audit, the optional Tempo proof and the seven-day
+observation window all presupposed a collector that Stage A declined to build.
+Their letters stay spent. The Stage B contract is retained in the telemetry
+contract's §8 as the starting point if the trigger recorded in §10 ever fires.
