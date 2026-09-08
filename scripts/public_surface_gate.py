@@ -87,15 +87,44 @@ def hooks_installed() -> bool:
     trailing separator -- and every one of those runs the same hook. An exact
     string match calls the working ones uninstalled and refuses every commit,
     which is how a gate teaches people to route around it.
+
+    **Two roots can be right, because of linked worktrees.** ``core.hooksPath``
+    is shared config, so one absolute value -- the spelling ``git config
+    core.hooksPath "$PWD/.githooks"`` produces in the main clone -- is what
+    every worktree of that clone then reads. Git runs it fine from all of them.
+    Resolving it against only the *current* worktree's root therefore called
+    every linked worktree uninstalled and refused the commit, which is the same
+    failure the paragraph above exists to prevent, arriving by a different
+    route. Found on 2026-09-08 committing Plan 154 Stage B from a worktree.
     """
     configured = _git("config", "--get", "core.hooksPath").strip()
     if not configured:
         return False
 
-    top = pathlib.Path(_git("rev-parse", "--show-toplevel").strip() or ".")
     # Git resolves a relative hooks path against the working tree root, which
     # is where it runs hooks from. An absolute one survives the join unchanged.
-    return (top / configured).resolve() == (top / HOOKS_PATH).resolve()
+    top = pathlib.Path(_git("rev-parse", "--show-toplevel").strip() or ".")
+    accepted = {(top / HOOKS_PATH).resolve()}
+
+    # In a linked worktree the common dir is the main clone's `.git`, so its
+    # parent is that clone's root. In the main clone it is already that root,
+    # and this adds nothing.
+    #
+    # `--path-format=absolute` needs git 2.31. Older git rejects the option,
+    # `_git` hands back "" for a non-zero exit, and this degrades to the
+    # worktree-only comparison rather than raising. The absolute check is what
+    # makes that safe: without the flag `--git-common-dir` can answer with a
+    # bare ".git", whose parent is "." -- and "." is the *process* working
+    # directory, not the repository root, so joining it would accept whatever
+    # happened to sit beside wherever git was invoked.
+    common = pathlib.Path(
+        _git("rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+        or "."
+    )
+    if common.is_absolute():
+        accepted.add((common.parent / HOOKS_PATH).resolve())
+
+    return (top / configured).resolve() in accepted
 
 
 def check_staged() -> int:
