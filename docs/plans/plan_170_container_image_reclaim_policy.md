@@ -239,7 +239,7 @@ because Linear issues already carry them.
 |---:|:---:|---|---|---|
 | 1 | [**A**](#stage-a--decide-the-two-retention-rules) | Two retention rules, one per pool, each with its measurement | `done` | CAR-94 |
 | 2 | [**B**](#stage-b--make-the-deploy-clean-up-after-itself) | The post-build cache prune, in both build paths | `done` | CAR-103 |
-| 3 | [**C**](#stage-c--make-the-keep-set-legible-and-do-the-one-time-image-sweep) | The tested keep-set, the runbook block, and the one-time image sweep | `next` | CAR-112 |
+| 3 | [**C**](#stage-c--make-the-keep-set-legible-and-do-the-one-time-image-sweep) | The tested keep-set, the runbook block, and the one-time image sweep | `done` | CAR-112 |
 
 ### Stage A — Decide the two retention rules
 
@@ -639,3 +639,45 @@ docker image rm ghcr.io/germondai/trawl:latest \
 touching anything the manifest classifies `aux-paused` or `on-demand`. The first
 clause, the test failing when the runbook block desyncs, is the stage's other
 half and landed in `21804a0`.
+
+**The keep-set is derived, not typed, and the runbook block is asserted against
+the derivation.** `tests/test_image_keep_set.py` joins `docker-compose*.yml` to
+`maintenance-running-set.txt` on `project/service` — no Docker and no socket, as
+Stage A measured — and renders the seven images no plain `docker compose up -d`
+materialises a container for. The block lives in §2 of
+`runbook_storage_maintenance.md`; the test fails when the two disagree.
+
+**The join runs image → services, never service → image**, which is the hazard
+Stage A named. `cartracker-archiver` is built by three services and
+`cartracker-airflow` by five, so one running service protects the whole image
+and one paused service protects it against every running sibling. Five, not the
+four this plan named — `airflow-init` declares the same build, and a join
+counting only the services that stay up would have got that image right for the
+wrong reason.
+
+**Three mutations, each noticed** — the exit's first clause demonstrated rather
+than asserted:
+
+| Mutation | |
+|---|---|
+| a new profile-gated Compose service | 3 failed |
+| a manifest class flipped `on-demand` → `oneshot` | 2 failed |
+| a line deleted from the rendered block | 1 failed |
+
+The harness was ad hoc rather than added to
+`scripts/verify_testing_contract_mutations.py`: that script's subject is
+`tests/test_testing_contract.py`, and widening it is not this stage's business.
+
+**Verified in CI on PR #400** — 12 jobs pass, 2 path-skipped. Locally 3,856 unit
+tests pass and `ruff` is clean.
+
+**Both exit clauses are therefore met**: the runbook block cannot desync without
+CI going red, and the sweep ran without touching anything the manifest
+classifies `aux-paused` or `on-demand`.
+
+**Cost:** estimate 1 → actual 1.
+
+**Public surfaces: no** mechanism, name or quantity either surface states was
+changed by this work. `README.md:399` links the storage runbook but restates
+nothing from it, and neither surface names an image, a prune policy or a
+containerd quantity.
