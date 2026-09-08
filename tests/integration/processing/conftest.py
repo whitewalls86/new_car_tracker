@@ -32,20 +32,8 @@ os.environ.setdefault("PGUSER", "cartracker")
 os.environ.setdefault("POSTGRES_PASSWORD", "cartracker")
 os.environ.setdefault("LOG_PATH", os.path.join(tempfile.gettempdir(), "processing_test.log"))
 
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
-_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-
-
-def _parse_dsn(url: str) -> dict:
-    from urllib.parse import urlparse
-    p = urlparse(url)
-    return {
-        "host": p.hostname or "localhost",
-        "port": p.port or 5432,
-        "dbname": p.path.lstrip("/") or "cartracker",
-        "user": p.username or "cartracker",
-        "password": p.password or "cartracker",
-    }
+from tests.integration.conftest import DATABASE_URL as _DATABASE_URL  # noqa: E402
+from tests.integration.conftest import _parse_dsn  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -336,3 +324,43 @@ def seed_honda_search_config(cur):
         (key,),
     )
     return key
+
+
+# ---------------------------------------------------------------------------
+# Read-back helpers (committed family) — shared by the writer-function tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def get_price_obs(vc):
+    """Read back the ops.price_observations row for a listing_id (or None)."""
+    def _read(listing_id):
+        vc.execute(
+            SQL("select_all_from_ops_price_observations"),
+            (listing_id,),
+        )
+        return vc.fetchone()
+
+    return _read
+
+
+@pytest.fixture()
+def get_vin_mapping(vc):
+    """Read back the ops.vin_to_listing row for a VIN (or None)."""
+    def _read(vin):
+        vc.execute(SQL("select_all_from_ops_vin_to_listing"), (vin,))
+        return vc.fetchone()
+
+    return _read
+
+
+@pytest.fixture()
+def count_silver(vc):
+    """Count staging.silver_observations rows for an artifact_id."""
+    def _read(artifact_id):
+        vc.execute(
+            SQL("select_cnt_from_staging_silver_observations"),
+            (artifact_id,),
+        )
+        return vc.fetchone()["cnt"]
+
+    return _read

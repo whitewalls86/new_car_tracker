@@ -80,27 +80,6 @@ def _carousel_hint(listing_id, price=20000, body="New 2026 Honda CR-V EX"):
     }
 
 
-def _get_price_obs(vc, listing_id):
-    vc.execute(
-        SQL("select_all_from_ops_price_observations"),
-        (listing_id,),
-    )
-    return vc.fetchone()
-
-
-def _get_vin_mapping(vc, vin):
-    vc.execute(SQL("select_all_from_ops_vin_to_listing"), (vin,))
-    return vc.fetchone()
-
-
-def _count_silver(vc, artifact_id):
-    vc.execute(
-        SQL("select_cnt_from_staging_silver_observations"),
-        (artifact_id,),
-    )
-    return vc.fetchone()["cnt"]
-
-
 def _claim_exists(vc, listing_id):
     vc.execute(
         SQL("select_cnt_from_ops_detail_scrape_claims"),
@@ -161,7 +140,7 @@ def _cleanup(vc, listing_ids=None, vins=None, artifact_id=None):
 # ---------------------------------------------------------------------------
 
 class TestWriteDetailActive:
-    def test_upserts_price_observation(self, vc, seed_artifact_c):
+    def test_upserts_price_observation(self, vc, seed_artifact_c, get_price_obs):
         artifact = seed_artifact_c(artifact_type="detail_page")
         lid = str(uuid.uuid4())
         vin = f"VINACT{uuid.uuid4().hex[:11].upper()}"
@@ -170,7 +149,7 @@ class TestWriteDetailActive:
             _primary(lid, vin=vin), [], artifact["artifact_id"], _NOW, lid, "run-1"
         )
 
-        row = _get_price_obs(vc, lid)
+        row = get_price_obs(lid)
         assert row is not None
         assert row["price"] == 28000
         assert row["make"] == "Honda"
@@ -178,7 +157,7 @@ class TestWriteDetailActive:
 
         _cleanup(vc, listing_ids=[lid], vins=[vin], artifact_id=artifact["artifact_id"])
 
-    def test_maps_vin_to_listing(self, vc, seed_artifact_c):
+    def test_maps_vin_to_listing(self, vc, seed_artifact_c, get_vin_mapping):
         artifact = seed_artifact_c(artifact_type="detail_page")
         lid = str(uuid.uuid4())
         vin = f"VINMP{uuid.uuid4().hex[:12].upper()}"
@@ -188,7 +167,7 @@ class TestWriteDetailActive:
         )
 
         assert result["vin"] == vin
-        row = _get_vin_mapping(vc, vin)
+        row = get_vin_mapping(vin)
         assert row is not None
         assert str(row["listing_id"]) == lid
 
@@ -258,7 +237,7 @@ class TestWriteDetailActive:
         _cleanup(vc, listing_ids=[lid], vins=["1HGCV1F34PA111001"],
                  artifact_id=artifact["artifact_id"])
 
-    def test_silver_written_for_primary(self, vc, seed_artifact_c):
+    def test_silver_written_for_primary(self, vc, seed_artifact_c, count_silver):
         artifact = seed_artifact_c(artifact_type="detail_page")
         lid = str(uuid.uuid4())
         vin = f"VINSV{uuid.uuid4().hex[:12].upper()}"
@@ -268,7 +247,7 @@ class TestWriteDetailActive:
         )
 
         assert result["silver_written"] >= 1
-        assert _count_silver(vc, artifact["artifact_id"]) >= 1
+        assert count_silver(artifact["artifact_id"]) >= 1
 
         _cleanup(vc, listing_ids=[lid], vins=[vin], artifact_id=artifact["artifact_id"])
 
@@ -291,7 +270,7 @@ class TestWriteDetailActive:
 
         _cleanup(vc, listing_ids=[lid], vins=[vin], artifact_id=artifact["artifact_id"])
 
-    def test_vin_fallback_from_existing_vin_to_listing(self, vc, seed_artifact_c):
+    def test_vin_fallback_from_existing_vin_to_listing(self, vc, seed_artifact_c, get_price_obs):
         """
         Primary has no VIN — should resolve from an existing vin_to_listing entry.
         """
@@ -308,14 +287,14 @@ class TestWriteDetailActive:
         primary = _primary(lid, vin=None)  # No VIN in parsed data
         write_detail_active(primary, [], artifact["artifact_id"], _NOW, lid, "run-1")
 
-        row = _get_price_obs(vc, lid)
+        row = get_price_obs(lid)
         assert row["vin"] == vin, "VIN should be resolved from vin_to_listing lookup"
 
         _cleanup(vc, listing_ids=[lid], vins=[vin], artifact_id=artifact["artifact_id"])
 
 
 class TestWriteDetailVinCollision:
-    def test_vin_relisting_replaces_old_price_observation(self, vc, seed_artifact_c):
+    def test_vin_relisting_replaces_old_price_observation(self, vc, seed_artifact_c, get_price_obs):
         """
         Given: price_observations has VIN→old_listing
         When:  detail active processes new listing with same VIN
@@ -350,7 +329,7 @@ class TestWriteDetailVinCollision:
         assert vc.fetchone()["cnt"] == 0
 
         # New row present
-        row = _get_price_obs(vc, new_lid)
+        row = get_price_obs(new_lid)
         assert row is not None
         assert row["vin"] == vin
 
@@ -365,7 +344,7 @@ class TestWriteDetailVinCollision:
 class TestWriteDetailCarousel:
     def test_carousel_matching_tracked_model_upserted_to_price_obs(
         self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
-    ):
+    , get_price_obs):
         """
         Given: tracked_models has (honda, cr-v)
         When:  carousel hint body = "New 2026 Honda CR-V EX"
@@ -384,7 +363,7 @@ class TestWriteDetailCarousel:
 
         assert result["carousel_upserted"] == 1
 
-        row = _get_price_obs(vc, carousel_lid)
+        row = get_price_obs(carousel_lid)
         assert row is not None
         assert row["price"] == 20000
 
@@ -397,7 +376,7 @@ class TestWriteDetailCarousel:
 
     def test_carousel_not_matching_tracked_model_filtered_out(
         self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
-    ):
+    , get_price_obs):
         """
         Given: tracked_models has (honda, cr-v) only
         When:  carousel hint body = "New 2026 Toyota RAV4 XLE"
@@ -415,7 +394,7 @@ class TestWriteDetailCarousel:
         )
 
         assert result["carousel_filtered"] == 1
-        assert _get_price_obs(vc, carousel_lid) is None
+        assert get_price_obs(carousel_lid) is None
 
         _cleanup(
             vc,
@@ -426,7 +405,7 @@ class TestWriteDetailCarousel:
 
     def test_carousel_always_goes_to_silver_regardless_of_filter(
         self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
-    ):
+    , count_silver):
         """
         Carousel hints go to silver_observations even when not matching tracked_models.
         """
@@ -444,7 +423,7 @@ class TestWriteDetailCarousel:
 
         # silver_written covers primary (1) + carousel (1) = 2
         assert result["silver_written"] == 2
-        assert _count_silver(vc, artifact["artifact_id"]) == 2
+        assert count_silver(artifact["artifact_id"]) == 2
 
         _cleanup(
             vc,
@@ -455,7 +434,7 @@ class TestWriteDetailCarousel:
 
     def test_carousel_vin_collision_replaced_without_error(
         self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
-    ):
+    , get_price_obs):
         """
         Given: price_observations has VIN → old_carousel_listing
                vin_to_listing maps that VIN → carousel_listing (relisted)
@@ -495,7 +474,7 @@ class TestWriteDetailCarousel:
         assert vc.fetchone()["cnt"] == 0, "Stale carousel price_observation should be deleted"
 
         # New row present
-        row = _get_price_obs(vc, carousel_lid)
+        row = get_price_obs(carousel_lid)
         assert row is not None
         assert row["vin"] == vin
 
@@ -508,7 +487,7 @@ class TestWriteDetailCarousel:
 
     def test_carousel_hint_without_price_skipped(
         self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
-    ):
+    , count_silver):
         """Carousel hints with null price are not written anywhere."""
         seed_tracked_model_c("honda", "cr-v")
         artifact = seed_artifact_c(artifact_type="detail_page")
@@ -523,7 +502,7 @@ class TestWriteDetailCarousel:
 
         assert result["carousel_upserted"] == 0
         # Silver: 1 (primary only — hint without price is also excluded from silver)
-        assert _count_silver(vc, artifact["artifact_id"]) == 1
+        assert count_silver(artifact["artifact_id"]) == 1
 
         _cleanup(
             vc,

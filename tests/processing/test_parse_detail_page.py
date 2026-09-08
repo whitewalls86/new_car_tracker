@@ -4,9 +4,7 @@ Ported from tests/scraper/processors/test_parse_detail_page.py.
 Contract test updated from n8n fields to writer fields — what
 processing/writers/detail_writer.py actually reads from primary.
 """
-import gzip
 import json
-from pathlib import Path
 
 import pytest
 
@@ -15,15 +13,7 @@ from processing.processors.parse_detail_page import (
     _parse_dealer_card,
     parse_cars_detail_page_html_v1,
 )
-
-_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "html"
-
-
-def _load_html_fixture(name: str) -> str:
-    """Load a gzip-compressed captured HTML artifact from tests/fixtures/html."""
-    return gzip.decompress((_FIXTURE_DIR / f"{name}.html.gz").read_bytes()).decode(
-        "utf-8", errors="replace"
-    )
+from tests.processing.conftest import load_html_fixture
 
 # Fields that detail_writer reads from the primary dict
 WRITER_PRIMARY_FIELDS = {
@@ -191,13 +181,13 @@ class TestRealCorpus:
 
     @pytest.mark.parametrize("fixture", ["real_detail_crv", "real_detail_2"])
     def test_real_detail_pages_are_not_blocked(self, fixture):
-        html = _load_html_fixture(fixture)
+        html = load_html_fixture(fixture)
         primary, _, meta = parse_cars_detail_page_html_v1(html)
         assert primary["listing_state"] == "active"
         assert meta.get("blocked") is not True
 
     def test_real_challenge_page_is_blocked(self):
-        html = _load_html_fixture("challenge_just_a_moment")
+        html = load_html_fixture("challenge_just_a_moment")
         primary, _, meta = parse_cars_detail_page_html_v1(html)
         assert primary["listing_state"] == "blocked"
         assert meta["blocked"] is True

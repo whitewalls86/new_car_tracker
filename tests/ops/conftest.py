@@ -1,8 +1,21 @@
+from types import MappingProxyType
+
 import pytest
 from fastapi.testclient import TestClient
 
 from ops.app import app
+from ops.public_stats import PresentationSnapshot
 from ops.routers.deploy import IntentResult
+
+
+def make_presentation(stats=None, *, status="ok", stale=False):
+    """A PresentationSnapshot with the defaults the router tests assume."""
+    return PresentationSnapshot(
+        stats=MappingProxyType(stats or {}),
+        status=status,
+        stale=stale,
+        last_success_at="2026-08-18T18:00:00Z" if stats else None,
+    )
 
 
 @pytest.fixture
