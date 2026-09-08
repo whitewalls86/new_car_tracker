@@ -188,6 +188,47 @@ def test_toggle_search_flips_enabled(api_client, verify_cur, test_key_prefix):
 
 
 # ---------------------------------------------------------------------------
+# A key that is not there (Plan 162 Stage Y, G27/G28)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.parametrize("path", ["toggle", "delete"])
+def test_mutating_a_search_key_that_does_not_exist_is_not_found(
+    api_client, verify_cur, test_key_prefix, path,
+):
+    """Zero rows matched is not a successful edit.
+
+    These routes executed their UPDATE, never read `rowcount`, and returned the
+    same 303 to /admin/searches/ whether the key existed or not -- so a typo and
+    a real change were indistinguishable to the operator and to this suite.
+
+    Only reachable at this layer: the failing condition is the database matching
+    nothing, and a mocked cursor's `rowcount` is a MagicMock that is never zero.
+    """
+    key = f"{test_key_prefix}no-such-key"
+    verify_cur.execute(SQL("select_1_from_search_configs"), (key,))
+    assert verify_cur.fetchone() is None, "the key must genuinely not exist"
+
+    response = api_client.post(
+        f"/admin/searches/{key}/{path}", follow_redirects=False
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.integration
+def test_updating_a_search_key_that_does_not_exist_is_not_found(
+    api_client, test_key_prefix,
+):
+    key = f"{test_key_prefix}no-such-key-update"
+    response = api_client.post(
+        f"/admin/searches/{key}",
+        data={**_VALID_FORM, "search_key": key},
+        follow_redirects=False,
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Delete (soft)
 # ---------------------------------------------------------------------------
 
