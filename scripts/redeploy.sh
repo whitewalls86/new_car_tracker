@@ -148,6 +148,38 @@
 #    away. The ops API is fixed to name the cause (Plan 162 Stage K); this is
 #    the half that lets the operator read it. Same family as decision 7 — a
 #    failure that costs the wait and the diagnosis is two failures.
+#
+# ---------------------------------------------------------------------------
+# Plan 170 Stage B — the ninth decision, added 2026-09-08 because nothing
+# reclaimed the build cache this script produces.
+#
+# 9. A build prunes the cache it just produced. Build cache grew 2.04 -> 7.52
+#    GB in 8 days on this host (~783 MB/day) while images stayed flat, so it
+#    is ~90% of all storage growth, and the only two things that build here
+#    are this script and scripts/deploy.sh — CI builds on GitHub runners and
+#    the `compose run` profiles use already-built images. Producer and reclaim
+#    are therefore the same event, and a scheduled job would poll a pool that
+#    only changes when somebody deploys. The 9 GB that appeared to be
+#    reclaimed in early September was a person running `docker builder prune`
+#    by hand, twice, which is the toil this replaces.
+#
+#    A size cap, not `--filter until=Nh`. The age distribution is
+#    deploy-shaped rather than smooth — `until=72h` would have reclaimed 6.83
+#    GB on 2026-09-08 and 0 GB four days earlier — so a day-count reclaims
+#    everything or nothing depending on when it happens to run. 4GB is picked
+#    from headroom on `/`, which is the quantity that actually matters.
+#
+#    Post-health, and only in the build path. `--restart` builds nothing and
+#    so has nothing to reclaim. Post-health because `LastUsedAt` refreshes on
+#    a cache *hit*, not just on creation: everything the finished build touched
+#    is stamped now, so the live working set survives the cap and the
+#    superseded tail does not.
+#
+#    Non-fatal, and that is the whole point of the `|| echo`. Under `set -e` a
+#    failing prune is a failed deploy, which by decision 3 means MUTATED=1 and
+#    deploy intent HELD — every gated DAG parked because a *cleanup* step
+#    failed after the fleet was already healthy. Reclaiming disk must never be
+#    able to do that.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -632,6 +664,10 @@ else
     _begin_validation
 
     PHASE="done"
+    # Decision 9. Build path only, after health, and it cannot fail the deploy.
+    echo "Pruning build cache back to the 4GB cap..."
+    docker builder prune --keep-storage 4GB -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
+
     echo "Done — every pollable service reported healthy."
     _print_follower_notes "$@"
 fi
