@@ -39,7 +39,7 @@
       "priority": 82,
       "effort": "S",
       "state": "planned",
-      "summary": "Docker build cache grows about 780 MB a day on the production host and nothing reclaims it. Makes each deploy prune the cache it just produced, under a size cap, rather than scheduling a job. Images need no retention rule; what protects the deliberately paused ones needs testing and a written home.",
+      "summary": "Docker build cache grows about 780 MB a day on the production host and nothing reclaims it. Makes each deploy discard the cache it just produced, rather than scheduling a job. Images need no retention rule; what protects the deliberately paused ones needs testing and a written home.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_170_container_image_reclaim_policy.md"
     }
   ],

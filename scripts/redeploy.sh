@@ -194,6 +194,45 @@
 #    deploy intent HELD — every gated DAG parked because a *cleanup* step
 #    failed after the fleet was already healthy. Reclaiming disk must never be
 #    able to do that.
+#
+# ---------------------------------------------------------------------------
+# Plan 170 Stage B — the tenth decision, added 2026-09-08.
+#
+# 10. A build that cannot fit does not start. A rebuild writes new layers
+#     while the images the fleet is currently running are still resident, so
+#     the two coexist until later deploys replace them. A change low in a
+#     shared base rewrites every dependent layer across the fleet at once,
+#     and that is the shape that fills a disk mid-build — which is worse than
+#     failing early, because a build that dies on ENOSPC leaves partial
+#     layers and a deploy that has already started.
+#
+#     So this is checked *before* `docker compose build`, which is the
+#     cheapest possible failure point: `_prepare_coordination` has not run,
+#     nothing is drained, nothing is recreated, MUTATED is 0, and the trap
+#     releases cleanly. Refusing here costs an operator one message.
+#
+#     It refuses rather than warns. A warning in a deploy log nobody is
+#     tailing is not a control, and this is the one pre-flight gate in this
+#     script that decision 1 does not argue against: decision 1 objects to
+#     gating on *unrelated* services, because that blocks deploying the fix
+#     during the incident. Disk is not unrelated — a deploy that cannot fit
+#     will fail anyway, later and messier.
+#
+#     THIS IS A FLOOR CHECK, NOT A BUILD-SIZE PREDICTOR. It cannot answer
+#     "will this build fit", because that needs to know which layers change,
+#     which Docker only knows once it is building. It answers "is this host
+#     healthy enough to start a build at all", and that is the honest limit
+#     of it.
+#
+#     The floor is HOST_DISK_FLOORS["bytes_available"] from
+#     scripts/host_maintenance.py — Plan 142's reviewed 10 GiB — and not a
+#     second number invented here. tests/test_deploy_script.py asserts the
+#     two agree, so raising one without the other fails CI. Measured
+#     2026-09-08: a cold build of every service in docker-compose.yml
+#     consumes 4.48 GiB on a CI runner with no images at all, which is an
+#     upper bound for a host that already has the base images. The floor is
+#     therefore roughly 2x the worst case this fleet has been observed to
+#     need, and about 1.5x once Plan 125 returns cartracker-lakehouse.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -212,6 +251,10 @@ HEALTH_POLL_INTERVAL="${DEPLOY_HEALTH_POLL_INTERVAL:-5}"
 # See decision 7 above before changing these.
 DRAIN_TIMEOUT="${DEPLOY_DRAIN_TIMEOUT:-600}"
 DRAIN_POLL_INTERVAL="${DEPLOY_DRAIN_POLL_INTERVAL:-5}"
+# See decision 10 above before changing this. It must equal
+# HOST_DISK_FLOORS["bytes_available"] in scripts/host_maintenance.py; a test
+# asserts they agree.
+DISK_FLOOR_BYTES=10737418240
 
 MODE="recreate"
 PHASE="startup"
@@ -634,6 +677,31 @@ if [ ! -f "$EXEMPT_FILE" ]; then
 fi
 EXEMPT="$(_exempt_services | tr '\n' ' ')"
 
+_require_disk_headroom() {
+    # Decision 10. A floor check, not a build-size predictor.
+    local available
+    available="$(df -B1 --output=avail / 2>/dev/null | tail -1 | tr -d ' ')"
+    if ! [ "$available" -eq "$available" ] 2>/dev/null; then
+        echo "Warning: could not read free space on /; proceeding without the" >&2
+        echo "  pre-flight disk check." >&2
+        return 0
+    fi
+    if [ "$available" -ge "$DISK_FLOOR_BYTES" ]; then
+        return 0
+    fi
+    echo "Refusing to build: / has $(( available / 1024 / 1024 )) MiB free," >&2
+    echo "  below the ${DISK_FLOOR_BYTES} byte floor this host is held to." >&2
+    echo >&2
+    echo "  Nothing has been drained or recreated, so no deploy is in flight." >&2
+    echo "  A rebuild writes new layers while the running images are still" >&2
+    echo "  resident, so starting one here risks filling / mid-build." >&2
+    echo >&2
+    echo "  Deploy fewer services at a time, or reclaim first:" >&2
+    echo "    docker builder prune -a -f" >&2
+    echo "    docs/runbooks/runbook_storage_maintenance.md §2" >&2
+    return 1
+}
+
 if [ "$MODE" = "restart" ]; then
     _prepare_coordination "$@"
     PHASE="restart"
@@ -658,6 +726,9 @@ if [ "$MODE" = "restart" ]; then
         echo "Done — restarted, containers healthy, mounts verified current."
     fi
 else
+    PHASE="preflight"
+    _require_disk_headroom
+
     PHASE="build"
     echo "Building: $SERVICES"
     docker compose build "$@"
