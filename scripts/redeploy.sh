@@ -180,6 +180,21 @@
 #    deploy intent HELD — every gated DAG parked because a *cleanup* step
 #    failed after the fleet was already healthy. Reclaiming disk must never be
 #    able to do that.
+#
+#    `-a`, without which the cap is inert. Measured on the first production
+#    run, 2026-09-08: `--keep-storage 4GB` alone reclaimed 1.906 GB and
+#    stopped at 5.72 GB, having never reached the cap. BuildKit's sweep skips
+#    `internal` and `frontend` records and every *shared* one unless `all` is
+#    set (`cache/manager.go`), and 1.46 GB of what survived was `Shared=True`.
+#    The eligible set was exhausted before the cap could bind, so no value of
+#    `--keep-storage` would have enforced anything.
+#
+#    `-a` does not mean "delete it all". The two flags compose: the sweep
+#    exits early once total size falls below `keepBytes`, and when a cap is
+#    set it deletes least-recently-used first. So the cap retains the 4 GB the
+#    fleet touched most recently — which is why post-build placement above is
+#    load-bearing rather than cosmetic. The live working set is the newest
+#    thing in the store at that moment.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -666,7 +681,7 @@ else
     PHASE="done"
     # Decision 9. Build path only, after health, and it cannot fail the deploy.
     echo "Pruning build cache back to the 4GB cap..."
-    docker builder prune --keep-storage 4GB -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
+    docker builder prune -a --keep-storage 4GB -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
 
     echo "Done — every pollable service reported healthy."
     _print_follower_notes "$@"

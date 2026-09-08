@@ -42,7 +42,12 @@ curl -sf -X POST "$OPS_URL/deploy/complete" || echo "Warning: failed to signal d
 # producer rather than to a scheduled job, and it runs here, after the deploy
 # has been verified and signalled. `|| echo` is load-bearing: under `set -e` a
 # failing prune would fail a deploy that has already succeeded.
+#
+# `-a` is what makes the cap bind at all, learned in production 2026-09-08:
+# without it BuildKit protects internal, frontend and *shared* records, so the
+# first run stopped at 5.72 GB with the 4GB cap never reached. See decision 9
+# in redeploy.sh for the measurement.
 echo "==> Pruning build cache back to the 4GB cap..."
-docker builder prune --keep-storage 4GB -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
+docker builder prune -a --keep-storage 4GB -f || echo "Warning: build cache prune failed; the deploy itself is unaffected"
 
 echo "==> Done. Check logs with: docker compose logs -f <service>"
