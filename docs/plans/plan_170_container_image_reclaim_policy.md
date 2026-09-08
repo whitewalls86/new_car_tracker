@@ -578,3 +578,64 @@ first pass, in opposite directions: Stage A said "no" against a stale copy of
 the projection, and Stage B said "no" against a stale reading of its own
 summary. **The check is to open the published file and read the sentence**, not
 to reason about whether the change was big enough to reach it.
+
+### Stage C — Make the keep-set legible, and do the one-time image sweep (2026-09-08)
+
+**The sweep ran on the production host at 19:04 UTC. 36 → 29 images, `/` 50% →
+45%, and `/var/lib/containerd` 18,798 → 16,285 MiB — 2,513 MiB reclaimed.**
+Seven images removed by name with `docker image rm`, never a prune, so nothing
+unnamed could be caught: `ghcr.io/germondai/trawl:latest` (1.18 GB),
+`ghcr.io/flaresolverr/flaresolverr:latest` (1.09 GB), `grafana/promtail:2.9.8`
+(275 MB), `python:3.13-slim-bookworm` (209 MB), both `curlimages/curl` tags
+(37.4 + 35.4 MB) and `alpine:latest` (13.6 MB).
+
+**The reclaim is 195 MiB short of the images' reported sizes** — 2,513 against
+2,708 MiB — because `docker image ls` bills a shared layer to every image
+holding it. The two `curl` tags overlap almost entirely and the two `promtail`
+versions partly; the sum was never going to be the reclaim.
+
+**Nothing the manifest protects was touched, verified after rather than
+assumed:** `cartracker-lakehouse`, `cartracker-mlflow`, `cartracker-dbt_test`
+and `quay.io/lakekeeper/catalog:v0.13.1` are all still present, and the fleet is
+28 running plus the two `oneshot` containers exited 0.
+
+**Stage B's warning about a larger sweep set did not hold, and re-measuring is
+why it is known.** It expected 11 unreferenced images at 6.92 GB plus a whole
+orphaned generation from the full-fleet build. The host carried **13**
+unreferenced images and the orphaned generation was not among them: the
+containerd store had already dropped those manifests when the tags moved, which
+is Stage A's own finding arriving from the other direction. The garbage half
+came back to ~2.84 GB, the figure this plan first estimated.
+
+**Two of the 13 were not garbage, and no static derivation can see why.**
+`cartracker-airflow:latest` (3.07 GB) and `cartracker-container-health:latest`
+(264 MB) were built by Stage B's footprint measurement and never started, so
+their containers still pin the *previous* image IDs — which are themselves
+untagged. `docker image prune -a` today would have deleted the newest airflow
+image and kept the superseded one. Both were excluded from the sweep, and the
+case is written into the runbook rather than the derivation, because it is a
+fact about container state and not about Compose.
+
+**Reproduction.** Before and after, from the production host:
+
+```
+docker ps -a -q | xargs -r docker inspect --format '{{.Name}} {{.Image}}'
+docker image ls -a --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Size}}'
+sudo du -s -x --block-size=1M /var/lib/containerd
+df -h /
+```
+
+The unreferenced set is the second list minus every image ID appearing in the
+first. The sweep itself:
+
+```
+docker image rm ghcr.io/germondai/trawl:latest \
+  ghcr.io/flaresolverr/flaresolverr:latest grafana/promtail:2.9.8 \
+  python:3.13-slim-bookworm curlimages/curl:latest curlimages/curl:8.10.1 \
+  alpine:latest
+```
+
+**For the exit:** this discharges the second clause — the sweep has run without
+touching anything the manifest classifies `aux-paused` or `on-demand`. The first
+clause, the test failing when the runbook block desyncs, is the stage's other
+half and landed in `21804a0`.
