@@ -39,6 +39,10 @@ def harness(mocker, tmp_path):
     state = {"staged": [], "diff": "diff --git a/README.md b/README.md\n+one"}
     state["hooks_path"] = gate.HOOKS_PATH
     state["top"] = tmp_path
+    # The main-clone shape: the common dir sits inside the working tree root,
+    # so its parent is that root. A linked worktree is the case where `top`
+    # and this disagree, and the tests that need it set both.
+    state["common_dir"] = str(tmp_path / ".git")
     stamp = tmp_path / "public-surface-stamp"
 
     def fake_git(*args: str) -> str:
@@ -46,6 +50,10 @@ def harness(mocker, tmp_path):
             return "\n".join(state["staged"])
         if args[:2] == ("diff", "--cached"):
             return state["diff"]
+        if args == ("rev-parse", "--show-toplevel"):
+            return str(state["top"])
+        if args[:1] == ("rev-parse",) and "--git-common-dir" in args:
+            return state["common_dir"]
         if args[:1] == ("rev-parse",):
             return str(tmp_path)
         if args == ("config", "--get", "core.hooksPath"):
@@ -185,6 +193,55 @@ class TestTheInstallIsNotOptional:
 
         assert harness["run"]() == 0
 
+    def test_an_absolute_path_from_the_main_clone_is_installed_in_a_worktree(
+        self, harness, tmp_path
+    ):
+        """Plan 163, found 2026-09-08 committing Plan 154 Stage B.
+
+        `core.hooksPath` is shared config, so the absolute value written once
+        in the main clone is what every linked worktree reads, and git runs the
+        hook from all of them. Resolving it against only the current worktree's
+        root called each one uninstalled and refused the commit -- a working
+        gate reporting itself broken, which is the failure the absolute-path
+        case above already exists to prevent.
+        """
+        worktree = tmp_path / ".claude" / "worktrees" / "a-branch"
+        harness["top"] = worktree
+        harness["common_dir"] = str(tmp_path / ".git")
+        harness["hooks_path"] = str(tmp_path / gate.HOOKS_PATH)
+        harness["staged"] = []
+
+        assert harness["run"]() == 0
+
+    def test_a_worktree_relative_spelling_is_still_installed(
+        self, harness, tmp_path
+    ):
+        """The relative value resolves per worktree, and must keep working.
+
+        This is the spelling the install message asks for, so a fix that only
+        taught the check about the main clone's copy would break the one the
+        documentation tells people to use.
+        """
+        worktree = tmp_path / ".claude" / "worktrees" / "a-branch"
+        harness["top"] = worktree
+        harness["common_dir"] = str(tmp_path / ".git")
+        harness["hooks_path"] = gate.HOOKS_PATH
+        harness["staged"] = []
+
+        assert harness["run"]() == 0
+
+    def test_an_unrelated_absolute_path_is_still_refused_from_a_worktree(
+        self, harness, tmp_path
+    ):
+        """Widening to two roots must not widen to any root."""
+        worktree = tmp_path / ".claude" / "worktrees" / "a-branch"
+        harness["top"] = worktree
+        harness["common_dir"] = str(tmp_path / ".git")
+        harness["hooks_path"] = str(tmp_path / "somewhere" / "else")
+        harness["staged"] = []
+
+        assert harness["run"]() == 2
+
     def test_a_dot_slash_spelling_is_installed(self, harness):
         harness["hooks_path"] = "./" + gate.HOOKS_PATH
         harness["staged"] = []
@@ -197,6 +254,96 @@ class TestTheInstallIsNotOptional:
         harness["hooks_path"] = ""
 
         assert harness["run"]("git status") == 0
+
+
+class TestTheInstallCheckAgainstRealGit:
+    """The same question as above, asked of git instead of a fake.
+
+    Every other test here patches ``_git``, which is right for the gate's
+    logic and useless for this particular bug: it was a disagreement about
+    what git *returns*, and a fake that returns what the author expected
+    cannot fail that way. This repository is developed on macOS and Windows
+    and CI runs on Linux, and the three spell paths differently -- drive
+    letters, separators, and whether ``--show-toplevel`` and
+    ``--git-common-dir`` agree on either. So this drives a real repository
+    with a real linked worktree, and it is the test that would notice if one
+    platform disagreed.
+    """
+
+    @staticmethod
+    def _run(*args, cwd):
+        subprocess.run(
+            ["git", *args], cwd=cwd, check=True,
+            capture_output=True, text=True, encoding="utf-8",
+        )
+
+    @pytest.fixture
+    def clone_with_worktree(self, tmp_path):
+        """A real clone at `main`, with a real linked worktree at `linked`."""
+        main = tmp_path / "clone"
+        main.mkdir()
+        # `-c init.defaultBranch` rather than `init -b`: the flag needs git
+        # 2.28, and an older git ignores the unknown config and calls the
+        # branch something else, which this test does not care about. macOS
+        # ships an older git than the Windows side of this repository does.
+        self._run("-c", "init.defaultBranch=trunk", "init", cwd=main)
+        self._run("config", "user.email", "t@example.invalid", cwd=main)
+        self._run("config", "user.name", "T", cwd=main)
+        (main / gate.HOOKS_PATH).mkdir()
+        (main / gate.HOOKS_PATH / "pre-commit").write_text(
+            "#!/bin/sh\n", encoding="utf-8"
+        )
+        (main / "seed").write_text("seed\n", encoding="utf-8")
+        self._run("add", "-A", cwd=main)
+        self._run("commit", "-m", "seed", cwd=main)
+
+        linked = tmp_path / "linked"
+        self._run("worktree", "add", str(linked), "-b", "side", cwd=main)
+        return main, linked
+
+    def test_an_absolute_hooks_path_holds_from_the_linked_worktree(
+        self, clone_with_worktree, monkeypatch
+    ):
+        """The exact configuration that refused a commit on 2026-09-08."""
+        main, linked = clone_with_worktree
+        self._run(
+            "config", "core.hooksPath", str(main / gate.HOOKS_PATH), cwd=main
+        )
+
+        monkeypatch.chdir(linked)
+        assert gate.hooks_installed() is True
+
+        monkeypatch.chdir(main)
+        assert gate.hooks_installed() is True
+
+    def test_a_relative_hooks_path_holds_from_both(
+        self, clone_with_worktree, monkeypatch
+    ):
+        """The spelling the install message asks for, which must keep working.
+
+        It resolves per worktree, so the linked tree needs its own checked-out
+        copy -- which it has, because `.githooks` is tracked.
+        """
+        main, linked = clone_with_worktree
+        self._run("config", "core.hooksPath", gate.HOOKS_PATH, cwd=main)
+
+        monkeypatch.chdir(linked)
+        assert gate.hooks_installed() is True
+
+        monkeypatch.chdir(main)
+        assert gate.hooks_installed() is True
+
+    def test_an_unrelated_path_is_still_refused_from_the_worktree(
+        self, clone_with_worktree, monkeypatch
+    ):
+        """Two accepted roots, not any root."""
+        main, linked = clone_with_worktree
+        elsewhere = main.parent / "elsewhere"
+        elsewhere.mkdir()
+        self._run("config", "core.hooksPath", str(elsewhere), cwd=main)
+
+        monkeypatch.chdir(linked)
+        assert gate.hooks_installed() is False
 
 
 class TestTheGitHookEntryPoint:
