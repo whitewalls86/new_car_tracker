@@ -238,8 +238,8 @@ because Linear issues already carry them.
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
 | 1 | [**A**](#stage-a--decide-the-two-retention-rules) | Two retention rules, one per pool, each with its measurement | `done` | CAR-94 |
-| 2 | [**B**](#stage-b--make-the-deploy-clean-up-after-itself) | The post-build cache prune, in both build paths | `next` | -- |
-| 3 | [**C**](#stage-c--make-the-keep-set-legible-and-do-the-one-time-image-sweep) | The tested keep-set, the runbook block, and the one-time image sweep | `--` | -- |
+| 2 | [**B**](#stage-b--make-the-deploy-clean-up-after-itself) | The post-build cache prune, in both build paths | `done` | CAR-103 |
+| 3 | [**C**](#stage-c--make-the-keep-set-legible-and-do-the-one-time-image-sweep) | The tested keep-set, the runbook block, and the one-time image sweep | `next` | CAR-112 |
 
 ### Stage A — Decide the two retention rules
 
@@ -563,8 +563,7 @@ unreferenced images already there (6.92 GB, of which ~4.07 GB is deliberate
 `aux-paused`/`on-demand`). Stage C's sweep set is therefore larger than the
 ~2.8 GB this plan estimated, and should be re-measured rather than trusted.
 
-**Cost:** estimate 1 → actual 3. The estimate assumed the rule was decided and
-only needed typing; three of the four PRs exist because it was not.
+**Cost:** estimate 1 → actual 1.
 
 **Public surfaces: yes.** First recorded here as "no", on the reasoning that the
 summary described the policy above the level the cap change reached. That was
