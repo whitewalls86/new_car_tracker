@@ -40,11 +40,20 @@ from enum import StrEnum
 
 
 class RequestableRole(StrEnum):
-    """``access_requests.requested_role`` -- ``admin`` is deliberately absent."""
+    """``access_requests.requested_role`` -- ``admin`` is deliberately absent.
 
+    **Declared least-privileged first, and the order is load-bearing.**
+    ``ops/routers/users.py`` renders these into the access-request form in
+    iteration order, so this is what the page offers and in what sequence.
+    Ordering it here rather than at the call site is what keeps the two
+    properties together: a fourth role added below appears on the form
+    automatically, where a hand-ordered list at the call site would have
+    silently omitted it.
+    """
+
+    VIEWER = "viewer"
     OBSERVER = "observer"
     POWER_USER = "power_user"
-    VIEWER = "viewer"
 
 
 class AccessRequestStatus(StrEnum):
