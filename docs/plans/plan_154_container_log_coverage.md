@@ -119,8 +119,8 @@ carries a legacy number yet, so the mapping matters only to inbound prose:
 
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
-| 1 | [**A**](#stage-a--decide-every-exclusion-on-its-merits) | Every exclusion decided on its merits, with measured volume | `next` | -- |
-| 2 | [**B**](#stage-b--admit-the-accepted-services) | The accepted services admitted, each with its drop policy | `--` | -- |
+| 1 | [**A**](#stage-a--decide-every-exclusion-on-its-merits) | Every exclusion decided on its merits, with measured volume | `done` | CAR-92 |
+| 2 | [**B**](#stage-b--admit-the-accepted-services) | The accepted services admitted, each with its drop policy | `next` | -- |
 | 3 | [**C**](#stage-c--observe-for-seven-days) | Seven days of real volume, and a keep/narrow/remove per service | `--` | -- |
 
 ### Stage A — Decide every exclusion on its merits
@@ -224,3 +224,106 @@ carried.
 - **After Stage B:** remove the labels and registry entries; Promtail returns to
   its Plan 141 state.
 - **After Stage C:** the per-service decision is the durable output.
+
+## Record
+
+### Stage A — Decide every exclusion on its merits (2026-09-07)
+
+All eighteen uncovered services classified against a 24-hour `docker logs`
+window ending 2026-09-07T19:27Z, sampled on the production host. The window
+covered 139,747 `scraper` lines and 8,727 `dbt_runner` lines, so it was
+representative rather than quiet. Volume was measured per container rather than
+estimated from service type, as item 3 required.
+
+**Two admits, sixteen exclusions.**
+
+| Service | lines/day | bytes/day | Verdict | Reason |
+|---|---:|---:|---|---|
+| `trawl` | 448 | 23 KB | **admit** | Turnstile solver challenge events, including 31 `cf_clearance set but still on challenge page`. The live scrape path, and the only place the 2026-08-14 silent solver failure would have been legible. 23 KB/day is negligible |
+| `postgres` | 595 | 109 KB | **admit, with a drop policy** | 288 daily checkpoint records are already covered by postgres-exporter and drop. The residue is where a 16-hour broken hourly job and a real connection exhaustion were recorded and never seen |
+| `docker-socket-proxy` | 187,218 | 45.4 MB | exclude | HAProxy access log of every Docker API metadata read, all `200`. No durable event contract. 89% of all lines and 94% of all bytes across the eighteen; the volume itself is Plan 177 Stage A |
+| `container-health` | 8,633 | 512 KB | exclude | 100% uvicorn access records — `/metrics` ×5,760, `/health` ×2,871 — and nothing about the service's own work. Emission is Plan 177 Stage B |
+| `grafana` | 3,509 | 1.0 MB | exclude | Alert-router chatter. Exactly two genuine `level=error` lines in 24 hours, both the same benign missing-plugin notice; the 866 `error` string matches are `error=null` fields |
+| `caddy` | 2,885 | 712 KB | exclude | No access logging exists to admit. 2,876 of 2,885 lines are its own healthcheck echo. Admission is Plan 177 Stages D and E |
+| `pgadmin` | 2,877 | 253 KB | exclude | 100% `GET /pgadmin/misc/ping` from its own Wget healthcheck |
+| `airflow-triggerer` | 2,876 | 400 KB | exclude | 100% `N triggers/watchers currently running` at info level, every 30 seconds |
+| `promtail` | 126 | 18 KB | exclude | File-watcher events only, and principle 4 — the collector does not ingest itself |
+| `redis-trawl` | 120 | 8.6 KB | exclude | RDB background saves only |
+| `prometheus` | 81 | 13 KB | exclude | TSDB head GC and WAL checkpoints. Self-health is metric based |
+| `minio` | 0 | 0 | exclude | Startup banner only — 159 lines all-time, last on 2026-08-31 |
+| `node-exporter` | 0 | 0 | exclude | Startup banner only — 114 lines all-time |
+| `flaresolverr` | 0 | 0 | exclude | Startup banner only — 27 lines all-time. Also not the active scrape path |
+| `postgres-exporter` | 0 | 0 | exclude | Startup banner only — 15 lines all-time |
+| `statsd-exporter` | 0 | 0 | exclude | Startup banner only — 9 lines all-time |
+| `dashboard` | 0 | 0 | exclude | Startup banner only — 8 lines all-time |
+| `loki` | 0 | 0 | exclude | Principle 4 — ingesting Loki into Loki is a feedback loop. 1,393 lines all-time with occasional genuine errors, diagnosed through local Docker rotation |
+
+**Seven services log only at boot.** `minio`, `node-exporter`, `flaresolverr`,
+`postgres-exporter`, `statsd-exporter` and `dashboard` last emitted a line on
+2026-08-31 and have been silent for the seven days since. Nothing to ingest is
+the cleanest exclusion available, and none of them had been considered before.
+
+**`caddy`'s PII answer: there is none today, because there is no access
+logging.** No `log` directive exists anywhere in the `Caddyfile`, verified by
+grep rather than inferred from reading. Of 2,885 daily lines, 2,876 are the
+Compose healthcheck's `GET /config/` against the admin API on `127.0.0.1` and
+the remaining 8 are ACME renewal and TLS storage maintenance. The only IP the
+log contains is `127.0.0.1` and the only path is `/config/`. The privacy
+question is therefore not answerable as a measurement — it becomes real the
+moment logging is turned on, which is Plan 177 Stage D's subject.
+
+**`postgres`'s reading.** `log_min_duration_statement = -1`,
+`log_lock_waits = off`, `log_connections` and `log_disconnections` both `off`,
+`log_statement = none`. Every failure mode this plan named as the reason to
+want Postgres logs is switched off. What is emitted is `log_checkpoints = on`,
+`log_autovacuum_min_duration = 600000`, and errors after the fact. One piece of
+good news: `log_destination = stderr` with `logging_collector = off`, so the
+output already reaches container stdout and admission needs a Promtail label
+and no file plumbing.
+
+**A drop policy for `postgres` is harder than it looks.** Most of its error
+lines are ad-hoc `psql` sessions guessing at table names, role names and
+quoting — `column " receipts | " does not exist` is pasted table output, and
+`syntax error at or near "\"` recurs across twenty days. Three classes are
+genuinely separable and worth keeping: `too many connections`, integrity and
+check-constraint violations, and the same relation failing on a schedule. The
+last of those is the awkward one, because `relation ... does not exist` appears
+in both columns and what separates them is periodicity, which Promtail cannot
+evaluate at ingestion. Stage B either ingests that class and lets a Grafana
+rule find the periodicity, or drops it and accepts missing the case below.
+
+**What the stage found that it was not looking for.** Postgres's log holds one
+genuine incident in twenty days. On 2026-08-29 `metrics_user` — postgres-
+exporter's own account, capped at `CONNECTION LIMIT 3` by Plan 86's V033 —
+exhausted its limit, and `up{job="postgres"}` read 0 from 05:57 to 06:13. The
+source-policy registry excludes Postgres on the grounds that "database health
+and capacity are covered by postgres-exporter metrics"; the one event in twenty
+days that tests that claim is postgres-exporter going blind, and the only
+durable record of why is the log the exclusion keeps out. Filed as Plan 176.
+
+A second finding is already closed: `staging.coordination_state_events` and
+`staging.coordination_release_evidence` failed exactly twice an hour, on the
+hour, for sixteen consecutive hours on 2026-08-26/27. Both relations exist now.
+Sixteen hourly failures at a fixed cadence is the clearest case in the dataset
+of something a retained Postgres log would have caught on hour two.
+
+**Downstream.** Four services turned out to be emission-configuration work
+rather than ingestion work and were split into
+[Plan 177](plan_177_service_log_emission.md), Stages A–E (CAR-97 to CAR-101).
+The connection-limit defect became [Plan 176](plan_176_role_connection_limits.md),
+backlog. Neither is Stage B's problem, which is the point of separating them.
+
+**Stage B is smaller than this plan assumed.** Two admits totalling under 1 MB
+a day before filtering leaves the seven-day footprint well inside Plan 135's
+bounds — but it also means Stage C's observation window will be measuring very
+little.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+Cost: estimate 3 → actual 1 (−2). Read-only throughout; nothing was deployed,
+so this stage's output is a document rather than a diff.
+
+Full sampling method, per-service line-shape composition, the Postgres error
+forensics and the Prometheus queries:
+[`plan_154_stage_A_evidence.md`](../evidence/plan_154_stage_A_evidence.md).
