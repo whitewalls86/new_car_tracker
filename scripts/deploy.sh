@@ -21,6 +21,23 @@ git fetch origin
 git checkout master
 git pull origin master
 
+# Plan 170 Stage B decision 10. A build that cannot fit does not start; see
+# the header of scripts/redeploy.sh for the argument. This is a floor check,
+# not a build-size predictor, and the number must equal
+# HOST_DISK_FLOORS["bytes_available"] in scripts/host_maintenance.py -- a test
+# asserts they agree.
+DISK_FLOOR_BYTES=10737418240
+AVAILABLE_BYTES="$(df -B1 --output=avail / | tail -1 | tr -d ' ')"
+if [ "$AVAILABLE_BYTES" -lt "$DISK_FLOOR_BYTES" ]; then
+    echo "Refusing to build: / has $(( AVAILABLE_BYTES / 1024 / 1024 )) MiB free," >&2
+    echo "  below the ${DISK_FLOOR_BYTES} byte floor this host is held to." >&2
+    echo "  Nothing has been changed. Reclaim first, or deploy service by" >&2
+    echo "  service with scripts/redeploy.sh:" >&2
+    echo "    docker builder prune -a -f" >&2
+    echo "    docs/runbooks/runbook_storage_maintenance.md §2" >&2
+    exit 1
+fi
+
 echo "==> Rebuilding images..."
 docker compose build
 
