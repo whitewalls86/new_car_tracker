@@ -728,36 +728,45 @@ class TestBuildCachePrune:
                 "was a person running `docker builder prune` by hand, twice."
             )
 
-    def test_the_prune_is_capped_and_unattended(self):
+    def test_the_prune_is_total_and_unattended(self):
         for name, text in self._build_scripts().items():
             for line in self._prune_lines(text):
-                assert "--keep-storage" in line, (
-                    f"{name}'s prune has no --keep-storage cap, so it discards "
-                    "the whole cache and the next deploy rebuilds every layer. "
-                    "The cap is what makes this safe to run unattended."
-                )
                 assert re.search(r"(?<![\w-])-f(?![\w-])|--force", line), (
                     f"{name}'s prune omits -f, so it blocks on a confirmation "
                     "prompt no deploy is watching"
                 )
                 assert re.search(r"(?<![\w-])-a(?![\w-])|--all", line), (
-                    f"{name}'s prune omits -a, which makes --keep-storage inert. "
-                    "Measured on the first production run, 2026-09-08: without "
-                    "it BuildKit protects internal, frontend and shared records, "
-                    "the eligible set was exhausted at 5.72 GB, and the 4GB cap "
-                    "was never reached. No cap value enforces anything without -a."
+                    f"{name}'s prune omits -a, so it reaches only dangling "
+                    "records. Measured 2026-09-08: without it the sweep skips "
+                    "internal, frontend and shared records and stopped with "
+                    "5.72 GB still resident."
                 )
 
-    def test_the_build_paths_agree_on_the_cap(self):
-        """Two scripts, one number. Without this they are two copies that drift."""
-        caps = {
-            match
+    def test_no_size_cap_came_back(self):
+        """`--keep-storage` was deployed twice on 2026-09-08 and enforced nothing:
+        7.52 -> 5.72 GB with the cap never reached, then 0 B reclaimed against
+        6.00 GB resident with `-a` set. No model explains both runs, so the
+        policy stopped depending on the flag rather than tuning its value. If
+        someone reintroduces a cap, it needs a measurement showing it binds --
+        not a number that looks reasonable."""
+        for name, text in self._build_scripts().items():
+            for line in self._prune_lines(text):
+                assert "--keep-storage" not in line and "--reserved-space" not in line, (
+                    f"{name}'s prune carries a size cap again. Two production "
+                    "runs showed --keep-storage reclaiming nothing it was asked "
+                    "to; see decision 9 in redeploy.sh before restoring one."
+                )
+
+    def test_the_build_paths_run_the_same_prune(self):
+        """Two scripts, one policy. Without this they are two copies that drift."""
+        commands = {
+            line[line.index("docker builder prune"):]
             for text in self._build_scripts().values()
-            for match in re.findall(r"--keep-storage\s+(\S+)", _uncommented(text))
+            for line in self._prune_lines(text)
         }
-        assert len(caps) == 1, (
-            f"the build paths disagree on the cache cap: {sorted(caps)}. It is "
-            "one number picked from headroom on /, not a per-script preference."
+        assert len(commands) == 1, (
+            f"the build paths run different prunes: {sorted(commands)}. The "
+            "reclaim policy is one decision, not a per-script preference."
         )
 
     def test_the_prune_can_never_fail_a_deploy(self):

@@ -43,7 +43,7 @@ Baselines as of 2026-08-18: `/` at ~64%, `/mnt/data` at 41% bytes / 30% inodes.
 | Vacuum journald | `journalctl --vacuum-size=500M` | ~1.2 GiB | none |
 | Clear apt cache | `apt-get clean` | ~220 MiB | none |
 | Prune dangling images | `docker image prune` | ~0 today | low |
-| Prune build cache | `docker builder prune -a --keep-storage 4GB -f` | down to the 4 GB cap | low — **and it is automatic now**, see below |
+| Prune build cache | `docker builder prune -a -f` | all of it (6.0 GB on 2026-09-08) | low — **and it is automatic now**, see below |
 
 > **This table has been measuring the wrong directory.** `/var/lib/docker` held
 > **714 MiB** on 2026-08-29 while `/var/lib/containerd` held **29 GiB** — Docker
@@ -62,21 +62,27 @@ Baselines as of 2026-08-18: `/` at ~64%, `/mnt/data` at 41% bytes / 30% inodes.
 > days** while images stayed flat, so it is ~90% of all growth — and it is
 > produced only by builds. `scripts/deploy.sh` and `scripts/redeploy.sh` are
 > the entire set of things that build on this host, so both now run
-> `docker builder prune -a --keep-storage 4GB -f` after health verification,
-> non-fatal. Producer and reclaim are the same event and no scheduled job
-> exists.
+> `docker builder prune -a -f` after health verification, non-fatal. Producer
+> and reclaim are the same event and no scheduled job exists. **If
+> `/var/lib/containerd` is ramping rather than sawtoothing, that is a defect
+> in the deploy scripts, not a window you are owed.**
 >
-> **`-a` is not optional, and the first production run is how we know.** On
-> 2026-09-08 the command shipped without it, reclaimed 1.906 GB and stopped at
-> **5.72 GB — the 4 GB cap was never reached**. BuildKit's sweep skips
-> `internal` and `frontend` records and every *shared* one unless `all` is set,
-> and 1.46 GB of the survivors were `Shared=True`; the eligible set ran out
-> before the cap could bind, so no value of `--keep-storage` would have
-> enforced anything. `-a` does not mean "delete it all": the sweep exits once
-> total size falls below the cap and deletes least-recently-used first, so the
-> 4 GB retained is the 4 GB the fleet touched most recently. **If `/var/lib/containerd` is ramping rather than sawtoothing, that
-> is a defect in the deploy scripts, not a window you are owed.** Running the
-> prune by hand is still safe; it should just have nothing much to do.
+> **Nothing in production reads build cache.** It is the saved result of a
+> build step, kept so the next build can skip it — a speed optimisation and
+> nothing else. Discarding it whole costs the next build its time and costs
+> nothing else, and the build runs *before* the deploy-intent drain, so that
+> time is not paid in parked DAGs. CI rebuilds every service from cold in
+> about 90 seconds.
+>
+> **There is deliberately no size cap, and that is the second answer.** Stage A
+> specified `--keep-storage 4GB`. It was deployed and measured twice on
+> 2026-09-08 and enforced nothing: `--keep-storage 4GB -f` took 7.52 → 5.72 GB
+> with the cap never reached, and `-a --keep-storage 4GB -f` reclaimed **0 B**
+> against 6.00 GB resident. The first is explicable — without `all` the sweep
+> skips internal, frontend and shared records — the second is not. No model
+> fits both runs, so the policy stopped depending on the flag rather than
+> tuning its value. **Do not reintroduce a cap without a measurement showing it
+> binds.**
 
 > **Images get no automated retention, and that is a decision.** They do not
 > accumulate — 21.03 → 20.97 GB across the same 8 days — and
