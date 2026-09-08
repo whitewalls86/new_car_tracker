@@ -395,6 +395,13 @@ def write_detail_unlisted(
 
     with db_cursor(error_context=f"detail_unlisted: writes artifact_id={artifact_id}") as cur:
         cur.execute(DELETE_PRICE_OBSERVATION, {"listing_id": listing_id})
+        # Plan 162 Stage Y: `deleted` was the literal True, so a listing with no
+        # observation row -- never observed, or already removed -- reported a
+        # deletion identically to one that happened. Both DELETEs here are keyed
+        # on listing_id alone, so rowcount is the whole answer. Zero is a
+        # legitimate outcome for either, which is why this reports rather than
+        # raises.
+        deleted = cur.rowcount
         # Event: price_observation deleted (unlisted)
         cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
             "listing_id": listing_id,
@@ -408,6 +415,7 @@ def write_detail_unlisted(
         })
         _clear_cooldown(cur, listing_id)
         cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": listing_id})
+        claims_released = cur.rowcount
         cur.execute(INSERT_DETAIL_CLAIM_EVENT, {
             "listing_id": listing_id,
             "run_id": run_id,
@@ -441,6 +449,11 @@ def write_detail_unlisted(
 
     emit_listing_removed(vin=vin, listing_id=listing_id)
 
-    return {"deleted": True, "vin": vin, "silver_written": silver_written}
+    return {
+        "deleted": bool(deleted),
+        "claims_released": claims_released,
+        "vin": vin,
+        "silver_written": silver_written,
+    }
 
 

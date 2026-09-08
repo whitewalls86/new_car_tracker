@@ -5,7 +5,9 @@ All DB and MinIO calls are patched. Tests verify:
   - Query params forwarded correctly
   - Response shape matches Plan 71 Airflow expectations
   - Count aggregation (srp_count, detail_count, retry_count, skip_count)
+  - A status write that matched no row is counted, not reported as a completion
 """
+from processing.routers.batch import StatusWriteFailed
 
 
 def _make_artifact(artifact_id=1, artifact_type="results_page"):
@@ -31,7 +33,36 @@ class TestProcessBatch:
             "retry_count": 0,
             "skip_count": 0,
             "silver_write_failures": 0,
+            "status_write_failures": 0,
         }
+
+    def test_status_write_failure_is_counted_not_reported_as_a_completion(
+        self, mock_processing_client, mocker,
+    ):
+        """A queue row that vanished is not a processed artifact.
+
+        MARK_ARTIFACT_STATUS is keyed on artifact_id alone, so a zero rowcount
+        means this batch is working from a stale claim. Before Plan 162 Stage Y
+        `_set_status` returned None and nobody looked, so the artifact was
+        counted a completion here while still sitting in 'processing' -- the
+        batch reporting work it had not recorded.
+        """
+        mocker.patch(
+            "processing.routers.batch._claim_batch",
+            return_value=[{"artifact_id": 1, "artifact_type": "detail_page"}],
+        )
+        mocker.patch(
+            "processing.routers.batch._process_artifact",
+            side_effect=StatusWriteFailed("artifact_id=1 status=complete"),
+        )
+
+        body = mock_processing_client.post("/process/batch").json()
+
+        assert body["status_write_failures"] == 1
+        assert body["detail_count"] == 0
+        assert body["srp_count"] == 0
+        assert body["retry_count"] == 0
+        assert body["skip_count"] == 0
 
     def test_batch_size_below_min_rejected(self, mock_processing_client):
         resp = mock_processing_client.post("/process/batch?batch_size=0")

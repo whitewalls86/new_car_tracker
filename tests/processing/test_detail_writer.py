@@ -238,6 +238,12 @@ class TestWriteDetailActive:
 
 class TestWriteDetailUnlisted:
     def test_unlisted_produces_delete(self, mock_cursor, mock_silver):
+        # The fixture's cursor reports rowcount 0. Until Plan 162 Stage Y this
+        # test asserted `deleted is True` against it -- a literal in the return
+        # dict, checked against a database that said nothing was deleted. The
+        # row this deletes has to exist for the assertion to mean anything.
+        mock_cursor.rowcount = 1
+
         primary = {
             "listing_id": "aaa", "vin": "VIN001",
             "listing_state": "unlisted",
@@ -252,6 +258,25 @@ class TestWriteDetailUnlisted:
         # Verify DELETE was called (first execute call should be the delete)
         first_execute = mock_cursor.execute.call_args_list[0]
         assert "DELETE" in first_execute[0][0]
+
+    def test_unlisted_reports_no_delete_when_nothing_matched(
+        self, mock_cursor, mock_silver,
+    ):
+        """A listing with no observation row deleted nothing, and says so.
+
+        Legitimate -- the listing may never have been observed -- so this
+        reports rather than raises. What it may not do is answer identically to
+        a delete that happened.
+        """
+        mock_cursor.rowcount = 0
+
+        result = write_detail_unlisted(
+            {"listing_id": "ccc", "vin": "VIN003"},
+            artifact_id=12, fetched_at=FETCHED_AT,
+            listing_id="ccc", run_id="run12",
+        )
+        assert result["deleted"] is False
+        assert result["claims_released"] == 0
 
     def test_unlisted_writes_silver_with_null_price(self, mock_cursor, mock_silver):
         primary = {"listing_id": "bbb", "vin": None, "make": "Toyota", "model": "Camry"}

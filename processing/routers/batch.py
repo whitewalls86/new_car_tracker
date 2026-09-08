@@ -65,13 +65,36 @@ def _claim_batch(batch_size: int, artifact_type: Optional[str]) -> List[Dict[str
     return rows
 
 
+class StatusWriteFailed(Exception):
+    """MARK_ARTIFACT_STATUS matched no row, so the queue was not updated.
+
+    Raised rather than returned because ten call sites would otherwise each
+    have to remember to propagate it, and the one that forgot would be
+    invisible. Caught per artifact in ``process_batch``: the batch continues,
+    and the artifact is counted as a status-write failure rather than as a
+    completion it did not achieve.
+    """
+
+
 def _set_status(artifact: Dict[str, Any], status: str) -> None:
-    """Update artifact queue status and write an event row."""
+    """Update artifact queue status and write an event row.
+
+    MARK_ARTIFACT_STATUS is keyed on `artifact_id` alone, so a zero rowcount
+    means the queue row is gone -- the claim this batch is working from is
+    stale. Plan 162 Stage Y: nothing observed that, so ``process_batch`` went on
+    to report `detail_count += 1` for an artifact still sitting in 'processing',
+    which is the state `_reap_stuck_processing` exists to clean up afterwards.
+    """
     with db_cursor(error_context=f"set_status {status}") as cur:
         cur.execute(MARK_ARTIFACT_STATUS, {
             "status": status,
             "artifact_id": artifact["artifact_id"],
         })
+        if not cur.rowcount:
+            raise StatusWriteFailed(
+                f"artifact_id={artifact['artifact_id']} status={status}: "
+                f"no queue row matched"
+            )
         cur.execute(INSERT_ARTIFACT_EVENT, {
             "artifact_id": artifact["artifact_id"],
             "status": status,
@@ -227,7 +250,8 @@ def process_batch(
     Claim and process a batch of pending/retry artifacts.
 
     Response shape matches Plan 71 Airflow DAG expectations:
-      srp_count, detail_count, retry_count, skip_count, silver_write_failures
+      srp_count, detail_count, retry_count, skip_count, silver_write_failures,
+      status_write_failures
     """
     with active_job():
         try:
@@ -243,6 +267,7 @@ def process_batch(
                 "retry_count": 0,
                 "skip_count": 0,
                 "silver_write_failures": 0,
+                "status_write_failures": 0,
             }
 
         logger.info(
@@ -255,9 +280,19 @@ def process_batch(
         retry_count = 0
         skip_count = 0
         silver_write_failures = 0
+        status_write_failures = 0
 
         for artifact in artifacts:
-            result = _process_artifact(artifact)
+            try:
+                result = _process_artifact(artifact)
+            except StatusWriteFailed as e:
+                # The processing itself may well have succeeded; what failed is
+                # recording it. Counted on its own rather than as a completion
+                # or a retry, because which of those it would have been is
+                # exactly what is no longer known.
+                logger.error("process_batch: %s", e)
+                status_write_failures += 1
+                continue
             status = result.get("status")
 
             if status == ArtifactStatus.COMPLETE:
@@ -279,4 +314,5 @@ def process_batch(
             "retry_count": retry_count,
             "skip_count": skip_count,
             "silver_write_failures": silver_write_failures,
+            "status_write_failures": status_write_failures,
         }
