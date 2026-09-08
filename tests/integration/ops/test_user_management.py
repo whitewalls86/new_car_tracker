@@ -48,7 +48,10 @@ def test_change_user_role_invalid_role_no_change(
         data={"role": "superadmin"},
         follow_redirects=False,
     )
-    assert response.status_code == 303
+    # Plan 162 Stage Y: a role this service does not have was rejected with the
+    # same redirect a successful change gets. The row check below was the only
+    # thing distinguishing them, and nothing obliged a caller to make it.
+    assert response.status_code == 400
 
     verify_cur.execute(
         SQL("select_role_from_authorized_users"), (user_id,)
@@ -79,8 +82,14 @@ def test_revoke_user_removes_row(
 
 
 @pytest.mark.integration
-def test_revoke_nonexistent_user_no_error(api_client):
+def test_revoke_nonexistent_user_is_not_a_revocation(api_client):
+    """Renamed with the behaviour: "no error" was the defect, not the contract.
+
+    Revoking a user that does not exist revokes nobody, and this is access
+    control -- answering 303 made a failed revocation and a real one
+    indistinguishable to the operator (Plan 162 Stage Y, G27).
+    """
     response = api_client.post(
         "/admin/users/99999/revoke", follow_redirects=False
     )
-    assert response.status_code == 303
+    assert response.status_code == 404

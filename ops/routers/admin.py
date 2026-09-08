@@ -68,6 +68,20 @@ def _db_error_response(request: Request):
         "message": "Database unavailable. Please try again later.",
     }, status_code=503)
 
+
+def _not_found_response(request: Request, message: str):
+    """The answer when a mutation matched no row.
+
+    Its absence is what Plan 162 Stage Y found: these routes redirected to the
+    list page whether the key existed or not, so a typo and a real edit were
+    indistinguishable to the operator and to the suite.
+    """
+    return templates.TemplateResponse(request=request, name="admin/error.html", context={
+        "request": request,
+        "heading": "Not Found",
+        "message": message,
+    }, status_code=404)
+
 # ---------------------------------------------------------------------------
 # Search config list
 # ---------------------------------------------------------------------------
@@ -488,8 +502,12 @@ def update_search(
     try:
         with db_cursor(error_context="Update-Search") as cur:
             cur.execute(sql, sql_params)
+            matched = cur.rowcount
     except Exception:
         return _db_error_response(request=request)
+
+    if not matched:
+        return _not_found_response(request, f"No search config named {search_key!r}.")
 
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
@@ -507,8 +525,12 @@ def toggle_search(request: Request, search_key: str):
     try:
         with db_cursor(error_context="Toggle-Search") as cur:
             cur.execute(sql, params)
+            matched = cur.rowcount
     except Exception:
         return _db_error_response(request=request)
+
+    if not matched:
+        return _not_found_response(request, f"No search config named {search_key!r}.")
     
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
@@ -527,7 +549,11 @@ def delete_search(request: Request, search_key: str):
     try:
         with db_cursor(error_context="Delete-Search") as cur:
             cur.execute(sql, params)
+            matched = cur.rowcount
     except Exception:
         return _db_error_response(request=request)
+
+    if not matched:
+        return _not_found_response(request, f"No search config named {search_key!r}.")
 
     return RedirectResponse(url="/admin/searches/", status_code=303)

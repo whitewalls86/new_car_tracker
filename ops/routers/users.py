@@ -44,6 +44,27 @@ public_router = APIRouter()  # public routes (no prefix)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
+
+def _db_error_response(request: Request):
+    return templates.TemplateResponse(request=request, name="admin/error.html", context={
+        "request": request,
+        "message": "Database unavailable. Please try again later.",
+    }, status_code=503)
+
+
+def _not_found_response(request: Request, message: str):
+    """The answer when a mutation matched no row.
+
+    Plan 162 Stage Y: these routes redirected to the list page whether the
+    target existed or not, so a revocation that revoked nobody was reported to
+    the operator exactly like one that worked.
+    """
+    return templates.TemplateResponse(request=request, name="admin/error.html", context={
+        "request": request,
+        "heading": "Not Found",
+        "message": message,
+    }, status_code=404)
+
 _TELEGRAM_API = os.environ.get("TELEGRAM_API", "")
 _TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -229,12 +250,20 @@ def change_user_role(
     role: str = Form(...),
 ):
     if role not in ROLE_LABELS:
-        return RedirectResponse(url="/admin/users", status_code=303)
+        return templates.TemplateResponse(request=request, name="admin/error.html", context={
+            "request": request,
+            "heading": "Bad Request",
+            "message": f"{role!r} is not a role.",
+        }, status_code=400)
     try:
         with db_cursor(error_context="Change-User-Role") as cur:
             cur.execute(UPDATE_USER_ROLE, (role, user_id))
+            matched = cur.rowcount
     except Exception:
         logger.exception("Failed to update user role")
+        return _db_error_response(request=request)
+    if not matched:
+        return _not_found_response(request, f"No user with id {user_id}.")
     return RedirectResponse(url="/admin/users", status_code=303)
 
 
@@ -243,8 +272,12 @@ def revoke_user(request: Request, user_id: int):
     try:
         with db_cursor(error_context="Revoke-User") as cur:
             cur.execute(DELETE_AUTHORIZED_USER, (user_id,))
+            matched = cur.rowcount
     except Exception:
         logger.exception("Failed to revoke user")
+        return _db_error_response(request=request)
+    if not matched:
+        return _not_found_response(request, f"No user with id {user_id}.")
     return RedirectResponse(url="/admin/users", status_code=303)
 
 
@@ -281,7 +314,7 @@ def approve_access_request(
             cur.execute(SELECT_PENDING_REQUEST_DETAILS, (req_id,))
             row = cur.fetchone()
             if not row:
-                return RedirectResponse(url="/admin/access-requests", status_code=303)
+                return _not_found_response(request, f"No pending request with id {req_id}.")
 
             cur.execute(
                 UPSERT_AUTHORIZED_USER,
@@ -290,7 +323,7 @@ def approve_access_request(
             cur.execute(APPROVE_ACCESS_REQUEST, (admin_hash, req_id))
     except Exception:
         logger.exception("Failed to approve access request")
-        return RedirectResponse(url="/admin/access-requests", status_code=303)
+        return _db_error_response(request=request)
 
     if row and row.get("notification_email"):
         send_access_approved(row["notification_email"], row["requested_role"])
@@ -308,12 +341,13 @@ def deny_access_request(request: Request, req_id: int):
         with db_cursor(error_context="Deny-Access-Request", dict_cursor=True) as cur:
             cur.execute(SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL, (req_id,))
             row = cur.fetchone()
-            if row:
-                notification_email = row.get("notification_email")
+            if not row:
+                return _not_found_response(request, f"No pending request with id {req_id}.")
+            notification_email = row.get("notification_email")
             cur.execute(DENY_ACCESS_REQUEST, (admin_hash, req_id))
     except Exception:
         logger.exception("Failed to deny access request")
-        return RedirectResponse(url="/admin/access-requests", status_code=303)
+        return _db_error_response(request=request)
 
     if notification_email:
         send_access_denied(notification_email)

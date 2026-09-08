@@ -385,7 +385,7 @@ moved it to the end without making it a different stage.
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
-| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `next` | CAR-104 |
+| 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `next` | CAR-104 |
 | 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
@@ -2328,38 +2328,118 @@ work. It can. The stages below use it.
 
 **The lettering runs past Z into AA.** `I` and `O` were skipped as always.
 
-### Stage Y: a route declares the statuses it can return
+### Stage Y grew: its rule passes a route that reports work it did not do
 
-**Issue:** unassigned · **State:** `backlog` · **Gap:** G21
+**Issue:** CAR-104 · **State:** `next` · **Gap:** G21, G27, G28
 
-**85 routes across seven services; 42 produce a status code they never
-declare.** Concentrated in `ops` (26), then `archiver` (7), and three each in
-`dbt_runner`, `processing` and `scraper`. The codes are 303 (13), 503 (15),
-409 (11), 500 (10), 400 (5), 404 (5), 422 (3), 403 (1).
+**Re-measured 2026-09-08 against `d6e3a6d`: 100 routes across the six importable
+services, 46 of which produce a status code they never declare.** The census
+said 85 and 42 on 2026-09-07; the difference is grain, not drift — six `ops`
+handlers are `api_route(..., methods=["GET", "HEAD"])` and serve two routes
+each, which the census counted once. `dashboard` contributes nothing because it
+still cannot be imported ([G18](../TESTING.md#the-gap-list)). The codes are 503
+(15), 303 (13), 409 (11), 500 (10), 404 (7), 400 (5), 422 (3), 403, 307 and 308.
+**Not one route in the repository declares a single code today.**
 
 **The OpenAPI schema is not a weak contract here, it is a false one.** Every
-service declares exactly `200` and `422` — FastAPI's defaults — while the
-suite asserts 303, 307, 308, 400, 401, 403, 404, 409, 422, 500 and 503 across
-**137 assertions**. Every real code is raised inside a handler body and
-surfaces nowhere a machine can read.
+service declares exactly `200` and `422` — FastAPI's defaults — while the suite
+asserts eleven distinct codes across **137 assertions**. Every real code is
+raised inside a handler body and surfaces nowhere a machine can read, and a
+contract artifact generated today would faithfully record the falsehood, which
+is why Stage Z cannot precede this.
 
-So this stage mostly writes down what already happens, and the rule is the
-familiar shape: the codes a route **declares** must equal the codes its body
-can **produce**, both directions, the produced set derived by reading
-`HTTPException`, `Response` and the redirect classes out of the handler. An
-undeclared code fails; a declared code nothing raises fails too.
+**Then writing the declarations down found routes with nothing true to
+declare, and the original rule passes every one of them.** `toggle_search`
+executes `UPDATE search_configs SET enabled = NOT enabled WHERE search_key = %s`,
+never reads `rowcount`, and returns 303 unconditionally. It produces exactly
+one code. It declares exactly one code. **Declared equals produced, and the
+route reports success for work it did not do** — a search key that does not
+exist gets the same redirect as one that does. A rule that certifies that is
+measuring the wrong thing, so the stage grew to cover the two gaps that finding
+opened.
 
-**It is 42 judgement calls, not 42 edits**, and that is the cost: for each
-route someone decides whether a `500` is part of the contract or an accident of
-implementation. That decision is worth making once and then holding by a
-mechanism, which is the whole argument for the stage.
+**The mechanism is a test that could not have failed, and it is this plan's own
+subject one layer up.** `test_toggle_search_ok` mocks the cursor and asserts
+`303`. A `MagicMock`'s `rowcount` is a `MagicMock` — never `0` — so the test
+environment cannot express the failing condition at all, and the assertion is
+satisfied by construction: it is equally true of a handler whose body has been
+deleted. Stage M's rule already passes it, because that rule asks whether an
+assertion **exists** and this one does. Nothing asks whether it could ever have
+been false.
 
-**Nothing downstream works without it.** A contract artifact generated today
-would faithfully record the false claim that every endpoint returns 200 or 422.
+**G27 — a handler does not observe the effects it causes. 13 functions.** A
+`WHERE`-bearing `UPDATE`/`DELETE` with no `RETURNING` and no `rowcount` read,
+across `ops/routers/` (admin, users, scrape, snapshots, maintenance),
+`processing/` and `archiver/`. **There is no member where checking is worse**,
+which is why it carries no ledger: `_record_last_used` touching a token row that
+is gone is exactly when you want to know, and `_reap_stuck_processing` updates a
+row it just read by primary key, so `rowcount` of 0 there is a live
+concurrent-modification race that currently passes silently. The same defect
+arrives a second way — an effect whose exception is swallowed and falls through
+to the success path. 34 such sites; **11 cover a mutation** and the rest cover a
+read or a parse, which degrades honestly. Five of the eleven are the dead
+`dbt_runner` calls and belong to [Stage AA](#stage-aa-a-test-may-not-invent-another-services-response),
+which resolves them. `scraper/processors/scrape_detail.py:196` is the control
+case and stays: it binds `minio_write_error` into the returned artifact, so the
+caller can tell. `revoke_user` binds nothing and returns the identical redirect,
+for an access-control operation, whether the row matched, did not exist, or the
+database raised.
 
-**Exit:** every route's declared codes equal the codes its handler can produce,
-asserted both ways; `RESPONSE_CODE_WAIVERS` seeded at 42 and drained to 0;
-demonstrated by an undeclared code failing.
+**G28 — a declared code that nothing exercises. 68 (route, code) pairs, 46
+asserted, at most 22 not.** That ceiling is soft in the direction this plan has
+been caught by before: `tests/ops/routers/test_coordination.py:156` asserts
+`status_code == status_code` with the code `parametrize`-injected, which a
+literal scan reads as no assertion — the same blindness Stage H fixed for paths,
+whose `_parametrized_strings` this reuses, so the true figure is lower. **This
+is not a new rule but Stage H's, strengthened.** `docs/TESTING.md` says every
+route is reached *"and the test asserts the status code"*, singular; every
+vacuous 303 test satisfies it. Only this stage's declarations make "every
+declared code" expressible, and that is the edit that answers whether the test
+could have failed — not by grading an assertion, but by requiring the declared
+set to be covered. Where a code's trigger is a database outcome it must be
+asserted at a real-engine layer, because a mocked `rowcount = 0` is the author
+asserting a belief about psycopg2 rather than observing one.
+
+**The three repairs are ordered, because the declarations and the behaviour
+cannot move at once.** Handlers observe their effects first — that is where the
+admin and user CRUD routes gain a 404 — then every route declares, then every
+declared code is covered. Reversed, the denominator shifts while it is being
+filled.
+
+**42 judgement calls was the wrong price.** The stage has none of the shape the
+census predicted: there are no `Depends()` and no `@app.exception_handler`
+anywhere in the six services — auth is Caddy's `forward_auth` — so a handler
+body is the whole of what a route can produce, with no dependency graph to
+walk. And the 500s argue for themselves in prose their own docstrings already
+carry (`archiver/app.py:241`, `dbt_runner/app.py:155`), with Airflow DAGs
+branching on them. They are contract.
+
+**One ledger survives, and it is ownerless.** FastAPI injects `422` on the
+presence of a parameter, never its fallibility — `fastapi/openapi/utils.py:418`,
+byte-identical in 0.128 and 0.141.1, so no upgrade removes it. 41 routes declare
+it; **33 can produce it and 8 cannot**, their only parameters being unconstrained
+strings. Six of the eight are repaired by G27 or resolved by Stage AA. The two
+that remain are `GET` and `HEAD /recaps/{slug}`, where the guard already exists
+as `_SLUG_RE` in the body and moving it into `Path(pattern=...)` would turn
+today's 404 into a 422 on a public route — a worse answer for "no such page".
+That is a decision with no owner and no expiry, so it is shaped like
+`DORMANT_SUITES` rather than a waiver, which would fail the day this plan
+archives and take the reason with it.
+
+**Exit:**
+
+- Every route's declared codes equal the codes its handler can produce, both
+  directions — an undeclared code fails, and a declared code nothing raises
+  fails too.
+- No route executes a mutation whose effect it does not observe, and no handler
+  swallows an effect's exception without changing what the caller observes.
+  Neither carries a ledger.
+- Every declared code is asserted by a test, and a database-triggered code is
+  asserted at a real-engine layer.
+- The phantom-422 ledger holds exactly the two `/recaps/{slug}` routes, with no
+  owner and no expiry.
+- Demonstrated, not asserted: deleting the body of `toggle_search` and leaving
+  its redirect fails three separate clauses; it passes the suite today.
 
 ### Stage Z: the contract is generated, committed and gated
 
@@ -2416,9 +2496,55 @@ rather than be skipped.
 
 **28 of the 37 are ours. The other 9 are `cars.com`**, and they are Stage AB.
 
-**Exit:** no test fabricates a response for a service this repository owns;
-`FABRICATED_RESPONSE_WAIVERS` seeded at 28 and drained to 0; demonstrated by a
-fabricated code the callee cannot return failing.
+**Two of this stage's own claims were corrected before it opened**, by Stage Y's
+census on 2026-09-08.
+
+**The seam list is short, and the missing seam is the one that matters.**
+`tests/ops/routers/test_admin.py` fabricates at `ops/routers/admin.py`'s request
+seam — `mock_requests["delete"].return_value.status_code = 200` in a test named
+`test_dbt_intent_delete_ok` — and its `mock_dbt_context` fixture returns
+`{"lock": {}, "intents": {}, "docs_available": False}`, a fabricated *shape*
+rather than a code, which the census counted at neither. So 28 is a floor and
+this stage re-measures rather than inheriting it.
+
+**And the rule as written would pass what that seam is hiding.**
+`ops/routers/admin.py` calls five endpoints on `dbt_runner` that do not exist:
+`GET /dbt/lock`, `GET` and `POST /dbt/intents`, `DELETE /dbt/intents/{intent_name}`
+and `GET /logs`. Two commits removed them and left every caller standing —
+`9f08336` on 2026-04-28 took the four dbt ones while rebuilding the dbt layer
+(301 deletions), and `d88a41e` on 2026-05-05 took `/logs` while standardising
+logging. Each call site is wrapped in `except Exception: pass` and followed by an
+unconditional 303, so the admin dbt panel and the log viewer have done nothing
+since April and nothing has reported it. **Keyed on codes alone this stage
+passes it**: the test fabricates a 200, and `dbt_runner` can certainly produce a
+200 — on `/health`, `/ready` and `/dbt/build`. A route that does not exist is
+invisible to a code-only comparison, so the pairing is **(path, code)**, which
+is exactly what Stage Z's committed artifact supplies and the reason this stage
+is blocked by it.
+
+**Resolving those five calls belongs here rather than to Stage Y**, which found
+them: whether the intent-management UI is deleted or `dbt_runner` regains the
+endpoints is the same decision as what the repaired test asserts. The four
+handlers also hold four of the swallowed-mutation sites Stage Y repairs
+elsewhere, and they leave that set with whichever answer this stage takes.
+
+**A second instance, and it is a field rather than a route.**
+`airflow/dags/scrape_detail_pages.py:143` logs `result.get("status")` from
+`POST /scrape/claims/release`, and that endpoint has never returned a `status`
+key — it answers `run_id`, `total`, `errors` and `fetches_recorded`. Every run
+logs `status=None`. Found by Stage Y on 2026-09-08 while correcting the same
+endpoint's counts, and left here deliberately: **the fix is not to add the
+field.** A caller reading a key the callee does not produce is this stage's
+defect one level below the status code, and it says the pairing has to reach
+the response *body* as well as the code — which is a scoping question for this
+stage to answer, not a line to patch in the DAG.
+
+**Exit:** no test fabricates a response for a service this repository owns; the
+fabricated-response ledger re-measured at this stage's start rather than seeded
+from the census, and drained to 0; the pairing keyed on (path, code); the five
+dead `dbt_runner` calls resolved; demonstrated by a fabricated code the callee
+cannot return failing, and by a fabricated response for a path it does not
+serve failing.
 
 ### Stage AB: what we do not own is recorded and replayed
 
