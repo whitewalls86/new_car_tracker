@@ -649,3 +649,147 @@ class TestSingleFileBindMounts:
             "the restart path no longer verifies the loaded file by inode; a "
             "restart that silently did not take would report success"
         )
+
+
+def _uncommented(text: str) -> str:
+    """The script's logic, with whole-line comments dropped.
+
+    Same device as ``test_exempt_services_are_read_from_the_shared_file``:
+    ``redeploy.sh``'s header discusses ``docker builder prune`` at length, so
+    anything counting or locating the *command* has to read past the prose
+    that explains it.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+class TestBuildCachePrune:
+    """Plan 170 Stage B: a build reclaims the cache it just produced.
+
+    Build cache grew 2.04 -> 7.52 GB in 8 days on the production host while
+    images stayed flat, so it is ~90% of all storage growth, and it is produced
+    only by builds. The reclaim is therefore attached to the producer rather
+    than to a clock, which makes it a property of these scripts and checkable
+    here.
+
+    The build paths are *derived* from the scripts rather than listed, so a
+    third one cannot land without a prune. ``.github/workflows/ci.yml`` also
+    builds and is deliberately out of scope: a GitHub runner is ephemeral and
+    its cache does not outlive the job.
+    """
+
+    #: Per script, the last thing that must have happened before the prune runs.
+    #: Stage B's rule is "after health verification", and the two scripts verify
+    #: health differently -- redeploy.sh polls Docker's health state, deploy.sh
+    #: signals the ops API once services have come up. The keys are asserted
+    #: against the derived build set below, so a new build path fails here until
+    #: somebody says what its prune must follow.
+    _HEALTH_ANCHOR = {
+        "deploy.sh": '"$OPS_URL/deploy/complete"',
+        "redeploy.sh": '_wait_for_health "$@"',
+    }
+
+    @staticmethod
+    def _build_scripts() -> dict[str, str]:
+        """``{filename: text}`` for every shell script here that builds an image."""
+        found = {}
+        for path in sorted((_REPO_ROOT / "scripts").glob("*.sh")):
+            text = path.read_text(encoding="utf-8")
+            if re.search(
+                r"^\s*docker compose build\b", _uncommented(text), re.MULTILINE
+            ):
+                found[path.name] = text
+        return found
+
+    @staticmethod
+    def _prune_lines(text: str) -> list[str]:
+        return [
+            line.strip()
+            for line in _uncommented(text).splitlines()
+            if "docker builder prune" in line
+        ]
+
+    def test_the_build_paths_are_the_two_this_host_has(self):
+        """The premise the rest of this class rests on. If a third script starts
+        building, the reclaim rule has to cover it or be re-argued."""
+        assert set(self._build_scripts()) == set(self._HEALTH_ANCHOR), (
+            "the set of scripts that build on this host has changed. Plan 170 "
+            "Stage B attached the cache reclaim to the producer, so a new build "
+            "path needs a prune and an entry in _HEALTH_ANCHOR saying what it "
+            "must run after."
+        )
+
+    def test_every_build_path_prunes_the_cache_it_produced(self):
+        for name, text in self._build_scripts().items():
+            assert self._prune_lines(text), (
+                f"{name} builds images but never prunes the build cache. Nothing "
+                "else reclaims it -- the 9 GB that vanished in early September "
+                "was a person running `docker builder prune` by hand, twice."
+            )
+
+    def test_the_prune_is_capped_and_unattended(self):
+        for name, text in self._build_scripts().items():
+            for line in self._prune_lines(text):
+                assert "--keep-storage" in line, (
+                    f"{name}'s prune has no --keep-storage cap, so it discards "
+                    "the whole cache and the next deploy rebuilds every layer. "
+                    "The cap is what makes this safe to run unattended."
+                )
+                assert re.search(r"(?<![\w-])-f(?![\w-])|--force", line), (
+                    f"{name}'s prune omits -f, so it blocks on a confirmation "
+                    "prompt no deploy is watching"
+                )
+
+    def test_the_build_paths_agree_on_the_cap(self):
+        """Two scripts, one number. Without this they are two copies that drift."""
+        caps = {
+            match
+            for text in self._build_scripts().values()
+            for match in re.findall(r"--keep-storage\s+(\S+)", _uncommented(text))
+        }
+        assert len(caps) == 1, (
+            f"the build paths disagree on the cache cap: {sorted(caps)}. It is "
+            "one number picked from headroom on /, not a per-script preference."
+        )
+
+    def test_the_prune_can_never_fail_a_deploy(self):
+        """Both scripts run under `set -e`, and in redeploy.sh a non-zero exit
+        after a container has been recreated means MUTATED=1 and deploy intent
+        HELD -- every gated DAG parked because a cleanup step failed after the
+        fleet was already healthy."""
+        for name, text in self._build_scripts().items():
+            for line in self._prune_lines(text):
+                assert "||" in line, (
+                    f"{name}'s prune is unguarded under `set -e`, so a prune "
+                    "failure fails a deploy that has already succeeded"
+                )
+
+    def test_the_prune_runs_after_health_verification(self):
+        """``LastUsedAt`` refreshes on a cache *hit*, not just on creation, so a
+        finished build stamps everything it touched. Pruning before the deploy
+        is verified would also let a cleanup step be blamed for a deploy that
+        had not yet passed."""
+        for name, text in self._build_scripts().items():
+            code = _uncommented(text)
+            anchor = self._HEALTH_ANCHOR[name]
+            assert anchor in code, f"{name} no longer contains {anchor!r}"
+            assert code.index("docker builder prune") > code.index(anchor), (
+                f"{name} prunes before {anchor!r}. Stage B's rule is that the "
+                "reclaim runs after the deploy is verified."
+            )
+
+    def test_restart_mode_does_not_prune(self):
+        """``--restart`` keeps the image and builds nothing, so it has no cache
+        to reclaim. A prune there would be a deploy action with an effect nobody
+        asked for -- the family of defect decisions 4 and 5 name."""
+        text = _SCRIPT.read_text(encoding="utf-8")
+        code = _uncommented(text)
+        assert len(self._prune_lines(text)) == 1, (
+            "redeploy.sh prunes in more than one place; only the build path "
+            "produces cache"
+        )
+        assert code.index("docker builder prune") > code.index('PHASE="build"'), (
+            "redeploy.sh's prune is reachable from --restart, which builds "
+            "nothing and so has nothing to reclaim"
+        )
