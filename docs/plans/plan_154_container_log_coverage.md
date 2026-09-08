@@ -189,6 +189,37 @@ and one representative error per admitted service proven to reach the error
 view. A projection missed by more than its stated margin is acted on here, not
 carried.
 
+## The checks
+
+Stage B deployed on **2026-09-08 03:13 UTC** — `promtail` restarted onto the
+new config, then `postgres` and `trawl` recreated to apply their
+`promtail.enable` labels. Stage C is the seven days that follow, and it is the
+only stage still open.
+
+Four readings, all due **2026-09-15**, all recorded as Stage C's entry in
+[`## Record`](#record):
+
+1. **Volume against the Stage A projection.** `docker logs --since 24h` for
+   `cartracker-trawl` and `cartracker-postgres`, lines and bytes, against Stage
+   A's baselines of 448 lines / 23 KB and 595 lines / 109 KB per day. Stage A's
+   trawl figure and Stage B's 324-line sample already differ by a third, so the
+   baseline is a range rather than a point.
+2. **The 90-day Loki footprint** and disk headroom against Plan 135's bounds.
+3. **Each drop policy doing the expected work and no more.**
+   `logentry_dropped_lines_total`, read from Promtail's own `/metrics` rather
+   than from Prometheus — Stage B recorded the aggregate lagging the event and
+   reporting a live counter as missing, which would be a false negative in
+   exactly this reading. The three postgres reasons are
+   `postgres_routine_server_log`, `postgres_unparsed_record` and
+   `postgres_continuation_record`; `trawl` has no drop rule and must show none.
+4. **One representative error per admitted service reaching the error view.**
+   `postgres` can satisfy this. **`trawl` cannot**: the error view selects
+   `WARNING` and above, and every `trawl` line is `INFO` by Stage B's design,
+   which was chosen so the solve rate stays computable as a ratio. The clause
+   was written before that decision existed, so it needs resolving rather than
+   reading — and it is recorded here so it surfaces at the window's close
+   instead of as a surprise failure.
+
 ## Relationship to other plans
 
 - **Plan 141 is a hard prerequisite.** It builds the registry, the completeness

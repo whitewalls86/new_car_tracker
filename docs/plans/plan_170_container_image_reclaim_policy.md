@@ -2,13 +2,10 @@
 
 ## What this plan is for
 
-Old container images accumulate on the production host with no rule for when
-they may be deleted, and the one command that would reclaim the space cannot
-tell an image kept deliberately — for a rollback, or for a service paused rather
-than retired — from one that is simply waste. Sets two retention rules, one for
-images and a more aggressive one for build cache, and schedules a job that
-derives what is safe to delete rather than guessing at it, reporting for a while
-before it removes anything.
+Old container images pile up on the production host with no rule for when they
+may be deleted, and the command that would reclaim the space cannot tell one
+kept for a rollback from simple waste. Sets retention rules for images and build
+cache, and reports what it would delete before deleting anything.
 
 ## The case
 
