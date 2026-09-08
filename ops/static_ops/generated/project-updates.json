@@ -39,7 +39,7 @@
       "priority": 82,
       "effort": "S",
       "state": "planned",
-      "summary": "Old container images pile up on the production host with no rule for when they may be deleted, and the command that would reclaim the space cannot tell one kept for a rollback from simple waste. Sets retention rules for images and build cache, and reports what it would delete before deleting anything.",
+      "summary": "Docker build cache grows about 780 MB a day on the production host and nothing reclaims it. Makes each deploy prune the cache it just produced, under a size cap, rather than scheduling a job. Images need no retention rule; what protects the deliberately paused ones needs testing and a written home.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_170_container_image_reclaim_policy.md"
     }
   ],
