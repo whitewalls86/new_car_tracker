@@ -320,6 +320,45 @@ images have not accumulated.
 runbook block, and the sweep has run without touching anything the manifest
 classifies `aux-paused` or `on-demand`.
 
+## The checks
+
+Stages A, B and C are all `done` and no code is owed. What remains is the one
+success criterion no local verification can reach: **criterion 4, that
+`/var/lib/containerd` steps down on each deploy instead of climbing to the next
+manual intervention.**
+
+**What was deployed, and when.** `docker builder prune -a -f` in both build
+paths, plus the pre-flight disk guard, deployed **2026-09-08** (Stage B, PRs
+#390, #391, #392, #397). The one-time image sweep ran the same day at 19:04 UTC
+(Stage C), taking the host from 36 images to 29.
+
+**What is being watched.** `cartracker_path_bytes{path="/var/lib/containerd"}`
+in Prometheus, published by `archiver/processors/disk_usage.py:55` through
+node-exporter's textfile collector. **It samples once a day, at about 07:24
+UTC**, and holds its value flat in between — so a deploy's effect appears at the
+next morning's sample and not before. The 2026-09-08 07:24 reading of 24,904 MiB
+predates both Stage B's deploys and the sweep; `du` measured 16,285 MiB at 19:04
+the same day and the series does not know it yet.
+
+The fourteen days before the change are what the criterion asks to see replaced:
+
+| Window | Shape |
+|---|---|
+| 08-25 → 08-30 | 23,329 → 29,577 MiB, monotonic |
+| 08-31 | 29,577 → 19,479 MiB — **a person running `docker builder prune`**, not a policy |
+| 09-01 → 09-08 | 19,795 → 24,924 MiB, monotonic again |
+
+Two ramps and one human intervention. The gate is that the next window differs
+in kind: deploys visible as steps down, and no cliff that only a person could
+have caused.
+
+**When the answer is due.** **2026-09-22** — two weeks, about fourteen daily
+samples, and several deploys at the recent cadence. A shorter window cannot tell
+a sawtooth from a flat spell with no deploys in it.
+
+**Where the result goes.** Stage B's entry in [`## Record`](#record), which
+already carries that stage's exit clause 3 and its single-deploy before/after.
+
 ## Success criteria
 
 1. Both retention rules — images and build cache — are written down with the
