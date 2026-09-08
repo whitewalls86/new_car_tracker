@@ -366,10 +366,20 @@ jobs:
       # headroom floor, but anything reading this must treat it as an upper
       # bound.
       #
-      # It is here to be watched over time. When an image grows -- Plan 125
-      # takes cartracker-lakehouse to roughly 2.34 GB on its next rebuild --
-      # the footprint moves on the PR that does it, not on the deploy that
+      # It is here to be watched over time: when a measured image grows, the
+      # footprint moves on the PR that does it rather than on the deploy that
       # discovers the disk is full.
+      #
+      # KNOWN BLIND SPOT. `docker compose build` reads docker-compose.yml, so
+      # this covers the 17 services with a `build:` section there (8 distinct
+      # images). It does NOT cover `cartracker-lakehouse` or
+      # `cartracker-mlflow`, which live in docker-compose.lakehouse.yml and
+      # docker-compose.mlflow.yml -- and lakehouse is the largest image in the
+      # fleet, roughly 2.34 GB after its next rebuild. Plan 125 Gate C is what
+      # returns those services; whoever opens it should extend this job, or
+      # the number here will silently stop describing the fleet. It also
+      # excludes the 17 `image:`-only services (trawl, grafana, postgres, the
+      # exporters), which are pulled on `up` and never built.
       - name: Record free space before the build
         run: |
           avail_kb="$(df -k --output=avail / | tail -1 | tr -d ' ')"
@@ -401,6 +411,8 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "cold build footprint: $used_gib GiB (ceiling)"
+          echo "free before: $before_gib GiB, free after: $after_gib GiB"
+          docker system df 2>&1 || true
 
   # ---------------------------------------------------------------------------
   # Plan 162 Stage E (Plan 139 Stages B and C) replaced one `dbt build + test`

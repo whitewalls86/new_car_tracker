@@ -651,6 +651,18 @@ class TestSingleFileBindMounts:
         )
 
 
+def _prune_command_index(code: str) -> int:
+    """Where the prune is *run* in ``code``, not where it is mentioned.
+
+    Decision 10's refusal message prints the command as operator guidance and
+    is defined above the mode dispatch, so an unanchored search finds the
+    advice rather than the call.
+    """
+    match = re.search(r"^\s*docker builder prune\b", code, re.MULTILINE)
+    assert match is not None, "no line runs `docker builder prune`"
+    return match.start()
+
+
 def _uncommented(text: str) -> str:
     """The script's logic, with whole-line comments dropped.
 
@@ -704,10 +716,17 @@ class TestBuildCachePrune:
 
     @staticmethod
     def _prune_lines(text: str) -> list[str]:
+        """Lines that *run* the prune, not lines that mention it.
+
+        Decision 10's refusal message prints `docker builder prune -a -f` as
+        the remedy an operator should run by hand, which is worth keeping --
+        so the match is anchored to the start of the command rather than
+        looking for the string anywhere on the line.
+        """
         return [
             line.strip()
             for line in _uncommented(text).splitlines()
-            if "docker builder prune" in line
+            if re.match(r"^\s*docker builder prune\b", line)
         ]
 
     def test_the_build_paths_are_the_two_this_host_has(self):
@@ -790,7 +809,7 @@ class TestBuildCachePrune:
             code = _uncommented(text)
             anchor = self._HEALTH_ANCHOR[name]
             assert anchor in code, f"{name} no longer contains {anchor!r}"
-            assert code.index("docker builder prune") > code.index(anchor), (
+            assert _prune_command_index(code) > code.index(anchor), (
                 f"{name} prunes before {anchor!r}. Stage B's rule is that the "
                 "reclaim runs after the deploy is verified."
             )
@@ -805,7 +824,142 @@ class TestBuildCachePrune:
             "redeploy.sh prunes in more than one place; only the build path "
             "produces cache"
         )
-        assert code.index("docker builder prune") > code.index('PHASE="build"'), (
+        assert _prune_command_index(code) > code.index('PHASE="build"'), (
             "redeploy.sh's prune is reachable from --restart, which builds "
             "nothing and so has nothing to reclaim"
+        )
+
+
+class TestPreflightDiskGuard:
+    """Plan 170 Stage B decision 10: a build that cannot fit does not start.
+
+    A rebuild writes new layers while the images the fleet is running are
+    still resident, so a change low in a shared base can rewrite every
+    dependent layer at once. Filling ``/`` mid-build is worse than refusing
+    early: the build dies on ENOSPC leaving partial layers, and on a deploy
+    that has already begun.
+
+    The floor is not a number this stage invented. It is Plan 142's reviewed
+    ``HOST_DISK_FLOORS["bytes_available"]``, and the first test below is what
+    keeps the shell copy honest against it.
+    """
+
+    @staticmethod
+    def _floors(text: str) -> list[int]:
+        return [
+            int(m) for m in re.findall(r"^\s*DISK_FLOOR_BYTES=(\d+)", text, re.MULTILINE)
+        ]
+
+    def test_the_shell_floor_equals_the_reviewed_python_floor(self):
+        """Two languages, one number. A shell constant that drifts from the
+        Python one is the second copy every registry in this repo exists to
+        avoid -- and it would drift silently, because nothing else reads it."""
+        from scripts.host_maintenance import HOST_DISK_FLOORS
+
+        expected = HOST_DISK_FLOORS["bytes_available"]
+        for name, text in TestBuildCachePrune._build_scripts().items():
+            floors = self._floors(text)
+            assert floors, (
+                f"{name} builds images but declares no DISK_FLOOR_BYTES, so it "
+                "will start a build on a host with no room for it"
+            )
+            for floor in floors:
+                assert floor == expected, (
+                    f"{name} holds DISK_FLOOR_BYTES={floor} but "
+                    f"HOST_DISK_FLOORS['bytes_available'] is {expected}. The "
+                    "deploy floor is Plan 142's reviewed number, not a second "
+                    "one; change both or neither."
+                )
+
+    def test_the_floor_clears_the_measured_worst_case(self):
+        """The floor is evidence-backed, not inherited.
+
+        Measured twice on 2026-09-08, and the pair is the point -- the CI
+        figure is only useful if it bounds the host, and it does:
+
+          CI, x86, no images at all      4.48 GiB   (ceiling)
+          production, ARM64, bases held  4.22 GiB   (2m13s, 13 services)
+
+        So the runner over-estimates by about 6%: tight enough to be worth
+        watching per-PR, conservative in the right direction. Of the host's
+        4.22 GiB, 3.65 GiB was build *cache* rather than new image layers --
+        most rebuilt layers deduplicated against ones already present -- which
+        is why the transient demand is far below the fleet's 21 GB of images.
+
+        This asserts the relationship survives someone lowering the floor,
+        which is the change that would quietly break it.
+        """
+        from scripts.host_maintenance import HOST_DISK_FLOORS
+
+        measured_ceiling = 4.48 * 1024**3
+        assert HOST_DISK_FLOORS["bytes_available"] > measured_ceiling, (
+            "the disk floor no longer clears the measured cold-build ceiling "
+            "of 4.48 GiB, so a deploy can pass the check and still fill /"
+        )
+
+    def test_the_check_runs_before_the_build(self):
+        """The whole value is where it sits. Before `docker compose build`
+        nothing is drained, nothing is recreated, MUTATED is 0 and the trap
+        releases cleanly -- so refusing costs an operator one message. After
+        the build it would be refusing a deploy that had already paid for
+        itself."""
+        for name, text in TestBuildCachePrune._build_scripts().items():
+            code = _uncommented(text)
+            floor_at = code.index("DISK_FLOOR_BYTES")
+            build_at = code.index("docker compose build")
+            assert floor_at < build_at, (
+                f"{name} checks disk headroom after it has already built. The "
+                "check exists to stop a build that cannot fit from starting."
+            )
+
+    def test_falling_below_the_floor_refuses_rather_than_warns(self):
+        """A warning in a deploy log nobody is tailing is not a control.
+
+        Scoped to the refusal block rather than the whole file, and that is
+        load-bearing: both scripts contain `exit 1`/`return 1` elsewhere -- the
+        drain timeout for one -- so a file-wide search passes even when the
+        guard itself has been changed to return success. Mutation testing
+        caught exactly that on 2026-09-08.
+        """
+        for name, text in TestBuildCachePrune._build_scripts().items():
+            code = _uncommented(text)
+            start = code.find("Refusing to build")
+            assert start != -1, (
+                f"{name} no longer refuses when the floor is breached"
+            )
+            # From the refusal message to the end of its enclosing block: the
+            # function's closing brace, or the `fi` of the inline form.
+            end = min(
+                idx for idx in (
+                    code.find("\n}", start),
+                    code.find("\nfi", start),
+                    len(code),
+                ) if idx != -1
+            )
+            block = code[start:end]
+            assert re.search(r"\b(exit 1|return 1)\b", block), (
+                f"{name} prints a refusal but does not act on it, so the disk "
+                "check is advice rather than a gate. The message is not the "
+                "control; the non-zero exit is."
+            )
+
+    def test_restart_mode_does_not_check_disk(self):
+        """`--restart` builds nothing, so it needs no room to build. Gating it
+        would block the one deploy mode that exists to fix a running fleet.
+
+        The guard deliberately sits *before* ``PHASE="build"`` -- that is what
+        makes it pre-flight -- so position alone cannot express this. The
+        restart branch is sliced out and the call asserted absent from it.
+        """
+        code = _uncommented(_SCRIPT.read_text(encoding="utf-8"))
+        branch_open = code.index('if [ "$MODE" = "restart" ]; then')
+        call_at = code.index("\n    _require_disk_headroom\n")
+        between = code[branch_open:call_at]
+        assert 'PHASE="restart"' in between, (
+            "the restart branch could not be located; this test is no longer "
+            "reading what it thinks it is"
+        )
+        assert "\nelse\n" in between, (
+            "redeploy.sh checks disk headroom on the --restart path, which "
+            "builds nothing and needs no headroom"
         )
