@@ -479,7 +479,7 @@ WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
     SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),
     SectionWaiver(79), SectionWaiver(94), SectionWaiver(108), SectionWaiver(112),
     SectionWaiver(113), SectionWaiver(117), SectionWaiver(119), SectionWaiver(121),
-    SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
+    SectionWaiver(122), SectionWaiver(126), SectionWaiver(127),
     SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
     SectionWaiver(149), SectionWaiver(150), SectionWaiver(152),
     SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),

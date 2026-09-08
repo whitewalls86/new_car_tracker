@@ -196,19 +196,30 @@ def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
     fetched_ids = [r.listing_id for r in results if r.status in FETCH_SPENDING_STATUSES]
     error_count = sum(1 for r in results if r.status == "failed")
 
+    claims_released = 0
+    fetches_recorded = 0
     with db_cursor(error_context="release_claims") as cur:
         if listing_ids:
             cur.execute(DELETE_DETAIL_SCRAPE_CLAIMS, (listing_ids, run_id))
+            claims_released = cur.rowcount
         if fetched_ids:
             # Same cursor, so this commits or rolls back with the DELETE above:
             # a released claim and its recorded fetch are never separated.
             # ops connects as PGUSER=cartracker, the owner of
             # ops.price_observations, so no additional grant is needed.
             cur.execute(RECORD_DETAIL_FETCHES, (fetched_ids,))
+            fetches_recorded = cur.rowcount
 
+    # Both counts are the database's, not the request body's. Plan 162 Stage Y:
+    # this reported `len(fetched_ids)` -- how many listings the caller *asked*
+    # about -- so a release against the wrong run_id, or a listing with no
+    # ops.price_observations row for RECORD_DETAIL_FETCHES to match, answered
+    # exactly like one that worked. Plan 147's loop guard could under-record and
+    # the response said it had not.
     return {
         "run_id": run_id,
         "total": len(results),
         "errors": error_count,
-        "fetches_recorded": len(fetched_ids),
+        "claims_released": claims_released,
+        "fetches_recorded": fetches_recorded,
     }

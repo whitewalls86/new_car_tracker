@@ -329,7 +329,14 @@ class TestReleaseRecordsFetch:
 
         _, params = self._fetch_update(cursor)
         assert params[0] == ["listing-ok", "listing-failed"]
-        assert resp.json()["fetches_recorded"] == 2
+
+        # `total` is the request's own count and this test can honestly assert
+        # it. `fetches_recorded` is now the database's, and there is no database
+        # here -- asserting it against a mocked cursor would mean seeding the
+        # rowcount this test then checks, which is supplying both halves. It is
+        # asserted at Layer 4 by tests/integration/ops/test_scrape.py, including
+        # the case where the two counts legitimately differ.
+        assert resp.json()["total"] == 3
 
     def test_claims_are_still_released_for_skipped_listings(self, mock_cursor_context):
         """The backoff is not a claim leak: a skipped listing keeps no claim."""

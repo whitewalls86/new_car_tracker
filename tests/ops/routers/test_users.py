@@ -180,7 +180,32 @@ def test_change_user_role_invalid(mock_client):
         data={"role": "superadmin"},
         follow_redirects=False,
     )
-    assert resp.status_code == 303
+    assert resp.status_code == 400
+    assert "is not a role" in resp.text
+
+
+def test_change_user_role_no_such_user(mock_client, mock_cursor_context, mocker):
+    """A role change matching no row is not a role change (Plan 162 Stage Y).
+
+    Before the rowcount check this answered 303 to /admin/users, identically to
+    a change that landed, so the operator could not tell them apart and neither
+    could this suite.
+    """
+    mocker.patch("ops.routers.auth._SALT", SALT)
+    _, cursor = mock_cursor_context
+    cursor.rowcount = 0
+
+    resp = mock_client.post(
+        "/admin/users/999/role", data={"role": "observer"}, follow_redirects=False,
+    )
+    assert resp.status_code == 404
+
+
+def test_change_user_role_db_error(mock_client, mock_db_connection_error):
+    resp = mock_client.post(
+        "/admin/users/1/role", data={"role": "observer"}, follow_redirects=False,
+    )
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +224,22 @@ def test_revoke_user_ok(mock_client, mock_cursor_context, mocker):
     cursor.execute.assert_called_once()
     sql = cursor.execute.call_args[0][0]
     assert sql == DELETE_AUTHORIZED_USER
+
+
+def test_revoke_user_no_such_user(mock_client, mock_cursor_context, mocker):
+    """Revoking nobody is not a revocation, and this is access control."""
+    mocker.patch("ops.routers.auth._SALT", SALT)
+    _, cursor = mock_cursor_context
+    cursor.rowcount = 0
+
+    resp = mock_client.post("/admin/users/999/revoke", follow_redirects=False)
+    assert resp.status_code == 404
+
+
+def test_revoke_user_db_error(mock_client, mock_db_connection_error):
+    """A revoke that raised was logged and then reported as success."""
+    resp = mock_client.post("/admin/users/1/revoke", follow_redirects=False)
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +305,7 @@ def test_approve_access_request_not_found(mock_client, mock_cursor_context, mock
         "/admin/access-requests/999/approve",
         follow_redirects=False,
     )
-    assert resp.status_code == 303
+    assert resp.status_code == 404
     # Only the SELECT was called, no INSERT/UPDATE
     assert cursor.execute.call_count == 1
 
@@ -286,3 +327,24 @@ def test_deny_access_request_ok(mock_client, mock_cursor_context, mocker):
 
     sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
     assert any("status = 'denied'" in sql for sql in sql_calls)
+
+
+def test_deny_access_request_not_found(mock_client, mock_cursor_context, mocker):
+    """Denying a request that is not pending answers 404, and does not write.
+
+    DENY_ACCESS_REQUEST's WHERE is `id = %s AND status = 'pending'`, so a zero
+    rowcount there meant either "no such request" or "already handled" with no
+    way to tell them apart. Gating on the read the way approve does resolves it
+    before the write, which is why this asserts the execute count too.
+    """
+    mocker.patch("ops.routers.auth._SALT", SALT)
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = None
+
+    resp = mock_client.post(
+        "/admin/access-requests/999/deny",
+        headers={"X-Auth-Request-Email": "admin@gmail.com"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 404
+    assert cursor.execute.call_count == 1

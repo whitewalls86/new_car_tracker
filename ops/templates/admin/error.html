@@ -4,7 +4,7 @@
 
 {% block content %}
 <article>
-    <header><strong>Service Unavailable</strong></header>
+    <header><strong>{{ heading | default("Service Unavailable") }}</strong></header>
     <p>{{ message }}</p>
     <footer><a href="javascript:history.back()" role="button" class="outline">Go Back</a></footer>
 </article>

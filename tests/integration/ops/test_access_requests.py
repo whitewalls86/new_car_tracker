@@ -258,12 +258,16 @@ def test_deny_access_request_updates_status(api_client, verify_cur, req_emails):
 
 
 @pytest.mark.integration
-def test_approve_nonexistent_request_redirects(api_client):
+def test_approve_nonexistent_request_is_not_found(api_client):
+    """Renamed with the behaviour (Plan 162 Stage Y, G27).
+
+    The redirect this used to assert is what made approving a request that does
+    not exist look exactly like approving one that does.
+    """
     response = api_client.post(
         "/admin/access-requests/99999/approve", follow_redirects=False
     )
-    assert response.status_code == 303
-    assert "/admin/access-requests" in response.headers["location"]
+    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

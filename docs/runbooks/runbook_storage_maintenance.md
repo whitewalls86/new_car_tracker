@@ -95,6 +95,54 @@ Baselines as of 2026-08-18: `/` at ~64%, `/mnt/data` at 41% bytes / 30% inodes.
 > this host keeps *paused on purpose*, which `maintenance-running-set.txt`
 > classifies `aux-paused` and `on-demand` and Docker cannot see.
 
+### The images that must survive any prune
+
+Four of the classes `maintenance-running-set.txt` gives a service — `aux-paused`,
+`on-demand`, `profile-running` and `aux-foreign` — mean the same thing to
+Docker: **no container holds the image**. So an unreferenced image is not
+evidence of anything. Deleting the unreferenced set takes Plan 125's paused
+catalog, Plan 112 Gate B's tracking server, both `dbt` tools images, and — in
+the window after a reboot, before `--profile trawl` has run — the solver and
+its Redis.
+
+**Check an image against this list before deleting it by hand.** It is derived
+from `docker-compose*.yml` and `maintenance-running-set.txt` and asserted by
+`tests/test_image_keep_set.py`, so it cannot go stale without CI going red. An
+image is listed when *no* service that a plain `docker compose up -d` starts
+holds it; one running service protects the whole image, which is why
+`cartracker-archiver` is absent despite `snapshot-worker` being `on-demand`.
+
+```
+# Derived from docker-compose*.yml and maintenance-running-set.txt
+# by tests/test_image_keep_set.py, which asserts this block. Do not edit.
+on-demand       cartracker-dbt:latest
+on-demand       cartracker-dbt_test:latest
+on-demand       cartracker-lakehouse:latest
+aux-paused      cartracker-mlflow:latest
+profile-running ghcr.io/germondai/trawl@sha256:86b1fdf26cfeebd996eeedaeb774002434f4cf8d02e5486f8a8173373c4d6e9b
+aux-paused      quay.io/lakekeeper/catalog:v0.13.1
+profile-running redis:7-alpine
+```
+
+Anything unreferenced and **not** on that list is reclaimable, and is a
+reviewed one-off `docker image rm` rather than a prune — the sweep, not a
+policy. Images do not accumulate on this host (see above), so there is nothing
+here for a schedule to do.
+
+**One more thing reads unreferenced without being garbage, and no derivation
+can see it: an image built but not yet started.** A container pins the image
+*ID* it started from, not the tag, so a rebuild that does not recreate the
+container leaves the new `:latest` held by nothing and the old ID held by a
+running container and named by nothing. Both halves were on this host on
+2026-09-08 — `cartracker-airflow:latest` at 3.07 GB and
+`cartracker-container-health:latest` at 264 MB, freshly built and never
+started. **Check the build dates before deleting an image this repo builds**:
+
+```
+docker image ls --format '{{.Repository}}:{{.Tag}}\t{{.CreatedSince}}'
+docker ps -a -q | xargs -r docker inspect --format '{{.Name}} {{.Image}}'
+```
+
 **Truncate, never `rm`, a live log file.** The Docker daemon holds an open
 handle; deleting the file frees nothing until the daemon is restarted, and the
 space stays invisible to `du` while remaining unavailable.
@@ -120,6 +168,11 @@ shrink files that are already large. Cap first, then truncate.
 > needed to bring a service back without a rebuild. There are 0 dangling images
 > today, so the upside is nil and the downside is a long rebuild — this VM is
 > ARM64 (OCI A1.Flex) and rebuilds are slow.
+>
+> It would also take everything under
+> [§2's keep-set](#the-images-that-must-survive-any-prune), which is the real
+> reason this stays on the list: those images are unreferenced **by decision**,
+> and Docker cannot tell that from garbage.
 
 > ### `docker system df` hangs on this host
 >
