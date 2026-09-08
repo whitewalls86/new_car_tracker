@@ -214,26 +214,30 @@ def _resolve_machine_token(presented: str) -> Optional[SnapshotToken]:
         logger.warning("machine token caller=%s refused: expired", row["name"])
         return None
 
-    _record_last_used(digest)
-    return SnapshotToken(name=row["name"], scope=row["scope"])
-
-
-def _record_last_used(digest: str) -> None:
-    """Refresh `last_used_at`, at most once per :data:`LAST_USED_THROTTLE`.
-
-    The throttle is in the statement's WHERE, so the engine decides whether to
-    write and concurrent requests through one credential do not each write.
-
-    A failure here is logged and swallowed. A credential that has already
-    authenticated must not be refused because its bookkeeping write failed —
-    the cost of that is a stale answer to "is anything still using this", which
-    is strictly better than a download that 500s.
-    """
+    # Inlined rather than delegated, so the guards above and this write sit in
+    # one frame. Plan 162 Stage Y: the write is correct only because `row is
+    # None` and the two lifecycle refusals return before it, and while it lived
+    # in a helper nothing connected the two -- a second caller would have got a
+    # write with no guard, and neither half's tests would have noticed. That is
+    # the seam Plan 158's defect lived in.
+    #
+    # A failure here is logged and swallowed. A credential that has already
+    # authenticated must not be refused because its bookkeeping write failed --
+    # the cost of that is a stale answer to "is anything still using this",
+    # which is strictly better than a download that 500s. Nothing about the
+    # response depends on it, which is why the swallow changes nothing the
+    # caller can observe.
+    #
+    # `rowcount` is deliberately not read: the throttle is in the statement's
+    # WHERE, so zero rows is the designed outcome whenever the window has not
+    # elapsed, and a check on it would fire on nearly every authenticated call.
     try:
         with db_cursor(error_context="Machine token last-used") as cur:
             cur.execute(TOUCH_MACHINE_TOKEN_LAST_USED, (digest, LAST_USED_THROTTLE))
     except Exception:
         logger.warning("machine token last_used_at update failed", exc_info=True)
+
+    return SnapshotToken(name=row["name"], scope=row["scope"])
 
 
 def require_snapshot_token(required_scope: str = MachineTokenScope.READ):

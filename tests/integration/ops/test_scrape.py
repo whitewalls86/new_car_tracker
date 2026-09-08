@@ -321,6 +321,49 @@ def test_release_records_fetch_for_ok_and_failed(
 
 
 @pytest.mark.integration
+def test_release_reports_the_rows_it_actually_recorded(
+    api_client, verify_cur, seed_claim, seed_observation,
+):
+    """`fetches_recorded` is the database's count, not the request's.
+
+    RECORD_DETAIL_FETCHES updates `ops.price_observations` WHERE `listing_id =
+    ANY(...)`, so a listing with no observation row records no fetch. Until Plan
+    162 Stage Y this endpoint answered `len(fetched_ids)` either way: Plan 147's
+    loop guard could silently under-record -- the listing keeps no
+    `last_detail_fetched_at`, is re-claimed on the next pass, and the response
+    that should have said so reported 2 of 2.
+
+    Only reachable at this layer. The unit test cannot produce a row that does
+    not exist, and seeding the rowcount it then asserts would be supplying both
+    halves of the contract.
+    """
+    run_id = str(uuid.uuid4())
+    observed = str(uuid.uuid4())
+    unobserved = str(uuid.uuid4())
+    seed_observation(observed)
+    for lid in (observed, unobserved):
+        seed_claim(listing_id=lid, claimed_by=run_id)
+
+    response = api_client.post("/scrape/claims/release", json={
+        "run_id": run_id,
+        "results": [
+            {"listing_id": observed, "status": "ok"},
+            {"listing_id": unobserved, "status": "ok"},
+        ],
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2, "the caller asked about two listings"
+    assert body["claims_released"] == 2, "both claims existed and were released"
+    assert body["fetches_recorded"] == 1, (
+        "only one listing had an observation row to record the fetch against"
+    )
+    assert _fetched_at(verify_cur, observed) is not None
+    assert _fetched_at(verify_cur, unobserved) is None
+
+
+@pytest.mark.integration
 def test_release_does_not_record_fetch_for_skipped(
     api_client, verify_cur, seed_claim, seed_observation,
 ):

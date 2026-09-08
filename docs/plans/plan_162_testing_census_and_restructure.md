@@ -2528,6 +2528,17 @@ endpoints is the same decision as what the repaired test asserts. The four
 handlers also hold four of the swallowed-mutation sites Stage Y repairs
 elsewhere, and they leave that set with whichever answer this stage takes.
 
+**A second instance, and it is a field rather than a route.**
+`airflow/dags/scrape_detail_pages.py:143` logs `result.get("status")` from
+`POST /scrape/claims/release`, and that endpoint has never returned a `status`
+key — it answers `run_id`, `total`, `errors` and `fetches_recorded`. Every run
+logs `status=None`. Found by Stage Y on 2026-09-08 while correcting the same
+endpoint's counts, and left here deliberately: **the fix is not to add the
+field.** A caller reading a key the callee does not produce is this stage's
+defect one level below the status code, and it says the pairing has to reach
+the response *body* as well as the code — which is a scoping question for this
+stage to answer, not a line to patch in the DAG.
+
 **Exit:** no test fabricates a response for a service this repository owns; the
 fabricated-response ledger re-measured at this stage's start rather than seeded
 from the census, and drained to 0; the pairing keyed on (path, code); the five
