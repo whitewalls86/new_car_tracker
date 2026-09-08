@@ -597,7 +597,7 @@
                             <ul>
                                 <li>A pipeline this distributed fails quietly. A blocked fetch path, a processing backlog, or a flush that stopped flushing throws no error you would notice until the data goes stale</li>
                                 <li>Prometheus scrapes every layer: DAG outcomes, database connections, object-store throughput, host resources, and custom gauges that expose mart-layer data health as metrics directly</li>
-                                <li>Loki aggregates structured logs from every Python service via Promtail, searchable across the whole stack from one query</li>
+                                <li>Loki aggregates logs via Promtail from the services deliberately admitted to it — each under a written ingestion policy deciding what is retained and at what severity, and every excluded service under a written reason — searchable across the whole stack from one query</li>
                                 <li>Health is three-state against a checked-in expected service set, so a service that is <em>absent</em> reads as failure instead of vanishing from the query — and "running, but no healthcheck configured" reads as its own unattractive value rather than as healthy</li>
                                 <li>More than twenty alert rules are provisioned as code and route to Telegram. Several fire on <strong>missing success</strong> rather than on visible errors — no successful bootstrap in a window while failures accumulate, no successful fetch while attempts continue</li>
                             </ul>

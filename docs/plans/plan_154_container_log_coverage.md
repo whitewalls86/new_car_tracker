@@ -120,8 +120,8 @@ carries a legacy number yet, so the mapping matters only to inbound prose:
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
 | 1 | [**A**](#stage-a--decide-every-exclusion-on-its-merits) | Every exclusion decided on its merits, with measured volume | `done` | CAR-92 |
-| 2 | [**B**](#stage-b--admit-the-accepted-services) | The accepted services admitted, each with its drop policy | `next` | -- |
-| 3 | [**C**](#stage-c--observe-for-seven-days) | Seven days of real volume, and a keep/narrow/remove per service | `--` | -- |
+| 2 | [**B**](#stage-b--admit-the-accepted-services) | The accepted services admitted, each with its drop policy | `done` | CAR-102 |
+| 3 | [**C**](#stage-c--observe-for-seven-days) | Seven days of real volume, and a keep/narrow/remove per service | `next` | -- |
 
 ### Stage A — Decide every exclusion on its merits
 
@@ -327,3 +327,61 @@ so this stage's output is a document rather than a diff.
 Full sampling method, per-service line-shape composition, the Postgres error
 forensics and the Prometheus queries:
 [`plan_154_stage_A_evidence.md`](../evidence/plan_154_stage_A_evidence.md).
+
+### Stage B — Admit the accepted services (2026-09-08)
+
+Deployed in two `redeploy.sh` runs, **promtail first**. The order was not
+incidental: labelling the containers first would have let the still-running old
+Promtail discover them inside its 30-second refresh and ingest their lines with
+no pipeline stages at all — unparsed and unlabelled — so the config was loaded
+before anything was labelled.
+
+`postgres` parses on `log_line_prefix = '%m [%p] '`. WARNING stays WARNING,
+ERROR and FATAL both map to ERROR, PANIC maps to CRITICAL, and
+LOG/DEBUG/INFO/NOTICE drop. **FATAL is deliberately not CRITICAL**: it ends one
+session, and Stage A found most FATALs in twenty days were ad-hoc `psql`
+sessions guessing at role names, so mapping it up would make an operator typo
+page someone. Production tested that decision within seconds — the recreate
+emitted `FATAL:  the database system is starting up`, which landed as `ERROR`.
+
+`trawl` takes levels and no drop rule. Not one of its 324 daily lines carries a
+severity token, so Plan 141's contract would have dropped 100% of it as
+unclassified. Every line is INFO because the solve rate is a ratio of
+`cf_clearance obtained` against attempts, and dropping the routine attempt
+removes the denominator. Its startup lines — `[api] TRAWL starting on :8191`,
+`[pool] browser 2/2 ready` — are shapes absent from Stage A's 24-hour sample
+and were labelled correctly anyway, which is what a flat mapping buys over a
+pattern list.
+
+Three drop reasons rather than one, because `logentry_dropped_lines_total` is
+labelled by reason and Stage C has to judge each policy separately. All three
+were confirmed firing against real production lines: `postgres_routine_server_log`
+6, `postgres_unparsed_record` 3, and `postgres_continuation_record` 1 — the last
+forced with a `SELECT` against a missing table, which produced exactly the
+designed pair, the `ERROR` retained and its `STATEMENT:` continuation dropped
+and counted.
+
+**One measurement lesson worth keeping.** Querying Prometheus reported
+`postgres_continuation_record` as missing when it had already fired; reading
+Promtail's `/metrics` directly is what settled it. The scrape interval sits
+between the event and the aggregate, so treating the aggregate as the source of
+truth produces a false negative in exactly the check this stage exists to make.
+
+Verification before deploy: 3,790 tests, and all eleven new fixtures replayed
+through `grafana/promtail:3.5.8` with `-dry-run -stdin` using pipeline stages
+extracted from `promtail.yml` itself, so they could not drift from production.
+The Go binary produced the same labels and drops as the Python model. The new
+drop-counter test was watched failing against a deliberate collision before
+being trusted.
+
+Stage C's seven-day window opened **2026-09-08 03:13 UTC** and closes on or
+after **2026-09-15**.
+
+Public surfaces: yes. `ops/templates/info.html` claimed Loki aggregates
+structured logs from "every Python service", which Stage A disproved —
+`container-health` is a Python service and is deliberately excluded, and six
+more services emit nothing after boot. Corrected in this stage to describe
+deliberate per-service admission, which is what the registry actually
+guarantees.
+
+Cost: estimate 2 → actual 1 (−1).
