@@ -2495,6 +2495,38 @@ def test_no_test_invents_the_shape_of_a_relation_production_defines():
     )
 
 
+def test_the_fixture_relation_corpus_is_not_empty():
+    """The guard the rule above spent two commits without.
+
+    A set difference over an empty corpus is empty, so a ``_CREATE_TABLE``
+    that stops matching does not fail the rule above -- it makes it pass
+    unconditionally, which is strictly worse than deleting it. That is what
+    happened. ``815fcf2`` added the rule and a pattern ending at the opening
+    paren; ``7825c0e`` added a **second** module-level ``_CREATE_TABLE`` for a
+    different rule, requiring a terminating semicolon that no inline fixture
+    carries, and the later binding won for every call site. The corpus read 0
+    of 0 across 248 test modules and 385 statement files, and the rule went
+    green on nothing.
+
+    Two defects were masking each other, which is why this guard is worth more
+    than the rename alone: ``production_relations`` calls ``.findall`` on the
+    same name, and the shadowing pattern's second group made it return tuples.
+    That ``AttributeError`` was unreachable only because the empty corpus meant
+    the loop body never ran, so repairing the corpus without noticing would
+    have swapped a rule that passes vacuously for one that crashes.
+
+    The one thing that did notice was
+    ``scripts/verify_testing_contract_mutations.py``, which reported this
+    rule's mutation as MISSED for as long as it was broken.
+    """
+    assert _fixture_relations(), (
+        "no test or statement file declares a CREATE TABLE anywhere. That is "
+        "almost certainly _CREATE_TABLE having stopped matching rather than a "
+        "repository with no fixtures, and the rule above cannot fail while it "
+        "is true"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule 5j -- schema.yml is the model's shape, and dbt is what enforces it.
 #
@@ -3804,7 +3836,7 @@ def test_no_waiver_is_listed_twice(rule, waivers):
 # ---------------------------------------------------------------------------
 _SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
-_CREATE_TABLE = re.compile(
+_CREATE_TABLE_BODY = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.]+)(.*?);",
     re.IGNORECASE | re.DOTALL,
 )
@@ -3838,7 +3870,7 @@ def check_constrained_columns() -> dict[tuple[str, str], frozenset[str]]:
     found: dict[tuple[str, str], set[str]] = {}
     for path in sorted((REPO_ROOT / "db" / "migrations").glob("*.sql")):
         body = _without_sql_comments(path.read_text(encoding="utf-8"))
-        for table, definition in _CREATE_TABLE.findall(body):
+        for table, definition in _CREATE_TABLE_BODY.findall(body):
             for column, values in _CHECK_IN.findall(definition):
                 members = set(_SQL_STRING.findall(values))
                 if members:
