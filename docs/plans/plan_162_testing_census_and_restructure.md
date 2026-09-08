@@ -384,13 +384,57 @@ moved it to the end without making it a different stage.
 | 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `done` | CAR-79 |
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `next` | CAR-82 |
-| 20 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
-| 21 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-88 |
-| 22 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+| 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `—` | CAR-88 |
+| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `—` | — |
+| 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
+| 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | — |
+| 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | — |
+| 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | — |
+| 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | — |
+| 27 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | — |
+| 28 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
 `blocked`, `done`, `canceled` — and exactly one stage carries `next`.
+
+**The 2026-09-08 ordering, and what fixes it.** Six stages entered the table at
+once and three constraints decided where, only one of which is a preference.
+
+**Y before Z before AA is a hard chain.** Z generates a contract artifact from
+each service's schema; run today it would faithfully record the false claim that
+every endpoint returns `200` or `422`, because that is all any route declares.
+AA needs Z's artifact as the place a caller goes to look. Nothing about that
+order is negotiable.
+
+**Q before AC is an argument rather than a block.** AC is a schema migration and
+CI's Postgres is a fourth hand-maintained transcription of production's —
+Stage Q's whole subject. Landing a migration against a database defined the way
+production defines it is worth one stage of delay.
+
+**AC is not urgent in the way its gap entry reads.** [G25](../TESTING.md#the-gap-list)
+is a latent hole, not an actively failing one: it costs the next time somebody
+renames a constrained value, and nothing is renaming one today.
+[Stage W](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) also
+partially mitigates it, because a rename must now pass through
+`shared/db_vocabularies.py`, where the coupling is at least visible. So it sits
+after Y and Q rather than first, and the risk of that choice is stated here
+rather than discovered later.
+
+**V is early because it is the same class as U and W** — a declaration held by
+prose that nothing enforces — and finishing that thread before opening the
+contract programme keeps the plan legible.
+
+**R stays last, and its first piece may have evaporated.** [The CI cost
+census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md) moved it to
+the end and cut its selector; what remained was an instrument fix *"reduced to
+whatever Stage U has not already supplied"*. Stage U has since shipped. Whether
+anything is left is the first question that stage asks, not an assumption this
+table should make for it.
+
+**The six new stages carry no `Legacy` and no `Issue`.** They were not in the
+2026-09-04 renumbering, and their Linear issues are created when they start —
+not now, because [an issue created early is an issue that rots](../../.claude/skills/ticket-now/SKILL.md).
 **The stage sections below run in letter order, not work order**, so a stage is
 found by its name rather than by remembering where it sits today. `Order` is the
 only thing that says what comes next, which is the point of it being a column.
@@ -2274,7 +2318,7 @@ work. It can. The stages below use it.
 
 **The lettering runs past Z into AA.** `I` and `O` were skipped as always.
 
-#### Stage Y: a route declares the statuses it can return
+### Stage Y: a route declares the statuses it can return
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G21
 
@@ -2307,7 +2351,7 @@ would faithfully record the false claim that every endpoint returns 200 or 422.
 asserted both ways; `RESPONSE_CODE_WAIVERS` seeded at 42 and drained to 0;
 demonstrated by an undeclared code failing.
 
-#### Stage Z: the contract is generated, committed and gated
+### Stage Z: the contract is generated, committed and gated
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G22 · **Blocked by:** Stage Y
 
@@ -2338,7 +2382,7 @@ default to inherit.
 service that is not reflected in its artifact fails; the normalisation names
 what it drops and why; demonstrated by an unreflected route change failing.
 
-#### Stage AA: a test may not invent another service's response
+### Stage AA: a test may not invent another service's response
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G23 · **Blocked by:** Stage Z
 
@@ -2366,7 +2410,7 @@ rather than be skipped.
 `FABRICATED_RESPONSE_WAIVERS` seeded at 28 and drained to 0; demonstrated by a
 fabricated code the callee cannot return failing.
 
-#### Stage AB: what we do not own is recorded and replayed
+### Stage AB: what we do not own is recorded and replayed
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G24
 
@@ -2395,7 +2439,7 @@ script error out. This class is about silence, and those are not silent.
 replayed against the real thing in CI or declared out of scope with the reason;
 demonstrated by a recorded corpus that has drifted failing.
 
-#### Stage AC: the database makes a stale read loud
+### Stage AC: the database makes a stale read loud
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G25
 
@@ -2442,7 +2486,7 @@ reads `CREATE TYPE … AS ENUM`; a stale literal in a `.sql` file or a dbt model
 fails; demonstrated by the `retry_later` mutation above now failing where it
 passed.
 
-#### Stage AD: a fixture cannot fabricate a row the database would reject
+### Stage AD: a fixture cannot fabricate a row the database would reject
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G26
 
