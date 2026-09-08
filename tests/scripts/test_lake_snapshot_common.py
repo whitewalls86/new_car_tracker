@@ -1,11 +1,9 @@
 """Unit tests for scripts/lake_snapshot_common.py (Plan 120, Phase 4)."""
 from __future__ import annotations
 
-import io
 import tarfile
 
 import pytest
-import zstandard as zstd
 
 from scripts.lake_snapshot_common import (
     ChecksumMismatchError,
@@ -20,23 +18,7 @@ from scripts.lake_snapshot_common import (
     sha256_file,
     verify_archive_checksum,
 )
-
-
-def _make_tar_zst(archive_path, files=None, raw_members=None):
-    """Build a .tar.zst archive. raw_members lets tests add unsafe entries
-    (path traversal, symlinks) that Path-based construction couldn't express."""
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tar:
-        for name, content in (files or {}).items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(content)
-            tar.addfile(info, io.BytesIO(content))
-        for info, content in raw_members or []:
-            tar.addfile(info, io.BytesIO(content) if content is not None else None)
-    compressed = zstd.ZstdCompressor(level=3).compress(buf.getvalue())
-    archive_path.write_bytes(compressed)
-    return archive_path
-
+from tests.scripts.conftest import make_tar_zst
 
 # ── Checksums ─────────────────────────────────────────────────────────────
 
@@ -63,12 +45,12 @@ class TestChecksums:
             get_archive_meta({"snapshot_id": "adaptive-refresh-x"})
 
     def test_verify_archive_checksum_passes(self, tmp_path):
-        archive = _make_tar_zst(tmp_path / "snapshot.tar.zst", files={"a.txt": b"hi"})
+        archive = make_tar_zst(tmp_path / "snapshot.tar.zst", files={"a.txt": b"hi"})
         manifest = {"archive": {"sha256": sha256_file(archive)}}
         assert verify_archive_checksum(archive, manifest) == sha256_file(archive)
 
     def test_verify_archive_checksum_mismatch_raises(self, tmp_path):
-        archive = _make_tar_zst(tmp_path / "snapshot.tar.zst", files={"a.txt": b"hi"})
+        archive = make_tar_zst(tmp_path / "snapshot.tar.zst", files={"a.txt": b"hi"})
         manifest = {"archive": {"sha256": "0" * 64}}
         with pytest.raises(ChecksumMismatchError):
             verify_archive_checksum(archive, manifest)
@@ -78,7 +60,7 @@ class TestChecksums:
 
 class TestSafeExtraction:
     def test_extracts_normal_members(self, tmp_path):
-        archive = _make_tar_zst(
+        archive = make_tar_zst(
             tmp_path / "snapshot.tar.zst",
             files={"silver_normalized/observations/part-000.parquet": b"parquetbytes"},
         )
@@ -90,7 +72,7 @@ class TestSafeExtraction:
     def test_rejects_path_traversal_member(self, tmp_path):
         info = tarfile.TarInfo(name="../evil.txt")
         info.size = 3
-        archive = _make_tar_zst(
+        archive = make_tar_zst(
             tmp_path / "snapshot.tar.zst", raw_members=[(info, b"pwn")],
         )
         dest = tmp_path / "out"
@@ -101,7 +83,7 @@ class TestSafeExtraction:
     def test_rejects_absolute_path_member(self, tmp_path):
         info = tarfile.TarInfo(name="/etc/evil.txt")
         info.size = 3
-        archive = _make_tar_zst(
+        archive = make_tar_zst(
             tmp_path / "snapshot.tar.zst", raw_members=[(info, b"pwn")],
         )
         with pytest.raises(LakeSnapshotError):
@@ -111,7 +93,7 @@ class TestSafeExtraction:
         info = tarfile.TarInfo(name="link")
         info.type = tarfile.SYMTYPE
         info.linkname = "/etc/passwd"
-        archive = _make_tar_zst(
+        archive = make_tar_zst(
             tmp_path / "snapshot.tar.zst", raw_members=[(info, None)],
         )
         with pytest.raises(LakeSnapshotError):

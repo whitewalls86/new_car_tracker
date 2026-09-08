@@ -32,24 +32,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from psycopg2.extras import RealDictCursor  # noqa: E402
 
 from ops.app import app  # noqa: E402
+from tests.integration.conftest import DATABASE_URL as _DATABASE_URL  # noqa: E402
+from tests.integration.conftest import _parse_dsn  # noqa: E402
 from tests.sql_loader import queries
 
 SQL = queries(__file__)
-
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
-_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-
-
-def _parse_dsn(url: str) -> dict:
-    from urllib.parse import urlparse
-    p = urlparse(url)
-    return {
-        "host": p.hostname or "localhost",
-        "port": p.port or 5432,
-        "dbname": p.path.lstrip("/") or "cartracker",
-        "user": p.username or "cartracker",
-        "password": p.password or "cartracker",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -142,3 +129,23 @@ def seed_user_committed():
                 (email_hash,),
             )
     conn.close()
+
+
+@pytest.fixture()
+def insert_detail_claim():
+    """Factory: insert a detail_scrape_claims row via the given cursor.
+
+    Returns the new listing_id. ``stale=True`` backdates the claim past the
+    orphan-expiry cutoff.
+    """
+    def _factory(cur, *, stale=False):
+        listing_id = str(uuid.uuid4())
+        run_id = str(uuid.uuid4())
+        claimed_hours_ago = 3 if stale else 0
+        cur.execute(
+            SQL("insert_detail_scrape_claims"),
+            (listing_id, run_id, str(claimed_hours_ago)),
+        )
+        return listing_id
+
+    return _factory

@@ -10,31 +10,18 @@ email_hash matches any of the test emails — covering rows inserted both by the
 API routes and by seed_user_committed.
 """
 import hashlib
-import os
 
-import psycopg2
 import pytest
 
 from tests.sql_loader import queries
 
 SQL = queries(__file__)
 
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 _SALT = "test-salt"
 
 
 def _hash(email: str) -> str:
     return hashlib.sha256((_SALT + email.lower()).encode()).hexdigest()
-
-
-def _get_conn():
-    from urllib.parse import urlparse
-    url = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-    p = urlparse(url)
-    return psycopg2.connect(
-        host=p.hostname, port=p.port or 5432,
-        dbname=p.path.lstrip("/"), user=p.username, password=p.password,
-    )
 
 
 @pytest.fixture(scope="module")
@@ -54,9 +41,9 @@ def req_emails(test_key_prefix):
 
 
 @pytest.fixture(autouse=True, scope="module")
-def cleanup_access_data(req_emails):
+def cleanup_access_data(req_emails, db_conn_factory):
     yield
-    conn = _get_conn()
+    conn = db_conn_factory()
     conn.autocommit = True
     hashes = [_hash(e) for e in req_emails.values()]
     with conn.cursor() as cur:

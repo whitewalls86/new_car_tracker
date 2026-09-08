@@ -50,26 +50,6 @@ def _listing(listing_id=None, vin=None, price=28000, make="Honda", model="CR-V")
 # Helpers: read back state from DB
 # ---------------------------------------------------------------------------
 
-def _get_price_obs(vc, listing_id):
-    vc.execute(
-        SQL("select_all_from_ops_price_observations"),
-        (listing_id,),
-    )
-    return vc.fetchone()
-
-
-def _get_vin_mapping(vc, vin):
-    vc.execute(SQL("select_all_from_ops_vin_to_listing"), (vin,))
-    return vc.fetchone()
-
-
-def _count_silver(vc, artifact_id):
-    vc.execute(
-        SQL("select_cnt_from_staging_silver_observations"),
-        (artifact_id,),
-    )
-    return vc.fetchone()["cnt"]
-
 
 def _count_price_obs_events(vc, listing_id):
     vc.execute(
@@ -107,21 +87,21 @@ def _cleanup(vc, listing_ids=None, vins=None, artifact_id=None):
 # ---------------------------------------------------------------------------
 
 class TestWriteSrpBasic:
-    def test_upserts_price_observation_for_each_listing(self, vc, seed_artifact_c):
+    def test_upserts_price_observation_for_each_listing(self, vc, seed_artifact_c, get_price_obs):
         artifact = seed_artifact_c(artifact_type="results_page")
         lid = str(uuid.uuid4())
         listings = [_listing(listing_id=lid, vin="1HGCV1F34PA000101")]
 
         write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
-        row = _get_price_obs(vc, lid)
+        row = get_price_obs(lid)
         assert row is not None
         assert row["price"] == 28000
         assert row["make"] == "Honda"
 
         _cleanup(vc, [lid], ["1HGCV1F34PA000101"], artifact["artifact_id"])
 
-    def test_maps_vin_to_listing(self, vc, seed_artifact_c):
+    def test_maps_vin_to_listing(self, vc, seed_artifact_c, get_vin_mapping):
         artifact = seed_artifact_c(artifact_type="results_page")
         vin = f"VINMAP{uuid.uuid4().hex[:11].upper()}"
         lid = str(uuid.uuid4())
@@ -130,13 +110,13 @@ class TestWriteSrpBasic:
         result = write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
         assert result["vin_mapped"] == 1
-        row = _get_vin_mapping(vc, vin)
+        row = get_vin_mapping(vin)
         assert row is not None
         assert str(row["listing_id"]) == lid
 
         _cleanup(vc, [lid], [vin], artifact["artifact_id"])
 
-    def test_listing_without_vin_still_upserted(self, vc, seed_artifact_c):
+    def test_listing_without_vin_still_upserted(self, vc, seed_artifact_c, get_price_obs):
         artifact = seed_artifact_c(artifact_type="results_page")
         lid = str(uuid.uuid4())
         listings = [_listing(listing_id=lid, vin=None)]
@@ -145,7 +125,7 @@ class TestWriteSrpBasic:
 
         assert result["upserted"] == 1
         assert result["vin_mapped"] == 0
-        row = _get_price_obs(vc, lid)
+        row = get_price_obs(lid)
         assert row is not None
         assert row["vin"] is None
 
@@ -169,7 +149,7 @@ class TestWriteSrpBasic:
 
 
 class TestWriteSrpSilverWrite:
-    def test_silver_rows_written_to_staging(self, vc, seed_artifact_c):
+    def test_silver_rows_written_to_staging(self, vc, seed_artifact_c, count_silver):
         artifact = seed_artifact_c(artifact_type="results_page")
         lid = str(uuid.uuid4())
         listings = [_listing(listing_id=lid, vin="1HGCV1F34PA000201")]
@@ -177,7 +157,7 @@ class TestWriteSrpSilverWrite:
         result = write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
         assert result["silver_written"] == 1
-        assert _count_silver(vc, artifact["artifact_id"]) == 1
+        assert count_silver(artifact["artifact_id"]) == 1
 
         _cleanup(vc, [lid], ["1HGCV1F34PA000201"], artifact["artifact_id"])
 
@@ -197,14 +177,14 @@ class TestWriteSrpSilverWrite:
 
         _cleanup(vc, [lid], artifact_id=artifact["artifact_id"])
 
-    def test_multiple_listings_all_in_silver(self, vc, seed_artifact_c):
+    def test_multiple_listings_all_in_silver(self, vc, seed_artifact_c, count_silver):
         artifact = seed_artifact_c(artifact_type="results_page")
         lids = [str(uuid.uuid4()) for _ in range(3)]
         listings = [_listing(listing_id=lid) for lid in lids]
 
         result = write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
-        assert _count_silver(vc, artifact["artifact_id"]) == 3
+        assert count_silver(artifact["artifact_id"]) == 3
         assert result["silver_written"] == 3
 
         _cleanup(vc, lids, artifact_id=artifact["artifact_id"])
@@ -272,7 +252,7 @@ class TestWriteSrpVinRecencyGuard:
 class TestWriteSrpVinFallback:
     def test_vin_looked_up_from_existing_mapping_when_not_in_listing(
         self, vc, seed_artifact_c
-    ):
+    , get_price_obs):
         """
         Given: vin_to_listing already has VIN for the listing
         When:  SRP listing arrives without a VIN field
@@ -292,14 +272,14 @@ class TestWriteSrpVinFallback:
         listings = [_listing(listing_id=lid, vin=None)]
         write_srp_observations(listings, artifact["artifact_id"], _NOW)
 
-        row = _get_price_obs(vc, lid)
+        row = get_price_obs(lid)
         assert row["vin"] == vin, "VIN should be resolved from existing vin_to_listing"
 
         _cleanup(vc, [lid], [vin], artifact["artifact_id"])
 
 
 class TestWriteSrpVinCollision:
-    def test_relisted_vin_replaces_old_price_observation(self, vc, seed_artifact_c):
+    def test_relisted_vin_replaces_old_price_observation(self, vc, seed_artifact_c, get_price_obs):
         """
         Given: price_observations has VIN → old_listing
         When:  SRP batch contains new_listing with the same VIN
@@ -327,7 +307,7 @@ class TestWriteSrpVinCollision:
         assert vc.fetchone()["cnt"] == 0, "Old price_observation should be deleted on relisting"
 
         # New row present with correct VIN
-        row = _get_price_obs(vc, new_lid)
+        row = get_price_obs(new_lid)
         assert row is not None
         assert row["vin"] == vin
 

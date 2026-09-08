@@ -25,21 +25,8 @@ os.environ.setdefault(
     "LOG_PATH", os.path.join(tempfile.gettempdir(), "scripts_test.log"),
 )
 
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
-_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-
-
-def _parse_dsn(url: str) -> dict:
-    from urllib.parse import urlparse
-
-    p = urlparse(url)
-    return {
-        "host": p.hostname or "localhost",
-        "port": p.port or 5432,
-        "dbname": p.path.lstrip("/") or "cartracker",
-        "user": p.username or "cartracker",
-        "password": p.password or "cartracker",
-    }
+from tests.integration.conftest import DATABASE_URL as _DATABASE_URL  # noqa: E402
+from tests.integration.conftest import _parse_dsn  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)

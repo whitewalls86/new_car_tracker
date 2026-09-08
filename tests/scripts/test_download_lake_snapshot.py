@@ -1,34 +1,20 @@
 """Unit tests for scripts/download_lake_snapshot.py (Plan 120, Phase 4)."""
 from __future__ import annotations
 
-import io
 import json
-import tarfile
 
 import httpx
 import pytest
-import zstandard as zstd
 
 from scripts.download_lake_snapshot import download_api, download_local, main
 from scripts.lake_snapshot_common import ChecksumMismatchError, LakeSnapshotError, sha256_file
-
-
-def _make_tar_zst(archive_path, files):
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tar:
-        for name, content in files.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(content)
-            tar.addfile(info, io.BytesIO(content))
-    compressed = zstd.ZstdCompressor(level=3).compress(buf.getvalue())
-    archive_path.write_bytes(compressed)
-    return archive_path
+from tests.scripts.conftest import make_tar_zst
 
 
 def _build_snapshot(tmp_path, snapshot_id="adaptive-refresh-2026-07-07-000000"):
     build_dir = tmp_path / "build"
     build_dir.mkdir()
-    archive = _make_tar_zst(
+    archive = make_tar_zst(
         build_dir / "snapshot.tar.zst", files={"expected/feature_audit_summary.json": b"{}"},
     )
     manifest = {

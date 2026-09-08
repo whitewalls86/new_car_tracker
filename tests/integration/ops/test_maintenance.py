@@ -19,16 +19,6 @@ pytestmark = pytest.mark.integration
 # Local seed helpers
 # ---------------------------------------------------------------------------
 
-def _insert_detail_claim(cur, *, stale=False):
-    listing_id = str(uuid.uuid4())
-    run_id = str(uuid.uuid4())
-    claimed_hours_ago = 3 if stale else 0
-    cur.execute(
-        SQL("insert_detail_scrape_claims"),
-        (listing_id, run_id, str(claimed_hours_ago)),
-    )
-    return listing_id
-
 
 # ---------------------------------------------------------------------------
 # EXPIRE_ORPHAN_DETAIL_CLAIMS
@@ -39,16 +29,16 @@ class TestExpireOrphanDetailClaims:
         cur.execute(EXPIRE_ORPHAN_DETAIL_CLAIMS)
         return {str(r["listing_id"]) for r in cur.fetchall()}
 
-    def test_stale_claim_is_deleted(self, cur):
-        listing_id = _insert_detail_claim(cur, stale=True)
+    def test_stale_claim_is_deleted(self, cur, insert_detail_claim):
+        listing_id = insert_detail_claim(cur, stale=True)
         assert listing_id in self._run_query(cur)
 
-    def test_fresh_claim_is_not_deleted(self, cur):
-        listing_id = _insert_detail_claim(cur, stale=False)
+    def test_fresh_claim_is_not_deleted(self, cur, insert_detail_claim):
+        listing_id = insert_detail_claim(cur, stale=False)
         assert listing_id not in self._run_query(cur)
 
-    def test_claim_actually_removed_from_table(self, cur):
-        listing_id = _insert_detail_claim(cur, stale=True)
+    def test_claim_actually_removed_from_table(self, cur, insert_detail_claim):
+        listing_id = insert_detail_claim(cur, stale=True)
         self._run_query(cur)
         cur.execute(SQL("select_1_from_detail_scrape_claims"), (listing_id,))
         assert cur.fetchone() is None
