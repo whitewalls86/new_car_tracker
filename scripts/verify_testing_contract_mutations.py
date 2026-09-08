@@ -682,6 +682,17 @@ MUTATIONS = [
         ["tests/test_env_example_wiring.py"],
         [],
     ),
+    (
+        "test_the_fixture_relation_corpus_is_not_empty",
+        "the shadowing _CREATE_TABLE comes back and empties the corpus",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            "_CREATE_TABLE_BODY = re.compile(",
+            "_CREATE_TABLE = re.compile(",
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
 ]
 
 
