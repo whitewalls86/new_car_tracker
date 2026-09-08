@@ -1,0 +1,666 @@
+# Plan 162 Stage S, exit 2 — branch coverage for the marts.
+#
+# WHY THIS IS IN A `coverage/` SUBDIRECTORY RATHER THAN A SECOND FILE BESIDE
+# ../unit_tests.yml. **Do not "tidy" it by renaming the file or flattening the
+# directory.** The branch-coverage instrument matches the literal string
+# `unit_tests.yml` in both directions, and a file named anything else breaks it
+# silently and in two ways at once:
+#
+#   * tests/dbt/branch_probe.py::compiled_unit_tests() maps a compiled unit test
+#     back to its model through `rglob("unit_tests.yml")`, an exact-filename
+#     glob. Tests declared in a differently-named file contribute zero measured
+#     branch coverage — measured 2026-09-07: all 47 branches the tests below
+#     close read as uncovered.
+#   * tests/dbt/branch_list.py::compiled_model_paths() excludes compiled paths
+#     containing `unit_tests.yml`. A differently-named file's compiled tests are
+#     therefore enumerated as extra *models*, and their mocked branches filed as
+#     uncovered branches of models that do not exist — measured 2026-09-07: 199
+#     phantom branch ids, every one of them unwaived, turning
+#     test_every_branch_is_exercised_in_both_directions_or_declared red.
+#
+# dbt reads every .yml under models/, so a subdirectory keeps the filename the
+# instrument needs while leaving ../unit_tests.yml free of concurrent edits.
+#
+# Every test in this file exists to take a named branch in BOTH directions and
+# to assert
+# what the model actually produces for the inputs that get it there — the branch
+# ids it closes are named above each block, because a test that reaches a branch
+# and asserts nothing is worse than no test: it passes forever and reports
+# coverage.
+#
+# Two findings are recorded in the comments below rather than silently encoded
+# in an expectation: `least`/`greatest` ignore NULLs in DuckDB, which makes
+# mart_deal_scores award the full 35-point MSRP-discount term to a listing with
+# no MSRP at all, and makes the `coalesce(greatest(...), 0)` wrapper around it
+# unreachable. Both are asserted as the model actually behaves.
+
+unit_tests:
+
+  # ===========================================================================
+  # mart_deal_scores
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Branches: scored.coalesce_fallback.0 (d.name is null), scored.outer_join.3
+  #           (stg_dealers join), and the "matched" arm of scored.outer_join.1 /
+  #           .2, scored.coalesce_fallback.1/.2/.4/.7, scored.where_conjunct.0/.1,
+  #           price_percentiles.where_conjunct.0/.1,
+  #           dealer_inventory.where_conjunct.0, scored.greatest_least.4/.5.
+  # ---------------------------------------------------------------------------
+
+  - name: test_deal_scores_dealer_name_prefers_the_dealer_dimension
+    description: >
+      dealer_name is coalesce(d.name, v.dealer_name): a VIN whose customer_id
+      is in stg_dealers takes the dimension's name, and one whose customer_id is
+      not takes the name carried on the listing. Both VINs are otherwise
+      identical, so the two rows differ only in the branch under test.
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "DEALERDIM00000001", listing_id: "A1", make: "honda", model: "crv",
+             listing_state: "active", price: 30000, msrp: 40000,
+             customer_id: "D1", dealer_name: "Stale Listing Name", dealer_zip: "11111",
+             first_price: 30000, days_on_market: 0, price_drop_count: 0,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+          - {vin: "DEALERDIM00000002", listing_id: "B1", make: "honda", model: "crv",
+             listing_state: "active", price: 30000, msrp: 40000,
+             customer_id: "D2", dealer_name: "Only On Listing", dealer_zip: "22222",
+             first_price: 30000, days_on_market: 0, price_drop_count: 0,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+      - input: ref('int_benchmarks')
+        rows: []
+      - input: ref('stg_dealers')
+        rows:
+          - {customer_id: "D1", name: "Canonical Motors", zip: "99999"}
+    expect:
+      # Both prices are 30000, so percent_rank ties them at 0 and the percentile
+      # term is worth its full 30 points. 35 (MSRP discount, capped) + 30 + 0.5
+      # (one unit of dealer inventory each) = 65.5.
+      rows:
+        - {vin: "DEALERDIM00000001", dealer_name: "Canonical Motors",
+           national_price_percentile: 0.0, dealer_inventory_count: 1,
+           deal_score: 65.5, deal_tier: "good"}
+        - {vin: "DEALERDIM00000002", dealer_name: "Only On Listing",
+           national_price_percentile: 0.0, dealer_inventory_count: 1,
+           deal_score: 65.5, deal_tier: "good"}
+
+  # ---------------------------------------------------------------------------
+  # Branches: the "unmatched" arm of scored.outer_join.1 and .2, the "fell
+  #           through" arm of scored.coalesce_fallback.1/.2/.4/.5/.6/.7, and the
+  #           false arm of scored.where_conjunct.0/.1,
+  #           price_percentiles.where_conjunct.0/.1 and
+  #           dealer_inventory.where_conjunct.0.
+  #
+  # A null price and a zero price are separate rows on purpose: `not (price > 0)`
+  # is NULL when price is NULL, so one row cannot stand for both guards.
+  # ---------------------------------------------------------------------------
+
+  - name: test_deal_scores_drops_priceless_rows_and_defaults_the_missing_joins
+    description: >
+      A VIN with no price and a VIN priced at zero are both excluded, and they
+      are also absent from price_percentiles, so the surviving VIN is alone in
+      its make/model partition and ranks at percentile 0. That VIN has a null
+      customer_id, so it joins to no dealer-inventory group and its count
+      defaults to 0; its null days_on_market and null price_drop_count default
+      to 0 as well.
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "NOJOINS0000000001", listing_id: "C1", make: "honda", model: "crv",
+             listing_state: "active", price: 20000, msrp: null,
+             customer_id: null, dealer_name: "Listing Only", dealer_zip: "33333",
+             first_price: null, days_on_market: null, price_drop_count: null,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+          - {vin: "NULLPRICE00000002", listing_id: "D1", make: "honda", model: "crv",
+             listing_state: "active", price: null, msrp: 40000,
+             customer_id: null, dealer_name: "Listing Only", dealer_zip: "33333",
+             first_price: null, days_on_market: null, price_drop_count: null,
+             price_observed_at: null}
+          - {vin: "ZEROPRICE00000003", listing_id: "E1", make: "honda", model: "crv",
+             listing_state: "active", price: 0, msrp: 40000,
+             customer_id: null, dealer_name: "Listing Only", dealer_zip: "33333",
+             first_price: null, days_on_market: null, price_drop_count: null,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+      - input: ref('int_benchmarks')
+        rows: []
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      # FINDING, asserted rather than assumed: msrp is NULL, so
+      # (msrp - price) / nullif(msrp, 0) * 350 is NULL — and DuckDB's `least`
+      # IGNORES nulls, so least(35, NULL) is 35 and the listing collects the
+      # full 35-point MSRP-discount term despite having no MSRP. 35 + 30
+      # (percentile 0) + 0 + 0 + 0 + 0 = 65.0.
+      rows:
+        - {vin: "NOJOINS0000000001", dealer_name: "Listing Only",
+           national_price_percentile: 0.0, dealer_inventory_count: 0,
+           msrp_discount_pct: null, msrp_discount_amt: null,
+           total_price_drop_pct: null, deal_score: 65.0, deal_tier: "good"}
+
+  # ---------------------------------------------------------------------------
+  # Branches: scored.case_arm.0, .1 (msrp > 0 and price > 0), scored.case_arm.2
+  #           (first_price > 0 and price > 0), scored.nullif.0 (msrp = 0),
+  #           scored.greatest_least.0 (the 0 floor wins), scored.greatest_least.1
+  #           (the 35 cap wins), scored.greatest_least.5 (the 500-listing cap),
+  #           <final>.case_arm.2 (deal_score >= 30) and <final>.case_else.0.
+  # ---------------------------------------------------------------------------
+
+  - name: test_deal_scores_msrp_term_is_floored_at_zero_and_capped_at_thirty_five
+    description: >
+      Four listings in one make/model partition, differing only in price, msrp
+      and first_price. A 30% discount saturates the 35-point cap; a 2.5%
+      discount does not and scores 8.75; a listing priced above MSRP would score
+      negative and is floored at 0; a listing with msrp = 0 has its divisor
+      nullif'd away. The four deal_scores span the 'excellent', 'good' and
+      'weak' tiers, so the deal_tier CASE takes its >= 30 arm and its ELSE.
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          # 30% off MSRP -> (50000-35000)/50000*350 = 105, capped to 35.
+          - {vin: "CAPHIT00000000001", listing_id: "F1", make: "honda", model: "crv",
+             listing_state: "active", price: 35000, msrp: 50000, first_price: 40000,
+             customer_id: null, dealer_name: null, dealer_zip: null,
+             days_on_market: 0, price_drop_count: 0,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+          # 2.5% off MSRP -> (40000-39000)/40000*350 = 8.75, under the cap.
+          - {vin: "CAPMISS0000000002", listing_id: "G1", make: "honda", model: "crv",
+             listing_state: "active", price: 39000, msrp: 40000, first_price: 39000,
+             customer_id: null, dealer_name: null, dealer_zip: null,
+             days_on_market: 0, price_drop_count: 0,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+          # Priced above MSRP -> the term is -23.33 and greatest(0, ...) floors it.
+          - {vin: "FLOORHIT000000003", listing_id: "H1", make: "honda", model: "crv",
+             listing_state: "active", price: 32000, msrp: 30000, first_price: 32000,
+             customer_id: null, dealer_name: null, dealer_zip: null,
+             days_on_market: 0, price_drop_count: 0,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+          # msrp = 0 and first_price = 0: both CASE guards take their false arm.
+          - {vin: "ZEROMSRP000000004", listing_id: "I1", make: "honda", model: "crv",
+             listing_state: "active", price: 25000, msrp: 0, first_price: 0,
+             customer_id: null, dealer_name: null, dealer_zip: null,
+             days_on_market: 0, price_drop_count: 0,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+      - input: ref('int_benchmarks')
+        rows:
+          # 600 > 500, so the national-supply term takes its capped arm and is
+          # worth the full 5 points for every row.
+          - {make: "honda", model: "crv", national_listing_count: 600,
+             national_avg_price: 34000, national_median_price: 33500,
+             national_p10_price: 25000, national_p25_price: 32000,
+             national_p75_price: 37000, national_p90_price: 39000,
+             national_avg_discount_pct: null}
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      # percent_rank over prices 25000 / 32000 / 35000 / 39000 is 0, 1/3, 2/3, 1.
+      # deal_score = MSRP term + (1 - pctl) * 30 + 5 (national supply, capped).
+      rows:
+        - {vin: "CAPHIT00000000001", msrp_discount_pct: 30.00, msrp_discount_amt: 15000,
+           total_price_drop_pct: 12.50, deal_score: 50.0, deal_tier: "good"}
+        - {vin: "CAPMISS0000000002", msrp_discount_pct: 2.50, msrp_discount_amt: 1000,
+           total_price_drop_pct: 0.00, deal_score: 13.8, deal_tier: "weak"}
+        - {vin: "FLOORHIT000000003", msrp_discount_pct: -6.67, msrp_discount_amt: -2000,
+           total_price_drop_pct: 0.00, deal_score: 25.0, deal_tier: "weak"}
+        # FINDING, asserted rather than assumed: msrp = 0 makes nullif(msrp, 0)
+        # NULL, the whole discount expression NULL, and — because DuckDB's
+        # `least` ignores nulls — least(35, NULL) = 35. A listing with no usable
+        # MSRP scores the maximum discount points, which is why this row is the
+        # highest-scoring of the four.
+        - {vin: "ZEROMSRP000000004", msrp_discount_pct: null, msrp_discount_amt: null,
+           total_price_drop_pct: null, deal_score: 70.0, deal_tier: "excellent"}
+
+  # ---------------------------------------------------------------------------
+  # Branches: scored.greatest_least.4 (dealer inventory capped at 10 units), and
+  #           the "not null" arm of scored.coalesce_fallback.5 and .6.
+  #
+  # The eleven filler listings are priced at 0 so that they count toward the
+  # dealer's inventory depth — dealer_inventory filters on listing_state and
+  # customer_id only — while being dropped from the model's own output by the
+  # `price > 0` guard, which keeps the expectation to a single row.
+  # ---------------------------------------------------------------------------
+
+  - name: test_deal_scores_dealer_inventory_depth_is_capped_at_ten_units
+    description: >
+      A dealer with twelve tracked active listings of one make/model reports
+      dealer_inventory_count = 12, but the score term is least(count, 10)/10*5,
+      so it contributes the same 5 points a dealer with exactly ten would. The
+      days-on-market and price-drop terms are likewise over their 90-day and
+      3-drop caps, so the score is the maximum every capped term can produce.
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "DEEPDEALER0000001", listing_id: "J1", make: "honda", model: "crv",
+             listing_state: "active", price: 30000, msrp: null, first_price: null,
+             customer_id: "BIGDEALER", dealer_name: "Big Dealer", dealer_zip: "44444",
+             days_on_market: 100, price_drop_count: 5,
+             price_observed_at: "2026-01-10 12:00:00+00"}
+          - {vin: "FILLER00000000001", listing_id: "K01", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000002", listing_id: "K02", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000003", listing_id: "K03", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000004", listing_id: "K04", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000005", listing_id: "K05", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000006", listing_id: "K06", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000007", listing_id: "K07", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000008", listing_id: "K08", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000009", listing_id: "K09", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000010", listing_id: "K10", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+          - {vin: "FILLER00000000011", listing_id: "K11", make: "honda", model: "crv",
+             listing_state: "active", price: 0, customer_id: "BIGDEALER"}
+      - input: ref('int_benchmarks')
+        rows: []
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      # 35 (no MSRP — see the finding above) + 30 (sole row in the percentile
+      # partition) + 15 (days capped at 90) + 10 (drops capped at 3)
+      # + 5 (inventory capped at 10) + 0 (no benchmark) = 95.0.
+      rows:
+        - {vin: "DEEPDEALER0000001", dealer_inventory_count: 12,
+           national_price_percentile: 0.0, deal_score: 95.0, deal_tier: "excellent"}
+
+  # ===========================================================================
+  # mart_vehicle_snapshot
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Branches: latest_state.where_conjunct.0 (vin17 is not null) and
+  #           <final>.outer_join.1 (the latest_state left join).
+  # ---------------------------------------------------------------------------
+
+  - name: test_snapshot_vin_absent_from_latest_state_falls_back_to_price_history
+    description: >
+      latest_state is built only from observations that carry a vin17, so an
+      observation whose VIN failed stg_observations' guard contributes nothing
+      and a VIN with no surviving observation joins to no latest_state row at
+      all. The VIN that does have a detail observation takes its state verbatim,
+      even when that state contradicts a recent last_seen_at.
+
+      The second VIN's input is not reachable in production and is here to pin
+      the degenerate case: int_latest_observation is derived from
+      stg_observations filtered to a non-null vin17, so a VIN in the driving
+      table always has a latest_state row. Only a unit test, which mocks the two
+      refs independently, can put a VIN in one and not the other.
+    model: mart_vehicle_snapshot
+    overrides:
+      macros:
+        now_ts: "cast('2026-01-15 12:00:00+00' as TIMESTAMP WITH TIME ZONE)"
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "HASSTATE000000001", listing_id: "L1", source: "detail",
+             listing_state: "unlisted", make: "honda", model: "crv",
+             fetched_at: "2026-01-14 12:00:00+00"}
+          - {vin17: "NOSTATE0000000002", listing_id: "L2", source: "srp",
+             listing_state: null, make: "honda", model: "crv",
+             fetched_at: "2026-01-14 12:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "HASSTATE000000001", current_price: 30000,
+             price_observed_at: "2026-01-14 12:00:00+00",
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-01 12:00:00+00", last_seen_at: "2026-01-14 12:00:00+00"}
+          - {vin: "NOSTATE0000000002", current_price: 20000,
+             price_observed_at: "2026-01-14 12:00:00+00",
+             first_price: 20000, min_price: 20000, max_price: 20000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-01 12:00:00+00", last_seen_at: "2026-01-14 12:00:00+00"}
+      - input: ref('int_active_make_models')
+        rows:
+          - {make: "honda", model: "crv"}
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          -- Carries a vin17, so it reaches latest_state and wins for that VIN.
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as varchar) as listing_id,
+                 cast('detail' as varchar) as source,
+                 cast('unlisted' as varchar) as listing_state,
+                 cast('2026-01-14 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as varchar) as vin,
+                 cast('HASSTATE000000001' as varchar) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as varchar) as make,
+                 cast(null as varchar) as model,
+                 cast(null as varchar) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as varchar) as stock_type,
+                 cast(null as varchar) as fuel_type,
+                 cast(null as varchar) as body_style,
+                 cast(null as varchar) as dealer_name,
+                 cast(null as varchar) as dealer_zip,
+                 cast(null as varchar) as dealer_city,
+                 cast(null as varchar) as dealer_state,
+                 cast(null as varchar) as customer_id,
+                 cast(null as varchar) as canonical_detail_url,
+                 cast(null as varchar) as financing_type,
+                 cast(null as varchar) as seller_zip,
+                 cast(null as varchar) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as varchar) as trid,
+                 cast(null as varchar) as isa_context,
+                 cast(null as varchar) as body,
+                 cast(null as varchar) as condition
+          -- vin17 is null (the VIN failed stg_observations' guard), so
+          -- latest_state discards it and NOSTATE0000000002 matches nothing.
+          union all select 2, 'L2', 'srp', 'active',
+                 cast('2026-01-14 13:00:00+00' as timestamp), null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null
+    expect:
+      rows:
+        # A detail observation's listing_state is authoritative: 'unlisted'
+        # stands even though last_seen_at is one day old.
+        - {vin: "HASSTATE000000001", listing_state: "unlisted", days_on_market: 14}
+        # No latest_state row at all, so there is no observation recency to
+        # test and the CASE falls to its ELSE. This expectation was 'active'
+        # until 2026-09-07, when the fallback stopped measuring price-event
+        # recency (int_price_history.last_seen_at) and started measuring when
+        # the listing was last *seen* -- which is what the model's own header
+        # always claimed it measured. A VIN nothing has observed is not a VIN
+        # observed recently.
+        - {vin: "NOSTATE0000000002", listing_state: "unlisted", days_on_market: 14}
+
+  # ===========================================================================
+  # mart_cooldown_cohorts / mart_cooldown_event_funnel
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Branches: mart_cooldown_cohorts.bucketed.case_arm.1 and .5 — the
+  #           `current_attempts = 2` arm of the attempt_bucket CASE and of the
+  #           bucket_order CASE that has to stay aligned with it.
+  # ---------------------------------------------------------------------------
+
+  - name: test_cooldown_bucket_2
+    description: >
+      A listing on its second attempt lands in the '2' bucket at bucket_order 2,
+      and a listing on its fourth lands in '3-4' at bucket_order 3 — the two
+      CASEs are separate expressions over the same conditions, so the test
+      asserts the label and the sort key together.
+    model: mart_cooldown_cohorts
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as event_id,
+                 'L001' as listing_id,
+                 'incremented' as event_type,
+                 2 as num_of_attempts,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as event_at
+          union all select 2, 'L002', 'incremented', 4, cast('2026-01-10 12:00:00+00' as timestamp)
+    expect:
+      rows:
+        - {attempt_bucket: "2", bucket_order: 2, listing_count: 1, min_attempts: 2, max_attempts: 2}
+        - {attempt_bucket: "3-4", bucket_order: 3, listing_count: 1, min_attempts: 4, max_attempts: 4}
+
+  # ---------------------------------------------------------------------------
+  # Branches: mart_cooldown_event_funnel.bucketed.case_arm.3 and .7 (the
+  #           `between 5 and 10` arms), bucketed.where_conjunct.1
+  #           (num_of_attempts >= 1) and bucketed.where_conjunct.2
+  #           (event_at is not null).
+  # ---------------------------------------------------------------------------
+
+  - name: test_cooldown_funnel_five_to_ten_bucket_and_the_two_row_guards
+    description: >
+      A seventh attempt lands in the '5-10' bucket at bucket_order 4. The two
+      rejected events fail one guard each — an event recorded with zero attempts
+      and an event with no event_at — so neither reaches a bucket, and the
+      second could not be hour-grouped even if it did.
+    model: mart_cooldown_event_funnel
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as event_id,
+                 'L001' as listing_id,
+                 'blocked' as event_type,
+                 7 as num_of_attempts,
+                 cast('2026-01-10 12:05:00+00' as timestamp) as event_at
+          union all select 2, 'L002', 'incremented', 2, cast('2026-01-10 12:15:00+00' as timestamp)
+          -- fails `num_of_attempts >= 1`
+          union all select 3, 'L003', 'blocked', 0, cast('2026-01-10 12:25:00+00' as timestamp)
+          -- fails `event_at is not null`
+          union all select 4, 'L004', 'blocked', 3, cast(null as timestamp)
+    expect:
+      rows:
+        - {event_hour: "2026-01-10 12:00:00", attempt_bucket: "2", bucket_order: 2,
+           scrape_count: 1, unique_listing_count: 1}
+        - {event_hour: "2026-01-10 12:00:00", attempt_bucket: "5-10", bucket_order: 4,
+           scrape_count: 1, unique_listing_count: 1}
+
+  # ===========================================================================
+  # mart_block_rate
+  # ===========================================================================
+
+  # Branch: mart_block_rate.<final>.where_conjunct.0 (event_at is not null).
+
+  - name: test_block_rate_event_without_a_timestamp_is_dropped
+    description: >
+      An event with no event_at cannot be placed in an hour, so it is excluded
+      rather than grouped into a null hour. The surviving event still reports
+      its own attempt count, so the exclusion is visible in max_attempts_seen as
+      well as in the counts.
+    model: mart_block_rate
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as event_id,
+                 'L001' as listing_id,
+                 'blocked' as event_type,
+                 1 as num_of_attempts,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as event_at
+          union all select 2, 'L002', 'incremented', 9, cast(null as timestamp)
+    expect:
+      rows:
+        - {hour: "2026-01-10 12:00:00", new_blocks: 1, block_increments: 0,
+           total_block_events: 1, unique_listings_blocked: 1, max_attempts_seen: 1}
+
+  # ===========================================================================
+  # mart_detail_batch_outcomes
+  # ===========================================================================
+
+  # Branch: mart_detail_batch_outcomes.<final>.where_conjunct.0
+  #         (fetched_at is not null).
+
+  - name: test_batch_observation_without_a_timestamp_is_dropped
+    description: >
+      obs_date is date_trunc('day', fetched_at), so an observation with no
+      fetched_at has no day to belong to and is excluded before grouping. It is
+      excluded from the yield denominator too: the surviving day reports
+      extraction_yield 100.0, not 50.0.
+    model: mart_detail_batch_outcomes
+    given:
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as varchar) as listing_id,
+                 cast('detail' as varchar) as source,
+                 cast(null as varchar) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as varchar) as vin,
+                 cast('VALIDVIN00000001A' as varchar) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as varchar) as make,
+                 cast(null as varchar) as model,
+                 cast(null as varchar) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as varchar) as stock_type,
+                 cast(null as varchar) as fuel_type,
+                 cast(null as varchar) as body_style,
+                 cast(null as varchar) as dealer_name,
+                 cast(null as varchar) as dealer_zip,
+                 cast(null as varchar) as dealer_city,
+                 cast(null as varchar) as dealer_state,
+                 cast(null as varchar) as customer_id,
+                 cast(null as varchar) as canonical_detail_url,
+                 cast(null as varchar) as financing_type,
+                 cast(null as varchar) as seller_zip,
+                 cast(null as varchar) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as varchar) as trid,
+                 cast(null as varchar) as isa_context,
+                 cast(null as varchar) as body,
+                 cast(null as varchar) as condition
+          -- fails `fetched_at is not null`
+          union all select 2, 'L2', 'detail', null, cast(null as timestamp), null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {obs_date: "2026-01-10", detail_observations: 1, detail_artifacts: 1,
+           valid_vin_count: 1, unique_vins_enriched: 1, extraction_yield: 100.0}
+
+  # ===========================================================================
+  # mart_inventory_coverage
+  # ===========================================================================
+
+  # Branch: mart_inventory_coverage.<final>.where_conjunct.0 (model is not null).
+
+  - name: test_coverage_null_model_excluded
+    description: >
+      make and model are separate guards. A VIN carrying a make but no model is
+      excluded, so it neither forms a (make, null) group of its own nor inflates
+      the total_vins of the make/model group beside it.
+    model: mart_inventory_coverage
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "NOMODEL0000000001", make: "honda", model: null, source: "detail"}
+          - {vin17: "HASMODEL000000002", make: "honda", model: "crv", source: "detail"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 1, detail_enriched: 1,
+           srp_only: 0, coverage_pct: 100.0}
+
+  # ===========================================================================
+  # mart_price_freshness_trend
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Branches: <final>.agg_filter.1 (1-3 days), .2 (4-7 days), .3 (8-14 days).
+  #
+  # The model calls now() directly rather than through the now_ts() macro, so
+  # there is nothing to pin with `overrides`. The fixture therefore states its
+  # timestamps RELATIVE to now(): a test written with absolute dates would drift
+  # out of its own buckets as the calendar moved, which is the live defect this
+  # stage already found once in mart_vehicle_snapshot's fixture data.
+  # ---------------------------------------------------------------------------
+
+  - name: test_freshness_buckets_partition_the_active_listings
+    description: >
+      Five active VINs in one make/model, priced-observed 0, 2, 5, 10 and 30
+      days ago, land one in each of the five freshness buckets. The buckets are
+      a partition, so every VIN is counted exactly once and the five counts sum
+      to total_vins; fresh_lt_7d_pct is the three at or under seven days.
+    model: mart_price_freshness_trend
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        format: sql
+        rows: |
+          select cast('honda' as varchar) as make,
+                 cast('crv' as varchar) as model,
+                 cast('active' as varchar) as listing_state,
+                 now() as price_observed_at
+          union all select 'honda', 'crv', 'active', now() - interval '2 days'
+          union all select 'honda', 'crv', 'active', now() - interval '5 days'
+          union all select 'honda', 'crv', 'active', now() - interval '10 days'
+          union all select 'honda', 'crv', 'active', now() - interval '30 days'
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 5,
+           fresh_lt_1d: 1, fresh_1_3d: 1, fresh_4_7d: 1, fresh_8_14d: 1,
+           stale_gt_14d: 1, fresh_lt_7d_pct: 60.0}
+
+  # ===========================================================================
+  # mart_scrape_volume
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Branch: source_rows.where_conjunct.0 (fetched_at is not null). The guard is
+  # the same expression at the same ordinal in both the cold and the incremental
+  # compile, so this closes it under both phase tags.
+  # ---------------------------------------------------------------------------
+
+  - name: test_scrape_volume_observation_without_a_timestamp_is_dropped
+    description: >
+      hour is date_trunc('hour', fetched_at), so an observation with no
+      fetched_at is dropped before the aggregate rather than grouped into a null
+      hour. It is dropped from the vin_extraction_pct denominator too, so the
+      surviving detail hour reads 100.0 rather than 50.0.
+    model: mart_scrape_volume
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as varchar) as listing_id,
+                 cast('detail' as varchar) as source,
+                 cast(null as varchar) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as varchar) as vin,
+                 cast('VALIDVIN00000001A' as varchar) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as varchar) as make,
+                 cast(null as varchar) as model,
+                 cast(null as varchar) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as varchar) as stock_type,
+                 cast(null as varchar) as fuel_type,
+                 cast(null as varchar) as body_style,
+                 cast(null as varchar) as dealer_name,
+                 cast(null as varchar) as dealer_zip,
+                 cast(null as varchar) as dealer_city,
+                 cast(null as varchar) as dealer_state,
+                 cast(null as varchar) as customer_id,
+                 cast(null as varchar) as canonical_detail_url,
+                 cast(null as varchar) as financing_type,
+                 cast(null as varchar) as seller_zip,
+                 cast(null as varchar) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as varchar) as trid,
+                 cast(null as varchar) as isa_context,
+                 cast(null as varchar) as body,
+                 cast(null as varchar) as condition
+          -- fails `fetched_at is not null`
+          union all select 2, 'L2', 'detail', null, cast(null as timestamp), null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null, null, null, null,
+                 null, null, null, null, null, null, null
+    expect:
+      rows:
+        - {hour: "2026-01-10 10:00:00", source: "detail", artifact_count: 1,
+           observation_count: 1, unique_listings: 1, valid_vin_count: 1,
+           vin_extraction_pct: 100.0}

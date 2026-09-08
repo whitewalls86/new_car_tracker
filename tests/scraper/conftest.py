@@ -97,8 +97,8 @@ def mock_scraper_client(mocker, mock_cursor_context):
     shared cursor mock also isolates collectors on the process-wide metrics
     registry from PostgreSQL.
     """
-    # app.py does `from db import get_pool, close_pool` so we must patch
-    # the names in the app module, not the db module.
+    # app.py binds get_pool/close_pool into its own namespace at import, so we
+    # patch the names in the app module rather than in scraper.db.
     mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
     mocker.patch("scraper.app.close_pool", new_callable=AsyncMock)
     from fastapi.testclient import TestClient

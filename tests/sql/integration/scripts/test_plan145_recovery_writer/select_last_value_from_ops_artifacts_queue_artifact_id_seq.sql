@@ -1,0 +1,1 @@
+SELECT last_value FROM ops.artifacts_queue_artifact_id_seq

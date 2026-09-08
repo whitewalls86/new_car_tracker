@@ -1,9 +1,20 @@
 import json
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
-from ops.public_stats import PublicStatsCache
+from ops.public_stats import (
+    DAG_REFRESH_INTERVAL_SECONDS,
+    DEFAULT_STALE_SECONDS,
+    MART_BUCKET_SECONDS,
+    STALE_GRACE_SECONDS,
+    PublicStatsCache,
+)
+
+_REPO_ROOT = Path(__file__).parent.parent.parent
+_PRODUCER_DAG = _REPO_ROOT / "airflow" / "dags" / "hourly_analytics_refresh.py"
 
 
 def _document(*, status="ok", last_success_at="2026-08-18T18:00:00Z", stats=None):
@@ -44,7 +55,8 @@ def test_refresh_publishes_immutable_full_snapshot(tmp_path):
     assert result.status == "ok"
     assert result.stale is False
     assert result.stats["active_listings"] == 500
-    assert result.stats["analytics_data_through_iso"] == "2026-08-18T17:00:00Z"
+    # The bucket labelled 17:00 runs to 18:00, and the page shows the end.
+    assert result.stats["analytics_data_through_iso"] == "2026-08-18T18:00:00Z"
     with pytest.raises(TypeError):
         result.stats["active_listings"] = 1
 
@@ -66,8 +78,28 @@ def test_failed_or_old_snapshot_is_stale(tmp_path):
     cache = PublicStatsCache(path)
     assert cache.refresh(now=datetime(2026, 8, 18, 18, 5, tzinfo=timezone.utc)).stale
 
-    _write(path, _document(last_success_at="2026-08-18T17:00:00Z"))
+    # Two missed hourly runs. 17:00 would no longer qualify: the threshold is
+    # now the producer's own interval plus slack, so one on-time cycle is fresh.
+    _write(path, _document(last_success_at="2026-08-18T16:00:00Z"))
     assert cache.refresh(now=datetime(2026, 8, 18, 18, 5, tzinfo=timezone.utc)).stale
+
+
+def test_a_snapshot_from_the_last_hourly_run_is_not_stale(tmp_path):
+    """The defect this threshold was raised to fix, pinned.
+
+    Measured in production on 2026-09-04: the snapshot read ``status: ok`` with
+    ``last_success_at`` 57 minutes old -- a normal hourly cycle -- and the live
+    page said "Analytics data through (stale)". At 900 seconds it said that for
+    45 of every 60 minutes.
+    """
+    path = tmp_path / "snapshot.json"
+    _write(path, _document(last_success_at="2026-08-18T17:01:29Z"))
+    cache = PublicStatsCache(path)
+
+    result = cache.refresh(now=datetime(2026, 8, 18, 17, 58, tzinfo=timezone.utc))
+
+    assert result.status == "ok"
+    assert result.stale is False
 
 
 def test_missing_or_unsupported_snapshot_is_empty(tmp_path):
@@ -94,3 +126,72 @@ def test_refresh_failure_retains_last_known_good_presentation(tmp_path):
     assert result.status == "unavailable"
     assert result.stale is True
     assert result.stats["active_listings"] == 500
+
+
+def test_the_stale_threshold_tracks_the_producer_dag_schedule():
+    """The threshold is derived from the DAG's cadence, so both must move together.
+
+    Read as text rather than imported: ``apache-airflow`` lives in its own image
+    and its own CI venv, so this suite cannot import a DAG module.
+
+    If this fails because the DAG's cadence changed, the fix is to change
+    ``DAG_REFRESH_INTERVAL_SECONDS`` to match and leave the grace alone -- not to
+    relax the assertion. A threshold shorter than the interval labels every
+    healthy snapshot stale; one much longer hides a producer that has stopped.
+    """
+    source = _PRODUCER_DAG.read_text(encoding="utf-8")
+    schedules = re.findall(r'^\s*schedule="([^"]+)",', source, re.MULTILINE)
+    assert schedules == ["0 * * * *"], (
+        f"{_PRODUCER_DAG.name} declares {schedules!r}. This test only understands "
+        f"an hourly cron of the form 'M * * * *'. If the producer's cadence "
+        f"changed, set DAG_REFRESH_INTERVAL_SECONDS in ops/public_stats.py to the "
+        f"new interval and teach this test the new form."
+    )
+
+    minute, hour, dom, month, dow = schedules[0].split()
+    assert (hour, dom, month, dow) == ("*", "*", "*", "*")
+    assert minute.isdigit(), f"unsupported minute field {minute!r}"
+
+    assert DAG_REFRESH_INTERVAL_SECONDS == 3600
+    assert STALE_GRACE_SECONDS == 300
+    assert DEFAULT_STALE_SECONDS == DAG_REFRESH_INTERVAL_SECONDS + STALE_GRACE_SECONDS
+
+
+def test_the_page_shows_the_end_of_the_bucket_not_its_label(tmp_path):
+    """Measured in production 2026-09-04: the page understated its own freshness.
+
+    ``data_through`` read 14:00 while the data was complete through 15:00, so at
+    15:48Z the page said "Analytics data through 9:00 AM" local -- an hour behind
+    the truth. The field is the label of the 14:00-15:00 bucket, and Plan 136
+    already guarantees only complete buckets are published, so the end is a fact
+    rather than an estimate.
+    """
+    path = tmp_path / "snapshot.json"
+    document = _document()
+    document["data_through"] = "2026-09-04T14:00:00Z"
+    _write(path, document)
+    cache = PublicStatsCache(path)
+
+    result = cache.refresh(now=datetime(2026, 9, 4, 15, 48, tzinfo=timezone.utc))
+
+    assert result.stats["analytics_data_through_iso"] == "2026-09-04T15:00:00Z"
+
+
+def test_the_bucket_width_tracks_the_mart_that_produces_it():
+    """The page adds a bucket width, so it must be the mart's actual width.
+
+    If ``mart_scrape_volume`` moved to 15-minute buckets, the page would go on
+    adding an hour and overstate freshness by 45 minutes -- a lie in the
+    opposite direction from the one this constant fixes, and a quieter one,
+    because a page claiming to be fresher than it is invites no complaint.
+    """
+    mart = _REPO_ROOT / "dbt" / "models" / "marts" / "mart_scrape_volume.sql"
+    source = mart.read_text(encoding="utf-8")
+
+    truncations = set(re.findall(r"date_trunc\('(\w+)',\s*fetched_at\)", source))
+    assert truncations == {"hour"}, (
+        f"{mart.name} buckets on {sorted(truncations)}. MART_BUCKET_SECONDS in "
+        f"ops/public_stats.py adds a bucket width to data_through before the "
+        f"landing page renders it; set it to the new width."
+    )
+    assert MART_BUCKET_SECONDS == 3600

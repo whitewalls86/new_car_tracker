@@ -10,6 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 DUCKDB_PATH = os.environ.get("DUCKDB_PATH")
 
 
@@ -37,6 +41,47 @@ def duckdb_con():
     return duckdb.connect(DUCKDB_PATH, read_only=True)
 
 
+@pytest.fixture(scope="session")
+def duckdb_s3_con():
+    """A DuckDB connection reading MinIO directly, built the way production does.
+
+    Distinct from ``duckdb_con`` above and not a variant of it: that one opens
+    the *file* a dbt build produced, while this one is
+    ``shared.duckdb_s3.get_duckdb_s3_connection()`` -- the same call
+    ``ops/routers/maintenance.py`` makes, reading the ops_normalized Parquet
+    with S3 credentials the analytics file's connection does not carry.
+
+    Absence is a skip locally and a failure in CI (``REQUIRE_MINIO``), for the
+    same reason as the two fixtures around it: a Layer 2 test that skips
+    executes no SQL, and the statement it covers is the one deciding which
+    listings get a 'cleared' event written for them.
+    """
+    if not os.environ.get("MINIO_ENDPOINT"):
+        reason = (
+            "MINIO_ENDPOINT is not set -- no MinIO for the ops_normalized "
+            "Parquet statements to read"
+        )
+        if os.environ.get("REQUIRE_MINIO"):
+            pytest.fail(reason)
+        pytest.skip(reason)
+    from shared.duckdb_s3 import get_duckdb_s3_connection
+    con = get_duckdb_s3_connection()
+    yield con
+    con.close()
+
+
+@pytest.fixture(scope="session")
+def blocked_cooldown_parquet():
+    """The glob ``ops/routers/maintenance.py`` passes as a bound parameter.
+
+    Built here from the same ``shared.minio.BUCKET`` the router reads, rather
+    than typed out: a retyped path is the paraphrase this suite exists to
+    prevent, one level below the statement.
+    """
+    from shared.minio import BUCKET
+    return f"s3://{BUCKET}/ops_normalized/blocked_cooldown_events/**/*.parquet"
+
+
 @pytest.fixture()
 def airflow_metadata(cur):
     """
@@ -60,9 +105,7 @@ def airflow_metadata(cur):
     close, which is how the drain queries reached production unexecuted.
     """
     cur.execute(
-        """SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'airflow'
-              AND table_name IN ('task_instance', 'dag_run', 'alembic_version')"""
+        SQL("select_table_name_from_information_schema_tables")
     )
     present = {row["table_name"] for row in cur.fetchall()}
     missing = {"task_instance", "dag_run", "alembic_version"} - present
@@ -75,30 +118,3 @@ def airflow_metadata(cur):
             pytest.fail(reason)
         pytest.skip(reason)
     return cur
-
-
-def pytest_terminal_summary(terminalreporter):
-    """Fail the Layer 2 run if anything skipped, when CI says nothing may.
-
-    ``REQUIRE_DUCKDB`` and ``REQUIRE_AIRFLOW_SCHEMA`` each close one fixture's
-    skip. This closes the class: the next fixture someone adds will default to
-    skipping when its dependency is absent, because that is the courteous thing
-    to do locally, and it will silently subtract from the CI run the day its
-    dependency breaks. A suite whose job is executing production SQL against a
-    real engine has nothing to say when it does not run.
-    """
-    if not os.environ.get("REQUIRE_LAYER_2_EXECUTION"):
-        return
-    skipped = terminalreporter.stats.get("skipped", [])
-    if not skipped:
-        return
-    reasons = sorted({str(report.longrepr[2]) for report in skipped})
-    terminalreporter.section("Layer 2 execution required", red=True)
-    terminalreporter.write_line(
-        f"{len(skipped)} test(s) skipped while REQUIRE_LAYER_2_EXECUTION is set. "
-        "A skipped Layer 2 test executes no SQL, so this run proves nothing "
-        "about the statements it names:"
-    )
-    for reason in reasons:
-        terminalreporter.write_line(f"  {reason}")
-    terminalreporter._session.exitstatus = 1

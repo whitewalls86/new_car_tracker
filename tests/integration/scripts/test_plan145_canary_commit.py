@@ -36,6 +36,9 @@ from scripts.oneoff.reconcile_april_detail import (
     allocate_artifact_ids,
     canary_batch_name,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -188,20 +191,17 @@ def canary_world(writer_conn, vc, mocker):
                 "--expect-rows", "4"],
     }
 
-    vc.execute("DELETE FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (made["artifact_ids"],))
-    vc.execute("DELETE FROM staging.price_observation_events "
-               "WHERE artifact_id = ANY(%s)", (made["artifact_ids"],))
-    vc.execute("DELETE FROM staging.artifacts_queue_events "
-               "WHERE artifact_id = ANY(%s)", (made["artifact_ids"],))
-    vc.execute(f"DELETE FROM {RECEIPT_TABLE} WHERE batch_name = ANY(%s)",
+    vc.execute(SQL("delete_staging_silver_observations"), (made["artifact_ids"],))
+    vc.execute(SQL("delete_staging_price_observation_events"), (made["artifact_ids"],))
+    vc.execute(SQL("delete_staging_artifacts_queue_events"), (made["artifact_ids"],))
+    vc.execute(SQL("delete_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (made["batches"],))
 
 
 def _snapshot_protected(vc):
     out = {}
     for table in PROTECTED_TABLES:
-        vc.execute(f"SELECT md5(t::text) AS h FROM {table} t ORDER BY 1")
+        vc.execute(SQL("select_h_from_table").format(table=table))
         out[table] = [r["h"] for r in vc.fetchall()]
     return out
 
@@ -217,9 +217,7 @@ def test_the_canary_commits_exactly_the_manifests_rows_and_nothing_else(
         ["canary-commit", "--run-id", world["run_id"], "--apply"]
         + world["pin"])) == 0
 
-    vc.execute("SELECT artifact_id, listing_id, source, listing_state, vin, "
-               "fetched_at FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s) ORDER BY artifact_id, source", (ids,))
+    vc.execute(SQL("select_artifact_id_listing_id_source_from_staging_silver_observations"), (ids,))
     silver = vc.fetchall()
     assert len(silver) == 4                       # the manifest's four rows
     assert {r["fetched_at"] for r in silver} == {CAPTURE_AT}
@@ -228,18 +226,14 @@ def test_the_canary_commits_exactly_the_manifests_rows_and_nothing_else(
     assert next(r["vin"] for r in silver
                 if r["listing_id"] == world["hint"]) == "VIN-SNAPSHOT-HINT"
 
-    vc.execute("SELECT artifact_id, event_type, source, event_at "
-               "FROM staging.price_observation_events "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_artifact_id_event_type_from_staging_price_observation_events"), (ids,))
     events = vc.fetchall()
     assert len(events) == 2                       # detail rows only
     assert {e["source"] for e in events} == {"detail"}
     assert {e["event_at"] for e in events} == {CAPTURE_AT}
     assert sorted(e["event_type"] for e in events) == ["deleted", "upserted"]
 
-    vc.execute("SELECT artifact_id, status, run_id, fetched_at, event_at, "
-               "artifact_type FROM staging.artifacts_queue_events "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_artifact_id_status_run_id_from_staging_artifacts_queue_events"), (ids,))
     queue = vc.fetchall()
     assert len(queue) == 3                        # one per artifact
     assert {q["status"] for q in queue} == {RECOVERED_STATUS}
@@ -260,7 +254,7 @@ def test_the_canary_leaves_one_receipt_naming_the_manifest_digest(canary_world,
         ["canary-commit", "--run-id", world["run_id"], "--apply"]
         + world["pin"]))
 
-    vc.execute(f"SELECT * FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_all_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     receipts = vc.fetchall()
     assert len(receipts) == 1
@@ -284,8 +278,7 @@ def test_a_rerun_of_the_canary_writes_zero_rows(canary_world, vc):
         for table in ("staging.silver_observations",
                       "staging.price_observation_events",
                       "staging.artifacts_queue_events"):
-            vc.execute(f"SELECT count(*) AS n FROM {table} "  # noqa: S608
-                       "WHERE artifact_id = ANY(%s)", (ids,))
+            vc.execute(SQL("select_n_from_table").format(table=table), (ids,))
             out.append(vc.fetchone()["n"])
         return out
 
@@ -294,8 +287,10 @@ def test_a_rerun_of_the_canary_writes_zero_rows(canary_world, vc):
         ["canary-commit", "--run-id", world["run_id"], "--apply"]
         + world["pin"])) == 0
     assert _counts() == before
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} "
-               "WHERE batch_name = %s", (world["batch_name"],))
+    vc.execute(
+        SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
+        (world["batch_name"],),
+    )
     assert vc.fetchone()["n"] == 1
 
 
@@ -340,8 +335,7 @@ def test_the_migrated_manifest_commits_against_real_postgres(canary_world, vc):
         ["canary-commit", "--run-id", world["run_id"], "--apply",
          "--expect-manifest-sha256", digest, "--expect-rows", "4"])) == 0
 
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 4
 
 
@@ -383,10 +377,9 @@ def test_a_substituted_sibling_manifest_commits_nothing(canary_world, vc):
              hashlib.sha256(store[target_key]).hexdigest(),
              "--expect-rows", "3"]))
 
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 0
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     assert vc.fetchone()["n"] == 0
 
@@ -427,10 +420,9 @@ def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
              "--expect-rows", "4"]))
     assert "selects different artifacts" not in str(exc.value)
 
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 0
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     assert vc.fetchone()["n"] == 0
 
@@ -453,10 +445,9 @@ def test_a_vin_snapshot_that_moved_after_sampling_commits_nothing(canary_world,
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", world["run_id"], "--apply"]
             + world["pin"]))
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 0
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     assert vc.fetchone()["n"] == 0
 
@@ -471,7 +462,7 @@ def test_the_commit_time_comes_from_the_receipt_not_the_process_clock(
         ["canary-commit", "--run-id", world["run_id"], "--apply"]
         + world["pin"]))
 
-    vc.execute(f"SELECT committed_at FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_committed_at_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     from_db = vc.fetchone()["committed_at"]
     report = json.loads(world["store"][
@@ -504,7 +495,7 @@ def test_a_lost_report_is_repaired_from_the_receipt_after_the_clock_moves(
             + world["pin"]))
 
     # the rows and the receipt are durable; the evidence object is not
-    vc.execute(f"SELECT committed_at FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_committed_at_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     true_commit = vc.fetchone()["committed_at"]
     assert commit_key not in world["store"]
@@ -540,10 +531,9 @@ def test_the_canary_row_budget_refuses_before_any_row_is_committed(
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", world["run_id"], "--apply"]
             + world["pin"]))
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 0
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     assert vc.fetchone()["n"] == 0
 
@@ -553,8 +543,7 @@ def test_the_canary_dry_run_commits_nothing(canary_world, vc):
     ids = sorted(world["artifact_ids"].values())
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", world["run_id"]])) == 0
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 0
 
 
@@ -570,9 +559,10 @@ def _flush_like_the_flushers(world, vc, *, tables=("silver", "price", "queue")):
     part = uuid.uuid4().hex[:8]
 
     if "silver" in tables:
-        vc.execute("SELECT artifact_id, listing_id, source, fetched_at "
-                   "FROM staging.silver_observations "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(
+            SQL("select_artifact_id_listing_id_source_from_staging_silver_observations_2"),
+            (ids,),
+        )
         rows = [dict(r) for r in vc.fetchall()]
         schema = pa.schema([pa.field("artifact_id", pa.int64()),
                             pa.field("listing_id", pa.string()),
@@ -584,13 +574,13 @@ def _flush_like_the_flushers(world, vc, *, tables=("silver", "price", "queue")):
                    f"part-{part}-0.parquet")
             store[key] = _write_parquet(schema, [
                 {**r, "listing_id": str(r["listing_id"])} for r in here])
-        vc.execute("DELETE FROM staging.silver_observations "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(SQL("delete_staging_silver_observations"), (ids,))
 
     if "price" in tables:
-        vc.execute("SELECT artifact_id, listing_id, event_type, event_at "
-                   "FROM staging.price_observation_events "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(
+            SQL("select_artifact_id_listing_id_from_staging_price_observation_events"),
+            (ids,),
+        )
         rows = [dict(r) for r in vc.fetchall()]
         if rows:
             schema = pa.schema([
@@ -603,13 +593,13 @@ def _flush_like_the_flushers(world, vc, *, tables=("silver", "price", "queue")):
                    f"part-{part}-0.parquet")
             store[key] = _write_parquet(schema, [
                 {**r, "listing_id": str(r["listing_id"])} for r in rows])
-        vc.execute("DELETE FROM staging.price_observation_events "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(SQL("delete_staging_price_observation_events"), (ids,))
 
     if "queue" in tables:
-        vc.execute("SELECT artifact_id, status, run_id, fetched_at, event_at "
-                   "FROM staging.artifacts_queue_events "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(
+            SQL("select_artifact_id_status_run_id_from_staging_artifacts_queue_events_2"),
+            (ids,),
+        )
         rows = [dict(r) for r in vc.fetchall()]
         if rows:
             schema = pa.schema([
@@ -621,8 +611,7 @@ def _flush_like_the_flushers(world, vc, *, tables=("silver", "price", "queue")):
             key = (f"ops_normalized/artifacts_queue_events/year={at.year}/"
                    f"month={at.month}/part-{part}-0.parquet")
             store[key] = _write_parquet(schema, rows)
-        vc.execute("DELETE FROM staging.artifacts_queue_events "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(SQL("delete_staging_artifacts_queue_events"), (ids,))
 
 
 def test_the_round_trip_passes_on_lake_objects_with_staging_emptied(
@@ -642,8 +631,7 @@ def test_the_round_trip_passes_on_lake_objects_with_staging_emptied(
     for table in ("staging.silver_observations",
                   "staging.price_observation_events",
                   "staging.artifacts_queue_events"):
-        vc.execute(f"SELECT count(*) AS n FROM {table} "  # noqa: S608
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(SQL("select_n_from_table").format(table=table), (ids,))
         assert vc.fetchone()["n"] == 0        # staging is gone, as it will be
 
     assert mod.run_canary_flush_verify(mod.parse_args(
@@ -667,15 +655,14 @@ def test_the_receipt_outlives_the_flush_that_deletes_the_rows(canary_world, vc):
         + world["pin"]))
     _flush_like_the_flushers(world, vc)
 
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (world["batch_name"],))
     assert vc.fetchone()["n"] == 1
 
     assert mod.run_canary_commit(mod.parse_args(
         ["canary-commit", "--run-id", world["run_id"], "--apply"]
         + world["pin"])) == 0
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = ANY(%s)", (ids,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (ids,))
     assert vc.fetchone()["n"] == 0        # not rewritten into the emptied table
 
 

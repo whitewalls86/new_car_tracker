@@ -29,6 +29,9 @@ from scripts.oneoff.reconcile_april_detail import (
     build_recovery_silver_row,
     write_import_batch,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -101,14 +104,11 @@ def recovery_batch(vc):
 
     ids = made["artifact_ids"]
     if ids:
-        vc.execute("DELETE FROM staging.silver_observations "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
-        vc.execute("DELETE FROM staging.price_observation_events "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
-        vc.execute("DELETE FROM staging.artifacts_queue_events "
-                   "WHERE artifact_id = ANY(%s)", (ids,))
+        vc.execute(SQL("delete_staging_silver_observations"), (ids,))
+        vc.execute(SQL("delete_staging_price_observation_events"), (ids,))
+        vc.execute(SQL("delete_staging_artifacts_queue_events"), (ids,))
     if made["batches"]:
-        vc.execute(f"DELETE FROM {RECEIPT_TABLE} WHERE batch_name = ANY(%s)",
+        vc.execute(SQL("delete_receipt_table").format(receipt_table=RECEIPT_TABLE),
                    (made["batches"],))
 
 
@@ -116,7 +116,7 @@ def _snapshot_protected(vc):
     """Every protected hot table, as an ordered list of whole rows."""
     out = {}
     for table in PROTECTED_TABLES:
-        vc.execute(f"SELECT md5(t::text) AS h FROM {table} t ORDER BY 1")
+        vc.execute(SQL("select_h_from_table").format(table=table))
         out[table] = [r["h"] for r in vc.fetchall()]
     return out
 
@@ -155,17 +155,17 @@ def test_a_batch_writes_all_four_things_at_the_legacy_capture_time(
     assert out == {"batch_name": batch, "skipped": False, "silver": 2,
                    "price_events": 1, "queue_events": 1, "artifacts": 1}
 
-    vc.execute("SELECT listing_id, source, fetched_at, artifact_id "
-               "FROM staging.silver_observations WHERE artifact_id = %s "
-               "ORDER BY source", (artifact_id,))
+    vc.execute(
+        SQL("select_listing_id_source_fetched_at_from_staging_silver_observations"),
+        (artifact_id,),
+    )
     written = vc.fetchall()
     assert [r["source"] for r in written] == ["carousel", "detail"]
     # The primary and the carousel row share the object's one identity.
     assert {r["artifact_id"] for r in written} == {artifact_id}
     assert {r["fetched_at"] for r in written} == {CAPTURE_AT}
 
-    vc.execute("SELECT listing_id, event_type, source, event_at "
-               "FROM staging.price_observation_events WHERE artifact_id = %s",
+    vc.execute(SQL("select_listing_id_event_type_from_staging_price_observation_events"),
                (artifact_id,))
     minted = vc.fetchall()
     assert len(minted) == 1                       # the carousel row minted none
@@ -173,9 +173,10 @@ def test_a_batch_writes_all_four_things_at_the_legacy_capture_time(
     assert minted[0]["event_type"] == "upserted"
     assert minted[0]["event_at"] == CAPTURE_AT    # not the now() default
 
-    vc.execute("SELECT status, artifact_type, minio_path, fetched_at, event_at, "
-               "listing_id FROM staging.artifacts_queue_events "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(
+        SQL("select_status_artifact_type_from_staging_artifacts_queue_events"),
+        (artifact_id,),
+    )
     recovered = vc.fetchall()
     assert len(recovered) == 1
     assert recovered[0]["status"] == RECOVERED_STATUS
@@ -184,7 +185,7 @@ def test_a_batch_writes_all_four_things_at_the_legacy_capture_time(
     assert recovered[0]["fetched_at"] == CAPTURE_AT       # the April capture
     assert recovered[0]["event_at"] > CAPTURE_AT          # the recovery action
 
-    vc.execute(f"SELECT * FROM {RECEIPT_TABLE} WHERE batch_name = %s", (batch,))
+    vc.execute(SQL("select_all_from_receipt_table").format(receipt_table=RECEIPT_TABLE), (batch,))
     receipt = vc.fetchone()
     assert receipt["manifest_sha256"] == manifest
     assert (receipt["artifact_count"], receipt["silver_count"],
@@ -201,8 +202,7 @@ def test_an_unlisted_detail_row_mints_a_deleted_event(recovery_batch, writer_con
     batch, silver, events, queue = recovery_batch(rows, {key: artifact_id})
     write_import_batch(writer_conn, batch, _digest(batch), silver, events, queue)
 
-    vc.execute("SELECT event_type, price FROM staging.price_observation_events "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_event_type_price_from_staging_price_observation_events"), (artifact_id,))
     row = vc.fetchone()
     assert row["event_type"] == "deleted" and row["price"] is None
 
@@ -214,24 +214,22 @@ def test_a_committed_batch_rerun_writes_zero_rows_and_touches_no_sequence(
     manifest = _digest(batch)
     write_import_batch(writer_conn, batch, manifest, silver, events, queue)
 
-    vc.execute("SELECT last_value FROM ops.artifacts_queue_artifact_id_seq")
+    vc.execute(SQL("select_last_value_from_ops_artifacts_queue_artifact_id_seq"))
     sequence_before = vc.fetchone()["last_value"]
 
     again = write_import_batch(writer_conn, batch, manifest, silver, events, queue)
     assert again["skipped"] is True
     assert (again["silver"], again["price_events"], again["queue_events"]) == (0, 0, 0)
 
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (artifact_id,))
     assert vc.fetchone()["n"] == 2                # still the first write's rows
-    vc.execute("SELECT count(*) AS n FROM staging.price_observation_events "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_n_from_staging_price_observation_events"), (artifact_id,))
     assert vc.fetchone()["n"] == 1
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (batch,))
     assert vc.fetchone()["n"] == 1
 
-    vc.execute("SELECT last_value FROM ops.artifacts_queue_artifact_id_seq")
+    vc.execute(SQL("select_last_value_from_ops_artifacts_queue_artifact_id_seq"))
     assert vc.fetchone()["last_value"] == sequence_before
 
 
@@ -246,10 +244,9 @@ def test_the_same_batch_name_with_another_digest_stops_and_writes_nothing(
                            silver, events, queue)
     assert _digest(batch) in str(exc.value)
 
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (artifact_id,))
     assert vc.fetchone()["n"] == 2                # not doubled
-    vc.execute(f"SELECT manifest_sha256 FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_manifest_sha256_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (batch,))
     assert [r["manifest_sha256"] for r in vc.fetchall()] == [_digest(batch)]
 
@@ -268,17 +265,16 @@ def test_a_failure_mid_batch_rolls_back_all_four_writes(
     for table in ("staging.silver_observations",
                   "staging.price_observation_events",
                   "staging.artifacts_queue_events"):
-        vc.execute(f"SELECT count(*) AS n FROM {table} WHERE artifact_id = %s",
+        vc.execute(SQL("select_n_from_table").format(table=table),
                    (artifact_id,))
         assert vc.fetchone()["n"] == 0, table
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (batch,))
     assert vc.fetchone()["n"] == 0
 
     # And the connection is usable again: the retry succeeds whole.
     write_import_batch(writer_conn, batch, _digest(batch), silver, events, queue)
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (artifact_id,))
     assert vc.fetchone()["n"] == 2
 
 
@@ -302,17 +298,16 @@ def test_a_probe_apply_issues_every_statement_and_commits_nothing(
     for table in ("staging.silver_observations",
                   "staging.price_observation_events",
                   "staging.artifacts_queue_events"):
-        vc.execute(f"SELECT count(*) AS n FROM {table} WHERE artifact_id = %s",
+        vc.execute(SQL("select_n_from_table").format(table=table),
                    (artifact_id,))
         assert vc.fetchone()["n"] == 0, table
-    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+    vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE),
                (batch,))
     assert vc.fetchone()["n"] == 0
 
     # The connection survives the rollback and an authoritative write still commits.
     write_import_batch(writer_conn, batch, manifest, silver, events, queue)
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (artifact_id,))
     assert vc.fetchone()["n"] == 2
 
 
@@ -330,7 +325,7 @@ def test_a_probe_apply_still_lets_a_constraint_fire_at_statement_time(
                            broken, probe=True)
 
     for table in ("staging.silver_observations", "staging.price_observation_events"):
-        vc.execute(f"SELECT count(*) AS n FROM {table} WHERE artifact_id = %s",
+        vc.execute(SQL("select_n_from_table").format(table=table),
                    (artifact_id,))
         assert vc.fetchone()["n"] == 0, table
 
@@ -343,17 +338,15 @@ def test_the_four_protected_tables_and_the_queue_are_unchanged(
     # between two empty snapshots proves nothing.
     live_listing = str(uuid.uuid4())
     vc.execute(
-        "INSERT INTO ops.price_observations (listing_id, vin, price, make, model, "
-        "last_seen_at, last_artifact_id) VALUES (%s::uuid, %s, 1, 'x', 'y', now(), 1)",
+        SQL("insert_ops_price_observations"),
         (live_listing, f"VIN{uuid.uuid4().hex[:14].upper()}"),
     )
     vc.execute(
-        "INSERT INTO ops.detail_scrape_claims (listing_id, claimed_by, status) "
-        "VALUES (%s::uuid, 'itest', 'running')", (live_listing,),
+        SQL("insert_ops_detail_scrape_claims"), (live_listing,),
     )
     try:
         before = _snapshot_protected(vc)
-        vc.execute("SELECT count(*) AS n FROM ops.artifacts_queue")
+        vc.execute(SQL("select_n_from_ops_artifacts_queue_2"))
         queue_before = vc.fetchone()["n"]
 
         (batch, silver, events, queue, _aid, *_rest) = \
@@ -361,12 +354,12 @@ def test_the_four_protected_tables_and_the_queue_are_unchanged(
         write_import_batch(writer_conn, batch, _digest(batch), silver, events, queue)
 
         assert _snapshot_protected(vc) == before
-        vc.execute("SELECT count(*) AS n FROM ops.artifacts_queue")
+        vc.execute(SQL("select_n_from_ops_artifacts_queue_2"))
         assert vc.fetchone()["n"] == queue_before
     finally:
-        vc.execute("DELETE FROM ops.detail_scrape_claims WHERE listing_id = %s::uuid",
+        vc.execute(SQL("delete_ops_detail_scrape_claims"),
                    (live_listing,))
-        vc.execute("DELETE FROM ops.price_observations WHERE listing_id = %s::uuid",
+        vc.execute(SQL("delete_ops_price_observations"),
                    (live_listing,))
 
 
@@ -382,12 +375,11 @@ def test_the_receipt_outlives_the_flush_that_deletes_the_rows_it_describes(
     for table in ("staging.silver_observations",
                   "staging.price_observation_events",
                   "staging.artifacts_queue_events"):
-        vc.execute(f"DELETE FROM {table} WHERE artifact_id = %s", (artifact_id,))
+        vc.execute(SQL("delete_table").format(table=table), (artifact_id,))
 
     again = write_import_batch(writer_conn, batch, manifest, silver, events, queue)
     assert again["skipped"] is True
-    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_n_from_staging_silver_observations"), (artifact_id,))
     assert vc.fetchone()["n"] == 0            # the flushed rows stay flushed
 
 
@@ -401,18 +393,15 @@ def test_the_not_null_column_would_have_accepted_the_string_None(vc):
     would have caught it either.
     """
     vc.execute(
-        "INSERT INTO staging.silver_observations "
-        "(artifact_id, listing_id, source, listing_state, fetched_at) "
-        "VALUES (%s, %s, 'carousel', 'active', %s) RETURNING id",
+        SQL("insert_staging_silver_observations"),
         (-1, str(None), CAPTURE_AT),
     )
     row_id = vc.fetchone()["id"]
     try:
-        vc.execute("SELECT listing_id FROM staging.silver_observations "
-                   "WHERE id = %s", (row_id,))
+        vc.execute(SQL("select_listing_id_from_staging_silver_observations"), (row_id,))
         assert vc.fetchone()["listing_id"] == "None"      # committed happily
     finally:
-        vc.execute("DELETE FROM staging.silver_observations WHERE id = %s",
+        vc.execute(SQL("delete_staging_silver_observations_2"),
                    (row_id,))
 
 
@@ -466,9 +455,7 @@ def test_the_receipt_table_rejects_a_digest_that_is_not_a_sha256(pg_conn):
     with pg_conn.cursor() as cur:
         with pytest.raises(Exception):
             cur.execute(
-                f"INSERT INTO {RECEIPT_TABLE} (batch_name, manifest_sha256, "
-                "artifact_count, silver_count, price_event_count, "
-                "queue_event_count) VALUES ('bad', 'tooshort', 0, 0, 0, 0)"
+                SQL("insert_receipt_table").format(receipt_table=RECEIPT_TABLE)
             )
 
 
@@ -479,15 +466,12 @@ def test_two_digests_for_one_batch_name_are_both_visible(pg_conn, vc):
     try:
         for digest in (_digest("a"), _digest("b")):
             vc.execute(
-                f"INSERT INTO {RECEIPT_TABLE} (batch_name, manifest_sha256, "
-                "artifact_count, silver_count, price_event_count, "
-                "queue_event_count) VALUES (%s, %s, 0, 0, 0, 0)", (batch, digest),
+                SQL("insert_receipt_table_2").format(receipt_table=RECEIPT_TABLE), (batch, digest),
             )
-        vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} "
-                   "WHERE batch_name = %s", (batch,))
+        vc.execute(SQL("select_n_from_receipt_table").format(receipt_table=RECEIPT_TABLE), (batch,))
         assert vc.fetchone()["n"] == 2
     finally:
-        vc.execute(f"DELETE FROM {RECEIPT_TABLE} WHERE batch_name = %s", (batch,))
+        vc.execute(SQL("delete_receipt_table_2").format(receipt_table=RECEIPT_TABLE), (batch,))
 
 
 def test_the_recovered_status_is_accepted_with_no_hot_queue_row(
@@ -497,11 +481,10 @@ def test_the_recovered_status_is_accepted_with_no_hot_queue_row(
     (batch, silver, events, queue, artifact_id, *_rest) = \
         _one_object_batch(recovery_batch, writer_conn)
     write_import_batch(writer_conn, batch, _digest(batch), silver, events, queue)
-    vc.execute("SELECT count(*) AS n FROM ops.artifacts_queue WHERE artifact_id = %s",
+    vc.execute(SQL("select_n_from_ops_artifacts_queue"),
                (artifact_id,))
     assert vc.fetchone()["n"] == 0
-    vc.execute("SELECT status FROM staging.artifacts_queue_events "
-               "WHERE artifact_id = %s", (artifact_id,))
+    vc.execute(SQL("select_status_from_staging_artifacts_queue_events"), (artifact_id,))
     assert vc.fetchone()["status"] == RECOVERED_STATUS
 
 
@@ -510,6 +493,5 @@ def test_a_recovered_capture_time_stays_four_months_behind_now(
     (batch, silver, events, queue, artifact_id, *_rest) = \
         _one_object_batch(recovery_batch, writer_conn)
     write_import_batch(writer_conn, batch, _digest(batch), silver, events, queue)
-    vc.execute("SELECT now() - fetched_at AS age FROM staging.silver_observations "
-               "WHERE artifact_id = %s LIMIT 1", (artifact_id,))
+    vc.execute(SQL("select_age_from_staging_silver_observations"), (artifact_id,))
     assert vc.fetchone()["age"] > timedelta(days=1)

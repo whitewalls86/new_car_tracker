@@ -94,7 +94,7 @@ Two further parts of the article are already answered here or should be dropped:
 
 | Article component | Disposition |
 |---|---|
-| **Skills** (procedural markdown) | Already present — `.claude/skills/` holds 8, including `close-out`, `plans`, `testing-contract`. Not in scope. |
+| **Skills** (procedural markdown) | Already present — `.claude/skills/` holds 12, including `close-out`, `stage-close`, `plans`, `testing-contract`. Not in scope. |
 | **Model catalog** (generated) | In scope. This is the missing half. |
 | **Business glossary** (hand-written) | Deferred to Stage 4 and gated. It is hand-maintained, which is the staleness failure the article opens by condemning, reintroduced inside its own solution. |
 | **Analytics guidance** (hand-written) | Same gate as the glossary. |

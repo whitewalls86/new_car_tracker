@@ -1,77 +1,69 @@
 # Plan 162: The Testing Census and CI Restructure
 
-## Status
+## What this plan is for
 
-**Stages 0–7 are complete except 6c. Stage 6c is next, then Stage 8** — which
-was narrowed on 2026-09-02, before it started: G7 is now the dashboard's
-assertionless Layer 2 suite, and the Streamlit Python it used to mean is G18
-and Plan 150's. [Why](#stage-8-narrowed-and-g7-now-names-a-different-gap).
-The census enumerated
-the work; Stage 1 ran the 73 tests nothing
-had ever invoked and found no production defects behind them, which
-[confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
-Stage 2 [unblinded the coverage instrument](#evidence--stage-2-unblinding-coverage-car-46-2026-08-31)
-the later stages are graded by, taking the reported number from 88% to 75.95%
-without a line of production code changing; Stage 3
-[gave the two health-sensor censuses one declared source](#evidence--stage-3-one-declared-source-for-the-health-sensor-censuses-car-47-2026-08-31)
-and found a third census, `DAG_SPECS`, already one DAG short; Stage 4
-[split the 267s dbt job](#evidence--stage-4-splitting-the-267s-dbt-job-car-48-2026-09-01)
-and took CI's wall clock from 292s to about 155s, most of it by answering Plan 139
-Stage C's question — the 92s step was 21 Python interpreters starting, not 21
-dbt builds running; and Stage 5
-[swept the 34 mock conversions and the 16 layer renames](#evidence--stage-5-the-mechanical-sweeps-car-49-2026-09-01),
-closing G4, G11 and G13; and Stage 6b
-[mechanised the encoding-sensitive I/O guard](#evidence--stage-6b-mechanising-the-encoding-sensitive-io-guard-car-60-2026-09-01),
-fixing 234 sites across three shapes and closing G13's class with a rule that
-fails on the exact call ruff cannot see. **The list stood at 68 after Stage 5 and stands at 56
-now**, down from 116: Stage 5 deleted exactly the 50 it was scoped to and added
-2 back, having found
-[the Layer 2 check crediting files by substring](#the-instrument-was-weaker-than-its-own-docstring),
-and Stage 6 emptied the 12 route waivers. Neither Stage 3 nor Stage 4 closes
-waivers; Stage 3 closes Plan 139's Stage H and Stage 4 its Stages B and C.
-Stage 6b closes none either — it adds a rule whose list starts empty.
+Runs a census of the whole automated test suite for coverage, dead assertions,
+and drift between what CI checks and what the code does, then closes the gaps
+it finds and restructures CI around what the census showed actually mattered.
 
-**Every count in this section is the number an instrument reports, not a
-number this document remembers.** The 68 above survived here for a day after
-Stage 6 made it 56, and was caught during Stage 6b's closeout by importing the
-waiver tuples rather than reading this paragraph. That is this plan's own
-subject matter happening to this plan, and it is left on the record rather than
-quietly corrected.
-
-This document was written as a deliberate stub on 2026-08-30, when
-[Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
-plan measures against. That blocker is gone: 161's contract landed, was
-asserted, and is archived.
-
-Stages 2 through 10, including 5b, 6b and 6c, are scoped below and unblocked. Effort is
-**L**, down from the XL placeholder, on the reasoning in
-[The estimate](#the-estimate) and now confirmed against a measurement rather
-than proposed. [`docs/PLANS.md`](../PLANS.md) owns priority and effort; this
-document does not choose them.
-
-## What the census found
+## The case
 
 [`tests/test_testing_contract.py`](../../tests/test_testing_contract.py)
-implemented seven mechanical rules when the census ran, and eight since Stage 2
+implemented seven mechanical rules when the census ran, and eight since Stage C
 added the coverage rule. It passes, and **a pass means only that those rules
 hold** — every violation standing on 2026-08-31 is grandfathered in a waiver
 list. That list is this plan's backlog:
 
 This is the census as taken, kept as the baseline the stages are measured
 against; the live count is whatever `tests/test_testing_contract.py` holds
-today. **Stage 1 has since cleared the CI-invocation row and Stage 5 the
-mocker and layer-numbering rows. Stage 5 also corrected the Layer 2 row
+today. Stage B has since cleared the CI-invocation row, Stage F the mocker and
+layer-numbering rows, Stage H the route row, and Stage J's encoding rule
+started empty and has stayed empty. Stage F also corrected the Layer 2 row
 upward, from 54 to 56 — see
-[the instrument note](#the-instrument-was-weaker-than-its-own-docstring).
-**The live total is 56.**
+[the instrument note](../evidence/plan_162_stage_F_evidence.md#the-instrument-was-weaker-than-its-own-docstring).
+
+**Measured 2026-09-03, by importing the tuples: the live total is 37**, down
+from 120 at the census.
+
+| Tuple | Live | Gap |
+|---|---|---|
+| `DUPLICATE_SQL_WAIVERS` | 1 | G17 — the one waived pair, two policies that agree |
+| `INLINE_SQL_WAIVERS` | 15 | G5 |
+| `SQL_LITERAL_WAIVERS` | 21 | G15 |
+| `CI_INVOCATION`, `MOCKER`, `ROUTE`, `LAYER_NUMBER`, `ENCODING` | 0 | G1, G2, G4, G6, G11, G13's class — all drained |
+| **Total** | **37** | |
+
+**Every count here is the number an instrument reports, not a number this
+document remembers**, and the rule exists because this document keeps breaking
+it. The count read 68 for a day after Stage H had made it 56, and was caught
+during Stage J's closeout by importing the waiver tuples rather than reading
+the paragraph that claimed it. It then read 56 from 2026-09-02 until
+2026-09-03, when Stages L, M and N had between them taken it to 37, and was
+caught the same way — while scoping Stage P. Twice is a pattern, and both are
+left on the record rather than quietly corrected: this plan's own subject
+matter, happening to this plan, in the one section that asserts it will not.
+
+**Three times, now.** Read again on 2026-09-07 while scoping the contract stages
+below, by the same method: **the live total is 25**, and the table above is
+missing two tuples entirely. `TEST_SQL_TEMPLATE_WAIVERS` (5) arrived with
+Stage X and `DBT_CONTRACT_WAIVERS` arrived with Stage S, was seeded at 23 and
+drained to 0 in two days. The live split is `INLINE_SQL_WAIVERS` 13,
+`SQL_LITERAL_WAIVERS` 6, `TEST_SQL_TEMPLATE_WAIVERS` 5, `DUPLICATE_SQL_WAIVERS`
+1, everything else empty.
+
+The third instance is not the same error as the first two. Those were a number
+that had moved; this is a *shape* that had moved — new rules brought new tuples,
+and a hand-written table cannot know about a tuple nobody told it about. The
+repair is the same either way and it is the one this plan keeps arriving at:
+read the tuples, do not read the paragraph.
 
 | Rule | Waivers | Gap |
 |---|---|---|
-| CI invocation | 4 → **0** | [G1](../TESTING.md#the-gap-list) (3), G2 (1) — both closed by Stage 1 |
-| Patching is `mocker` | 34 → **0** | G4 — closed by Stage 5 |
+| CI invocation | 4 → **0** | [G1](../TESTING.md#the-gap-list) (3), G2 (1) — both closed by Stage B |
+| Patching is `mocker` | 34 → **0** | G4 — closed by Stage F |
 | Route reached through `app.routes` | 12 | G6 |
-| `.sql` file touched by a Layer 2 test | 54 → **56** | G14 — the census undercounted; see Stage 5 |
-| Layer numbering | 16 → **0** | G11 — closed by Stage 5 |
+| `.sql` file touched by a Layer 2 test | 54 → **56** | G14 — the census undercounted; see Stage F |
+| Layer numbering | 16 → **0** | G11 — closed by Stage F |
 | **Total** | **120** | as measured; 122 on the corrected reading |
 
 The waiver list can only shrink, and three assertions enforce that: a waiver
@@ -89,7 +81,7 @@ The readings this document carried as its starting point were taken by eye on
 |---|---|
 | 21 files mixing two mock styles | **34** files patch with something other than `mocker` — the by-eye count never looked at `monkeypatch.setattr` |
 | 3 of 35 routes unreferenced | **12 of 87** routes reached through no routing table |
-| 16 modules with inline SQL | **10** modules (G5) — and a gap nobody had counted: **54 of 76** `.sql` files that no Layer 2 test executes (G14). Stage 5 later corrected this to 56 |
+| 16 modules with inline SQL | **10** modules (G5) — and a gap nobody had counted: **54 of 76** `.sql` files that no Layer 2 test executes (G14). Stage F later corrected this to 56 |
 
 The direction of the error is the point. Inspection undercounted three times out
 of three, and the one gap that inspection missed entirely, G14, is now the
@@ -101,7 +93,7 @@ Six of the thirteen gaps this plan owns are checked by nothing: **G5, G7, G8,
 G9, G10 and G12.** (Twelve at the census; **G13 was re-owned here on
 2026-08-31** when its Plan 146 half shipped, and it is half-checked — the
 `PYTHONPATH` clause is asserted and nothing else is. **G10 has since been
-mechanised and closed** by Stage 2 the same day, leaving five.) They are
+mechanised and closed** by Stage C the same day, leaving five.) They are
 recorded in prose, they are not among the 120, and they can worsen without
 anything noticing. That is the condition
 `ARCHITECTURE.md:179` was in before Plan 161, and it is why this plan's success
@@ -112,7 +104,7 @@ order:
 
 - **G5, G9 and G10 have a natural, cheap assertion.** G10's was estimated at
   roughly five lines — every service directory appears in
-  `[tool.coverage.run] source` — and Stage 2 built it, at that size plus a
+  `[tool.coverage.run] source` — and Stage C built it, at that size plus a
   second assertion for the half the estimate had not counted.
 - **G7 could never be reached by the existing rules, and that is why it was the
   wrong gap.** `dashboard/` is Streamlit, not FastAPI. The route rule imports
@@ -121,111 +113,728 @@ order:
   with zero test files. **Rescoped 2026-09-02** — G7 is now the dashboard's
   Layer 2 suite asserting nothing, which is reachable, cheap and this plan's;
   the Python that needed a test invented is G18 and belongs to Plan 150. See
-  [Stage 8 narrowed](#stage-8-narrowed-and-g7-now-names-a-different-gap).
+  [Stage M narrowed](#stage-m-narrowed-and-g7-now-names-a-different-gap).
 - **G12 may correctly never get a rule.** "No module under `airflow/dags`
   imports `shared`" is *true today* — it is the constraint, not the violation.
   Closing it changes the DAG tree's import structure, which is an architecture
   decision and not an assertion.
 
-## The stages
+### Why the estimate is L
 
-| Stage | Work | Closes | Waivers |
-|---|---|---|---|
-| **0** | **The census. Complete — CAR-40, 2026-08-31** | — | — |
-| **1** | **The orphaned suites. Complete — CAR-45, 2026-08-31** | G1, G2 | 4 |
-| **2** | **Unblind coverage. Complete — CAR-46, 2026-08-31** | G10 | -- |
-| **3** | **The two health-sensor censuses read one declared source. Complete — CAR-47, 2026-08-31** | Plan 139 Stage H | -- |
-| **4** | **Split the 267s `dbt build + test` job. Complete — CAR-48, 2026-09-01** | Plan 139 Stages B, C | -- |
-| **5** | **The mechanical sweeps. Complete — CAR-49, 2026-09-01** | G4, G11, G13 | 50 |
-| **5b** | **Separate production scripts from spent ones. Complete — CAR-55, 2026-09-01** | — | -- |
-| **6** | **Route coverage, and `container_health`'s test home. Complete — CAR-50, 2026-09-01** | G6, G9 | 12 |
-| **6b** | **Encoding-sensitive I/O, mechanised. Complete — CAR-60, 2026-09-01** | G13's class | 0 |
-| **6c** | Every service contract produces an intent row the database accepts | -- | 0 |
-| **7** | **SQL execution, from both directions. Complete — CAR-51, 2026-09-01** | G14; G5 to 15 | 56 |
-| **8** | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | -- |
-| **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
-| **10** | Suites on real Compose services, dbt against the Plan 120 snapshot, advisory CI impact selection | Plan 139 Stage E | -- |
-| **11** | The dbt testing contract, and what leaves the SQL census | G16 | -- |
-| **12** | Shared fixtures: what the suite duplicates now that it is 3,988 tests | -- | -- |
+**L, replacing the XL placeholder**, on three grounds:
 
-**4 + 50 + 12 + 56 = 122.** The stages account for the whole waiver list; no
-entry is left without a stage that deletes it. Stage 7 later raised its own
-column from 56 to 66 + 23 across two new rules — see [Stage 7 grew two
-gaps](#stage-7-grew-two-gaps-while-closing-one), and note that a stage
-discovering more than it was scoped for is the instrument working, not the
-arithmetic failing.
+1. **The census — the largest single unknown — is done.** The plan was sized XL
+   when Stage A was an unbounded measurement against a standard that did not
+   exist yet. It is now a completed stage with an enumerated result.
+2. **Roughly half the waiver count is two mechanical sweeps.** 50 of 120 are
+   Stage F: converting 34 files to `mocker` and renaming 16 layer references.
+   Near-zero judgement, verified by deleting a waiver.
+3. **The remainder is bounded and enumerated**, file by file, in the gap list
+   and the waiver tuples.
+
+**Stage B is what confirms or destroys this.** The pass state of the 73 orphaned
+tests is the one input the estimate rests on that the census could not settle,
+which is why it is first of the remaining stages.
+
+### What it absorbed from Plan 139
+
+Plan 139 was written as test-suite *maintenance* and was archived on 2026-08-31
+with Stages A, B and F delivered. Its disposition, recorded when the split was
+made:
+
+| Stage | Disposition |
+|---|---|
+| A — make coverage visible | Shipped; `ci.yml` runs `--cov`. What it did *not* do is make the number mean anything, which is G10 and Stage C here |
+| B — recover the CI critical path | **This plan**, Stage E |
+| C — understand the 92s step | **This plan**, Stage E |
+| D — intent markers and the coverage decision | Split: the gate decision was Plan 161's questions 6 and 8; the markers and the coverage-source repair are **this plan** |
+| E — advisory CI impact selection | **This plan**, Stage P. Its own premise was "before any new fast path", and the restructure is the fast path |
+| F — CI's database does not model production's schemas | Shipped 2026-08-31, PR #305 (CAR-36). CI now runs `airflow db migrate` |
+| G — Promtail contract checker | Moved to [Plan 160](plan_160_promtail_contract_checker_reliability.md) |
+| H — one invariant, two censuses | **This plan**, Stage D |
+
+Plan 139 Stage E carries one piece of thinking worth preserving verbatim rather than
+rediscovering: Plan 142's service graph is *evidence* for a CI selector, not the
+selector itself, because "production asks which live work depends on a service,
+while CI asks which tests, images and integration environments can detect a
+changed path."
+
+**Two notes from Plan 139 Stage F (CAR-36), for this plan to pick up rather than
+rediscover:**
+
+- **CI's Postgres is greenfield; production's is populated.** Plan 139 Stage F made the
+  `airflow` schema exist in CI, but built from empty, while production's carries
+  hundreds of thousands of rows. Same root cause as bare images versus Compose
+  definitions: CI's database is not shaped like production's. Worth measuring in
+  Stage P — *which* suites depend on an empty database, and which would find
+  something in a full one. The rehearsal that would close it needs a deployed
+  stack, not a CI job, and is recorded in
+  [Plan 121](plan_121_staging_environment.md).
+- **`tests/integration/airflow/` still points at `sqlite:////tmp/airflow.db`.**
+  Plan 139 Stage F left it deliberately: pointing the DAG tests at the same Postgres
+  metadata DB the drain tests read would mix test data into it. Now that a real
+  Airflow metadata schema exists in the same job, whether those suites should
+  share it is Stage P's call.
+
+**Consequence, resolved 2026-08-30:** Plans 103 and 107 were triggered by "Plan
+139 Stage D settles the coverage gate." Plan 139 Stage D was taken apart, so that trigger
+named something that would not happen. Both were **superseded by Plans 161 and
+162** — their premises were a coverage percentage and a self-scored rubric, both
+last edited 2026-04-29, and both are what Plan 161's contract now decides. Parts
+of each had already shipped under other plans without them.
+
+## Design
+
+### The stage letters, and the numbers they replace
+
+**Adopted 2026-09-04.** This plan was sequenced before
+[the plan-document contract](../PLAN_DOCUMENT.md) landed, so its stages were
+numbered, and the contract's own adoption clause exempts it: *"Plans that were
+already sequenced when this contract landed keep their existing identifiers."*
+It also names the one route out — a plan rewritten wholesale **may** adopt
+letters if it records an old-to-new mapping — and this is that rewrite. The
+mapping is the table below, and it is permanent rather than transitional: every
+stage section and every record entry carries a **Legacy** line naming its old
+number, so a commit message, a branch, a Linear title or a code comment written
+against the old namespace still resolves.
+
+| Legacy | Stage | | Legacy | Stage | | Legacy | Stage |
+|:---:|:---:|---|:---:|:---:|---|:---:|:---:|
+| 0 | **A** | | 6b | **J** | | 11 | **S** |
+| 1 | **B** | | 6c | **K** | | 12 | **T** |
+| 2 | **C** | | 7 | **L** | | 13 | **U** |
+| 3 | **D** | | 8 | **M** | | 14 | **V** |
+| 4 | **E** | | 9 | **N** | | 15 | **W** |
+| 5 | **F** | | 10 | **P** | | 16 | **X** |
+| 5b | **G** | | 10b | **Q** | |  |  |
+| 6 | **H** | | 10c | **R** | |  |  |
+
+**Two deviations, both recorded rather than left to be noticed.** The letters
+are allocated down the work order rather than in discovery order, because for
+the fourteen stages that had closed before this rewrite the discovery order is
+not recoverable except from record dates, several of which collide; the property
+the contract actually needs — that a letter never moves once allocated — starts
+here. And **`I` and `O` are skipped.** This plan has a live Stage 0 and 128
+references to its numbered stages standing in code, CI and other plans, so a
+`Stage O` sitting beside a `Stage 0` would be a collision built on purpose. `Y` and `Z`
+remain for the next two stages discovered.
+
+**This reverses a decision recorded in this document**, and the reversal is the
+point rather than an embarrassment. The order table used to argue that lettering
+would cost 187 stage references and buy nothing. What changed is that the
+contract landed with a mechanised waiver list behind it, and that Stage R turned
+out to belong last in the order while keeping its place in the numbering — which
+is precisely the ambiguity a numbered `Order` beside a lettered `Stage` exists
+to dissolve.
 
 ### Why this order
 
 Four of the placements are load-bearing. The rest is grouping.
 
-**Stage 1 is first of the remaining stages because it is the only unknown that
+**Stage B is first of the remaining stages because it is the only unknown that
 changes the estimate.** 73 integration-marked tests sit in 11 files that no CI
 step has ever invoked; `tests/integration/processing/` — 58 of them — has never
 appeared in `ci.yml` in its history. **Whether they still pass is unknown**, and
-every other stage can be sized from measurements Stage 0 already took. If those
-suites have rotted, the areas they cover are unexercised and Stages 7 and 8 both
+every other stage can be sized from measurements Stage A already took. If those
+suites have rotted, the areas they cover are unexercised and Stages L and M both
 get worse. Running them is cheap, is a repair in its own right, and is what
 converts this plan's estimate from a proposal into a measured number.
 
-**Stage 2 is second because coverage is the instrument the rest of the work
+**Stage C is second because coverage is the instrument the rest of the work
 reads.** `[tool.coverage.run] source` names six packages and omits
 `container_health`, `dashboard`, `scripts` and `airflow/dags` — so **the two
 services furthest below the floor are the two the instrument cannot see.** Every
 stage behind this one measures better for it being fixed first.
 
-**Stage 4 sits after Stage 1, not before it.** Stage 1 changes which suites
+**Stage E sits after Stage B, not before it.** Stage B changes which suites
 exist in CI; splitting the job afterwards means organising once with full
-knowledge rather than twice. The rest of the restructure stays at Stage 10,
+knowledge rather than twice. The rest of the restructure stays at Stage P,
 where its risk belongs — but the job split itself is largely mechanical, and
 leaving it until last would mean running the most CI-intensive work this
 repository has attempted across weeks of a 267-second critical path we had
 already decided to remove.
 
-**Stages 6 and 7 each pair two gaps because splitting them means touching the
+**Stages H and L each pair two gaps because splitting them means touching the
 same files twice.** G9 builds `container_health` a test directory and a Layer 4
 that do not exist; G6's four `container_health` routes are uncoverable until it
 does. G5 moves inline SQL into `.sql` files and G14 gets Layer 2 executing
 `.sql` files — the same modules, from opposite ends.
 
-**G13 joined Stage 5 on 2026-08-31, for the same reason.** It is the thirteenth
+**G13 joined Stage F on 2026-08-31, for the same reason.** It is the thirteenth
 gap and the only one this plan did not originally own: the contract assigned it
 to Plan 146 Stage 1 for the `PYTHONPATH` half, that half shipped as CAR-42, and
-the remaining instance was left owned by a plan that owes no code. Stage 5 is
+the remaining instance was left owned by a plan that owes no code. Stage F is
 the right home because it is already the pass that reads every patch in the
 suite — and "an unexplained mock of a filesystem, clock, platform or path
 primitive is a finding" is the same question asked one step further out. The
 pattern the rule holds up as correct, `21333ab`, is itself a mocking fix. Doing
 the two together is one reading of the suite instead of two.
 
-**Stage 5b sits immediately after Stage 5 because Stage 5 is what makes it
+**Stage G sits immediately after Stage F because Stage F is what makes it
 free.** The first instinct was to run it near the front, so the stages that
 follow would visibly move the coverage number. The waiver list forbids it. Ten
-of Stage 5's 34 mocker waivers name files under `tests/scripts/` and
+of Stage F's 34 mocker waivers name files under `tests/scripts/` and
 `tests/integration/scripts/`, character for character, and `_assert_exactly`
 asserts both directions — so moving a test file breaks its waiver twice, once
 because the old subject has stopped existing and once because the new path is
-an unwaived violation. Running 5b first means rewriting ten waiver subjects
-that Stage 5 then deletes outright. Running it second costs nothing, because
-Stage 5 has already emptied the colliding set. No other waiver tuple names a
+an unwaived violation. Running Stage G first means rewriting ten waiver subjects
+that Stage F then deletes outright. Running it second costs nothing, because
+Stage F has already emptied the colliding set. No other waiver tuple names a
 `scripts/` path — `LAYER_2_WAIVERS` and `LAYER_NUMBER_WAIVERS` have none, and
-`CI_INVOCATION_WAIVERS` is empty since Stage 1 — so Stage 5 is the only
+`CI_INVOCATION_WAIVERS` is empty since Stage B — so Stage F is the only
 collision in the plan.
 
-Nothing is lost by the delay. **Stages 6, 7, 8 and 9 are all downstream of
-Stage 5**, so every remaining stage that moves the number is still graded
+Nothing is lost by the delay. **Stages H, L, M and N are all downstream of
+Stage F**, so every remaining stage that moves the number is still graded
 against the cleaned denominator, which was the whole point of going early. The
-CI payoff is not delayed either: Stage 4 is the dbt job split, and the impact
-selector that reads the new prefix is Stage 10.
+CI payoff is not delayed either: Stage E is the dbt job split, and the impact
+selector that reads the new prefix is Stage P.
 
-**It is numbered 5b rather than 6.** Inserting an integer renumbers five stages
-and invalidates two issues already filed against the old numbers — CAR-50 names
-Stage 6 and CAR-52 names Stage 8 in their titles. A letter costs nothing and
-breaks nothing.
+**It was numbered 5b rather than 6.** Inserting an integer would have renumbered
+five stages and invalidated two issues already filed against the old numbers —
+CAR-50 and CAR-52 still read `Stage 6` and `Stage 8` in their titles today,
+because a closed issue keeps the name it closed under. A suffix cost nothing and
+broke nothing, which is the argument the lettering
+[now generalises](#the-stage-letters-and-the-numbers-they-replace).
 
-### Stage 7 grew two gaps while closing one
+### The remaining eight, ordered 2026-09-04
 
-**Added 2026-09-01, mid-stage.** Stage 7 was scoped at 56 Layer 2 waivers and
+The stages that closed were placed one at a time, by what unblocked what. The
+eight that remain were ordered together, once, on three constraints and one
+deadline: **U, X, S, T, W, Q, V, R.**
+
+**Stage U goes first because two later stages hand work to it, and it costs a
+point.** [Stage Q's fourth scoping
+decision](#four-decisions-taken-while-scoping-this-stage-2026-09-04) says its
+`docker compose config` guard *"must skip cleanly when `docker` is absent and be
+required in CI — which is exactly [Stage U]'s mechanism, and a dependency this
+stage should hand forward rather than solve locally"*, and Stage R's first piece
+runs after U precisely so it can read U's output instead of simulating it. Under
+the numbering, U sat after both of them. Putting it first is the third
+application of one argument this plan has already made twice — Stage C ahead of
+the stages it measures, Stage J ahead of L, M and N: **a guard that lands first
+is one the later stages get for free rather than one that has to sweep what they
+wrote.**
+
+**Stage X is second** because nothing in its original scope is invented and it
+retires the scoping compromise Stage T was carrying — and **since 2026-09-04 it
+also holds the only measurement that expires.** The execution recorder moved
+here from Stage S on that date: recording what text ran against which engine is
+repo-wide rather than dbt's, and X is already the stage that makes every
+statement live in a file and validates it against an engine. Its capture
+baseline must be taken while DuckDB is still authoritative — one taken after
+[Plan 125 Gate
+D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration) is not a
+baseline — and X sitting a position ahead of S serves that deadline better than
+S did. Plan 125 is build-order row 9 with Gate D two gates out, so one stage
+ahead of X costs nothing; that is room for U, not for V and R. **X's estimate
+predates the recorder and has not been revisited.**
+
+**Stage S is third, and since the same date carries no deadline of its own.**
+The aggregation the recorder also needs — an artifact and a gate job — is why
+CAR-79 was filed blocked on CAR-78, and it travelled to X with the rest: Stages
+Q and R are what settle how those jobs are defined, so the aggregation half can
+land with or after Q wherever it lives. Nothing in what remains of S is lost by
+waiting.
+
+**Then T, which wants X's recorder**, and **W, which wants U's registry** — W's
+whole output is a declaration that something is deliberate, and U is what builds
+the shape such declarations take. **Then Q**, now holding U's skip mechanism.
+**Then V**, whose own issue warns it may turn production-gated: if a variable
+genuinely needs wiring into `docker-compose.yml`, only a deploy proves it
+arrived, which is a different risk class and does not belong on a critical path.
+**Then R**, for the three reasons its own section gives.
+
+**Two consequences outside this document, both acted on 2026-09-04.** CAR-78
+bundled Stages Q and R, because both were CI-infrastructure work on the same
+jobs. That stopped holding when Stage R's selector was cut — what remains of R
+is an instrument fix, a caching measurement and a docs-zone path — and the order
+now separates them by two positions. R left to **CAR-87**. CAR-81 bundled Stages
+U and V as one class, a declaration nothing enforces; the order puts them six
+positions apart, with U as the plan's `next`, so V left to **CAR-88**. Both new
+issues carry 1 point: each parent held 2 across two halves, split one apiece.
+
+## Stages
+
+**`Order` is numbered and rewritten freely; `Stage` is lettered and never
+changes.** The 2026-09-04 reordering is what that buys: eight stages changed
+position and not one changed name, so every inbound reference still resolves.
+Stage R is the clearest case — it holds order 22 and the letter it was allocated,
+because [the CI cost census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md)
+moved it to the end without making it a different stage.
+
+| Order | Stage | Legacy | What it delivers | Closes | State | Issue |
+|---:|:---:|:---:|---|---|---|---|
+| 1 | [**A**](#stage-a-the-census) | 0 | The census | — | `done` | CAR-40 |
+| 2 | [**B**](#stage-b-the-orphaned-suites) | 1 | The orphaned suites | G1, G2 | `done` | CAR-45 |
+| 3 | [**C**](#stage-c-unblinding-coverage) | 2 | Unblind coverage | G10 | `done` | CAR-46 |
+| 4 | [**D**](#stage-d-carries-a-constraint-worth-knowing-before-it-starts) | 3 | The two health-sensor censuses read one declared source | Plan 139 Stage H | `done` | CAR-47 |
+| 5 | [**E**](#stage-e-splitting-the-267s-dbt-build--test-job) | 4 | Split the 267s `dbt build + test` job | Plan 139 Stages B, C | `done` | CAR-48 |
+| 6 | [**F**](#stage-f-the-mechanical-sweeps) | 5 | The mechanical sweeps | G4, G11, G13 | `done` | CAR-49 |
+| 7 | [**G**](#stage-g-what-the-split-is-and-why-a-directory-rather-than-a-list) | 5b | Separate production scripts from spent ones | — | `done` | CAR-55 |
+| 8 | [**H**](#stage-h-container_healths-test-home-and-every-route-reached) | 6 | Route coverage, and `container_health`'s test home | G6, G9 | `done` | CAR-50 |
+| 9 | [**J**](#stage-j-was-added-by-the-failure-this-plan-predicted) | 6b | Encoding-sensitive I/O, mechanised | G13's class | `done` | CAR-60 |
+| 10 | [**K**](#stage-k-was-added-by-a-deploy-not-by-the-suite) | 6c | Every service contract produces an intent row the database accepts | — | `done` | CAR-66 |
+| 11 | [**L**](#stage-l-grew-two-gaps-while-closing-one) | 7 | SQL execution, from both directions | G14; G5 to 15 | `done` | CAR-51 |
+| 12 | [**M**](#stage-m-narrowed-and-g7-now-names-a-different-gap) | 8 | `scraper`'s floor, and the Layer 2 suite that asserts nothing | G7, G8 | `done` | CAR-52 |
+| 13 | [**N**](#stage-n-the-dag-trees-sql-convention) | 9 | `airflow/dags` and the `.sql` convention | G12 | `done` | CAR-53 |
+| 14 | [**P**](#stage-p-dbt-builds-against-production-shaped-data) | 10 | dbt builds against production-shaped data | — | `done` | CAR-54 |
+| 15 | [**U**](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) | 13 | Every skip in CI is declared, or the run fails | — | `done` | CAR-81 |
+| 16 | [**X**](#stage-x-a-test-may-not-author-sql-either) | 16 | A test may not author SQL either, and what text ran against which engine | — | `done` | CAR-83 |
+| 17 | [**S**](#stage-s-answers-a-question-plan-161-did-not-ask) | 11 | Branch coverage for the dbt models, and what leaves the SQL census | G16 | `done` | CAR-79 |
+| 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
+| 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
+| 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
+| 21 | [**Y**](#stage-y-a-route-declares-the-statuses-it-can-return) | — | A route declares the statuses it can return | G21 | `next` | CAR-104 |
+| 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
+| 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
+| 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
+| 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
+| 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
+| 27 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
+| 28 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
+| 29 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+
+`State` takes the five values [the plan-document
+contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
+`blocked`, `done`, `canceled` — and exactly one stage carries `next`.
+
+**The 2026-09-08 ordering, and what fixes it.** Six stages entered the table at
+once and three constraints decided where, only one of which is a preference.
+
+**Y before Z before AA is a hard chain.** Z generates a contract artifact from
+each service's schema; run today it would faithfully record the false claim that
+every endpoint returns `200` or `422`, because that is all any route declares.
+AA needs Z's artifact as the place a caller goes to look. Nothing about that
+order is negotiable.
+
+**Q before AC is an argument rather than a block.** AC is a schema migration and
+CI's Postgres is a fourth hand-maintained transcription of production's —
+Stage Q's whole subject. Landing a migration against a database defined the way
+production defines it is worth one stage of delay.
+
+**AC is not urgent in the way its gap entry reads.** [G25](../TESTING.md#the-gap-list)
+is a latent hole, not an actively failing one: it costs the next time somebody
+renames a constrained value, and nothing is renaming one today.
+[Stage W](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) also
+partially mitigates it, because a rename must now pass through
+`shared/db_vocabularies.py`, where the coupling is at least visible. So it sits
+after Y and Q rather than first, and the risk of that choice is stated here
+rather than discovered later.
+
+**V is early because it is the same class as U and W** — a declaration held by
+prose that nothing enforces — and finishing that thread before opening the
+contract programme keeps the plan legible.
+
+**R stays last, and its first piece may have evaporated.** [The CI cost
+census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md) moved it to
+the end and cut its selector; what remained was an instrument fix *"reduced to
+whatever Stage U has not already supplied"*. Stage U has since shipped. Whether
+anything is left is the first question that stage asks, not an assumption this
+table should make for it.
+
+**The six new stages carry no `Legacy`.** They were not in the 2026-09-04
+renumbering. The `Issue` cells were empty when this table was written and are
+filled as the issue set lands — grouped by
+[`plan-start`](../../.claude/skills/plan-start/SKILL.md)'''s rule, one issue per
+deploy-requiring stage and one per bundled run of locally-verified ones.
+
+*This paragraph first claimed the issues are created only when a stage starts,
+citing `ticket-now` for it. **That skill says no such thing and the claim is
+backwards** — `plan-start` creates a plan'''s whole issue set up front, in
+`Backlog` with no cycle, and `fill-cycle` seeds them into one later. A
+fabricated citation inside the plan whose subject is documents that drift from
+their mechanisms, left on the record rather than quietly deleted.*
+**The stage sections below run in letter order, not work order**, so a stage is
+found by its name rather than by remembering where it sits today. `Order` is the
+only thing that says what comes next, which is the point of it being a column.
+
+**4 + 50 + 12 + 56 = 122**, from Stages B, F, H and L respectively. The stages
+account for the whole waiver list; no entry is left without a stage that deletes
+it. Stage L later raised its own share from 56 to 66 + 23 across two new rules —
+see [Stage L grew two gaps](#stage-l-grew-two-gaps-while-closing-one), and note
+that a stage discovering more than it was scoped for is the instrument working,
+not the arithmetic failing. Those figures record what each stage was **scoped to
+drain** and are deliberately not restated as work lands; what the tuples hold
+today is [measured in the case](#the-case) and is 37.
+
+### Stage A: the census
+
+**Legacy:** Stage 0 · **Issue:** CAR-40 · **State:** `done`
+
+**What it was.** Measure the whole suite against the contract Plan 161 had
+just landed, replace this plan's XL placeholder with a real estimate, and cut
+the follow-on work into issues that could actually be filed.
+
+**Exit.** The census is scoped and the effort estimate is real. Slicing the
+work into further issues is the outcome, not this stage — the specifics did
+not exist until Plan 161 had answered its nine questions.
+
+### Stage B: the orphaned suites
+
+**Legacy:** Stage 1 · **Issue:** CAR-45 · **State:** `done`
+
+**What it was.** 73 integration-marked tests in 11 files that no CI step had
+ever invoked, `tests/integration/processing/` — 58 of them — never having
+appeared in `ci.yml` in its history. Whether they still passed was the one
+input the L estimate rested on that the census could not settle, which is why
+this ran first of the remaining stages.
+
+**Exit.** The 11 orphaned files are executed and their pass/fail state
+recorded; passing suites are invoked by named steps in `ci.yml`;
+`tests/integration/lakehouse/` is declared dormant against G2 rather than
+waived; `CI_INVOCATION_WAIVERS` is empty and
+`test_every_integration_suite_is_invoked_by_a_ci_step` passes without it; and
+the plan's L estimate is confirmed or revised against what the run found.
+
+### Stage C: unblinding coverage
+
+**Legacy:** Stage 2 · **Issue:** CAR-46 · **State:** `done`
+
+**What it was.** `[tool.coverage.run] source` named six packages and omitted
+`container_health`, `dashboard`, `scripts` and `airflow/dags` — so the two
+services furthest below the floor were the two the instrument could not see.
+Sequenced second because coverage is the instrument the rest of the work
+reads.
+
+**Exit.** `[tool.coverage.run] source` names every service directory; the unit
+job's `--cov --cov-report=term-missing` output is consumed by a threshold, an
+artifact, or both, rather than measured and discarded; and an assertion fails
+when a service directory is missing from `source`.
+
+### Stage D carries a constraint worth knowing before it starts
+
+**Legacy:** Stage 3 · **Issue:** CAR-47 · **State:** `done`
+
+The two censuses live in **different virtual environments**.
+`tests/airflow/test_health_sensor_demotion.py` asserts 13 DAG files wire a
+sensor and runs in the main venv, where it must never import `airflow`;
+`tests/integration/airflow/test_dag_integrity.py` asserts 14 sensor tasks and
+runs in the isolated Airflow venv. One DAG wires two sensors, so both numbers
+are right and nothing connects them. **The single declared source they both read
+therefore cannot import Airflow** — a data file, or a module with no Airflow
+import.
+
+Plan 134's deletion updated the first count and missed the second, and shipped
+(`056cde7`); PR #293 then failed on a count nobody had touched. The comment
+added reactively in `33b275e` is documentation, not a mechanism, and will drift
+again. Plan 139 scoped this as XS and warned that an XL plan should not hold a
+two-file fix hostage; giving it a numbered stage near the front settles that
+permanently.
+
+**Exit.** Both health-sensor censuses read one declared source, that source does not import Airflow, and adding or deleting a sensor updates one place with both tests following.
+
+### Stage E: splitting the 267s `dbt build + test` job
+
+**Legacy:** Stage 4 · **Issue:** CAR-48 · **State:** `done`
+
+**What it was.** One 267-second job running eight sequential suites against
+one Postgres and one MinIO, named for one of the eight. This is Plan 139
+Stages B and C, which moved here when 139 was archived.
+
+**Exit.** The eight suites are split into jobs named for what each runs; the
+`pip install apache-airflow==3.2.0` venv build no longer runs on every
+invocation of unrelated suites; Plan 139 Stage C's question — what the 92s
+step is actually doing — is answered on the record; and wall clock is
+measured against the 267s baseline and recorded. That last is success
+criterion 3, and it is measured rather than asserted.
+
+### Stage F: the mechanical sweeps
+
+**Legacy:** Stage 5 · **Issue:** CAR-49 · **State:** `done`
+
+**What it was.** 34 files patching with something other than `mocker` and 16
+`Layer N` mentions carrying Plan 84's numbering — 50 of the plan's 120
+waivers, at near-zero judgement, each verified by deleting a waiver.
+
+**Exit.** The venv fix goes first: `tests/integration/airflow/`'s venv does
+not install `pytest-mock`, and two of the 34 files are blocked on it. All 34
+files are converted; the 16 `Layer N` mentions across `tests/` and `ci.yml`
+match the contract's headings; and `MOCKER_WAIVERS` and
+`LAYER_NUMBER_WAIVERS` are both empty.
+
+### Stage G: what the split is, and why a directory rather than a list
+
+**Legacy:** Stage 5b · **Issue:** CAR-55 · **State:** `done`
+
+Three buckets, but only two moves, which is what keeps the cost near zero:
+
+| Bucket | Where | Moves? | In the denominator? |
+|---|---|---|---|
+| **Production** — invoked by CI, an image, a Compose file or an ops route | `scripts/` (unchanged) | no | yes |
+| **Maintenance** — human-invoked, durable, named in a live runbook | `scripts/ops/` | yes | yes |
+| **One-off** — ran for a plan that has since archived | `scripts/oneoff/` | yes | **no** |
+
+`tests/scripts/` mirrors the split and needs one new row in the contract's
+*Where the newer suites sit* table, which
+`test_every_test_directory_is_assigned_a_layer` will demand the moment the
+directory appears.
+
+**Production does not move, and that is the entire cost argument.** There are
+20 binding references to `scripts/*` across 11 deploy surfaces — `ci.yml` (4),
+`docker-compose.lakehouse.local.yml` (3), `redeploy.sh` (3),
+`dbt_runner/Dockerfile` (2), `.env.example` (2), the two other lakehouse
+Compose files, `.gitattributes`, `deploy-followers.txt`,
+`ops/routers/snapshots.py` and `deploy.sh` — and **every one of them names a
+script that stays put.** Moving only the other two buckets rewrites no deploy
+surface at all.
+
+It also gives the list the safe failure direction, the one
+`maintenance-running-set.txt` already argues for in this repository: a new
+script lands in production-land and is measured **by default**, and has to be
+deliberately moved down to leave the instrument. Nobody drops something out of
+coverage by forgetting.
+
+**A directory rather than a manifest, because the directory is the
+declaration.** A manifest would be a second mechanism to keep in step with the
+first; the path is self-describing, `git log --follow` records the
+reclassification, and `[tool.coverage.run]` and `ci_change_scope.py` each read
+it for free. `scripts/ci_change_scope.py` is today a single-prefix classifier —
+`DOCS_PREFIX = b"docs/"` and nothing else — so a changeset confined to
+`scripts/oneoff/` plus its tests needs lint and its own unit tests and no
+Docker build, no dbt job, no 267-second critical path. That is the first real
+instance of the impact selection Stage P generalises, against code that
+already exists.
+
+**The classification is mechanical, and that is why this stage is small.** The
+first scoping of it assumed per-file archaeology across fifteen archived plans.
+It is not: **33 of the 35 Python scripts declare their owning plan in the first
+three lines of the docstring**, so the bucket falls out of a join — docstring
+plan number against the archived numbers in
+[`completed_plans.md`](../planning/completed_plans.md), overridden by the
+binding-reference grep, which wins in both directions.
+
+**The name is never the signal, and the override is what proves it.**
+`audit_adaptive_refresh_features.py` reads as forensics and is baked into
+`dbt_runner/Dockerfile`; `report_dbt_run_results.py` belongs to archived Plan
+123 and is in the same image. Both are production. The `audit_`, `estimate_`
+and `spike_` prefixes classify nothing.
+
+**Five scripts declare no plan and are the whole of the judgement.**
+`ci_change_scope.py` is settled by its `ci.yml` reference; the remaining four —
+`audit_parquet_layout.py`, `audit_normalized_parquet_layout_once.py`,
+`backfill_unlisted_silver.py` and `diff_semantic_duplicate_html.py` — need
+reading. That is the residual, and it is four files.
+
+**A coupling finding that ran the other way, recorded because the first reading
+of it was wrong.** Two production scripts import from scripts that look spent —
+`export_volatility_features_to_iceberg.py` takes `cleanup_keys` from
+`spike_iceberg_lakehouse.py`, and `train_html_dictionary.py` imports from
+`estimate_dictionary_savings.py`. Scoped as "production depends on a spike" and
+as this stage's hardest part. **The archive join dissolved both:** Plans 112 and
+129 are not archived, so all four files stay in production-land and neither
+import crosses a bucket boundary. The lesson is the one Stage A already
+recorded — run the measurement before sizing the work it implies.
+
+**Two constraints on `oneoff/`, stated so they are decisions rather than
+drift.** Spent means *out of the ratchet's denominator* — never deleted, and
+never untested: `reconcile_april_detail.py` is 84% covered **because** it
+deleted 14.6 GB of production data, and its tests are why that was safe. And an
+entry there should have to cite the archived plan it belongs to, so the bucket
+cannot outlive its reasons the way an unchecked waiver list would.
+
+**What it is worth, measured rather than asserted.** The `oneoff/` bucket —
+archived owning plan, no binding reference — is **14 scripts, 6,338 statements
+at 72%**, still over half of it `reconcile_april_detail.py` alone. Removing it
+takes the denominator from 19,733 to 13,395 and the reported number from 75.91%
+to **77.8%**. Stage M's dashboard repair — 309 statements, 280 of them
+currently missed — moves the total by **+1.27 points today and +1.87 after**,
+so the ratchet becomes about **1.5× more responsive**. Real, and worth having
+before Stages H through N are graded; nowhere near large enough to justify
+paying the Stage F waiver collision to get it sooner. That arithmetic is why
+this stage is placed on the waiver argument rather than the coverage one.
+
+An earlier draft of this section put the bucket at 19 scripts and 7,019
+statements. It was close by accident and wrong in composition: it counted
+`spike_iceberg_lakehouse.py`, `run_dbt_spark.py`, `verify_dialect_datediff.py`
+and both `compare_gate_*_parity.py` against Plan 125, and
+`estimate_dictionary_savings.py` against Plan 129 — **six scripts belonging to
+plans that are still open.** Spent is a property of the owning plan's state, not
+of how finished a script looks.
+
+**Exit.** `scripts/ops/` and `scripts/oneoff/` exist with `tests/` mirroring them and production unmoved; every script is classified by the archive join, with the four declaring no plan read and placed by hand; `[tool.coverage.run] source` excludes `scripts/oneoff/` while the tests under it still run; `ci_change_scope.py` treats an `oneoff/`-only changeset as needing lint and unit tests only; the contract's *Where the newer suites sit* table gains rows for the two new test directories; and an assertion fails when a script directory is unclassified.
+
+### Stage H: `container_health`'s test home, and every route reached
+
+**Legacy:** Stage 6 · **Issue:** CAR-50 · **State:** `done`
+
+**What it was.** 12 of 87 routes reached through no routing table, four of
+them `container_health`'s — a service with no `tests/` directory and no
+`TestClient` anywhere. G6 and G9 are one stage because G6's four routes are
+uncoverable until G9 builds the home they would be tested from.
+
+**Exit.** `container_health` has a `tests/container_health/` and a Layer 4
+suite; the two misfiled unit tests move out of Layer 0's directory into the
+Layer 1 home they belong in (G9); all 12 waived routes are reached through
+their app's routing table by a test that asserts a status code; and
+`ROUTE_WAIVERS` is empty. Health and readiness endpoints are not exempt —
+they are what another service's drain logic reads, and the three coordination
+routes are the surface whose drain hung Plan 142's first production deploy.
+
+### Stage J was added by the failure this plan predicted
+
+**Legacy:** Stage 6b · **Issue:** CAR-60 · **State:** `done`
+
+**Added 2026-09-01.** Success criterion 2 records G13 as the weakest of its
+three exceptions, and says why in a sentence worth reading back: *"the next
+instance of G13's class will be found the way the last two were, by someone
+running the suite somewhere CI does not."* That is precisely what happened, six
+days later and while Stage H was being started.
+
+`tests/scripts/test_build_public_roadmap.py` writes a synthetic plan document
+containing an em-dash with `write_text` and no `encoding=`. The locale decides:
+UTF-8 on Linux, cp1252 on Windows, where the character becomes the byte `0x97`.
+`build_public_roadmap._first_heading` reads it back as UTF-8 — correctly — and
+raises. **The suite was green in CI and red on a developer machine**, which is
+the benign direction of the harness rule and the same shape as `21333ab`.
+
+**What makes it a stage rather than a second one-file repair is that four
+independent guards were in a position to catch it and none could.** Measured
+on 2026-09-01:
+
+1. **No encoding rule is configured.** `[tool.ruff.lint] select` is
+   `["E", "F", "I"]` — nothing that reads an encoding argument.
+2. **The rule that would is preview-gated.** `--select PLW1514` alone answers
+   *"Selection `PLW1514` has no effect because preview is not enabled"*, so it
+   is off twice over and silently.
+3. **Enabling it fully would still not have caught this.** With
+   `--select PLW1514 --preview` the repository has **22 violations and not one
+   of them is the line that broke master.** The rule fires only on a
+   directly-constructed receiver: `Path("b.md").write_text(...)` is flagged,
+   `(tmp_path / "a.md").write_text(...)` is not — with or without a `Path`
+   annotation on the fixture. It is blind to the idiom nearly every
+   fixture-writing test in this repository uses.
+4. **CI is `ubuntu-latest` in all ten jobs**, so this failure direction is
+   invisible by construction — the constraint G13's exception already named.
+
+The near-miss is the instructive part. *The harness must not decide the
+outcome* is written for exactly this class and even carries a Windows example,
+but its checkable rule is about **mocks** of filesystem, clock, platform or
+path primitives. A missing `encoding=` is not a mock, so Stage F's sweep — the
+pass that read every patch in the suite — went straight past it. The prose
+covered this; no mechanism could.
+
+**So the stage is not "turn on the ruff rule".** Finding 3 is the whole reason
+it needs designing: the available tool cleans 22 real sites, several in
+production code (`ops/routers/admin.py`, `dbt_runner/app.py`, three
+`archiver/processors/` modules), and still would not have stopped the defect
+that prompted it. Closing the class means a rule that reads the calls the way
+the route rule reads request literals, a Windows job, or an argued case that
+neither is worth it — recorded as a decision either way.
+
+**It sits after Stage H and before Stage L.** After 6 because CAR-50 is already
+in flight and re-cutting it buys nothing. Before 7 because **Stages L, M and N
+author more new tests than the rest of the plan combined**, and a guard that
+lands first is one those stages get for free rather than one that has to sweep
+what they wrote. That is the same argument that put Stage C ahead of the stages
+it measures.
+
+**The old suffix was positional, not topical.** This stage has nothing to do
+with route coverage; it was numbered 6b for the reason 5b was, and CAR-52 — closed
+under the old namespace — still reads `Stage 8` in its title.
+
+**Exit.** The 22 `PLW1514` violations are resolved or explicitly waived, the production ones included; a mechanism fails on `(tmp_path / "a.md").write_text("—")` — the exact shape ruff cannot see — **or** the plan records why neither an AST rule nor a Windows runner is worth building; and success criterion 2 names precisely which part of G13's class remains unmechanisable rather than leaving the exception standing whole.
+
+### Stage K was added by a deploy, not by the suite
+
+**Legacy:** Stage 6c · **Issue:** CAR-66 · **State:** `done`
+
+**Added 2026-09-01.** Stage J was added by a failure this plan predicted. This
+one was added by a failure it did not, found during Plan 138 Stage 2's
+production deploy — and the shape is the reason it belongs here rather than in
+Plan 138.
+
+`POST /deploy/start` with `{"targets":["dashboard"]}` returns **503
+`{"detail":"Database unavailable."}`**. Postgres was healthy throughout. The
+database was never the problem.
+
+`ops/coordination_contract.py` maps `dashboard` and `pgadmin` to `frozenset()`
+— they are the only two services in `SERVICE_CONTRACTS` with **no surfaces**.
+`_set_intent` therefore writes `phase='requested'`, `targets='["dashboard"]'`
+and `scope='[]'`, against a constraint that forbids exactly that pair
+(`db/migrations/V043__coordination_state.sql:27`):
+
+```sql
+CHECK (
+    (phase =  'none' AND kind IS NULL     AND targets =  '[]'::jsonb AND scope =  '[]'::jsonb)
+    OR
+    (phase <> 'none' AND kind IS NOT NULL AND targets <> '[]'::jsonb AND scope <> '[]'::jsonb)
+)
+```
+
+**So two services can never be deployed alone**, and the failure is structural
+rather than intermittent. The workaround is to name a scoped service in the
+same command — `bash scripts/redeploy.sh ops dashboard` — because the union is
+then non-empty. That is a real property of `redeploy.sh`, which takes a service
+list, and it is what unblocked the deploy.
+
+**Three guards were in a position to catch this and none could.** Measured
+2026-09-01:
+
+1. **The contract suite never asserts the value that breaks.**
+   `tests/ops/test_coordination_contract.py` exercises `expand_targets` and the
+   string `scope` does not appear anywhere in the file. It asserts the mapping
+   is *well-formed*, never that its output is *writable*.
+2. **The constraint is in a Flyway migration, and the contract is in Python.**
+   Neither half is wrong on its own; the defect exists only in their
+   composition, and no layer in this repository composes them. This is the same
+   division Stage D closed for the health-sensor censuses — two sources that
+   must agree, with nothing asserting that they do.
+3. **The error message actively misdirects.** `_set_intent` catches bare
+   `Exception` and returns `"error"`, which `ops/routers/deploy.py:248` renders
+   as 503 "Database unavailable." The constraint violation never reaches the
+   response or the log, so the symptom points at the one component that was
+   healthy.
+
+**The stage is therefore two things, and the second is not optional.** An
+assertion that every service in `SERVICE_CONTRACTS` yields a `(targets, scope)`
+pair the constraint accepts closes the defect class. Unmasking the exception is
+what stops the *next* unrelated failure in this path costing the same
+diagnosis, and finding 3 is the whole reason a passing deploy script is not
+sufficient evidence here.
+
+**It sits after Stage J for Stage J's own reason** — Stages M and N author more new
+tests than the rest of the plan combined, and this is a guard those stages get
+for free rather than one that has to sweep what they wrote. **The old suffix was
+positional, not topical**, as it was for Stages G and J.
+
+*Written on 2026-09-01 as "after Stage J and before Stage L", by a deploy that
+did not know Stage L was in flight on another branch. Stage L completed the same
+day, so this stage gets Stages M and N rather than L, M and N — the argument is
+unchanged and the count is not.*
+
+#### Finding 3 was corroborated the same day, on the same endpoint
+
+**Added 2026-09-01 while merging Stage L.** Stage L broke `POST /deploy/start`
+too, independently and for an unrelated reason: it moved
+`set_deploy_intent.sql` into a file and wrote an explanatory comment that
+quoted the statement's own placeholder, and **psycopg2 counts placeholders
+across the whole string, comments included**. The statement then expected four
+parameters where `deploy.py` passes three.
+
+**The symptom was identical — 503 `Database unavailable` — and for exactly the
+reason finding 3 gives.** `_set_intent` catches bare `Exception`, so a
+`psycopg2` parameter error and a `CHECK` violation are indistinguishable at the
+response, in the log, and to the operator. Two unrelated defects, one day
+apart, wearing the same misleading face.
+
+That is the strongest evidence this stage has for its second half, and it
+arrived from outside it. **The assertion half would not have caught Stage L's
+defect** — the contract's `(targets, scope)` pair was fine — but **the
+unmasking half would have named it immediately**, instead of it being found by
+seven Layer 4 failures in CI and diagnosed from a log. A reader comparing the
+two should not conclude they share a cause: [Stage L's
+evidence](#stage-l--sql-execution-from-both-directions)
+records the placeholder defect and Rule 5e, which is what stops that one
+recurring; this stage owns the masking that made both of them expensive.
+
+**Exit.** A test enumerates `SERVICE_CONTRACTS` and fails for any service whose lone-deploy `(targets, scope)` pair violates `V043__coordination_state.sql:27`; `_set_intent`'s exception path surfaces the underlying SQL error, so a constraint violation no longer renders as 503 "Database unavailable"; and `bash scripts/redeploy.sh dashboard` either succeeds or fails naming the actual cause.
+
+### Stage L grew two gaps while closing one
+
+**Legacy:** Stage 7 · **Issue:** CAR-51 · **State:** `done`
+
+**Added 2026-09-01, mid-stage.** Stage L was scoped at 56 Layer 2 waivers and
 "G5's ten modules". Both numbers were wrong, and both were wrong the same way
 the census was wrong about G14: **the measure was fitted to the code in front
 of it.**
@@ -242,7 +851,7 @@ one. Closed the same day; `INLINE_SQL_WAIVERS` is `()`.
 **G15 is what closing G5 revealed.** A statement bound to a name and executed
 from there is invisible to both instruments at once: Rule 5b does not fire
 because it is not at the call site, and Rule 5's denominator cannot count it
-because there is no `.sql` file. Stage 7 extracted six of these by hand and
+because there is no `.sql` file. Stage L extracted six of these by hand and
 only because someone happened to read the files; the measured cost of that
 blind spot was 23 more in 11 modules, six of them in `ops/routers/admin.py`, a
 router the stage never touched precisely because every one of its statements is
@@ -253,7 +862,7 @@ scan `service_packages()`, which is the right predicate for "what is a service"
 and the wrong one for "what is production Python". `airflow/` and `scripts/`
 hold neither an `__init__.py` nor, therefore, any rule — and they hold 26 more
 sites, 22 of them in Plan 125's Iceberg and Spark scripts, which Gates C and D
-productionize. The repair is a second derivation reading Stage 5b's declared
+productionize. The repair is a second derivation reading Stage G's declared
 bucket table, **not** an `__init__.py`: `service_packages()` drives seven rules,
 and making `scripts` a package would demand an "enough" row for something that
 is not a service and send the route rule looking for `scripts.app`.
@@ -266,9 +875,13 @@ packages, and `executemany` was left out because it matched nothing that day.
 The rules that have never been wrong are the derived ones —
 `service_packages()`, `_test_directories()`, `production_sql_files()`.
 
-### Stage 8 narrowed, and G7 now names a different gap
+**Exit.** All 54 uncovered `.sql` files are executed by a Layer 2 test; the two paraphrasing test files are repaired; the 10 modules holding inline SQL at `.execute()` call sites move to `shared.query_loader` or expose a module-level `(sql, params)` builder; and `LAYER_2_WAIVERS` is empty.
 
-**Rescoped 2026-09-02, before the stage started.** Stage 8 was "the services
+### Stage M narrowed, and G7 now names a different gap
+
+**Legacy:** Stage 8 · **Issue:** CAR-52 · **State:** `done`
+
+**Rescoped 2026-09-02, before the stage started.** Stage M was "the services
 below the floor", G7 and G8 together, and G7 was "`dashboard/`: 7 modules, 0
 test files". Reading the service settled that G7 as written is not this plan's
 work, and that a better gap was sitting underneath it unnamed.
@@ -317,7 +930,7 @@ so the row records a measurement rather than an intention.
 
 **What this plan is not taking on, stated so it is a decision.** Asserting that
 the dashboard's queries return *correct values* is Layer 3's shape — known
-inputs, known outputs — not Layer 4's, and Stage 8 does not attempt it. Three
+inputs, known outputs — not Layer 4's, and Stage M does not attempt it. Three
 reasons, in order of weight:
 
 1. **The correctness is already asserted where the data is made.** All eight
@@ -349,11 +962,908 @@ already reaches it. That is a modeling change, it is what Plan 150 Stage 0c
 means by *"served by extending an existing mart"*, and it is noted there rather
 than done here.
 
-### Stage 12 exists because this plan grew the suite
+**Exit.** `tests/integration/sql/test_dashboard_queries.py` asserts something, borrowing `test_analytics_snapshot_queries.py`'s `result.description` pattern rather than inventing one; a rule rather than only 25 assertions, so a Layer 2 test that executes a statement and asserts nothing about the result fails; `scraper/` meets the floor; and both services' rows in `docs/TESTING.md`'s "enough" table are updated to what is then true.
 
-**Added 2026-09-01, at the maintainer's suggestion, during Stage 7.** Plan 162
-has spent nine stages adding tests -- Stage 1 put 73 orphaned ones into CI,
-Stage 6 added Layer 4 for `container_health`, and Stage 7 alone took Layer 2
+### Stage N: the DAG tree's `.sql` convention
+
+**Legacy:** Stage 9 · **Issue:** CAR-53 · **State:** `done`
+
+**What it was.** `airflow/dags/` was the only place in the repository where
+the contract's rule that production SQL lives in a `.sql` file was
+structurally impossible: no module under it imports `shared`, so
+`shared.query_loader` was unavailable. That constraint is G12, and it is the
+constraint rather than the violation — which is why this stage was permitted
+to close without an assertion.
+
+**Exit.** `airflow/dags/` can reach a `.sql` loading mechanism; the single
+legitimate `ast` reader, `_sensor_constant()`, is either no longer forced or
+is confirmed as still necessary with the reason recorded; and
+`docs/TESTING.md` reflects the outcome — G12 closed, or a third exemption
+stated as a decision with its reasoning. **This is the only stage in the plan
+that changes production import structure rather than test structure.**
+
+### Stage P: dbt builds against production-shaped data
+
+**Legacy:** Stage 10 · **Issue:** CAR-54 · **State:** `done`
+
+**What it is.** An isolated CI job whose only work is `dbt build` against a
+Plan 120 production-derived snapshot, on its own runner with its own Postgres
+and MinIO, gated to changes that can affect a dbt build.
+
+**Why it is not the fixture we already have.**
+[`seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py)
+seeds authored business-state scenarios, and authored rows are well-behaved by
+construction. dbt unit tests are semantic and run on inputs their author chose.
+Neither can surface a `unique` violation, a `not_null` violation, a cast
+failure or a duplicate join key that exists in production **because no
+production row is ever in the denominator.** A `dbt build` over a real snapshot
+is the only instrument here that can, and it answers the question before a
+deploy rather than after one.
+
+**Why a separate job rather than a step in `dbt-models`.** The fixture lives in
+a reserved `obs_year=2099` partition specifically so it cannot collide with the
+empty-schema compilation seed. A production snapshot lands in real partitions,
+under the same globs, as a third dataset — so sharing a runner would mean the
+existing equivalence assertions run over fixture-plus-production. Separate
+GitHub Actions jobs get independent runners with no shared filesystem or
+network, which dissolves the collision rather than managing it, and parallelism
+keeps the wall clock at `max()` rather than `sum()`, protecting [success
+criterion 3](#success-criteria).
+
+**Why it may be path-gated from the start, though [Stage R](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) may
+not.** Plan 139 Stage E requires an observation window before a selector is
+promoted to skipping jobs, because a false positive in a *narrowing* selector
+suppresses evidence that previously existed. A job that has never run suppresses
+nothing; the worst case of a wrong trigger is coverage not gained. The
+asymmetry does not bind on a net-new job, and this is the one place in the plan
+where gating is free.
+
+**Four things it needs that do not exist yet.**
+
+1. **Two Postgres sources travel with the snapshot.** `sources.yml` declares six
+   source tables. Four are MinIO Parquet and are exactly what
+   [`seed_lake_snapshot.py`](../../scripts/seed_lake_snapshot.py) already
+   uploads. The other two — `public.search_configs` and `ops.tracked_models` —
+   resolve through `postgres_scan()` and so must be live rows in Postgres, not
+   objects in MinIO. Left empty, `stg_search_configs` reads nothing,
+   `int_active_make_models` inner-joins to nothing, and `mart_vehicle_snapshot`
+   builds green over an empty world — in the job whose entire purpose is proving
+   the build survives real data. Both tables are small enough to export whole,
+   which is also the safe direction: full dimensions against a cohort fact set
+   drop rows for cohort reasons only, never because a dimension row was left
+   behind. Neither carries VIN or dealer data.
+2. **The exporter grows those two tables**, and the seeder grows a Postgres
+   write path, which it has never had — it uploads objects and nothing else.
+   Its refusal to run against a production-looking target must extend to
+   `POSTGRES_URL` at the same time: a seeder that can `INSERT` into any
+   connection string it is handed is a different risk class from one that can
+   only upload Parquet.
+3. **The snapshot id is pinned in the repository**, not read from
+   `latest.json`. Not because a moving pointer would produce false failures —
+   it mostly would not, since prod-green plus CI-red on a fixed snapshot means
+   the change did it — but because a pointer that moves between two runs of the
+   same commit destroys re-runnability on the one check whose job is telling you
+   what a change did. Pinning also turns "production data changed and a model
+   now fails" into a snapshot-bump PR: a reviewable diff with an owner, rather
+   than an ambient condition that lands on whoever opened a PR that morning.
+4. **A trigger set wider than `dbt/`.** The pin itself, the seeder and
+   downloader, the dbt version pins, and `db/migrations/` all change this
+   build's outcome. Unclassified paths fail open, as
+   [`ci_change_scope.py`](../../scripts/ci_change_scope.py) already does.
+
+**What it deliberately does not do.** It does not run
+`tests/integration/dbt/`; those keep their fixture and their job. It asserts
+through dbt's own data tests, which is why the verb is `build` and not `run`.
+
+**Three residuals, recorded rather than solved**, because each is a real limit
+on what a green here proves. Production builds incrementally — `--full-refresh`
+is conditional in [`dbt_runner/app.py`](../../dbt_runner/app.py) and off by
+default — while a fresh DuckDB file takes every incremental model's cold path,
+so the two exercise different code. A subset cannot invent a duplicate or a
+null, so `unique` and `not_null` failures here are true positives about
+production; `relationships` failures may be artifacts of incomplete cohort
+closure, which Plan 120 records as the hard part and once got wrong. And a
+snapshot captured after production's last dbt run can be red while production is
+green only because production has not run yet — a correct finding, arriving
+early, landing on an unrelated author.
+
+**Exit.** A gated CI job builds the full dbt project against a pinned,
+production-derived snapshot with all six sources populated, and fails on a
+production row that violates a dbt data test. Demonstrated by a deliberate
+violation, not asserted.
+
+#### Stage P ships in two parts, and the reason is a cycle
+
+**Split 2026-09-03, on the way to opening the PR.** The stage's own gate cannot
+land in the change that introduces it. The job builds against a snapshot; that
+snapshot can only be produced by an exporter carrying the two Postgres dimension
+tables; and that exporter has to be merged and deployed before it can produce
+one. Introduced together, the job is red on its own PR and stays red on master
+until a pin bump lands — for two reasons that are both the job working exactly
+as designed: no `CARTRACKER_SNAPSHOT_TOKEN` secret existed yet, and a
+placeholder pin necessarily names a snapshot exported before the Postgres half,
+which the seeder's `--require-non-empty` correctly refuses.
+
+The alternatives were worse in the way this plan cares about. Merging one
+known-red check leaves master red on a schedule nobody owns. Gating the job on
+the secret's presence makes it skip silently the day that secret is rotated or
+removed — a job that disappears when its credential does is the failure class
+Stage B spent its budget making impossible, and it would have needed a
+waiver-shaped justification to sit beside `DORMANT_SUITES`.
+
+So:
+
+* **Part 1** — what a production export needs: the exporter's two dimension
+  tables, `shared/lake_snapshot_postgres.py` and its round-trip SQL pair, the
+  export cache schema bump, and the seeder's Postgres write path with its
+  stricter `POSTGRES_URL` guard. Merged as
+  [#357](https://github.com/whitewalls86/new_car_tracker/pull/357) on
+  2026-09-04, every job green.
+* **Part 2** — the gate, arriving with a pin that resolves: the `snapshot-dbt`
+  job, the `snapshot_dbt` classifier group and its trigger set,
+  `.github/ci_lake_snapshot_pin.json` with a real snapshot id, and the
+  deliberate violation the exit above demands.
+
+**The pin travels with the job, not ahead of it.** A pin file in master naming
+a snapshot no job reads, and which would fail if one did, is a file that lies
+about which snapshot is authoritative — and the change that adds the job is
+where it gets a real value anyway. The same reasoning moved the trigger set:
+`SNAPSHOT_DBT_TRIGGERS` with no job consuming it is dead config in
+`ci_change_scope.py`, the one file in this stage whose blast radius is every job
+in the workflow.
+
+#### The export DAG fails on a successful export
+
+**Found 2026-09-03, pre-flighting the first `ci`-tier run.**
+[`check_snapshot_result`](../../airflow/dags/export_ci_lake_snapshot.py) accepts
+only `{"created"}` as a non-dry-run success status. The exporter returns
+`"exported"`. A DAG-triggered export therefore publishes its archive and both
+pointers, and then fails the task.
+
+**Nothing caught it because the DAG has never run** — `airflow.dag_run` holds
+zero rows for `export_ci_lake_snapshot`, and both snapshots in production before
+this stage came from the `snapshot-worker` invocation `docker-compose.yml`
+documents. The stage's own pre-flight is the only reason it is not still waiting
+for whoever triggered the DAG first.
+
+**It is a Layer 1 instance of the rule this plan keeps rediscovering.**
+`tests/integration/airflow/test_export_ci_lake_snapshot_dag.py` seeds
+`{"status": "created"}` and asserts the checker accepts it — a status string the
+test author chose and the exporter never emits. Both halves of the contract are
+written in the same file, so the test passes forever and proves nothing. It
+belongs in *[a run that succeeds has done the work its success
+implies](../TESTING.md#specified-here-not-yet-asserted)*, and the general shape
+is worth naming: **a DAG-side checker keyed on a string a service returns needs
+one test that reads the string from the service**, not from the test.
+
+The repair is two lines and its test correction, and it is Part 2's rather than
+a stage of its own — Part 2 is already the change that makes the export routine
+instead of hand-run, so the DAG is the surface it lands on. Until it ships,
+exports run through `snapshot-worker` directly.
+
+#### The CI credential became Plan 173, not a stage here
+
+Wiring Part 1's download needed a bearer token in CI for the first time, which
+turned one shared string into a question about three callers — CI, a
+developer's laptop, and the Plan 112 MLflow rehearsal. The *format* half landed
+alongside this stage, because a credential format is cheapest to change while
+nothing automated depends on it. The *storage* half became
+[Plan 173](plan_173_machine_credential_lifecycle.md), which also records why
+OAuth2's `client_credentials` and GitHub Actions OIDC were rejected and
+deferred respectively.
+
+Recorded here only so the trail from this stage to that plan is not lost. The
+reasoning lives there and is deliberately not repeated.
+
+#### Stage P was one row and is three
+
+**Split 2026-09-03, while scoping it.** The row read "suites on real Compose
+services, dbt against the Plan 120 snapshot, advisory CI impact selection" and
+carried a 2-point estimate for six separable pieces, three of which the ticket
+never listed. Nothing about them shares a mechanism, a file or a risk profile:
+one adds an isolated job, one rewrites four existing ones, and one builds a
+selector. Splitting them is not a rescope — every piece stays owned here — but
+it stops a single issue from being able to read "done" on a third of its
+content.
+
+The numbering follows this plan's own precedent and the contract's exemption
+for it. Stages S and T are already allocated, and [Stage G's
+reasoning](#why-this-order) applies unchanged: inserting an
+integer renumbers later stages and invalidates issues already filed against the
+old numbers. So Stages Q and R, as with G, J and K.
+
+### Stage Q: CI's services are production's, in definition and in contents
+
+**Legacy:** Stage 10b · **Issue:** CAR-78 · **State:** `—`
+
+**What it is.** Three questions with one thesis — CI's services are not
+production's — approached from the definition, the contents and one named
+instance.
+
+**The definition.** Four jobs (`dbt-models`, `schema-contracts`,
+`service-integration`, `lake-integration`) each declare their own `services:`
+block and their own `docker://flyway/flyway` step: four copies of `postgres:16`,
+three of `minio/minio:latest`, four hand-maintained Flyway argument lists. The
+drift is already measurable. CI's Postgres omits Compose's `command: postgres -c
+shared_buffers=2GB -c max_connections=100` and its `shm_size: 1gb`; CI's MinIO
+omits the console, the OIDC identity configuration and
+`MINIO_PROMETHEUS_AUTH_TYPE`; CI's Flyway omits `-baselineOnMigrate=true`.
+Nothing asserts any of it. This is the general form of the CI-schema gap Plan
+139 Stage F closed narrowly.
+
+The shape is already precedented here.
+[`docker-compose.lakehouse.ci.yml`](../../docker-compose.lakehouse.ci.yml) is a
+CI-only override that makes `cartracker-net` non-external and substitutes
+throwaway services, and
+[`tests/test_lakehouse_compose_config.py`](../../tests/test_lakehouse_compose_config.py)
+is its parity suite. A `docker-compose.ci.yml` needs the same two moves —
+`cartracker-net` and `cartracker_pgdata` are both `external: true` in the base
+file — and running Flyway as `docker compose run --rm flyway` makes CI execute
+the identical command production executes, rather than a fourth transcription
+of it.
+
+**The contents.** CI's Postgres is greenfield and production's carries hundreds
+of thousands of rows, so this stage measures *which* suites depend on an empty
+database rather than assuming the answer. The rehearsal that would close it
+needs a deployed stack and belongs to [Plan 121](plan_121_staging_environment.md);
+this stage owes the measurement and the handoff, not the repair.
+
+**The instance.** `tests/integration/airflow/` still points at
+`sqlite:////tmp/airflow.db`. Plan 139 Stage F left it deliberately, to keep test
+data out of the Postgres metadata schema the drain tests read. Now that a real
+Airflow metadata schema exists in the same job, whether those suites should
+share it is decided here — and it is the same question as the other two, one
+service down.
+
+**Why the three are one stage.** They touch the same four jobs. Splitting them
+means editing those jobs two or three times, and the sqlite question cannot be
+answered without knowing what the job's services are.
+
+**Exit.** The four jobs' services come from the Compose definitions with a
+mechanism that fails if a bare `services:` image returns; the greenfield
+measurement is recorded with its Plan 121 handoff; and the sqlite question has
+a decision with its reasoning.
+
+#### Four decisions taken while scoping this stage, 2026-09-04
+
+Reasoning in [the CI cost
+census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md); these are what
+changes about what gets built.
+
+**1. It is five jobs, not four.** Stage P closed on 2026-09-04 and added
+`snapshot-dbt`, which declares its own `postgres:16`, its own
+`minio/minio:latest` and a sixth hand-transcribed Flyway argument list. The
+count above was taken before it existed.
+
+**2. The guard is a resolved-config diff, not a field-by-field parity test.**
+`docker compose config --format json` resolves the whole merge chain — override
+files, `${VAR}` interpolation, `extends`, `include` — and normalizes as it goes.
+Verified against this repository: `command:` returns as a list where the file
+holds a block scalar, `shm_size: 1gb` returns as `1073741824`, and it needs no
+daemon state, no `cartracker-net` and no `cartracker_pgdata`. So the guard
+resolves the base chain and the CI chain, **diffs the two documents**, and
+requires the difference to equal a declared, commented allowlist. No field can
+be missed for not having been thought of — which is the limitation
+[`tests/test_lakehouse_compose_config.py`](../../tests/test_lakehouse_compose_config.py)
+has, since it `yaml.safe_load`s single files and asserts only what it names.
+
+That also settles the shape of the honest claim: **the exit is not "CI's
+services are byte-identical to production's."** `cartracker-net` and
+`cartracker_pgdata` are both `external: true`, the base file reads a dozen
+unset `${...}` variables, and production's MinIO carries
+`MINIO_IDENTITY_OPENID_*` pointing at Google. The end state is production's
+definition plus a **declared and asserted** override set, which is what turns
+the residue from accidental into visible.
+
+**3. testcontainers is declined for this stage.** Raised by [the Stage X origin
+note](../evidence/plan_162_stage_X_origin_2026-09-04.md) as directly addressing
+this stage's problem statement, and evaluated properly rather than by taste. It
+collides with [Stage R](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it):
+`service-integration` runs five pytest steps against one shared Postgres and
+each `run:` is its own session, so session-scoped containers mean five startups
+per job or one collapsed invocation — and collapsing destroys the named-step
+granularity the invocation rule reads. Every integration conftest also reads
+`TEST_DATABASE_URL` at **module import time**, with
+`tests/integration/archiver/conftest.py` stating the constraint outright
+("Must run before `shared.db` is imported"), so containers would have to start
+before conftest import in a root that the 2,212-test unit suite also loads. And
+it wraps `docker compose up` without changing what the compose file says, so
+`docker-compose.ci.yml` is needed either way. On this stage's own thesis the two
+options tie; every tiebreaker after that is cost.
+
+**4. The guard's own skip is Stage U's.** A `docker compose config` guard
+shells out to the `docker` CLI, and the parity suite it is modelled on opens by
+declaring "No live Docker required." It must skip cleanly when `docker` is
+absent and be *required* in CI — which is exactly
+[Stage U](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails)'s mechanism,
+and a dependency this stage should hand forward rather than solve locally.
+
+**Two questions this stage still owes an answer**, both to be settled while
+building rather than now: whether CI adopts production's `shared_buffers=2GB` /
+`shm_size: 1gb` wholesale or overrides them with a stated reason — a 7GB runner
+also hosting DuckDB, a dbt build and an Airflow venv is not the VM those numbers
+were chosen for — and whether the unset variables arrive through a committed
+`.env.ci` or through defaults in the override file.
+
+### Stage R: CI selection, and the instrument that has to precede it
+
+**Legacy:** Stage 10c · **Issue:** CAR-87 · **State:** `—`
+
+**Rescoped 2026-09-04, and moved to run after Stage X.** The selector this
+stage was built around is cut. [The CI cost
+census](../evidence/plan_162_stage_R_ci_cost_census_2026-09-04.md) found that its
+premises describe a workflow that no longer exists: the wall clock is set by a
+single job (`schema-contracts`, 123s) and every other heavy job already
+finishes inside its shadow, so **skipping any subset that excludes that job
+saves exactly zero seconds**. Plan 139 Stage E requires "a benefit larger than
+runner variance" before a selector is promoted; the available benefit is 0–30s
+against ±10–20s of variance, so the rule cannot be satisfied at any precision
+the selector could reach. Runner minutes are not a second justification — the
+repository is public.
+
+**What the stage is now.** Three pieces, in order:
+
+1. **The instrument fix**, reduced to whatever [Stage U](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails) has not already
+   supplied. The defect is real and unchanged —
+   `test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+   *directory* appears in a step's arguments, which is why 7 tests sat
+   deselected until a coverage number caught them. But the fix as scoped below
+   is a *static* reimplementation of pytest's own selection, and Stage U builds
+   a `pytest_terminal_summary` hook across every job that observes what actually
+   ran. Transcribing what a tool already knows is the same defect [Stage Q](#stage-q-cis-services-are-productions-in-definition-and-in-contents)
+   exists to remove from the services blocks. **This stage runs after Stage U so
+   it can read Stage U's output instead of simulating it.**
+2. **Install caching, measured before adopted.** 98 of `schema-contracts`' 123
+   seconds is infrastructure and dependency installs; the tests are 6. That is
+   the compressible number, and unlike selection a cache miss costs time rather
+   than correctness. Two candidates need measuring **both ways** rather than
+   assuming: the 27s Airflow venv, where restoring several hundred MB may cost
+   what installing it costs, and `setup-python`'s `cache: pip`, which caches
+   downloads rather than installs. Having rejected the selector on measured
+   grounds, this stage may not adopt caching on projected ones.
+3. **`.claude/skills/**/*.md` joins the docs zone.** Prose edits of 12 and 14
+   files are pulling the full heavy workflow, three dbt builds included, because
+   `.claude/` is not in `DOCS_PREFIXES`. This is the fail-open direction and
+   carries none of the risk the trigger sets were declined for.
+   `.claude/settings.json` stays out: one such merge paired it with
+   `tests/scripts/test_build_public_roadmap.py`, and hooks can change what runs.
+
+**What it drops, each with the condition that would revive it.** A flat no
+ossifies; these expire on checkable events.
+
+| Dropped | Why | Revisit when |
+|---|---|---|
+| The advisory impact selector | 0s available under the `max()` ceiling | The ceiling falls far enough that job-level skipping beats runner variance |
+| A trigger set for `dbt-models` | 57% of heavy runs would skip it, saving 0s; and narrowing an *existing* job suppresses evidence, unlike `snapshot-dbt` | Caching has promoted it to the critical path **and** Plan 125 Gate E has retired the dual-run, so its surface is stable |
+| Incremental-diff classification | The plan's own four conditions, against ~2 minutes that the census shows is nearer zero | Not on current evidence |
+| Content-addressed `docker-build` skipping | Called "the cheaper first win"; measures at 0s, since 96s sits under a 123s ceiling | Caching promotes `docker-build` to the critical path — which piece 2 above would do |
+
+**Why it runs last.** Three mechanisms, not a general caution. Stage U
+may subsume piece 1, as above. [Stage X](#stage-x-a-test-may-not-author-sql-either) creates a new SQL root with its
+own census — a path class no invocation rule can know about yet. [Stage T](#stage-t-exists-because-this-plan-grew-the-suite) may move the suite
+boundaries that piece 1's unit of analysis rests on.
+
+**Exit.** The invocation rule distinguishes a suite from a directory, built on
+Stage U's observation rather than a second implementation of it; the caching
+candidates are measured both ways and only the winners adopted; the docs zone
+covers `.claude/skills/**/*.md`; and each of the four dropped items carries its
+revisit condition in the record.
+
+**What it was scoped as**, kept below because the reasoning that produced the
+four drops is worth reading against what replaced it.
+
+**What it is.** Plan 139 Stage E's advisory impact selector, the two questions
+Stage G raised and declined, and — first — the instrument both of them need.
+
+**The instrument comes first, and the plan did not previously say so.**
+`test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
+*directory* appears in a step's arguments. A directory is not a suite, and the
+rule cannot distinguish "this file runs in CI" from "the directory containing
+this file is named in a `run:` line", nor either from "this file sits in
+`tests/integration/` and needs nothing that makes it one".
+[Stage F found this](../evidence/plan_162_stage_F_evidence.md#a-unit-test-filed-as-an-integration-test-and-two-wrong-answers-before-the-right-one)
+and assigned it here. **A path-to-test-group selector cannot be built on top of
+an instrument that does not know which tests a step runs**, so this is a
+prerequisite rather than a companion, and the order inside the stage is: fix
+the instrument, build the advisory selector, then decide the two questions on
+top of it.
+
+**The selector stays advisory**, on Plan 139 Stage E's terms: record what it
+would have run, compare against every actual failure, and treat any failure
+outside the predicted set as evidence against promotion rather than an
+exception to allowlist. Promotion to job skipping requires a written observation
+window with zero unexplained misses and a benefit larger than runner variance.
+Plan 142's service graph is evidence for the selector and not the selector
+itself — production asks which live work depends on a service, CI asks which
+tests, images and environments can detect a changed path.
+
+**The two questions it inherits** are
+[below](#stage-p-inherits-a-question-stage-g-raised-and-declined): classifying
+the incremental diff rather than the cumulative one, which Plan 139 Stage E's own rule
+answers *not yet*, and content-addressed skipping for `docker-build`, which is
+a claim about content rather than about run history and is the cheaper first
+win.
+
+**Exit.** The invocation rule distinguishes a suite from a directory; an
+advisory selector emits its prediction on every full run without gating
+anything; and both inherited questions have a recorded decision.
+
+#### Stage P inherits a question Stage G raised and declined
+
+**Scoped 2026-09-01, from a question asked while reviewing Stage G's CI
+change. Recorded here rather than acted on, because it is Plan 139 Stage E's subject
+and Plan 139 Stage E already has a rule for it.**
+
+`ci_change_scope.py` classifies the **cumulative** PR diff — `base.sha` to
+`head.sha` — so a documentation commit pushed onto a PR that has already gone
+green re-runs the whole workflow, because the cumulative diff still contains
+the production paths verified two pushes ago. Classifying the *incremental*
+diff instead would skip it.
+
+**The saving is about two minutes** — PR #325's full workflow was 127s wall
+clock after Stage E. That is the number any design here has to beat, and it is
+small.
+
+**The cost is four conditions, not one diff.** A skip is only sound if all of
+them hold, and three of them are invisible when they do not:
+
+1. **The reference commit must be verified, not merely green.** The previous
+   push may itself have skipped the heavy jobs, so the reference has to be the
+   most recent ancestor where they actually concluded `success` rather than
+   `skipped` — an Actions API walk with `actions: read`, or a marker written
+   when heavy passes and read back later.
+2. **The base must not have moved.** `actions/checkout` builds
+   `refs/pull/N/merge` on a `pull_request` event, so the workflow tests
+   `merge(base, head)` and not `head`. If `master` advances between the
+   verified run and the new push, the merged tree differs even for a
+   documentation-only diff and the earlier verdict does not carry. This is the
+   dangerous one: green, fast, and not verifying the tree being merged.
+3. **Rebases and force-pushes must fail closed**, via an ancestry check rather
+   than a SHA equality that can match a commit no longer on the branch.
+4. **The selection logic needs its own tests**, in Python beside
+   `ci_change_scope.py` rather than in workflow shell, because it is riskier
+   than the path classification it would sit on top of.
+
+**Plan 139 Stage E's rule already decides this, and the answer is not yet.** Promotion
+to job skipping requires an observation window with zero unexplained misses and
+a benefit larger than runner variance; a false negative costs time and a false
+positive suppresses evidence. Incremental gating is a false-positive risk by
+construction. It also weakens exactly what Plan 139 Stage E told it not to: the current
+fast path's proof is strong *because* it is cumulative — "every changed path in
+this PR is under `docs/`" is a claim about a tree, and going incremental turns
+it into a claim about a chain of runs.
+
+**The cheaper target, if Stage P wants a win here first, is
+content-addressed skipping for `docker-build`** — key the build on a hash of
+the Dockerfiles, requirements and service sources and reuse the layer cache
+when it matches. That is a claim about content rather than about run history,
+so it carries none of the four conditions above, and `docker-build` is the job
+`promtail-config` waits on.
+
+### Stage S answers a question Plan 161 did not ask
+
+**Legacy:** Stage 11 · **Issue:** CAR-79 · **State:** `done`
+
+**Added 2026-09-01. Rewritten 2026-09-04, against a measurement that
+contradicted its own premise.** [Plan 161](plan_161_testing_contract.md) asked
+what a *service* owes before it ships and keyed the answer to a Python package.
+The dbt project is not one: `dbt/` is a Dockerfile, SQL and YAML, `dbt_runner`
+— the service that invokes dbt — has the "enough" row, and the models it builds
+have none. `test_every_service_directory_has_a_row_in_the_enough_table` asserts
+the table equals `service_packages()` in both directions, so **adding a `dbt`
+row today fails as a phantom.** The obligation is not unmet; it is
+inexpressible.
+
+**The stage's original answer was a headcount, and the headcount is the wrong
+instrument.** As written it measured 17 of 22 models with a dbt unit test and
+required the five without to gain one. Re-measured 2026-09-04:
+
+| | |
+|---|---|
+| Models on disk | **23**, not 22 |
+| With at least one dbt unit test | 18 |
+| Directly asserted by a fixture-driven real build | 7 |
+| Asserted by **both** | 7 |
+| Asserted by neither | 5 |
+
+The fixture adds depth, not breadth — every model it asserts on already had a
+unit test. But the count fails in the other direction too. `stg_observations`
+has no unit test **and is not untested**:
+[`scripts/seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py)
+seeds `ARTIFACT_NULL_VIN` and `ARTIFACT_SHORT_VIN` deliberately, so both reject
+paths of its `vin17` guard and its accept path run against production-shaped
+Parquet on every real build. The headcount scores it zero.
+
+Set against branch counts the ranking inverts. Scoping counted branch points
+with a regex proxy — not a parse, and expected to be low by construction — and
+put `int_listing_volatility_features` at ~48 against 3 unit tests,
+`int_listing_observation_fingerprints` at ~37 against 5, and `mart_deal_scores`
+at ~33 against 4. **Re-counted 2026-09-06 from a real parse of dbt's compiled
+SQL: 46, 33 and 34 respectively, against a total of 216 branch points across
+the 23 models on a cold compile, and 311 once both compile phases are
+counted.** The proxy was close and its ranking was right, which is worth
+recording because it is the rarer outcome in this plan — three of the four
+other numbers this stage was scoped by did not survive measurement.
+
+**A fifth did not either, and it was this section's own.** Scoping put the
+total at 250 by counting with a regex; the enumerator says 216. The proxy had
+counted every `filter (where ...)` twice, once as an aggregate filter and again
+as a `where` conjunct. It is recorded here rather than quietly corrected
+because the error is this plan's recurring subject, committed by this plan's
+own author, and caught by the instrument the stage was building. **The models
+holding the most logic are the least proportionally covered, and every
+instrument in this repository reports them as covered.**
+
+**Three lists already claim to cover branches. None is derived from the models,
+and no two are checked against each other.**
+
+| List | Covers a branch with | Size |
+|---|---|---|
+| [`archiver/config/lake_snapshot_selectors.yml`](../../archiver/config/lake_snapshot_selectors.yml) | **real production rows** | 22 selectors, 18 SQL templates |
+| [`scripts/seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py) | **synthetic rows**, under the same scenario names | ~20 scenarios |
+| `dbt/models/*/unit_tests.yml` | **mocked inputs** | 66 tests across 18 models |
+
+The first is why this stage is a reconciliation rather than an invention. Its
+own header already states the contract:
+
+> Each entry names a dbt/PySpark branch or guard the snapshot must exercise,
+> the source table(s) and filters used to find candidate entities in
+> production, and the minimum representation required in the snapshot before it
+> can be published.
+
+The production snapshot is not a sample that happens to contain interesting
+rows. It is **generated branch-first**, from real data, with `min_entities` as a
+publication floor — `stable_state_run: 25`, `relisted_vin: 10`,
+`invalid_or_null_vin`, `detail_beats_srp`, `srp_fallback`, `price_drop`,
+`no_price_history`. The fixture mirrors those same scenario names
+synthetically. Both were built to cover dbt branches; both are curated by hand
+from somebody's reading of the models.
+
+**So what the dbt project owes is branch coverage, and the missing artifact is
+one: the branch list, derived from the model SQL itself.** With it in hand,
+everything this stage wants is a comparison:
+
+- **which branches no unit test covers** — against `unit_tests.yml`;
+- **which branches production data never takes** — against the selector
+  registry, and against which selectors actually fill `min_entities`. A branch
+  no production row reaches is either dead code or a state never seen;
+- **which constraints are decorative** — 161 column constraints are declared
+  across the 23 models, and nothing demonstrates that removing a guard fails
+  its constraint. A `not_null` is a claim about a branch guard, so the
+  enumerator that finds the branch finds the constraint's subject too;
+- **and the ratchet is free.** A derived list means a new model enters the
+  denominator the moment it exists, and shows up missing in three places at
+  once.
+
+Today the only obligation this repository mechanically enforces on a model is
+that it carries a cadence tag (`tests/dbt/test_cadence_tags.py`), which is a
+*scheduling* rule. A new mart with no test of any kind ships green.
+
+**G16 is untouched by the rewrite, and its argument is unchanged.**
+`_SQL_EXEMPT_ROOTS` exempts `dbt/` from the Layer 2 census by design — correct,
+because Layer 3 is dbt's instrument — so a `.sql` file whose logic moves into a
+mart leaves a counted surface for an uncounted one, and **the count drops for
+something that is not a repair.** That is the same failure as Stage F's
+substring bug: the list shrinking for free. What the rewrite adds is the reason
+the exemption is worth defending at all — it is only honest if the uncounted
+population has a floor of its own, and branch coverage is that floor.
+
+**One gap found while measuring, and small enough to close here.**
+`--require-non-empty` proves all six dbt sources seeded rows before a snapshot
+build, and its CI comment names the failure it prevents: *"left empty,
+`stg_search_configs` reads nothing, `int_active_make_models` inner-joins to
+nothing, and `mart_vehicle_snapshot` builds green over an empty world."* But the
+list it checks — `LAKE_TABLES` plus `POSTGRES_SNAPSHOT_TABLES` — is hardcoded in
+the seeder, and nothing asserts it agrees with `dbt/models/sources.yml`. A
+seventh source would go unchecked and the gate would pass over exactly the empty
+world it exists to catch. It is this plan's own recurring defect, sitting inside
+the instrument this stage now depends on.
+
+**The execution recorder left this stage on 2026-09-04, for
+[Stage X](#stage-x-a-test-may-not-author-sql-either).** Recording what text ran
+against which engine is repo-wide and not dbt's: production reaches an engine
+through four client libraries — `psycopg2`, `asyncpg`, `duckdb` and
+`pyspark.sql` — and the fixture-keyed design this section used to carry would
+have recorded nothing for two of them, `scraper/sql/`'s statements included. X
+is the stage that already makes every statement live in a file and validates it
+against an engine, and it runs before this one, so the capture baseline's
+deadline is served earlier there than it was here.
+
+**The column contract arrived here from
+[Stage X](#stage-x-a-test-may-not-author-sql-either) on 2026-09-05**, travelling
+the other way. X needed a trustworthy declaration of each model's shape — to
+stop a test inventing one — and found there is none. `schema.yml` is
+documentation: nothing makes it agree with the model it describes, and no column
+in it carries a type. The drift is already in the tree, in three fixtures that
+hand-declare stand-ins for real models and have diverged from them —
+`int_listing_state_fingerprints` declared 5 columns against the model's 8,
+`int_listing_state_runs` 1 against 11, `int_listing_observation_fingerprints` 1
+against 10. Nothing noticed, because nothing was comparing them.
+[`int_latest_observation.sql`](../../dbt/models/intermediate/int_latest_observation.sql)
+already records the production half of the same defect in its own prose: *"a
+column added to stg_observations must be added here too, or it silently stops
+appearing downstream. Nothing currently catches that drift automatically … this
+model's schema file documents only vin17/source/make, not the full column list,
+so it is not a backstop."* X landed the ledger that makes this visible — G20,
+seeded at 23, one waiver per model — and the name-only half of the fixture rule;
+**the retype half is recorded there as a stated limit and is struck when this
+stage closes.**
+
+**The scoping counts were wrong in three places, and re-measuring them is the
+first thing this stage did.** CAR-79 named six models with partial column lists
+and put the shortfall at ~101 columns. Measured against each model's final
+`SELECT` on 2026-09-06:
+
+| Model | Declared | Emitted | Undocumented |
+|---|---:|---:|---:|
+| `mart_deal_scores` | 4 | 39 | **35** |
+| `int_latest_observation` | 3 | 33 | 30 |
+| `stg_observations` | 6 | 33 | 27 |
+| `mart_vehicle_snapshot` | 5 | 29 | 24 |
+| `stg_price_events` | 6 | 10 | 4 |
+| | | | **120** |
+
+**Five models, not six, and the largest gap was not on the list.**
+`int_listing_volatility_features` was cited at 27/31 and `mart_block_rate` at
+6/8; both document every column they emit. `mart_deal_scores` — 4 declared
+against 39 emitted, because its final `SELECT` is `select *` over a CTE that
+projects 38 — was cited nowhere, and it is the worst case in the project. So 18
+of 23 models are complete rather than 17, the shortfall is **120 columns rather
+than ~101**, and the completed declaration is **307 columns rather than 187**,
+which is the denominator the type contract below actually has to fill. This is
+the third time in this plan that a stage's scoping number was wrong in the
+direction that made the stage look smaller, and the second time in two stages —
+see [Stage X](#stage-x-a-test-may-not-author-sql-either), whose evidence records
+the same thing under §4.
+
+#### The three lists answer three questions, not one
+
+**Amended 2026-09-07, against a measurement taken after the enumerator
+existed.** This section previously treated the three lists as three ways of
+doing one job, and asked which branches each of them covered. With the branch
+list in hand that question could finally be asked of the data, and the answer
+says the framing was wrong. Of 308 measurable branch points:
+
+| | branches |
+|---|---:|
+| Covered by a dbt unit test | **148** |
+| Covered by the fixture-driven real build | 95 |
+| Union | 200 |
+| **Only** the fixture reaches | **22** |
+| **Only** a unit test reaches | 75 |
+| Both reach | 73 |
+| Neither reaches | 108 |
+
+**Unit tests are already the stronger branch instrument by half again**, and
+73 branches are covered twice over. But the 22 the fixture alone reaches are
+not a random remainder — they are almost exactly the surface a unit test
+*cannot* express:
+
+- **12 are phase-tagged**, `@full` or `@incremental` — and this bullet said
+  something false when it was written, which is worth leaving visible. It read
+  *"a dbt unit test never materializes a relation, so `is_incremental()`
+  machinery is structurally out of its reach — no quantity of unit testing gets
+  these."* **Corrected 2026-09-07: a unit test reaches them.** It needs
+  `overrides: {macros: {is_incremental: true}}` and a mocked `- input: this`,
+  and on a clean warehouse that fails — dbt runs a model's unit tests *before*
+  materializing it, so the test needs a relation the test is blocking. That
+  reads as a deadlock and is not one: dbt's documentation prescribes
+  `dbt run --empty` first, which creates the relations without running tests.
+  With that step a clean warehouse builds `PASS=282 ERROR=0` and all 19 of the
+  incremental-only branch points are unit-tested. **The claim was inferred from
+  a failure rather than from the documentation, and it was inferred twice —
+  once by an agent, once by the author checking it.** It is corrected here
+  rather than deleted because the shape of the error is the plan's own subject:
+  a measurement taken without a precondition, read as a property of the world.
+- **2 are `stg_observations`' `vin17` guard**, which is this section's own
+  headline anecdote arriving from the other direction: the model with zero unit
+  tests, whose reject paths run on every build because the fixture seeds
+  `ARTIFACT_NULL_VIN` and `ARTIFACT_SHORT_VIN` deliberately.
+- **4 are cooldown bucket boundaries** in `mart_cooldown_cohorts` and
+  `mart_cooldown_event_funnel`, mapping one-to-one onto the selector registry's
+  `cooldown_bucket_3_4`, `_5_10` and `_11_plus`. The branch-first snapshot
+  design, seen from the far end.
+- **4 are deep CTE predicates** in `int_listing_volatility_features`, several
+  joins past anything a mocked `ref()` reaches.
+
+**So the lists are not redundant, they are differently shaped, and grading them
+all on one number was the error.** The work divides:
+
+| List | Owes |
+|---|---|
+| `dbt/models/*/unit_tests.yml` | **Branch exhaustiveness — 100%, both arms, every branch**, including ones another instrument already reaches |
+| the fixture-driven build | **Non-vacuity**: every model materializes rows, cold and warm |
+| the snapshot selectors | **Relevance**: which branches production actually reaches |
+
+**Unit tests take exhaustiveness because they are the only list that can
+construct a state production has never produced.** A selector finds rows; it
+cannot find the absence of rows, and it cannot find a state the business has
+never entered. Keying coverage to production data would make the branch list
+hostage to whatever production happens to contain.
+
+**The fixture is released from branch coverage entirely, and that is what makes
+it maintainable.** Its data stops being pinned in place by an obligation to
+reach particular branches, and answers one question instead: does a build over
+this data produce a world where every model is actually populated? Nothing else
+can ask that. No unit test would ever have found that five of the 23 models
+build to zero rows — see [the empty
+models](#five-models-build-over-an-empty-world) — and a production-shaped
+snapshot would not either, because production has the rows that fixture lacks.
+
+**And the third question inverts.** A branch production never takes is not a
+coverage gap somebody must close by inventing data. It is a finding: dead code,
+or a state never yet seen. Nothing in this repository currently answers it.
+
+#### Five models build over an empty world
+
+**Measured 2026-09-06.** `int_active_make_models`, `int_benchmarks`,
+`mart_deal_scores`, `mart_price_freshness_trend` and `mart_vehicle_snapshot`
+materialize **zero rows** against the fixture, and the build reports success.
+Their data tests pass vacuously — `not_null` over an empty relation is
+trivially true — so roughly thirty declared constraints currently assert
+against nothing at all.
+
+The cause is one line of provenance: dbt has six sources, two of which are
+Postgres tables read through `postgres_scan`, and
+[`scripts/seed_lake_snapshot_fixture.py`](../../scripts/seed_lake_snapshot_fixture.py)
+seeds **MinIO only**. `ops.tracked_models` is written by the processing service
+at runtime and by nothing in the dbt path, so it is empty;
+`int_active_make_models` inner-joins it and yields nothing; `mart_vehicle_snapshot`
+inner-joins that; `mart_deal_scores` and `mart_price_freshness_trend` read the
+mart. `int_benchmarks` is empty for an unrelated reason — its join between
+`int_latest_observation` and `int_price_history` survives no rows under the
+`current_price > 0` filter.
+
+**The instrument for this already exists and is pointed at the other job.**
+`--require-non-empty` names this exact cascade in its own CI comment — *"left
+empty, `stg_search_configs` reads nothing, `int_active_make_models` inner-joins
+to nothing, and `mart_vehicle_snapshot` builds green over an empty world"* — but
+it runs in `snapshot-dbt`, against the production snapshot, and guards
+*sources*. The fixture build in `dbt-models` has no such gate, and no gate at
+all on *models*.
+
+**There is no waiver list, and the case against one is a live defect rather
+than a principle.** `mart_vehicle_snapshot.sql:35` reads
+`case when ph.last_seen_at >= {{ now_ts() }} - interval '7 days' then 'active'
+else 'unlisted' end`, and the fixture's timestamps are absolute — `2026-07-26`
+and neighbours. That arm was covered when it was written and has been dead for
+weeks, because wall-clock time moved past the fixture and nothing was watching.
+A waiver list is precisely where that would have been absorbed: a red gate
+nobody can explain, a line reading "legitimately empty in the fixture", and rot
+recorded instead of repaired. The cost of refusing one is that this gate will
+one day fail for a reason no commit caused; the answer to that is to anchor the
+fixture's dates relative to `now()`, which is work this stage owes and a waiver
+would have hidden.
+
+#### Six decisions taken while scoping this stage, 2026-09-06
+
+Each was settled against a measurement taken first, in a throwaway dbt project
+running the pinned CI versions (`dbt-core==1.10.20`, `dbt-duckdb==1.10.1`).
+
+**1. The branch list is parsed, not matched, and its identity is positional.**
+`sqlglot` on the duckdb dialect parses **184 of 184** files under
+`target/compiled/` — all 23 models and all 161 data tests — with no failures,
+`arg_max`, `filter (where …)`, `qualify`, `::numeric` and windows included.
+Compiled rather than raw, because `regex_matches()`, `parquet_source()` and
+`datediff_days()` sit inside the expressions the enumerator has to see, and a
+Jinja stub that rendered one of them branchless would undercount without
+failing. A branch is keyed `model.<output column>.<kind>.<ordinal>`; the
+predicate text rides along as a fingerprint the reconciliation prints for
+review but never keys on, because a text key silently detaches every claim on
+the next edit. The accepted cost is that reordering `CASE` arms transfers a
+claim between them — which changes semantics anyway and so is already review's
+business.
+
+**2. Coverage is observed, not claimed.** The alternative was nominal: each of
+the three lists declares branch ids and the gate checks both directions. That
+relocates the hand-curation this stage exists to close, and a typed claim can
+be wrong forever without failing. It was rejected once
+`target/compiled/…/unit_tests.yml/` turned out to hold **the model's own SQL
+with each `ref()` replaced by a `__dbt__cte__` CTE of the `given` rows** — a
+unit test is the model with fixed inputs, so one probe mechanism reaches all
+three lists. A probe is `count(*) filter (where <predicate>)` and its negation,
+evaluated in the branch's own scope; a branch is covered when both arms come
+back non-zero. Demonstrated on `stg_dealers`, where
+`test_dealers_most_recent_attributes_win` takes only the true arm and
+`test_dealers_null_customer_id_excluded` takes both. Two limits are accepted:
+branches inside windows, `qualify` or aggregate arguments have no row-level
+scope to attach to and are recorded unprobeable with the reason, and unit-test
+probes must ride in the `dbt-models` job rather than a bare compile, because
+`get_fixture_sql` reads the real relation's columns and errors without it.
+
+**3. Every branch counts the same.** 73 of the 216 a cold compile yields are
+`coalesce` fallbacks, and 48 of those are `coalesce(field, '')` field
+normalizations inside the two fingerprint concats, which raised the option of filtering them out or
+weighting them by kind. Both were rejected: a filter is a judgement that
+shrinks the denominator, which is the defect this plan has now found in four
+separate instruments, and a field that is never null in the fixture is a field
+the fingerprint has never been shown to distinguish on. The obligation is both
+arms of every one of them.
+
+**4. The constraint gate mutates only inside the model that declares the
+constraint.** Mutating across models and rebuilding the downstream subtree was
+considered and dropped. `not_null_mart_vehicle_snapshot_vin` cannot be broken
+from inside `mart_vehicle_snapshot` — the guard is `where vin17 is not null` at
+[`int_latest_observation.sql:39`](../../dbt/models/intermediate/int_latest_observation.sql),
+and the mart takes it as its driving table. Calling that constraint decorative
+is **correct, not a false verdict**: it restates an invariant established
+upstream, where `not_null_int_latest_observation_vin17` sits and is locally
+load-bearing. Generalised: a propagated constraint is either mirrored upstream,
+where local mutation finds it, or it is not — and then the finding is that the
+model establishing the invariant fails to declare it, which is the more useful
+one and comes free. So two classes, not three, with a decorative verdict
+carrying the upstream guard's branch id as its reason. The stated limit is that
+mutation measures the code as it stands and cannot tell "decorative because
+redundant" from "decorative but a useful regression barrier" — which is why the
+exit records these rather than deleting them.
+
+**5. G16 gets a manifest, not a count.** A high-water count plus the absorption
+ledger was the cheaper design and is rejected on a hole in exactly the thing
+being asserted: delete `foo.sql` and add `bar.sql` in one commit and the count
+never moves, so the departure goes unrecorded. The objection to the manifest
+was churn, and the churn was measured — production `.sql` add/delete events run
+2, 6 and 6 in non-sweep months against 112, 28 and 95 in the three months that
+were Plan 120's selector extraction and this plan's own Stages L and X. **About
+five lines a month, from sweeps that are now finished.** That does not buy a
+correctness hole in a rule whose whole subject is silent departure. No
+`--update` flag: a manifest that regenerates itself is a rubber stamp, and the
+diff someone reads is the entire mechanism. `SQL_ABSORBED_BY_DBT` stays out of
+`ALL_WAIVERS` — it is permanent record rather than a draining queue, and
+[`test_no_waiver_outlives_the_plan_that_owns_it`](../../tests/test_testing_contract.py)
+would turn the whole ledger red the day this plan archives.
+
+**6. The column contract is derived from a build, and its Spark half leaves.**
+Names and types both come from `DESCRIBE` against the built relations, so
+exits 6 and 7 close in one operation and nobody hand-transcribes a column list
+— the failure that produced the three stale fixtures Stage X found. Contracts
+were confirmed enforced on `table` and on `view` (4 of the 23 are views), with
+a precise diagnostic naming the column, both types and the mismatch reason, and
+`string` was confirmed accepted by dbt-duckdb and normalized to `VARCHAR`. The
+spellings are DuckDB's; both Spark questions this stage uncovered are
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md)'s and are recorded there.
+
+**Exit.**
+
+1. **The branch list is derived from the model SQL**, not maintained. A model
+   that gains a branch nothing exercises fails the suite. Demonstrated by adding
+   one, not asserted.
+2. **Every branch is exercised in both directions by a dbt unit test** — all of
+   them, including branches some other instrument already reaches. See
+   [the division of labour](#the-three-lists-answer-three-questions-not-one)
+   for why duplication is the point rather than waste.
+3. **The fixture's obligation is non-vacuity, and it is the whole of the
+   fixture's obligation.** Every model materializes at least one row, on a cold
+   build and on an incremental one. No waiver list: an empty model is a defect
+   in the fixture, never a fact to be recorded.
+4. **Every declared column constraint is shown to be load-bearing** — removing
+   the guard that produces it fails its test. A constraint no mutation can
+   break is recorded as decorative rather than left standing as coverage.
+5. **G16 is asserted.** `production_sql_files()` may shrink only when the change
+   names the dbt model that absorbed the statement; a silent shrink fails.
+   Demonstrated by a silent shrink failing, not asserted.
+6. **The non-empty gate derives its source list from `sources.yml`**, so a
+   source added to the dbt project cannot go unchecked.
+7. **`schema.yml` is complete.** The 5 partial column lists are filled — 120
+   columns — so 23 of 23 models document every column their final `SELECT`
+   emits.
+8. **Every column carries a `data_type`, under `contract: {enforced: true}`** —
+   0 of 187 do today, and 307 will be declared once exit 6 lands — so dbt fails
+   the build when a model's output stops matching its declaration. Spellings
+   valid on both engines per [Plan 125's
+   audit](../reference/plan_125_portability_audit.md): `varchar` is a hard Spark
+   parse error, `string` is DuckDB's alias and Spark's native name, *"verified
+   on both"*. A model that cannot carry an enforced contract has the reason
+   recorded rather than being skipped.
+9. **G20's waiver ledger is empty**, ratcheting down from the 23 Stage X seeded,
+   one per model.
+
+### Stage T exists because this plan grew the suite
+
+**Legacy:** Stage 12 · **Issue:** CAR-80 · **State:** `done`
+
+**Added 2026-09-01, at the maintainer's suggestion, during Stage L.** Plan 162
+has spent nine stages adding tests -- Stage B put 73 orphaned ones into CI,
+Stage H added Layer 4 for `container_health`, and Stage L alone took Layer 2
 from 129 tests to 237. Nothing has yet looked at what that growth duplicated.
 
 Measured on 2026-09-01, before the stage starts:
@@ -382,12 +1892,16 @@ is written out **17 times**, across `tests/integration/processing/` and
 `SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid`
 nine times; `SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid` six.
 
-**These must not become `.sql` files.** A read-back assertion is the test's own
-half of the work, not a statement production issues, and `shared/sql/` feeds
+**~~These must not become `.sql` files.~~ Reversed by
+[Stage X](#stage-x-a-test-may-not-author-sql-either), 2026-09-04**, and struck
+rather than deleted because the mechanism it names is right and only the
+conclusion was wrong. As written: a read-back assertion is the test's own half of
+the work, not a statement production issues, and `shared/sql/` feeds
 `production_sql_files()` -- filing one there would demand a Layer 2 test *for
 an assertion*, which is circular, and would inflate the production census with
-statements no service runs. The repair is a shared *test* helper, which is why
-this is its own stage and not a continuation of Stage 7.
+statements no service runs. **Every clause of that holds, and none of it requires
+the file to live in `shared/sql/`.** A separate root with its own census answers
+the circularity without keeping the exemption, which is what Stage X builds.
 
 **Why this is the same defect as G17 and not a tidiness exercise.** A seed
 `INSERT` written by hand inside a test is a statement that has to agree with
@@ -398,398 +1912,732 @@ census by design, and correctly so, because fixture seeds are not production
 SQL. That exemption is what makes this invisible: the rules this plan built all
 stop at the tests' own door.
 
+**That paragraph is Stage X's thesis, written here first and scoped as
+duplication.** It states the drift exactly -- 96 statements that must agree with
+a schema, with no single definition and nothing that notices when 95 of them are
+found -- and then reaches for a shared helper, which removes the retyping and
+leaves the drift. **This stage keeps the half a file cannot answer**: the 55
+module-local seed helpers, the three `_seed` definitions, `_make_tar_zst` in
+three script modules. Two helpers doing the same thing is not a question a file
+answers, which is what the instrument note below is about. The SQL is Stage X's.
+
 **Two things the stage must not do**, stated now so they are decisions rather
 than discoveries. It must not consolidate a fixture whose two callers want
 different data -- a shared seed that grows parameters until it can serve
 everyone is harder to read than the two helpers it replaced, and a test whose
 setup lives three files away is worse at explaining its own failure. And it
-must not touch `tests/scripts/oneoff/`, which Stage 5b declared spent: those
+must not touch `tests/scripts/oneoff/`, which Stage G declared spent: those
 helpers duplicate each other freely and should, because the plans that own them
 have archived.
 
 **The instrument this stage needs does not exist yet**, which is why it is
-scoped after Stage 11 rather than before it. "Two helpers do the same thing" is
-not a textual property -- `_seed` and `_insert_queue_row` may be identical in
-effect and share no token -- so unlike G5, G15 and G17 there is no cheap
-derived check waiting to be written. The stage should say plainly whether it
+scoped after [Stage X](#stage-x-a-test-may-not-author-sql-either) rather than
+before it. "Two helpers do the same thing" is not a textual property -- `_seed`
+and `_insert_queue_row` may be identical in effect and share no token -- so
+unlike G5, G15 and G17 there is no cheap derived check waiting to be written.
+The instrument that would answer it is the execution recorder, which records
+what text each helper actually executed; it was Stage S's until 2026-09-04 and
+is X's now, so this stage's dependency moved with it. The stage should say plainly whether it
 found one or whether it leaves prose behind, per success criterion 2.
 
-### Stage 11 answers a question Plan 161 did not ask
+**Exit.** Scoped to the Python half; the SQL is Stage X's and is not re-measured
+here. The helper duplication is re-measured against the same recipe that produced
+the table above, and every delta is recorded — including the ones that did not
+move. Shared test helpers replace the duplications that genuinely share intent;
+a duplication whose callers want different data is left alone and that decision
+is recorded rather than silently skipped. `tests/scripts/oneoff/` is untouched.
+And the stage states plainly
+whether it found a mechanical instrument for "two helpers do the same thing" or
+leaves prose behind: concluding that none exists is a permitted outcome,
+concluding nothing is not.
 
-**Added 2026-09-01.** [Plan 161](plan_161_testing_contract.md) asked what a
-*service* owes before it ships and keyed the answer to a Python package. The
-dbt project is not one: `dbt/` is a Dockerfile, SQL and YAML, `dbt_runner` —
-the service that invokes dbt — has the "enough" row, and the 22 models it
-builds have none. `test_every_service_directory_has_a_row_in_the_enough_table`
-asserts the table equals `service_packages()` in both directions, so **adding a
-`dbt` row today fails as a phantom.** The obligation is not unmet; it is
-inexpressible.
+### Stage U: every skip in CI is declared, or the run fails
 
-What that costs, measured: **17 of 22 models have a dbt unit test and five do
-not**, and no rule requires one. `tests/dbt/` asserts every model carries a
-cadence tag, so the only obligation this repository mechanically enforces on a
-model is a *scheduling* one. A new mart with no test ships green.
+**Legacy:** Stage 13 · **Issue:** CAR-81 · **State:** `done`
 
-**Two things make this urgent rather than tidy.** The first is that
-`_SQL_EXEMPT_ROOTS` exempts `dbt/` from the Layer 2 census by design — correct,
-because Layer 3 is dbt's instrument — so a `.sql` file whose logic moves into a
-mart leaves a counted surface for an uncounted one, and **the count drops for
-something that is not a repair.** That is the same failure as Stage 5's
-substring bug: the list shrinking for free. The second is that
-[Plan 125](plan_125_duckdb_to_iceberg_migration.md) absorbed Plan 118 and moves
-the analytics layer onto Spark/Iceberg, so that migration is not hypothetical —
-it is the plan of record.
+**Found 2026-09-04, closing Stage P.** The run that proved the snapshot gate
+works reported `3622 passed, 1 skipped`, and the skip took a paragraph to
+explain — which is a paragraph nobody would have written if the number had not
+been quoted in a record entry.
 
-Stage 11 therefore owns three things:
+Measured across the whole run: **two skips, two jobs, two reasons, zero
+mechanisms.** `test_every_sha_a_recap_names_is_a_real_commit` skips because
+`actions/checkout@v4` clones at depth 1 and it needs real git history.
+`test_dictionary_compressed_objects_and_packed_members_are_both_readable` skips
+because `INTEGRATION_HTML_DICT_ID` is deliberately unset. Both are correct
+decisions. Both are held in place by prose — a docstring and a `ci.yml` comment
+— and a third would arrive the same way, silently.
 
-1. **What the dbt project owes**, and a mechanism that can hold it — the
-   "enough" table's derivation admits a non-package surface, or a second table
-   does.
-2. **G16: a `.sql` file may only leave `production_sql_files()` by naming the
-   dbt model that absorbed it.** The denominator may shrink; it may not shrink
-   silently.
-3. **The execution recorder, scoped here and built later.** Recording *what
-   text executed against which engine* is the only mechanism that closes the
-   remaining class at once: it kills the paraphrase, the weak name-match
-   reading, and a statement whose test executes it against an engine production
-   no longer uses. Two hard parts are already known — `.format()` templates
-   record rendered but are stored as templates, and the suites run in separate
-   CI jobs so aggregation needs an artifact and a gate job.
+**`REQUIRE_LAYER_2_EXECUTION` is narrower than its name.** It fails a run on any
+skip in `tests/integration/sql/`, which is one suite in one job. The dictionary
+skip is in `tests/integration/shared/` and the recap skip is a Layer 0 test in
+the unit job; neither is in its reach. Its `pytest_terminal_summary` hook is the
+right mechanism sitting at the wrong scope.
 
-**The recorder splits along a seam worth respecting.** *Capture* is
-engine-local, cheap, and worth doing while DuckDB is still authoritative,
-because a baseline taken after [Plan 125 Gate D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
-is not a baseline. The *cross-engine assertion* — "this ran on the engine
-production uses for it" — needs two live engines to design honestly and belongs
-at that gate. Building both against one live engine and one hypothetical would
-fit the design to what exists today, which is the error recorded two sections
-above.
+**The shape is `DORMANT_SUITES`, one level down.** That tuple made a deliberately
+unrun *suite* declare itself, with an assertion that fails when an undeclared one
+appears and a second that fails when a declared one starts running. The same two
+directions apply to a deliberately skipped *test*, and the second direction is
+the one that matters most here: a skip whose reason has stopped being true is
+exactly the drift this plan exists against.
 
-**One exposure number here is conditional and should not be quoted flat.** 26
-`.sql` files are covered only by a DuckDB-bound test — every `dashboard/sql/*`
-plus both `dbt_runner/sql/*` snapshots. Whether they move engines at all is
-decided by Plan 125 Gate D2: under "serving extracts from Iceberg" they do,
-under "DuckDB as a non-authoritative Iceberg reader/cache" — which that plan
-currently calls the lower-risk first cut — they do not, and `duckdb_con`
-remains the correct fixture.
+**Estimate: 1 point.**
 
-### Stage 6b was added by the failure this plan predicted
+**Exit:** every skip observed in a CI run is named in a declared-skips registry
+with its reason and its condition; an undeclared skip fails the run; a declared
+skip that stops skipping fails too; and the hook covers every job rather than
+one suite. Demonstrated by an undeclared skip failing a run, not asserted.
 
-**Added 2026-09-01.** Success criterion 2 records G13 as the weakest of its
-three exceptions, and says why in a sentence worth reading back: *"the next
-instance of G13's class will be found the way the last two were, by someone
-running the suite somewhere CI does not."* That is precisely what happened, six
-days later and while Stage 6 was being started.
+### Stage V: a variable the environment documents reaches the service that reads it
 
-`tests/scripts/test_build_public_roadmap.py` writes a synthetic plan document
-containing an em-dash with `write_text` and no `encoding=`. The locale decides:
-UTF-8 on Linux, cp1252 on Windows, where the character becomes the byte `0x97`.
-`build_public_roadmap._first_heading` reads it back as UTF-8 — correctly — and
-raises. **The suite was green in CI and red on a developer machine**, which is
-the benign direction of the harness rule and the same shape as `21333ab`.
+**Legacy:** Stage 14 · **Issue:** CAR-88 · **State:** `done`
 
-**What makes it a stage rather than a second one-file repair is that four
-independent guards were in a position to catch it and none could.** Measured
-on 2026-09-01:
+**Found 2026-09-04, deploying this plan's own change.** Stage P's credential
+work added `SNAPSHOT_DOWNLOAD_TOKENS` to `.env.example` and to
+`ops/routers/snapshots.py`, and never added it to `docker-compose.yml`. A
+variable in `.env` reaches a container only if the service names it, so the new
+one was inert: the router fell back to the legacy single token, the deploy
+reported healthy, the route answered 200, and **a working rotation and a failed
+one were indistinguishable from outside.** It surfaced only because the
+container was asked what it had loaded rather than whether it was up. A `git
+pull` is not a deploy, a healthy container is not a correct one, and neither the
+deploy script's health gate nor the route's own 200 could tell the difference
+here.
 
-1. **No encoding rule is configured.** `[tool.ruff.lint] select` is
-   `["E", "F", "I"]` — nothing that reads an encoding argument.
-2. **The rule that would is preview-gated.** `--select PLW1514` alone answers
-   *"Selection `PLW1514` has no effect because preview is not enabled"*, so it
-   is off twice over and silently.
-3. **Enabling it fully would still not have caught this.** With
-   `--select PLW1514 --preview` the repository has **22 violations and not one
-   of them is the line that broke master.** The rule fires only on a
-   directly-constructed receiver: `Path("b.md").write_text(...)` is flagged,
-   `(tmp_path / "a.md").write_text(...)` is not — with or without a `Path`
-   annotation on the fixture. It is blind to the idiom nearly every
-   fixture-writing test in this repository uses.
-4. **CI is `ubuntu-latest` in all ten jobs**, so this failure direction is
-   invisible by construction — the constraint G13's exception already named.
+`.env.example` is the file that tells an operator what to set. A key it
+documents that no service consumes is a lie in the one place someone reads
+before touching production.
 
-The near-miss is the instructive part. *The harness must not decide the
-outcome* is written for exactly this class and even carries a Windows example,
-but its checkable rule is about **mocks** of filesystem, clock, platform or
-path primitives. A missing `encoding=` is not a mock, so Stage 5's sweep — the
-pass that read every patch in the suite — went straight past it. The prose
-covered this; no mechanism could.
+**Measured across the whole file: 37 keys, four never referenced by any
+`docker-compose*.yml`.** One was the defect above. The other three are
+pre-existing and are the reason this stage is an investigation before it is a
+rule:
 
-**So the stage is not "turn on the ruff rule".** Finding 3 is the whole reason
-it needs designing: the available tool cleans 22 real sites, several in
-production code (`ops/routers/admin.py`, `dbt_runner/app.py`, three
-`archiver/processors/` modules), and still would not have stopped the defect
-that prompted it. Closing the class means a rule that reads the calls the way
-the route rule reads request literals, a Windows job, or an argued case that
-neither is worth it — recorded as a decision either way.
+| Key | What has to be established |
+|---|---|
+| `FASTAPI_ADMIN_KEY` | whether anything still reads it, or it is dead and leaves `.env.example` |
+| `MLFLOW_TRACKING_URI` | Plan 112's, and plausibly script-only — a variable a developer exports, never a container variable |
+| `PROVENANCE_ENV` | same shape, same question |
 
-**It sits after Stage 6 and before Stage 7.** After 6 because CAR-50 is already
-in flight and re-cutting it buys nothing. Before 7 because **Stages 7, 8 and 9
-author more new tests than the rest of the plan combined**, and a guard that
-lands first is one those stages get for free rather than one that has to sweep
-what they wrote. That is the same argument that put Stage 2 ahead of the stages
-it measures.
+**Waiving all three to make a new assertion pass is the move this stage exists
+to refuse.** Each has a different correct answer — wire it, delete it, or
+declare it script-only — and a ledger that absorbs three unexamined entries on
+the day it is created is decoration. Nine stages of this plan have gone into
+making waivers mean something.
 
-**The letter is positional, not topical.** 6b has nothing to do with route
-coverage; it is numbered this way for the reason 5b was, and CAR-52 still names
-Stage 8.
+**Then the rule.** Every key in `.env.example` is either referenced by a
+`docker-compose*.yml`, or declared script-only with the consumer that reads it
+named. The declaration carries the same two directions as `DORMANT_SUITES`: an
+undeclared unwired key fails, and a key declared script-only that later appears
+in compose fails too.
 
-### Stage 6c was added by a deploy, not by the suite
+Not folded into [Stage U](#stage-u-every-skip-in-ci-is-declared-or-the-run-fails):
+different subject, same class. That one is about a test that does not run; this
+is about a variable that does not arrive. Sharing a stage would make the pair
+read as one mechanism when they are two.
 
-**Added 2026-09-01.** Stage 6b was added by a failure this plan predicted. This
-one was added by a failure it did not, found during Plan 138 Stage 2's
-production deploy — and the shape is the reason it belongs here rather than in
-Plan 138.
+**Estimate: not sized.** The investigation is what sizes it — three keys with
+three possibly different answers, and the rule is small only if none of them
+turns out to be a real undelivered variable.
 
-`POST /deploy/start` with `{"targets":["dashboard"]}` returns **503
-`{"detail":"Database unavailable."}`**. Postgres was healthy throughout. The
-database was never the problem.
+**Exit:** each of the three keys has an established answer and has been wired,
+deleted, or declared; every remaining `.env.example` key is referenced by a
+compose file or declared script-only with its consumer; an undeclared unwired
+key fails; and a script-only declaration that stops being true fails.
+Demonstrated by an unwired key failing, not asserted.
 
-`ops/coordination_contract.py` maps `dashboard` and `pgadmin` to `frozenset()`
-— they are the only two services in `SERVICE_CONTRACTS` with **no surfaces**.
-`_set_intent` therefore writes `phase='requested'`, `targets='["dashboard"]'`
-and `scope='[]'`, against a constraint that forbids exactly that pair
-(`db/migrations/V043__coordination_state.sql:27`):
+### Stage W: a test may not supply both halves of a contract
 
-```sql
-CHECK (
-    (phase =  'none' AND kind IS NULL     AND targets =  '[]'::jsonb AND scope =  '[]'::jsonb)
-    OR
-    (phase <> 'none' AND kind IS NOT NULL AND targets <> '[]'::jsonb AND scope <> '[]'::jsonb)
-)
-```
+**Legacy:** Stage 15 · **Issue:** CAR-82 · **State:** `done`
 
-**So two services can never be deployed alone**, and the failure is structural
-rather than intermittent. The workaround is to name a scoped service in the
-same command — `bash scripts/redeploy.sh ops dashboard` — because the union is
-then non-empty. That is a real property of `redeploy.sh`, which takes a service
-list, and it is what unblocked the deploy.
+**Found 2026-09-04, closing Stage P.** `check_snapshot_result` in the export
+DAG accepted only `{"created"}` as a successful non-dry-run status. The exporter
+returns `"exported"`. A DAG-triggered export would have published its archive
+and both pointers and then failed the task, and it went unnoticed for as long as
+it did because the DAG had never run.
 
-**Three guards were in a position to catch this and none could.** Measured
-2026-09-01:
+**The test was the reason it could survive being written.**
+`tests/integration/airflow/test_export_ci_lake_snapshot_dag.py` seeded
+`{"status": "created"}` itself and asserted the checker accepted it. Both halves
+of the contract were authored in one file, so the test passes for *any* string
+its author picks — including one no service emits. It was not a weak test of the
+right thing; it was a strong test of nothing.
 
-1. **The contract suite never asserts the value that breaks.**
-   `tests/ops/test_coordination_contract.py` exercises `expand_targets` and the
-   string `scope` does not appear anywhere in the file. It asserts the mapping
-   is *well-formed*, never that its output is *writable*.
-2. **The constraint is in a Flyway migration, and the contract is in Python.**
-   Neither half is wrong on its own; the defect exists only in their
-   composition, and no layer in this repository composes them. This is the same
-   division Stage 3 closed for the health-sensor censuses — two sources that
-   must agree, with nothing asserting that they do.
-3. **The error message actively misdirects.** `_set_intent` catches bare
-   `Exception` and returns `"error"`, which `ops/routers/deploy.py:248` renders
-   as 503 "Database unavailable." The constraint violation never reaches the
-   response or the log, so the symptom points at the one component that was
-   healthy.
+**The class is narrower than the rule it sits under, and that is what makes it
+reachable.** [*A run that succeeds has done the work its success
+implies*](../TESTING.md#specified-here-not-yet-asserted) is recorded as having no
+general form, and that is correct — "did this actually do the thing" is specific
+to each thing. But *this* has a signature: **production enumerates a closed set
+of values, and a test restates a member of that set as a literal rather than
+deriving it.** Status sets, scope names, enum members, state vocabularies. The
+same shape the `.sql` convention already solved for statements — defined once in
+production, read by the test rather than retyped.
 
-**The stage is therefore two things, and the second is not optional.** An
-assertion that every service in `SERVICE_CONTRACTS` yields a `(targets, scope)`
-pair the constraint accepts closes the defect class. Unmasking the exception is
-what stops the *next* unrelated failure in this path costing the same
-diagnosis, and finding 3 is the whole reason a passing deploy script is not
-sufficient evidence here.
+**That precedent is holed, and [Stage X](#stage-x-a-test-may-not-author-sql-either)
+is the repair.** The `.sql` convention solved this for *production* statements.
+Test statements were exempted by [Plan 161 question
+3](plan_161_testing_contract.md#3-what-must-never-be-mocked), so a read-back
+assertion retyped inside a test is the very thing this stage is about, in the
+form this stage cites as already handled. Nothing here needs to wait on it —
+the closed-set form is independent and the repair above stands — but the
+sentence should not be read as saying the statement case is closed.
 
-**It sits after 6b for 6b's own reason** — Stages 8 and 9 author more new
-tests than the rest of the plan combined, and this is a guard those stages get
-for free rather than one that has to sweep what they wrote. **The letter is
-positional, not topical**, as it was for 5b and 6b.
+The repair for the instance is
+`tests/airflow/test_export_ci_lake_snapshot_statuses.py`, which reads the DAG's
+`acceptable` sets by AST and the exporter's `status=` literals by import, and
+fails when the DAG accepts a status the exporter cannot produce. Both its
+assertions were watched failing against the reintroduced bug. **That is one
+instance and no mechanism**, which is why this stage exists rather than the
+Record entry that named the shape being the end of it.
 
-*Written on 2026-09-01 as "after 6b and before 7", by a deploy that did not
-know Stage 7 was in flight on another branch. Stage 7 completed the same day,
-so 6c gets 8 and 9 rather than 7, 8 and 9 — the argument is unchanged and the
-count is not.*
+**The stage may conclude that only the narrow form is reachable**, and should
+say so plainly rather than stretching for a general checker — the same licence
+[Stage T](#stage-t-exists-because-this-plan-grew-the-suite) has. Enumerating
+"a closed set in production restated in a test" is a static question. Deciding
+whether an arbitrary fixture value should have come from somewhere is not, and a
+rule that tried would fail on correct code.
 
-#### Finding 3 was corroborated the same day, on the same endpoint
+**Three stages from one evening, all the same class.** Stages U, V and this
+one were each found closing Stage P, and each is a declaration held by prose
+that nothing enforces — a skip explained in a docstring, a variable documented in
+`.env.example`, a status agreed in a comment. That they arrived together is not a
+coincidence: the stage that closed was the one that asked what its own numbers
+meant.
 
-**Added 2026-09-01 while merging Stage 7.** Stage 7 broke `POST /deploy/start`
-too, independently and for an unrelated reason: it moved
-`set_deploy_intent.sql` into a file and wrote an explanatory comment that
-quoted the statement's own placeholder, and **psycopg2 counts placeholders
-across the whole string, comments included**. The statement then expected four
-parameters where `deploy.py` passes three.
+**Estimate: not sized.** Whether the narrow form is one rule or several is what
+the first measurement answers.
 
-**The symptom was identical — 503 `Database unavailable` — and for exactly the
-reason finding 3 gives.** `_set_intent` catches bare `Exception`, so a
-`psycopg2` parameter error and a `CHECK` violation are indistinguishable at the
-response, in the log, and to the operator. Two unrelated defects, one day
-apart, wearing the same misleading face.
+**Exit:** the closed sets production enumerates and tests consume are
+identified; a test that restates a member as a literal rather than deriving it
+fails; and the stage states plainly which forms of the class the rule reaches
+and which it does not. Demonstrated by a restated literal failing, not asserted.
 
-That is the strongest evidence this stage has for its second half, and it
-arrived from outside it. **The assertion half would not have caught Stage 7's
-defect** — the contract's `(targets, scope)` pair was fine — but **the
-unmasking half would have named it immediately**, instead of it being found by
-seven Layer 4 failures in CI and diagnosed from a log. A reader comparing the
-two should not conclude they share a cause: [Stage 7's
-evidence](#evidence--stage-7-sql-execution-from-both-directions-car-51-2026-09-01)
-records the placeholder defect and Rule 5e, which is what stops that one
-recurring; this stage owns the masking that made both of them expensive.
+### Stage X: a test may not author SQL either
 
-### Stage 5b: what the split is, and why a directory rather than a list
+**Legacy:** Stage 16 · **Issue:** CAR-83 · **State:** `done`
 
-Three buckets, but only two moves, which is what keeps the cost near zero:
+**Added 2026-09-04, from a review of what the SQL contract actually guarantees.**
+The contract's claim is not that SQL *should* live in files. It is that SQL which
+does not live in a file cannot be green. That property is total for production
+statements and stops at `tests/`, and everything below follows from asking why.
 
-| Bucket | Where | Moves? | In the denominator? |
-|---|---|---|---|
-| **Production** — invoked by CI, an image, a Compose file or an ops route | `scripts/` (unchanged) | no | yes |
-| **Maintenance** — human-invoked, durable, named in a live runbook | `scripts/ops/` | yes | yes |
-| **One-off** — ran for a plan that has since archived | `scripts/oneoff/` | yes | **no** |
+This stage came from a conversation rather than an incident or a sweep, so its
+reasoning — the prior-art comparison that prompted it, the affordance/enforcement
+distinction it rests on, and the two positions argued and abandoned on the way —
+is recorded in
+[`docs/evidence/plan_162_stage_X_origin_2026-09-04.md`](../evidence/plan_162_stage_X_origin_2026-09-04.md).
 
-`tests/scripts/` mirrors the split and needs one new row in the contract's
-*Where the newer suites sit* table, which
-`test_every_test_directory_is_assigned_a_layer` will demand the moment the
-directory appears.
+**The exemption was reasoned, and its premise no longer holds.** [Plan 161
+question 3](plan_161_testing_contract.md#3-what-must-never-be-mocked) settled that
+paraphrase detection is judgement rather than mechanism, for one stated reason:
+*fixture seeds are SQL in test files too*, and a checker that cannot tell a seed
+from a paraphrase fails on correct code. That is true and it is the whole
+argument. **If no SQL literal appears in a test file at all, the ambiguity has
+nothing to live in** — any SQL-shaped literal under `tests/` is a violation, and
+the rule stops needing judgement.
 
-**Production does not move, and that is the entire cost argument.** There are
-20 binding references to `scripts/*` across 11 deploy surfaces — `ci.yml` (4),
-`docker-compose.lakehouse.local.yml` (3), `redeploy.sh` (3),
-`dbt_runner/Dockerfile` (2), `.env.example` (2), the two other lakehouse
-Compose files, `.gitattributes`, `deploy-followers.txt`,
-`ops/routers/snapshots.py` and `deploy.sh` — and **every one of them names a
-script that stays put.** Moving only the other two buckets rewrites no deploy
-surface at all.
+**So this stage removes a judgement rule rather than adding a mechanical one.**
+The contract's split moves **7 mechanical / 4 judgement → 8 / 3**, and the rule
+that leaves is the one [Plan 161 flagged as reading mechanical and not being
+it](plan_161_testing_contract.md#7-what-does-the-agent-skill-check-and-what-can-it-not).
+`.claude/skills/testing-contract/SKILL.md` loses its fourth judgement rule in the
+same change; a skill that goes on refusing to certify something now asserted is
+the stale-waiver defect in prose.
 
-It also gives the list the safe failure direction, the one
-`maintenance-running-set.txt` already argues for in this repository: a new
-script lands in production-land and is measured **by default**, and has to be
-deliberately moved down to leave the instrument. Nobody drops something out of
-coverage by forgetting.
+**The measurement already exists and belongs to
+[Stage T](#stage-t-exists-because-this-plan-grew-the-suite)**, taken
+2026-09-01: **96 ad-hoc `INSERT` statements inside test modules**, **161 distinct
+read-back `SELECT`s**, 43 of them written more than once for **145 total
+retypings** —
+`SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid`
+seventeen times. Stage T read those as duplication and reached for a shared
+helper. A helper removes the retyping and leaves the drift: one definition that
+still has to agree with a schema, with nothing asserting that it does.
 
-**A directory rather than a manifest, because the directory is the
-declaration.** A manifest would be a second mechanism to keep in step with the
-first; the path is self-describing, `git log --follow` records the
-reclassification, and `[tool.coverage.run]` and `ci_change_scope.py` each read
-it for free. `scripts/ci_change_scope.py` is today a single-prefix classifier —
-`DOCS_PREFIX = b"docs/"` and nothing else — so a changeset confined to
-`scripts/oneoff/` plus its tests needs lint and its own unit tests and no
-Docker build, no dbt job, no 267-second critical path. That is the first real
-instance of the impact selection Stage 10 generalises, against code that
-already exists.
+**Nothing here needs inventing, which is why this is a stage.** Five mechanisms
+exist and are pointed at a second root: `shared.query_loader` loads it,
+`production_sql_files()` is the derivation pattern for the census, the Layer 2
+execution rule is the assertion shape, the waiver tuples are the ratchet, and
+[`verify_testing_contract_mutations.py`](../../scripts/verify_testing_contract_mutations.py)
+is how the new rule earns trust before it is believed.
 
-**The classification is mechanical, and that is why this stage is small.** The
-first scoping of it assumed per-file archaeology across fifteen archived plans.
-It is not: **33 of the 35 Python scripts declare their owning plan in the first
-three lines of the docstring**, so the bucket falls out of a join — docstring
-plan number against the archived numbers in
-[`completed_plans.md`](../planning/completed_plans.md), overridden by the
-binding-reference grep, which wins in both directions.
+**The root is separate and its census is its own.** `tests/sql/` is loaded by the
+same loader and is **not** in `production_sql_files()`. That answers Stage T's
+circularity objection without keeping the exemption: a read-back assertion is
+still not a production statement, still owes no Layer 2 test, and still does not
+inflate the production denominator — it is simply no longer a literal typed
+inside a test.
 
-**The name is never the signal, and the override is what proves it.**
-`audit_adaptive_refresh_features.py` reads as forensics and is baked into
-`dbt_runner/Dockerfile`; `report_dbt_run_results.py` belongs to archived Plan
-123 and is in the same image. Both are production. The `audit_`, `estimate_`
-and `spike_` prefixes classify nothing.
+**`PREPARE` is likely the right instrument for validating them.**
+`PREPARE stmt AS <sql>` parses and plans against the live catalogue of a
+Flyway-migrated Postgres, so a renamed column fails loudly with no rows written
+and nothing to clean up, and placeholders are native. It does not cover DDL and
+does not catch constraint violations, so the real executions still happen in the
+suites that own them; `PREPARE` is what schema-checks **every** test statement
+whether or not a test using it ran. Today a seed is only checked if its own test
+happens to execute — which is the same conditional coverage
+[G14](../TESTING.md#the-gap-list) found on the production side.
 
-**Five scripts declare no plan and are the whole of the judgement.**
-`ci_change_scope.py` is settled by its `ci.yml` reference; the remaining four —
-`audit_parquet_layout.py`, `audit_normalized_parquet_layout_once.py`,
-`backfill_unlisted_silver.py` and `diff_semantic_duplicate_html.py` — need
-reading. That is the residual, and it is four files.
+**Two things to settle rather than discover.** Test DDL — temp tables and
+scaffolding created inside tests — is neither production DDL that Flyway owns nor
+a seed, and needs a stated position. And **the detector is itself an instrument
+with a hostile failure surface**: docstrings, log lines and fixture text all
+contain SQL keywords, and [G5's own measure](#stage-l-grew-two-gaps-while-closing-one)
+matched a `SELECT` inside `db_cursor`'s docstring. This plan's rule applies to
+this plan's newest rule — a denominator fitted to what exists when it is written
+will be wrong — so the detector is mutation-tested before it is trusted, not
+after.
 
-**A coupling finding that ran the other way, recorded because the first reading
-of it was wrong.** Two production scripts import from scripts that look spent —
-`export_volatility_features_to_iceberg.py` takes `cleanup_keys` from
-`spike_iceberg_lakehouse.py`, and `train_html_dictionary.py` imports from
-`estimate_dictionary_savings.py`. Scoped as "production depends on a spike" and
-as this stage's hardest part. **The archive join dissolved both:** Plans 112 and
-129 are not archived, so all four files stay in production-land and neither
-import crosses a bucket boundary. The lesson is the one Stage 0 already
-recorded — run the measurement before sizing the work it implies.
+**The execution recorder arrived here on 2026-09-04, from
+[Stage S](#stage-s-answers-a-question-plan-161-did-not-ask).** It was scoped
+there because it reads SQL and dbt was the surface that stage was defending,
+and that was the wrong seam. Recording *what text executed against which
+engine* is a claim about every statement in the repository, not about the dbt
+project; this is the stage that already makes every statement live in a file
+and validates it against an engine, so the engine half belongs beside the file
+half.
 
-**Two constraints on `oneoff/`, stated so they are decisions rather than
-drift.** Spent means *out of the ratchet's denominator* — never deleted, and
-never untested: `reconcile_april_detail.py` is 84% covered **because** it
-deleted 14.6 GB of production data, and its tests are why that was safe. And an
-entry there should have to cite the archived plan it belongs to, so the bucket
-cannot outlive its reasons the way an unchecked waiver list would.
+**Its first design was an enumeration, and the repository caught it before it
+was written.** Keying capture to the fixtures that hand out connections —
+`cur`, `viewer_cur`, `duckdb_con`, `duckdb_s3_con` — misses two of the four
+client libraries production actually reaches an engine through:
 
-**What it is worth, measured rather than asserted.** The `oneoff/` bucket —
-archived owning plan, no binding reference — is **14 scripts, 6,338 statements
-at 72%**, still over half of it `reconcile_april_detail.py` alone. Removing it
-takes the denominator from 19,733 to 13,395 and the reported number from 75.91%
-to **77.8%**. Stage 8's dashboard repair — 309 statements, 280 of them
-currently missed — moves the total by **+1.27 points today and +1.87 after**,
-so the ratchet becomes about **1.5× more responsive**. Real, and worth having
-before Stages 6 through 9 are graded; nowhere near large enough to justify
-paying the Stage 5 waiver collision to get it sooner. That arithmetic is why
-this stage is placed on the waiver argument rather than the coverage one.
+| Client | Where | A fixture-keyed recorder sees it |
+|---|---|---|
+| `psycopg2` | every service's `queries.py` path | yes |
+| `duckdb` | `shared/duckdb_s3.py`, `dashboard`, `dbt_runner` | yes |
+| `asyncpg` | `scraper/db.py`, exercised unmocked since Stage M | **no** |
+| `pyspark.sql` | Plan 125's tooling | **no** |
 
-An earlier draft of this section put the bucket at 19 scripts and 7,019
-statements. It was close by accident and wrong in composition: it counted
-`spike_iceberg_lakehouse.py`, `run_dbt_spark.py`, `verify_dialect_datediff.py`
-and both `compare_gate_*_parity.py` against Plan 125, and
-`estimate_dictionary_savings.py` against Plan 129 — **six scripts belonging to
-plans that are still open.** Spent is a property of the owning plan's state, not
-of how finished a script looks.
+It would have shipped recording nothing for `scraper/sql/`'s statements, and
+gone on recording nothing when Spark arrives. That is `_SQL_CALL_NAMES` again,
+which [Stage N](#stage-n-the-dag-trees-sql-convention) deleted rather than
+lengthened.
 
-### Stage 10 inherits a question Stage 5b raised and declined
+**So the recorder is keyed on the client, and the client set is derived.** A
+session-scoped plugin wraps each library at its entry point, so every
+connection any fixture opens is recorded and the fixture list stops existing.
+`production_db_clients()` — read from the imports across
+`production_python_files()`, Stage N's derivation reused — is compared against
+what the plugin instruments, equal in both directions, the same shape as
+`service_packages()` against the "enough" table. **A new engine is a new
+import, and a new import fails the suite until the recorder wraps it or the
+contract says in writing why not.** That is how a future engine is made to
+conform: not a rule someone remembers at Gate D, but a test that breaks when
+the import lands.
 
-**Scoped 2026-09-01, from a question asked while reviewing Stage 5b's CI
-change. Recorded here rather than acted on, because it is Stage E's subject
-and Stage E already has a rule for it.**
+dbt is the one execution surface that cannot be wrapped, running in a
+subprocess — and does not need to be. It already writes what it executed to
+`target/run/` beside `run_results.json`. A declared second mechanism, not a
+hole.
 
-`ci_change_scope.py` classifies the **cumulative** PR diff — `base.sha` to
-`head.sha` — so a documentation commit pushed onto a PR that has already gone
-green re-runs the whole workflow, because the cumulative diff still contains
-the production paths verified two pushes ago. Classifying the *incremental*
-diff instead would skip it.
+**The `.format()` templates are the known hard part, and there are two ways
+out.** A statement stored as a template records rendered, so attributing a
+recorded string back to its `.sql` file is either a reverse match against the
+template turned into a pattern — test-only, approximate, brittle on multi-line
+placeholders — or a `str` subclass returned by `shared.query_loader.load_query()`
+carrying its origin and preserving it through `.format()`, which is exact and
+costs a production change made for a test instrument. All seven services load
+through that one function. Decide it at the top of the stage rather than in the
+middle of it.
 
-**The saving is about two minutes** — PR #325's full workflow was 127s wall
-clock after Stage 4. That is the number any design here has to beat, and it is
-small.
+**Two things it will not do, recorded now rather than discovered at Gate D.**
+The recorder records *text*, so Spark's DataFrame API — not text at all, and a
+`selectExpr` fragment leading with no verb — is invisible to it, exactly as
+[G15](../TESTING.md#the-gap-list) already records for the static rule. And the
+**cross-engine assertion** — "this ran on the engine production uses for it" —
+is not in this stage: it needs two live engines to design honestly and belongs
+to [Plan 125 Gate
+D](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration). Building it
+against one live engine and one hypothetical would fit the design to what
+exists today.
 
-**The cost is four conditions, not one diff.** A skip is only sound if all of
-them hold, and three of them are invisible when they do not:
+**Capture has a deadline; aggregation does not.** A baseline taken after Gate D
+is not a baseline, and capture is engine-local and cheap. The aggregation the
+coverage upgrade needs — a per-job artifact and a gate job, because a statement
+may be executed in any of five CI jobs — is what CAR-79 was filed blocked on
+CAR-78 for, and Stages Q and R are what settle how those jobs are defined. The
+baseline can be taken here and the aggregation can land with or after Q.
 
-1. **The reference commit must be verified, not merely green.** The previous
-   push may itself have skipped the heavy jobs, so the reference has to be the
-   most recent ancestor where they actually concluded `success` rather than
-   `skipped` — an Actions API walk with `actions: read`, or a marker written
-   when heavy passes and read back later.
-2. **The base must not have moved.** `actions/checkout` builds
-   `refs/pull/N/merge` on a `pull_request` event, so the workflow tests
-   `merge(base, head)` and not `head`. If `master` advances between the
-   verified run and the new push, the merged tree differs even for a
-   documentation-only diff and the earlier verdict does not carry. This is the
-   dangerous one: green, fast, and not verifying the tree being merged.
-3. **Rebases and force-pushes must fail closed**, via an ancestry check rather
-   than a SHA equality that can match a commit no longer on the branch.
-4. **The selection logic needs its own tests**, in Python beside
-   `ci_change_scope.py` rather than in workflow shell, because it is riskier
-   than the path classification it would sit on top of.
+**What the aggregation buys, when it lands, is the weak reading this plan has
+carried since Stage L.** `test_every_production_sql_file_is_touched_by_a_layer_2_test`
+credits a file when a Layer 2 module *names* it as a whole word, which this
+document has called the weakest available reading from the day it was written.
+Replacing `_names(stem, text)` with "this file's text executed in this run"
+turns it into the strongest, in one edit — and it is the half that cannot run
+inside any single job, which is precisely why it waits for Q.
 
-**Stage E's rule already decides this, and the answer is not yet.** Promotion
-to job skipping requires an observation window with zero unexplained misses and
-a benefit larger than runner variance; a false negative costs time and a false
-positive suppresses evidence. Incremental gating is a false-positive risk by
-construction. It also weakens exactly what Stage E told it not to: the current
-fast path's proof is strong *because* it is cumulative — "every changed path in
-this PR is under `docs/`" is a claim about a tree, and going incremental turns
-it into a claim about a chain of runs.
+**Ordering: it must precede Stage T's SQL half, and now does.** Under the
+numbering it ran after T, which would have built shared helpers that this stage
+then converted to files — the [Stage F/G collision](#why-this-order) exactly.
+That was resolved by scoping: T kept the Python helpers, this stage took the
+SQL, and neither waited on the other. **The 2026-09-04 reordering resolves it
+outright** — X is order 16 and T is order 18 — and the scoping split is kept
+anyway, because two stages that cannot collide are cheaper to reason about than
+two that merely do not.
 
-**The cheaper target, if Stage 10 wants a win here first, is
-content-addressed skipping for `docker-build`** — key the build on a hash of
-the Dockerfiles, requirements and service sources and reuse the layer cache
-when it matches. That is a claim about content rather than about run history,
-so it carries none of the four conditions above, and `docker-build` is the job
-`promtail-config` waits on.
+**Estimate: 1 point, and it predates the recorder.** It was settled by the
+paragraph above — nothing invented, five existing mechanisms pointed at a second
+root — which held while this stage was only about where test SQL lives. The
+recorder arrived on 2026-09-04 and *is* invented rather than pointed, so the
+estimate is owed a revisit it has not had. The census of SQL literals under
+`tests/` sets the waiver list this stage drains; it does not size the stage.
 
-### Stage 3 carries a constraint worth knowing before it starts
+**Exit.** Two halves, the second of which arrived on 2026-09-04.
 
-The two censuses live in **different virtual environments**.
-`tests/airflow/test_health_sensor_demotion.py` asserts 13 DAG files wire a
-sensor and runs in the main venv, where it must never import `airflow`;
-`tests/integration/airflow/test_dag_integrity.py` asserts 14 sensor tasks and
-runs in the isolated Airflow venv. One DAG wires two sensors, so both numbers
-are right and nothing connects them. **The single declared source they both read
-therefore cannot import Airflow** — a data file, or a module with no Airflow
-import.
+**Where test SQL lives:** no SQL literal appears in any file under `tests/`;
+every statement they now hold lives under `tests/sql/`, loaded rather than typed,
+and is validated against a Flyway-migrated Postgres whether or not the test
+consuming it runs; the production census is unchanged in size by the move;
+judgement rule 4 is struck from `docs/TESTING.md` and from the reviewer skill,
+taking the split to 8/3; test DDL has a recorded position; and the detector has
+been watched failing against a mutation of each shape it claims to catch.
+Demonstrated by an inline statement failing the suite, not asserted.
 
-Plan 134's deletion updated the first count and missed the second, and shipped
-(`056cde7`); PR #293 then failed on a count nobody had touched. The comment
-added reactively in `33b275e` is documentation, not a mechanism, and will drift
-again. Plan 139 scoped this as XS and warned that an XL plan should not hold a
-two-file fix hostage; giving it a numbered stage near the front settles that
-permanently.
+**What ran against which engine:** capture records the text executed and the
+client it executed through, with its baseline taken while DuckDB is still
+authoritative; `production_db_clients()` is derived from production's imports
+and asserted equal in both directions against what the recorder instruments, so
+a new engine fails the suite until it is wrapped or exempted in writing;
+`.format()` provenance is solved rather than noted; and dbt's subprocess is
+captured from its own run artifacts rather than left uncovered. Two things are
+explicitly **not** in this exit: the cross-engine assertion, which belongs to
+Plan 125 Gate D, and the aggregation — a per-job artifact and a gate job — which
+lands with or after Stage Q and takes the replacement of the Layer 2 name-match
+reading with it.
+
+### The service data contracts, Stages Y to AD
+
+**Added 2026-09-07, from the conversation that closed Stage W.** Six stages,
+one subject, and the subject is the one Stage W turned out to be the first
+instance of: **a test can only avoid authoring both halves of a contract if
+there is a place it must go to find out what its options are.**
+`shared/db_vocabularies.py` is that place for the words the database owns.
+Nothing is that place for anything else.
+
+**Every measurement below was taken on 2026-09-07** and none of it is recorded
+anywhere else; the numbers are the reason these are six stages rather than one
+sentence in Stage W's record.
+
+**Each seeds its own waiver tuple and drains it**, which is Stage S's pattern —
+`DBT_CONTRACT_WAIVERS` was seeded fully waived at 23 of 23 on 2026-09-05 and
+drained to 0 on 2026-09-07. Stage W did not do this: it repaired all 33 of its
+sites outright and so contributed nothing to the plan's progress meter, which
+is the only reason the completion criterion looked unable to describe this
+work. It can. The stages below use it.
+
+**The lettering runs past Z into AA.** `I` and `O` were skipped as always.
+
+### Stage Y: a route declares the statuses it can return
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G21
+
+**85 routes across seven services; 42 produce a status code they never
+declare.** Concentrated in `ops` (26), then `archiver` (7), and three each in
+`dbt_runner`, `processing` and `scraper`. The codes are 303 (13), 503 (15),
+409 (11), 500 (10), 400 (5), 404 (5), 422 (3), 403 (1).
+
+**The OpenAPI schema is not a weak contract here, it is a false one.** Every
+service declares exactly `200` and `422` — FastAPI's defaults — while the
+suite asserts 303, 307, 308, 400, 401, 403, 404, 409, 422, 500 and 503 across
+**137 assertions**. Every real code is raised inside a handler body and
+surfaces nowhere a machine can read.
+
+So this stage mostly writes down what already happens, and the rule is the
+familiar shape: the codes a route **declares** must equal the codes its body
+can **produce**, both directions, the produced set derived by reading
+`HTTPException`, `Response` and the redirect classes out of the handler. An
+undeclared code fails; a declared code nothing raises fails too.
+
+**It is 42 judgement calls, not 42 edits**, and that is the cost: for each
+route someone decides whether a `500` is part of the contract or an accident of
+implementation. That decision is worth making once and then holding by a
+mechanism, which is the whole argument for the stage.
+
+**Nothing downstream works without it.** A contract artifact generated today
+would faithfully record the false claim that every endpoint returns 200 or 422.
+
+**Exit:** every route's declared codes equal the codes its handler can produce,
+asserted both ways; `RESPONSE_CODE_WAIVERS` seeded at 42 and drained to 0;
+demonstrated by an undeclared code failing.
+
+### Stage Z: the contract is generated, committed and gated
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G22 · **Blocked by:** Stage Y
+
+**A contract nobody generates is a document, and this plan exists because
+`ARCHITECTURE.md:179` was accurate in April 2026 and quietly false by August.**
+A certified hand-written contract is that failure wearing a suit.
+
+So the artifact is **generated from each running app and committed**, and a
+job regenerates and diffs it. You cannot forget to update a generated file; you
+can only fail to notice it changed, and the diff is what makes noticing
+mandatory. Adding a route, changing a response model, changing a status code
+all move the file, and the reviewer's job is to say "yes, I meant that".
+
+**The mechanism already exists here in miniature** and its docstring makes the
+argument: `scripts/public_surface_gate.py` holds a commit that edits README or
+`info.html` until the surface has been read, keyed on a digest of the staged
+content so re-staging reopens the gate. *"A check you must remember is weaker
+than one you cannot forget."* This is that, pointed at seven services instead
+of two files.
+
+**The fiddly part is normalisation.** The schema carries operation IDs and
+ordering that move for reasons nobody cares about — `ops/routers/public.py`
+already emits duplicate-operation-ID warnings — so the committed artifact is a
+normalised projection, and what it drops is a decision to record rather than a
+default to inherit.
+
+**Exit:** every service has a committed contract artifact; a change to any
+service that is not reflected in its artifact fails; the normalisation names
+what it drops and why; demonstrated by an unreflected route change failing.
+
+### Stage AA: a test may not invent another service's response
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G23 · **Blocked by:** Stage Z
+
+**37 fabricated HTTP status codes across 6 test modules** — `{200: 26, 403: 9,
+400: 1, 500: 1}` — and the seams they replace are `ops.coordination_drain.
+requests.get`, `ops.coordination_release.requests.get`,
+`scrape_listings.requests.post` and `notifications.requests.post`.
+
+**This is Stage W's defect at the HTTP boundary**, and it behaves the same way.
+A test of *our own* endpoint asserting an impossible code is self-correcting —
+`TestClient` runs the real route and the assertion goes red. A test of a
+*caller* invents both the status code and the body of a service it never calls,
+so it passes for any pair its author picks. If `archiver` starts returning 202,
+`ops`'s test still fabricates 200, still passes, and production breaks.
+
+The rule is Stage W's third rule one layer up: the caller's fabricated codes
+must be codes the callee can produce, with the pairing derived rather than
+declared — the caller names the service in a `<NAME>_URL` constant, and Stage W
+proved that pairing is derivable and that an undetermined owner must fail
+rather than be skipped.
+
+**28 of the 37 are ours. The other 9 are `cars.com`**, and they are Stage AB.
+
+**Exit:** no test fabricates a response for a service this repository owns;
+`FABRICATED_RESPONSE_WAIVERS` seeded at 28 and drained to 0; demonstrated by a
+fabricated code the callee cannot return failing.
+
+### Stage AB: what we do not own is recorded and replayed
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G24
+
+**9 fabricated `cars.com` responses**, mostly the 403 in
+`tests/scraper/processors/test_scrape_detail.py`. There is no code in this
+repository to derive them from, so Stage AA's rule cannot reach them.
+
+**The pattern is already established here, twice**:
+`scripts/verify_promtail_contract.py` and
+`scripts/verify_container_health_docker_contract.py` each replay a recorded
+corpus through the real thing in a dedicated CI job — *"one corpus, two
+consumers, neither importing the other"*. The fast tests get the recording; the
+job catches the real service changing underneath it.
+
+**Airflow is the cheap half and should not wait.** `airflow/dags/
+notifications.py:71` compares a task state against the literal `"failed"`, a
+word Airflow owns. CI already installs real Airflow in a venv and runs a suite
+in it, so asserting `"failed"` is a real member of `TaskInstanceState` is three
+lines in an existing job.
+
+**`git` and `markdown-it` are deliberately excluded.** Their vocabularies are
+restated too — `fetch.prune`, `heading_open` — but a stale one there makes a
+script error out. This class is about silence, and those are not silent.
+
+**Exit:** every external vocabulary this repository depends on is either
+replayed against the real thing in CI or declared out of scope with the reason;
+demonstrated by a recorded corpus that has drifted failing.
+
+### Stage AC: the database makes a stale read loud
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G25
+
+**The hole this closes is live and was measured, not inferred.** On 2026-09-07
+the Layer 2 suite was run against a Flyway-migrated Postgres with
+`artifacts_queue.status`'s `retry` renamed to `retry_later` in the migration
+and in `shared/db_vocabularies.py`, and with the test seeds updated so the run
+got past its own fixtures. **240 passed.** Five production statements were
+still filtering on `'retry'` — `processing/sql/claim_artifact.sql`,
+`claim_artifacts.sql`, `archiver/sql/delete_cleanup_candidates.sql` and
+`get_queue_cleanup_candidates.sql` among them — which in production means the
+claimer silently stops picking up retry artifacts and the cleanup job silently
+stops clearing stuck rows, with a green suite.
+
+**The pattern behind that result generalises.** Writes are caught, because the
+constraint rejects them. Rowcount-asserted updates are caught: the same
+experiment against `coordination_state.phase` failed two tests on
+`assert cur.rowcount == 1`. **Read filters are caught by nothing.**
+
+**92 such literals across 52 `.sql` files**, 22 of them in `dbt/models/`, which
+the local run could not reach at all — those 35 skips are the DuckDB half.
+
+**A checker is the wrong instrument, and this was verified rather than
+assumed.** Against a `text` column with a `CHECK`, a stale filter returns
+`(0 rows)`. Against a Postgres `ENUM`, it raises `invalid input value for enum
+phase: "draining"` — parameterised as well as literal. Converting the 18
+constrained columns to enum types closes this for `.sql` files, for dbt models,
+and for code nobody has written yet, at the database rather than in a linter.
+
+**It does not subsume Stage W, and the reason is measured.** psycopg2 returns
+an enum column to Python as a plain `str`, so `state["phase"] == "draining"`
+stays silently false after a rename, enum or no enum. The enum makes the
+*query* loud and does nothing about the *comparison*. Those are the 33 sites
+Stage W repaired.
+
+**This stage must update Stage W's reader**, which parses `CHECK (<column> IN
+(...))` and will match nothing once the columns are enum types.
+`test_the_check_constraint_corpus_is_not_empty` is what stops that being
+silent — the corpus would fall to 0 against a floor of 10 and fail loudly — but
+the reader is part of this stage's work, not a surprise for it to discover.
+
+**Exit:** the 18 constrained columns are enum-typed; Stage W's corpus reader
+reads `CREATE TYPE … AS ENUM`; a stale literal in a `.sql` file or a dbt model
+fails; demonstrated by the `retry_later` mutation above now failing where it
+passed.
+
+### Stage AD: a fixture cannot fabricate a row the database would reject
+
+**Issue:** unassigned · **State:** `backlog` · **Gap:** G26
+
+**481 test-side copies of a database-owned value, and the split is the
+finding**: **183 (38%)** are in `tests/integration/`, and they are **already
+policed** — during Stage AC's experiment, stale seeds were rejected with
+`CheckViolation` before the test could assert anything. The database refuses to
+let those tests exist outside the contract. **298 (61%) are unit tests** that
+build a dict in memory, and nothing checks them at all.
+
+**That is where the useless test actually lives.** CAR-82's instance was an
+in-memory dict with a made-up status. So the class is not "a test that retypes a
+value" — it is **a test that fabricates data the database would have
+rejected**, which is 298 sites and not 481.
+
+The heaviest are `tests/scripts/oneoff/test_reconcile_april_detail.py` (84),
+`tests/ops/routers/test_coordination.py` (38), `tests/scripts/
+test_host_maintenance.py` (31) and `tests/processing/test_batch_functions.py`
+(20).
+
+**The mechanism is probably a fixture factory rather than a rule** — rows built
+through something that validates against the vocabulary, so a fabricated row
+that could not exist fails at construction rather than being linted afterwards.
+That is a design question this stage opens rather than one it inherits.
+
+**Seeding 298 waivers takes the plan's live total from 25 to roughly 400 before
+it falls.** That is honest — the census opened at 120 — but it makes progress
+read as a spike rather than a slope, and anyone glancing at the number
+mid-programme will misread it. If that is too coarse, the natural split is by
+whether the fixture crosses a service boundary, because that is where the
+useless tests are.
+
+**Exit:** a unit fixture cannot carry a value the owning column forbids;
+`FABRICATED_ROW_WAIVERS` seeded at its measured count and drained to 0;
+demonstrated by a fabricated row failing at construction.
+
+
+### Stage AE: configuration is what Compose delivers, and everything else is a constant
+
+**Issue:** CAR-109 · **State:** `backlog`
+
+**Found 2026-09-08, closing Stage V.** That stage asserts `.env.example`
+against `docker-compose*.yml` in both directions, and its corpus is those two
+files. It therefore says nothing about a default chosen in Python, which is
+where most of this repository's configuration actually lives.
+
+**Measured across production Python: 76 distinct environment names read, and
+39 that neither `.env.example` nor any Compose file mentions.** Twenty are
+covered by Stage V's rule. Seventeen more are set as *literals* in a Compose
+`environment:` block -- `PGHOST`, `DATABASE_URL`, `SCRAPER_URL` -- so they are
+delivered, just not operator-configurable. The remaining 39 exist only in the
+code that reads them.
+
+**None of them is a provisioning defect, and that was measured rather than
+assumed.** Every one has a concrete fallback and **not one is read through
+`os.environ[...]`**, so no absent variable can fail a fresh provision. Two that
+first looked like exceptions were not: `DISK_USAGE_ROOT_PREFIX` and
+`DISK_USAGE_VOLUME_PREFIX` reach their defaults through the
+`os.environ.get(X) or DEFAULT_X` idiom at `disk_usage.py:287-290` rather than a
+`.get` default. So this stage is not about a variable that fails to arrive. It
+is about where configuration is allowed to live.
+
+**The 39 are not one kind of thing, and treating them as one is what makes the
+split feel unmaintainable.** Twelve are configuration by any reading: six
+topology defaults that are simply the deployed value compiled into Python
+(`LOKI_URL = http://loki:3100` in `ops/coordination_release.py`,
+`PROMETHEUS_URL`, `CONTAINER_HEALTH_URL`, `AIRFLOW_HOME`, `RAW_BASE`,
+`LOG_PATH`), two archiver safety flags that gate behaviour per service, and
+four DuckDB memory and thread limits that are the real levers on a struggling
+VM. The rest are calibration constants and cadences -- pack and prune batch
+sizes, byte targets, progress intervals.
+
+**`PACK_PRUNE_INODES_PER_OBJECT` is the clearest of those and is worth stating
+exactly**, because it is what shows the two kinds apart. MinIO stores each
+object as a directory plus an `xl.meta`, so deleting one frees about two
+inodes; Plan 131 Stage 0a measured the figure across the bucket at **2.24**. It
+is used once, at `delete_packed_source_html.py:632`, to print
+`inodes_freed_estimated` beside the `inodes_freed_measured` the filesystem
+actually reports. A measured constant feeding one cosmetic estimate is not a
+knob, and exposing it as an environment variable invites someone to change a
+number whose derivation lives in a plan document.
+
+**The line, stated so that it needs no judgement to apply:** configuration is
+what Compose delivers. Everything else is a constant and stops being an
+environment variable at all. Membership is decided by whether a service
+delivers the value, not by anyone's view of whether an operator might want it,
+which is what makes the split survive the people who made it.
+
+**Moving a default is not a safe edit, and the order matters.** A variable left
+as `os.environ.get("X", "2GB")` while Compose gains `X: ${X:-}` returns the
+**empty string**, not `"2GB"` -- the key now exists. That is Stage P's failure
+mode a third time: a value that looks wired, a container that comes up healthy,
+and a wrong value invisible from outside. So a variable that moves has its
+default removed from Python and its read made strict **in the same change**,
+with Compose the single owner. Thirty-six of the 39 use the fragile
+`.get(name, default)` form today; only `disk_usage.py` uses the idiom that
+survives an empty value.
+
+**Then the rule, and it is one rule rather than a policy.** No production
+module reads an environment variable with an inline default: AST-walk
+`production_python_files()` -- the corpus the SQL and import rules already use
+-- and fail on `os.environ.get(X, d)` and `getenv(X, d)`. What survives is
+`os.environ[X]`, and the second clause is that a variable read strictly must be
+delivered by its service's Compose block. That clause reuses the interpolation
+parser [Stage V](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it)
+committed rather than deriving Compose references a second time, because two
+parsers that could disagree about what Compose delivers is the defect this
+plan keeps finding in other clothes.
+
+**The waiver is seeded, drained, and then deleted.** The rule has 39 violations
+the day it is written, so it lands with a waiver tuple at that count and the
+stage drains it to zero -- Stage S's pattern, and this plan does not leave
+things on waivers. What is decided here is what happens to the empty tuple, and
+this plan has done it both ways deliberately: `CI_INVOCATION_WAIVERS` stays
+empty so a new violation fails on append, while the SQL-execution gate's ledger
+was deleted so that restoring the escape hatch is a diff that has to argue for
+itself. **This one is deleted**, for the reason that gate gave: an empty ledger
+and no ledger differ in exactly one way, which is what the next violation costs
+to admit, and here it should cost an argument rather than a tuple append.
+
+**The cost is the module-scope reads, not the line count.** These are module
+level -- `DUCKDB_MEMORY_LIMIT = os.environ.get(...)` at
+`delete_packed_source_html.py:123`. Made strict, a missing variable raises
+`KeyError` at **import**, which breaks every test and tool that imports the
+module rather than only those exercising the behaviour. Either a conftest
+supplies the service defaults or the read defers into the function. That choice
+is this stage's design question and it is larger than the 39 edits.
+
+**Estimate: not sized.** The triage is done -- roughly twelve move and the rest
+are deletions -- but the module-scope decision above is what sizes it, and the
+twelve that become Compose configuration can only be proven by a deploy, so
+this stage is production-gated in the way [Stage V](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it)
+was expected to be and was not.
+
+**Exit:** no production module reads an environment variable with an inline
+default; every variable read strictly is delivered by its service's Compose
+block; each of the 39 has been moved to Compose or reduced to a constant, with
+its read made strict in the same change as its default moved; the waiver tuple
+has drained to zero and been deleted; and the twelve that moved are verified by
+asking a deployed container what it loaded, not by asking whether it is up.
+Demonstrated by an inline default failing, not asserted.
 
 ## Success criteria
 
@@ -802,7 +2650,7 @@ loudly as an unwaived violation does.
 back.** A repair with no assertion behind it is Plan 84 repeated exactly — real
 tests, an accurate description, false within months, invisible because nothing
 could tell. This is the criterion the six unmechanised gaps exist to be measured
-against, and it is why Stage 2 comes before the stages that would otherwise be
+against, and it is why Stage C comes before the stages that would otherwise be
 graded by the instrument it repairs.
 
 Three exceptions, stated here so they are decisions rather than omissions:
@@ -811,7 +2659,7 @@ Three exceptions, stated here so they are decisions rather than omissions:
   As written it could not be asserted by the existing rules and needed an
   approach invented. Narrowed to the assertionless Layer 2 suite, it is
   ordinarily mechanisable — a Layer 2 test that executes a statement and asserts
-  nothing about the result is a rule this suite can hold — and Stage 8 owes that
+  nothing about the result is a rule this suite can hold — and Stage M owes that
   rule, not just the 25 assertions. **The part that was genuinely exceptional
   left with G18**, which is Plan 150's, so this criterion no longer carries it.
 - **G12** may close without a rule at all, because the condition a rule would
@@ -831,14 +2679,14 @@ Three exceptions, stated here so they are decisions rather than omissions:
   A Windows-only encoding defect broke master, found exactly as forecast — by
   someone running the suite where CI does not. It is the third instance of the
   class, which is enough of a pattern to stop treating each one as a one-file
-  repair, so [Stage 6b](#stage-6b-was-added-by-the-failure-this-plan-predicted)
-  now owns the class. **The exception stands only for the part 6b concludes it
-  cannot mechanise**, and 6b is required to say which part that is rather than
+  repair, so [Stage J](#stage-j-was-added-by-the-failure-this-plan-predicted)
+  now owns the class. **The exception stands only for the part Stage J concludes
+  it cannot mechanise**, and Stage J is required to say which part that is rather than
   leaving it implied. What is already settled is that the obvious mechanism does
   not close it: `PLW1514` cannot see a `tmp_path / "name"` receiver, so the rule
   that looks like the answer would have passed this defect too.
 
-  **Stage 6b answered this on 2026-09-01, and the exception is now one named
+  **Stage J answered this on 2026-09-01, and the exception is now one named
   behaviour rather than a whole rule.** Encoding is mechanised:
   `test_every_text_read_and_write_states_its_encoding` requires `encoding=` on
   every `read_text` and `write_text` in the repository, and fails on
@@ -854,8 +2702,8 @@ Three exceptions, stated here so they are decisions rather than omissions:
   collisions, and locale-dependent collation.** Those have no textual signature
   to match on — the code that breaks on them is not distinguishable, by reading,
   from code that does not — so the only instrument that sees them is an actual
-  second platform, and [Stage 6b's decision
-  record](#evidence--stage-6b-mechanising-the-encoding-sensitive-io-guard-car-60-2026-09-01)
+  second platform, and [Stage J's decision
+  record](#stage-j--mechanising-the-encoding-sensitive-io-guard)
   says why a Windows runner was declined rather than built. That is the residue,
   and it is now a list of four behaviours instead of an open-ended class.
 
@@ -863,43 +2711,26 @@ Three exceptions, stated here so they are decisions rather than omissions:
 replaced it is named for what it does. Measured in wall-clock seconds against
 the 267s baseline, not asserted.
 
-**Met by Stage 4, 2026-09-01.** Across three runs of the final configuration
+**Met by Stage E, 2026-09-01.** Across three runs of the final configuration
 the workflow went 292s to 145-165s and the job's successor 267s to 118-134s,
 in four jobs named for what they run.
-[The precise reading](#success-criterion-3-is-met) matters more than the
+[The precise reading](../evidence/plan_162_stage_E_evidence.md#success-criterion-3-is-met) matters more than the
 headline: the dbt job's cost fell by 55% and stopped dominating, but it is
 still the longest job in the workflow on both post-change runs. The criterion
 was accepted as met on that basis.
 
 **4. ~~Every suite in `tests/integration/` is either invoked by a named CI step
-or declared dormant with a reason.~~ Met by Stage 1 (CAR-45), 2026-08-31.**
+or declared dormant with a reason.~~ Met by Stage B (CAR-45), 2026-08-31.**
 This was G1's repair and the one criterion already mechanically enforced when
 the plan was written. `CI_INVOCATION_WAIVERS` is `()` and
 `test_every_integration_suite_is_invoked_by_a_ci_step` fails against an empty
 tuple the moment a suite appears unrun, with `tests/integration/lakehouse/`
 declared in `DORMANT_SUITES` rather than waived.
 
-*Struck in Stage 4 rather than deleted. The sentence went on describing "the
-four current waivers" after Stage 1 had removed all four: the criterion was
+*Struck in Stage E rather than deleted. The sentence went on describing "the
+four current waivers" after Stage B had removed all four: the criterion was
 already true and only its description had aged, which is the small version of
 exactly what this plan exists to stop.*
-
-## The estimate
-
-**L, replacing the XL placeholder**, on three grounds:
-
-1. **The census — the largest single unknown — is done.** The plan was sized XL
-   when Stage 0 was an unbounded measurement against a standard that did not
-   exist yet. It is now a completed stage with an enumerated result.
-2. **Roughly half the waiver count is two mechanical sweeps.** 50 of 120 are
-   Stage 5: converting 34 files to `mocker` and renaming 16 layer references.
-   Near-zero judgement, verified by deleting a waiver.
-3. **The remainder is bounded and enumerated**, file by file, in the gap list
-   and the waiver tuples.
-
-**Stage 1 is what confirms or destroys this.** The pass state of the 73 orphaned
-tests is the one input the estimate rests on that the census could not settle,
-which is why it is first of the remaining stages.
 
 ## Non-goals
 
@@ -914,53 +2745,6 @@ which is why it is first of the remaining stages.
   Plan 161 lands" and names an archived blocker. Correcting it is a state
   transition and belongs to the `plans` skill.
 
-## What it absorbed from Plan 139
-
-Plan 139 was written as test-suite *maintenance* and was archived on 2026-08-31
-with Stages A, B and F delivered. Its disposition, recorded when the split was
-made:
-
-| Stage | Disposition |
-|---|---|
-| A — make coverage visible | Shipped; `ci.yml` runs `--cov`. What it did *not* do is make the number mean anything, which is G10 and Stage 2 here |
-| B — recover the CI critical path | **This plan**, Stage 4 |
-| C — understand the 92s step | **This plan**, Stage 4 |
-| D — intent markers and the coverage decision | Split: the gate decision was Plan 161's questions 6 and 8; the markers and the coverage-source repair are **this plan** |
-| E — advisory CI impact selection | **This plan**, Stage 10. Its own premise was "before any new fast path", and the restructure is the fast path |
-| F — CI's database does not model production's schemas | Shipped 2026-08-31, PR #305 (CAR-36). CI now runs `airflow db migrate` |
-| G — Promtail contract checker | Moved to [Plan 160](plan_160_promtail_contract_checker_reliability.md) |
-| H — one invariant, two censuses | **This plan**, Stage 3 |
-
-Stage E carries one piece of thinking worth preserving verbatim rather than
-rediscovering: Plan 142's service graph is *evidence* for a CI selector, not the
-selector itself, because "production asks which live work depends on a service,
-while CI asks which tests, images and integration environments can detect a
-changed path."
-
-**Two notes from Stage F (CAR-36), for this plan to pick up rather than
-rediscover:**
-
-- **CI's Postgres is greenfield; production's is populated.** Stage F made the
-  `airflow` schema exist in CI, but built from empty, while production's carries
-  hundreds of thousands of rows. Same root cause as bare images versus Compose
-  definitions: CI's database is not shaped like production's. Worth measuring in
-  Stage 10 — *which* suites depend on an empty database, and which would find
-  something in a full one. The rehearsal that would close it needs a deployed
-  stack, not a CI job, and is recorded in
-  [Plan 121](plan_121_staging_environment.md).
-- **`tests/integration/airflow/` still points at `sqlite:////tmp/airflow.db`.**
-  Stage F left it deliberately: pointing the DAG tests at the same Postgres
-  metadata DB the drain tests read would mix test data into it. Now that a real
-  Airflow metadata schema exists in the same job, whether those suites should
-  share it is Stage 10's call.
-
-**Consequence, resolved 2026-08-30:** Plans 103 and 107 were triggered by "Plan
-139 Stage D settles the coverage gate." Stage D was taken apart, so that trigger
-named something that would not happen. Both were **superseded by Plans 161 and
-162** — their premises were a coverage percentage and a self-scored rubric, both
-last edited 2026-04-29, and both are what Plan 161's contract now decides. Parts
-of each had already shipped under other plans without them.
-
 ## Intersections
 
 ### Plan 161 — the testing contract
@@ -970,6 +2754,12 @@ plan closes the distance. `docs/TESTING.md`'s gap list names Plan 162 as the
 owner of thirteen entries — twelve at the census, plus G13, re-owned here on
 2026-08-31 — and an assertion fails if that owner is ever an archived plan — so this plan cannot be quietly abandoned without the suite
 saying so.
+
+**This document was written as a deliberate stub on 2026-08-30**, when Plan 161
+had not yet decided the standard this plan measures against. Writing the stages
+before the standard existed would have been scoping work against a rule nobody
+had agreed. That blocker is gone: 161's contract landed, was asserted, and is
+archived.
 
 ### Plans 103 and 107 — coverage
 
@@ -981,7 +2771,7 @@ numbers.
 ### Plan 120 — CI lake snapshot
 
 Complete, and it produced **two** artifacts this document had been conflating.
-Stage 4 checked, because a claim about what CI builds against should not rest
+Stage E checked, because a claim about what CI builds against should not rest
 on a sentence:
 
 - **The synthetic fixture**, `scripts/seed_lake_snapshot_fixture.py` — its own
@@ -1000,22 +2790,30 @@ on a sentence:
 
 This entry previously read that the fixture was *"unused for the dbt build it
 was paid for"*. That is false of the fixture and true of the snapshot, which
-is Stage 10's.
+is Stage P's.
 
 ### Plan 121 — staging environment
 
-Owns the deployed-stack rehearsal that Stage 10's greenfield-versus-populated
+Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
 question cannot close from inside a CI job.
 
-## Evidence
+## Record
 
-### Evidence — Stage 0, the census (CAR-40), 2026-08-31
+One entry per closed stage, oldest first. **Legacy** names the stage's old
+number, so a commit, branch or ticket written before 2026-09-04 still resolves.
+Where an entry states a cost as an `In Progress` window, that window is wall
+clock reconstructed from the issue's Linear state history, not effort recorded
+when the stage closed.
+
+### Stage A — the census
+
+**Legacy:** Stage 0 · **Issue:** CAR-40 · **Closed:** 2026-08-31
 
 Both exit conditions met. Commit `dfa55ae`. Estimate 2, actual 1.
 
 The census ran against the instrument Plan 161 built rather than by hand, which
 is the whole reason it cost 1 rather than the XL this plan was sized at. What
-it produced is [above](#what-the-census-found): 120 waived violations across
+it produced is [above](#the-case): 120 waived violations across
 five mechanically checked rules, twelve gaps, and a stage per repair.
 
 **Every by-eye reading this document had carried since 2026-08-30 was an
@@ -1027,7 +2825,7 @@ not the individual numbers.
 **`dashboard/` is Streamlit, not FastAPI.** G7 therefore cannot be reached by
 the route rule or by the "enough" floor's first clause: the rule imports
 `<service>.app` and reads its OpenAPI schema, and there is no schema to read.
-This was not known when the gap list was written, and it means Stage 8 must
+This was not known when the gap list was written, and it means Stage M must
 invent an approach rather than drain a waiver list.
 
 *Read on 2026-09-02 as a conclusion about the wrong subject, and left standing
@@ -1035,8 +2833,8 @@ because it was the right conclusion about the one it had. Inventing an approach
 is what the Streamlit Python needs, and that is now G18 and Plan 150's; the
 dashboard gap this plan kept — a Layer 2 suite with 25 tests and no assertions
 — needed no invention at all, and the census never looked for it because it was
-counting test files rather than reading one. See [Stage 8
-narrowed](#stage-8-narrowed-and-g7-now-names-a-different-gap).*
+counting test files rather than reading one. See [Stage M
+narrowed](#stage-m-narrowed-and-g7-now-names-a-different-gap).*
 
 **Half the gap list is unenforced.** Six of the twelve gaps are checked by
 nothing at all, which is what success criterion 2 exists to answer — a repair
@@ -1054,10 +2852,12 @@ overstated itself would have been building on sand. The repair added
 claim a mechanism it does not have.
 
 **What the census could not settle:** whether the 73 orphaned tests still pass.
-That is Stage 1, and it is the one input the L estimate rests on that remains
+That is Stage B, and it is the one input the L estimate rests on that remains
 unmeasured.
 
-### Evidence — Stage 1, the orphaned suites (CAR-45), 2026-08-31
+### Stage B — the orphaned suites
+
+**Legacy:** Stage 1 · **Issue:** CAR-45 · **Closed:** 2026-08-31
 
 All five exit conditions met. Estimate 2.
 
@@ -1113,7 +2913,7 @@ pass against a queue holding 20 foreign pending rows, and those 20 are still
 `pending` afterwards.
 
 **Dormancy could not be a waiver, and finding out why was the stage's one
-design change.** Stage 1 was scoped to declare `tests/integration/lakehouse/`
+design change.** Stage B was scoped to declare `tests/integration/lakehouse/`
 dormant through the waiver list, on the reasoning that a waiver already carries
 a reason, an owner and a date. It cannot: `test_no_waiver_outlives_the_plan_that_owns_it`
 fails any waiver whose owner plan has archived, so the lakehouse entry would
@@ -1129,11 +2929,11 @@ breaking them: removing the processing step fails the invocation rule against
 an empty waiver tuple, and pointing a step at the dormant suite fails the
 dormancy guard. 120 waivers → **116**.
 
-**The L estimate is confirmed.** Stage 1 was the one input it rested on that
+**The L estimate is confirmed.** Stage B was the one input it rested on that
 the census could not settle, and it resolved the favourable way: no production
-defects, no rot in the covered areas, and Stages 7 and 8 do not get worse. The
+defects, no rot in the covered areas, and Stages L and M do not get worse. The
 two test defects cost minutes, not the days a genuine failure would have. What
-Stage 1 adds to the estimate is not effort but a warning about its shape — both
+Stage B adds to the estimate is not effort but a warning about its shape — both
 defects, and the queue fragility, were invisible to review and obvious to
 execution, so the remaining stages should be sized on the assumption that
 anything this plan has only *read* is still unmeasured.
@@ -1147,20 +2947,22 @@ predates this stage.
 
 Chasing its owner is what made it Plan 162's. It is G13's class, and G13 was
 the one gap in `docs/TESTING.md` this plan did not own — assigned to **Plan 146
-Stage 1 (CAR-42)**, scoped to the `PYTHONPATH` half. That half shipped; the
+Stage B (CAR-42)**, scoped to the `PYTHONPATH` half. That half shipped; the
 `Documentation tests` step sets `PYTHONPATH` today, and `21333ab` had already
 repaired the other named instance. So the G13 row described finished work while
 naming an owner in closeout that owes no code, and the live instance — found and
 deliberately left by Plan 161 — had no owner at all.
 
-**G13 is therefore re-owned to Plan 162, Stage 5**, and the row rewritten to
-describe what is actually left. Stage 5 rather than Stage 3: Stage 3 is a
-specific two-venv census fix and "also small" is not a category, while Stage 5
+**G13 is therefore re-owned to Plan 162, Stage F**, and the row rewritten to
+describe what is actually left. Stage F rather than Stage D: Stage D is a
+specific two-venv census fix and "also small" is not a category, while Stage F
 is already the pass that reads every patch in the suite. What that costs is
 honest and recorded above — [a third exception](#success-criteria) to success
 criterion 2, and the weakest of the three.
 
-### Evidence — Stage 2, unblinding coverage (CAR-46), 2026-08-31
+### Stage C — unblinding coverage
+
+**Legacy:** Stage 2 · **Issue:** CAR-46 · **Closed:** 2026-08-31
 
 All three exit conditions met. Commits `8c10d95` and `2b12294`. Estimate 1,
 actual 1.
@@ -1189,28 +2991,28 @@ only the instrument could show it.** `container_health` is among the
 best-covered directories in the repository at 93% and is still below the floor,
 because the floor is routes reached through the app and a Layer 4 that exists —
 neither of which a percentage measures. That is the contract's *"not a coverage
-percentage"* clause holding under its first real test, and it re-scopes Stage 6:
+percentage"* clause holding under its first real test, and it re-scopes Stage H:
 G9 is a test-home and routing problem, not a coverage one. `dashboard/` at 9%
-is the genuine gap, and it is Stage 8's.
+is the genuine gap, and it is Stage M's.
 
 **The threshold is a ratchet, not a target, and `scripts/` is the caveat on
 it.** At 10,488 statements it is over half the denominator and largely spent
 one-off code, so it damps the movement the service stages produce. That is
-[Stage 5b](#the-stages), scoped from this measurement.
+[Stage G](#stages), scoped from this measurement.
 
 **Two of this stage's own claims were wrong and were corrected by measuring.**
 The gap list said unblinding would expose "the two services below the floor"; it
 exposed one badly covered service, one well-covered one, and a `scripts/`
-denominator nobody had counted. The first sizing of Stage 5b then repeated the
+denominator nobody had counted. The first sizing of Stage G then repeated the
 error in miniature — see its section for what the archive join corrected.
 
-**Landed alongside Stage 1 and reconciled to it.** Stage 1 established the
+**Landed alongside Stage B and reconciled to it.** Stage B established the
 convention for repaired gap entries — row deleted, preamble names what closed
 it, history here, letters never reused — while this branch was open; G10's
-closure was rewritten to follow it. Stage 1's own deletions had left three
+closure was rewritten to follow it. Stage B's own deletions had left three
 mutations in `scripts/verify_testing_contract_mutations.py` anchored on the
 removed G1 and G2 rows, so the script aborted rather than ran; its staleness
-guard is what said so. Re-anchored, and Stage 1's new dormancy rule was given
+guard is what said so. Re-anchored, and Stage B's new dormancy rule was given
 the mutation it shipped without.
 
 **Confirmed in CI, which is the only place the gate can actually fire.**
@@ -1231,11 +3033,13 @@ raising the floor should keep at least that much slack.
 **The canary test that fails locally passes here**, which is G13 restated as
 evidence rather than assertion: `test_a_failing_canary_command_fails_the_check`
 is among the 3,195 that pass on Linux and is the one failure on Windows. CI
-cannot see the instance Stage 5 owns, exactly as its row says. The single
+cannot see the instance Stage F owns, exactly as its row says. The single
 Linux skip is unrelated — `test_every_sha_a_recap_names_is_a_real_commit`,
 which skips on a shallow clone.
 
-### Evidence — Stage 3, one declared source for the health-sensor censuses (CAR-47), 2026-08-31
+### Stage D — one declared source for the health-sensor censuses
+
+**Legacy:** Stage 3 · **Issue:** CAR-47 · **Closed:** 2026-08-31
 
 All three exit conditions met. Commits `17d4fab`, `a5fda6c` and `92ef62b`,
 [PR #319](https://github.com/whitewalls86/new_car_tracker/pull/319). Estimate 1,
@@ -1314,11 +3118,13 @@ added, and a new assertion comparing the DagBag's dag_ids against the ones
 things someone thought to list. It is not owned by any stage: G12 is about
 `shared` imports, not this.
 
-### Evidence — Stage 4, splitting the 267s dbt job (CAR-48), 2026-09-01
+### Stage E — splitting the 267s dbt job
+
+**Legacy:** Stage 4 · **Issue:** CAR-48 · **Closed:** 2026-09-01
 
 All four exit conditions met. Commits `5dd6bb7`, `8c54915`, `70d2411`,
 `9f21f87`, [PR #321](https://github.com/whitewalls86/new_car_tracker/pull/321).
-Estimate 2.
+Estimate 2 points. `In Progress` ran 02:32–03:56 UTC on 2026-09-01, 1h23m.
 
 **The whole result, measured across nine CI runs rather than asserted:**
 
@@ -1341,249 +3147,25 @@ steadier than wall clock, which also carries queueing — run 3's `lint` waited
 14s for a runner. A change worth less than about 20 seconds cannot be
 demonstrated here without more runs than it is worth.
 
-#### What the job was, and why the cut is by prerequisite
+**The full record is [`docs/evidence/plan_162_stage_E_evidence.md`](../evidence/plan_162_stage_E_evidence.md)**, 7 sections:
 
-Eight suites ran in series on one runner behind one Flyway migration, one
-`pip install`, one `dbt build` and one Airflow venv build. The suites shared
-a runner and nothing else, so the split is by the only thing they *did*
-share:
+1. What the job was, and why the cut is by prerequisite
+2. Plan 139 Stage C's question, answered
+3. A property nearly lost, then re-established somewhere else
+4. Two findings that were not scoped and cost nothing
+5. Success criterion 3 is met
+6. What was deliberately not done
+7. Cost, and one regression worth recording
 
-| Job | The prerequisite it pays for | Suites |
-|---|---|---|
-| `dbt model tests (real build)` | a real `dbt build --target duckdb` | `dbt/` |
-| `SQL + Airflow metadata contracts` | that build **and** the `airflow` schema | `sql/`, `airflow/` |
-| `Service integration tests (Postgres)` | a migrated Postgres, nothing else | `ops/`, `scripts/`, `processing/`, `scraper/`, `dbt_runner/` |
-| `Lake integration tests (MinIO)` | the Plan 120 fixture in object storage | `shared/`, `archiver/` |
+### Stage F — the mechanical sweeps
 
-`tests/integration/sql/` is the only suite needing two prerequisites — 21
-tests read dbt's marts out of DuckDB, 92 read Postgres, one file reads
-Airflow's own `task_instance`/`dag_run`. So `schema-contracts` runs its own
-`dbt build` rather than waiting on `dbt-models`. Passing the DuckDB file
-between jobs as an artifact was costed and rejected: it puts the two longest
-jobs in series, which is the thing the split exists to stop. The second build
-costs ~31s in a job that is not on the critical path.
+**Legacy:** Stage 5 · **Issue:** CAR-49 · **Closed:** 2026-09-01
 
-The Airflow venv now lives in the one job whose suites import Airflow. It ran
-ahead of all eight before, six of which never import it.
-
-#### Plan 139 Stage C's question, answered
-
-**The 92s step was never running tests. It was starting Python.**
-
-`--durations=20` in CI: 16 tests, 93.99s. Seven real-build tests were 93.25s
-of it — **99.2%** — and the nine selector-equivalence tests were 0.44s
-together. Those seven drive 21 `dbt build --select` subprocesses at a mean
-**4.44s**, while dbt's own report for one such build reads *"1 incremental
-model, 1 project hook, 12 data tests, 4 unit tests in 0.61 seconds"*.
-
-The decomposition, measured in the job rather than reasoned from adapter
-internals:
-
-| | |
-|---|---:|
-| `import dbt.cli.main` | 1.37s, once per process |
-| `dbtRunner().invoke(build)` | 1.19 – 1.24s |
-| `dbtRunner(manifest=...).invoke(build)` | 1.04 – 1.14s |
-| the same build as a subprocess | ~4.2s |
-
-So roughly 3s of every 4.4s was Python starting and importing dbt, paid 21
-times: **~80s of the 93s, against ~13s of actual dbt work.**
-
-**Plan 139's hypothesis was half right, and the wrong half is the useful
-one.** It guessed "each test drives its own real dbt invocation and they could
-share one build". The first clause holds. The second cannot: each test's
-subject *is* a sequence of incremental builds with fixture data seeded
-between them, so there is no single build to share. Only the startup was
-shareable. Sharing it took the suite to **24.26s** — the seven from 93.25s to
-23.83s, every test between 2.33s and 4.92s where the cheapest had been
-12.31s. Both of those are pytest's own timer on one run each, which is the
-only way to get a per-test breakdown; the CI *step* around them reads 86-95s
-before and 25-37s after, across three runs each.
-
-Manifest reuse was measured and **not** taken: ~0.15s per invocation, about
-three seconds total, in exchange for running a configuration the numbers
-above were not measured against.
-
-#### A property nearly lost, then re-established somewhere else
-
-All three readers in `tests/integration/dbt/` opened DuckDB with
-`read_only=True`, so no assertion could mutate the warehouse it inspected.
-dbt-duckdb caches its environment across invocations — precisely why an
-invoke is 1.2s rather than 4.4s — so it holds the file open read-write for
-the life of the pytest process, and a read-only *connection* is no longer
-available. Two ways of keeping one were tried against duckdb 1.5.5, the
-version CI runs, and both are closed:
-
-```
-connect(path, read_only=True)   ConnectionException: Can't open a connection to
-                                same database file with a different
-                                configuration than existing connections
-:memory: + ATTACH (READ_ONLY)   BinderException: Unique file handle conflict
-```
-
-A third, reading a copy of the file, works and was rejected on meaning rather
-than mechanism: every assertion would then describe a snapshot instead of the
-warehouse the build actually wrote.
-
-**So the guard moved from the connection to the statement**, which is a
-different mechanism for the same property and on one axis a stricter one. It
-was always the *statements* that were the risk, and a read-only connection
-never had an opinion about `COPY ... TO`, which reads the warehouse and writes
-the filesystem. `ReadOnlyConnection` classifies every statement with
-`duckdb.extract_statements` — the engine's own parser, so no regex over SQL
-text and no special case for `WITH ... SELECT` — and allows only `SELECT` and
-`EXPLAIN`. **Deny by default**: a statement type a future DuckDB adds is
-refused until someone reads it and adds it.
-
-This is success criterion 2 applied to the stage's own work, so it has an
-assertion behind it rather than a paragraph.
-`test_analytics_connection_guard.py` is 16 tests and runs unmarked in the unit
-job, because it needs no MinIO, no Postgres and no dbt. Verified by breaking
-the guard four ways:
-
-| Mutation | Result |
-|---|---|
-| `INSERT`/`DELETE` added to the allowlist | 5 fail |
-| only the first statement of a multi-statement string classified | 1 fails |
-| the check moved after execution instead of before | 1 fails |
-| the check removed entirely | 11 fail |
-
-**The first run of that mutation set was wrong, and how it was wrong is worth
-more than the table.** Restoring each mutation with `cp` set the source
-mtime inside the same second as the `.pyc` written moments earlier, so Python
-kept the *mutated bytecode* and ran it against restored source. The visible
-symptom was a test failing while `inspect.getsource` showed correct code —
-`refuse_writes` provably first in the file, and a `DELETE` reaching the
-database anyway. It was diagnosed by wrapping the connection in a spy that
-logged every statement reaching it, which showed the execute happening
-*before* the refusal.
-
-Nothing was wrong with the guard. **The verification tooling was lying, in a
-way that read exactly like a defect in the thing under test** — which is this
-plan's own recurring finding pointed at itself, and the reason the mutation
-script now clears `__pycache__` around every edit rather than trusting a
-timestamp.
-
-**What it does not cover, stated so the limit is known:** a caller that
-reaches past the wrapper for a raw connection. Nothing in the directory does
-today.
-
-The change reaches further than the two files that build: all three share one
-pytest process, so the selector suite's reads moved too, though it invokes dbt
-never.
-
-#### Two findings that were not scoped and cost nothing
-
-**The `loki` service was dead weight.** The old job started three service
-containers; nothing under `tests/integration/` has ever opened port 3100. It
-arrived with `cf216c8`'s log-aggregation work and outlived it. Removing it
-took **"Initialize containers" from 44–56s to 12–16s** — far more than
-expected, because the Loki image pull was most of it.
-
-**Every job installed every service's dependencies, and none of them needed
-to.** ~220MB of wheels per job, because the single job it replaced genuinely
-did need all seven files. Measured by walking each suite's imports including
-its first-party ones:
-
-- **`dashboard/` is ~50MB** of streamlit, pydeck, pandas, plotly and pillow
-  that no integration suite reaches. `tests/integration/sql/` imports
-  `dashboard.queries`, and that module imports `pathlib` and
-  `shared.query_loader`.
-- **`scraper/` brings curl_cffi (13.5MB) and asyncpg**, and the scraper suite
-  reaches neither: it imports `processing.queries` and `scraper.queries`, both
-  pure `load_query` modules.
-
-`Install dependencies` went **44s to 17–20s** in the three jobs that dropped
-`dashboard/`, and 46s to 41s in `service-integration`, which still needs four
-files. The failure direction is the safe one — a distribution that turns out
-to be needed is an ImportError at collection, named and immediate.
-
-#### Success criterion 3 is met
-
-The criterion is *"the `dbt build + test` job is no longer the critical path,
-and what replaced it is named for what it does"*. The job is gone; the four
-that replaced it are named for what they run; the workflow went 292s to
-145-165s and the job's successor 267s to 118-134s across three runs.
-
-The third clause is the one worth stating precisely rather than rounding, and
-**the first attempt to state it here was wrong on one reading — which is this
-plan's own recurring finding, committed by this plan.** On the first run after
-the in-process change, `dbt model tests (real build)` was 118s against `Unit
-tests (pytest)` at 112s, and this section said the two were "within runner
-variance of each other". The next run said 134s against 97s:
-
-| | run 33465499674 | run 33466934324 | run 33467252321 |
-|---|---:|---:|---:|
-| workflow wall clock | 145s | 156s | 165s |
-| `dbt model tests (real build)` | 118s | 134s | 128s |
-| `Unit tests (pytest)` | 112s | 97s | 97s |
-| gap | 6s | **37s** | **31s** |
-
-**Three readings, and the dbt job is the longest in all three.** It is no
-longer a 267-second critical path; it is still the critical path. The honest
-form of the claim is that the job's cost fell by about half and stopped
-dominating, not that something else overtook it — and one run was never enough
-to say which, on a runner whose variance moves a 25s step to 37s.
-
-**The third run is the one that settles it, and it settles it the other way
-from the guess.** It was taken after the temporary measurement step was
-deleted, which the previous draft of this section expected to be worth 7-11s;
-the job came back at 128s and the workflow at its slowest of the three. The
-rig was never the variable. Runner variance was, and it is larger than the
-thing being subtracted — which is the argument for quoting three runs
-everywhere above rather than the best one.
-
-**The criterion was accepted as met by the maintainer on 2026-09-01 with this
-reading on the record**, which is a decision about what "no longer the critical
-path" was worth in practice, not a measurement that says something else is
-slower. A stage that wants the dbt job genuinely off the top has a sized
-target waiting: its remaining `Install dependencies` is 18s and its `dbt build`
-16s, against 25-37s of tests.
-
-#### What was deliberately not done
-
-- **No test file moved and no step was renamed.** Two `ci.yml` step names are
-  subjects in `LAYER_NUMBER_WAIVERS`, and `tests/integration/sql/`'s files
-  appear there too; renaming or moving either would have meant rewriting
-  waivers that Stage 5's G11 sweep deletes outright — the same collision
-  [Stage 5b's placement argument](#stage-5b-what-the-split-is-and-why-a-directory-rather-than-a-list)
-  is built on. The waiver list is untouched at 116.
-- **`docs/PLANS.md` was moved through the `plans` skill**, not edited here.
-  Build-order row 1 keeps its position; only its slice pointer advanced to
-  Stage 5, since Stages 5 through 10 remain. This plan's non-goal is authoring
-  that file mid-stage, and the skill's boundary is what kept the two apart:
-  both authored cells were proposed with sources and approved before the row
-  was touched.
-- **The measurement rig is gone.** `.github/scripts/measure_dbt_invocation_cost.py`
-  and its `ci.yml` step existed to answer Stage C and were deleted once the
-  answer was recorded above. The numbers it produced are in this section; the
-  script is in the history at `e3b4c82` if a later stage wants to re-run it.
-
-#### Cost, and one regression worth recording
-
-The stage cost one red CI run, and it was self-inflicted in a way the suite
-was already built to catch: the split commit wrote `apache-airflow==3.2.0`
-into two YAML *comments*, and
-`test_ci_pins_the_airflow_version_production_runs` greps the whole workflow
-for that pattern and requires exactly one distinct match. It found three —
-`3.2.0`, ``3.2.0` `` and ``3.2.0`.`` — having swept up markdown backticks.
-The test was right and the comments were wrong; a version in prose is a second
-declaration that drifts. **It was invisible locally because the assertion is
-integration-marked and runs inside the isolated Airflow venv, which a
-`-m "not integration"` run never reaches** — the same shape as Stage 3's
-finding, and the second time in two stages that pre-push verification proved
-only what the main venv could see.
-
-One harmless consequence of in-process dbt, recorded so it is not mistaken
-for a defect later: dbt-core's own Click deprecation warnings now surface in
-this suite's output, because dbt is imported into the pytest process instead
-of hidden inside a subprocess.
-
-### Evidence — Stage 5, the mechanical sweeps (CAR-49), 2026-09-01
+**Cost:** estimate 2 points. `In Progress` ran 04:01–05:09 UTC on 2026-09-01, 1h08m.
 
 All four exit conditions met. **The waiver list went 116 to 68** — the 50 the
 stage was scoped to delete, and 2 added back because moving two test files
-[exposed a defect in the Layer 2 checker](#the-instrument-was-weaker-than-its-own-docstring).
+[exposed a defect in the Layer 2 checker](../evidence/plan_162_stage_F_evidence.md#the-instrument-was-weaker-than-its-own-docstring).
 Both tuples the stage owns are now `()`. 51 test files, three workflow lines
 and one contract document changed; the production tree was not touched.
 
@@ -1591,302 +3173,31 @@ and one contract document changed; the production tree was not touched.
 |---|---:|---:|
 | `MOCKER_WAIVERS` | 34 | **0** |
 | `LAYER_NUMBER_WAIVERS` | 16 | **0** |
-| `ROUTE_WAIVERS` (Stage 6) | 12 | 12 |
-| `LAYER_2_WAIVERS` (Stage 7) | 54 | **56** |
+| `ROUTE_WAIVERS` (Stage H) | 12 | 12 |
+| `LAYER_2_WAIVERS` (Stage L) | 54 | **56** |
 | **Total** | **116** | **68** |
 
 G4, G11 and G13 are deleted from `docs/TESTING.md`'s gap list, which is now
 seven rows: G5, G6, G7, G8, G9, G12 and G14.
 
-#### The venv fix, which really was one argument
+**The full record is [`docs/evidence/plan_162_stage_F_evidence.md`](../evidence/plan_162_stage_F_evidence.md)**, 10 sections:
 
-`ci.yml`'s isolated Airflow venv now installs `pytest-mock` alongside `pytest`,
-and that was the whole of it — one word on one `pip install` line. Both
-`tests/integration/airflow/` files converted on the strength of it. The gap
-row had already argued the point and the argument held: `pytest-mock`
-depends only on `pytest`, so none of the starlette/fastapi conflict that
-forced the venv's existence applies to it.
+1. The venv fix, which really was one argument
+2. Two of the 16 were a move, not a rename
+3. Four `Layer N` cross-references, which the rule cannot see
+4. G13: an interpreter path, replaced by a shell builtin
+5. One conversion that is not mechanical, and says why in the file
+6. How it was done, and what that cost
+7. Three process-state patches stayed monkeypatch, correctly
+8. A unit test filed as an integration test, and two wrong answers before the right one
+9. The instrument was weaker than its own docstring
+10. Coverage is a unit-test instrument, and the integration answer is already built
 
-**What that fix cannot be verified against locally, and is not.** Neither
-Airflow file runs in the main venv — `test_hourly_analytics_refresh.py`
-imports `airflow.exceptions` through its fixture and errors out without a real
-Airflow install. `test_scrape_listings.py` guards its import and does run: all
-7 pass converted. The other file's conversion is `patch.object(module, ...)`
-to `mocker.patch.object(module, ...)` eleven times over, with no scope change,
-and CI is where it is proved.
+### Stage G — separating production scripts from spent ones
 
-#### Two of the 16 were a move, not a rename
+**Legacy:** Stage 5b · **Issue:** CAR-55 · **Closed:** 2026-09-01
 
-Fourteen were: `tests/integration/sql/` and `tests/integration/ops/` moved 1→2
-and 3→4 respectively, and the two `ci.yml` step names went with them —
-`Run SQL smoke tests (Layer 2)` and `Run API integration tests (Layer 4)`.
-
-The other two were not, and the waiver list said so before the sweep started:
-`test_flush_silver_observations.py` and `test_flush_staging_events.py` were
-waived as *"1, not 4"*, not "1, not 2". They are SQL smoke tests by content —
-"validates the SELECT / DELETE SQL patterns ... against a real DB with Flyway
-migrations applied" — and they were sitting in `tests/integration/archiver/`,
-which the contract places at **Layer 4**. Claiming Layer 2 there fails the
-rule; claiming Layer 4 makes the headline argue with the file.
-
-**The docstrings were right and the directory was wrong, so the files moved.**
-Both are now `tests/integration/sql/`, keeping their original
-`Layer 2 — SQL smoke tests for <processor>` headline. Nothing else changed:
-each uses only the `cur` fixture from `tests/integration/conftest.py`, imports
-nothing from `archiver`, and needs only `TEST_DATABASE_URL` and Flyway — all of
-which the `Run SQL smoke tests (Layer 2)` step supplies. The archiver step
-keeps its six MinIO-dependent files.
-
-The rule caught the mismatch because the waiver recorded the *actual* layer
-rather than the shifted one. A +1 sweep applied blindly would have written
-"Layer 2" into a Layer 4 directory and failed, which is the assertion doing its
-job.
-
-#### Four `Layer N` cross-references, which the rule cannot see
-
-The asserting test reads only a *leading* `Layer N` on a module docstring's
-first line. Four other mentions carried Plan 84's numbering in prose, invisible
-to it, and were swept by hand:
-
-- Two class docstrings in `tests/integration/sql/test_ops_queries.py` saying
-  "Layer 1 smoke tests" in a Layer 2 file. Straight +1.
-- `tests/ops/routers/test_scrape.py`: "SQL correctness is covered by Layer 3
-  integration tests" → Layer 4, and `tests/integration/ops/test_scrape.py` is
-  the file it means. Straight +1.
-- `tests/integration/ops/test_maintenance_api.py` pointed at "the Layer 1 tests
-  in test_maintenance.py". **This one lost its number rather than gaining
-  one.** The file it names is `tests/integration/ops/test_maintenance.py`,
-  beside it, which the contract places at Layer 4 — so neither "Layer 1" nor
-  the +1 shift's "Layer 2" is true, and "Layer 4" would say the opposite of
-  what the sentence means. It now names the file and no layer.
-
-That last one is worth keeping because the contract test's own comment cited it
-as the example of *"prose that is correct"* — the reason cross-references are
-excluded from the rule. It was not correct. The comment now cites
-`test_scrape.py` instead, which is.
-
-#### G13: an interpreter path, replaced by a shell builtin
-
-`tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
-built its canary command as `f"{shlex.quote(sys.executable)} -c ..."`. The
-verifier runs `--canary-cmd` through `subprocess.run(..., shell=True)`, and
-`shlex.quote` is POSIX quoting that `cmd.exe` does not honour, so the test
-failed on Windows and passed in CI on the same code.
-
-The command is now `exit 3`. What the test owns is that a non-zero canary fails
-the check and lands its returncode in the report; naming an interpreter was
-never part of that, and it dragged a filesystem path through the shell's
-quoting rules to get there. `exit 3` needs no quoting and means the same thing
-to `/bin/sh` and `cmd.exe`.
-
-The original comment defending `sys.executable` — *"a `python` command is not
-guaranteed to exist even where Python does"* — was answering the right question
-and reaching for the wrong tool. Avoiding the interpreter entirely answers it
-better.
-
-#### One conversion that is not mechanical, and says why in the file
-
-`tests/scraper/processors/test_scrape_detail.py::test_a_dummy_scrape_is_not_counted`
-took both its readings **outside** a `with patch("builtins.open", ...)` block
-on purpose: `prometheus_client`'s `ProcessCollector` opens `/proc/<pid>/stat`
-in binary mode during `REGISTRY.collect()`, and under `mock_open` that read
-returns a `str` and raises. `mocker.patch` lasts until teardown, so a
-straight conversion would have moved the second reading inside the patch and
-broken it — **on Linux only**, which is to say in CI and not on the machine
-doing the conversion.
-
-It converts with two `mocker.stop()` calls and a comment saying why the patch
-is stopped by hand. This is the only place in the 34 where the `with` block's
-*scope* was load-bearing rather than incidental, and it is the same rule G13 is
-about, one layer down: the file already knew the answer because someone had
-been bitten by it, and the comment is what carried that across.
-
-#### How it was done, and what that cost
-
-The sweep is 345 new `mocker.patch` call sites across 34 files. It was done
-with four throwaway AST rewriters — flatten `with patch(...)` blocks (including
-the parenthesised multi-manager form) into `mocker.patch` calls and dedent the
-body; rename `monkeypatch.setattr` to `mocker.patch.object`, or to
-`mocker.patch` where the first argument is a dotted string; add the `mocker`
-parameter to every function that gained a use of it; drop `monkeypatch` from
-every signature that no longer references it. Each file was then run.
-
-**The rewriters got the tests right and the plumbing wrong, repeatedly.** Every
-failure they produced was the same shape: a *helper* — `_run_apply`,
-`_patch_dedupe`, `_canary_ready`, `_mock_zstd`, some thirty of them — gained
-`mocker` as a trailing parameter while its call sites went on passing
-positionally, so the fixture landed in the wrong slot. `test_reconcile_april_detail.py`
-alone took five rounds of this, 152 failures down to zero. The tell was always
-a `TypeError` or `AttributeError: 'MonkeyPatch' object has no attribute
-'patch'` at call time, never a wrong assertion, which is the good failure mode
-to have: nothing silently passed.
-
-Where a `@contextmanager` helper existed only to hold patches — `_fake_db` in
-two files, `_mock_zstd` — it stopped being a context manager. `mocker`'s
-teardown is the fixture's, so the yield had nothing left to do.
-
-#### Three process-state patches stayed monkeypatch, correctly
-
-The contract's carve-out is not a formality and three sites landed in it:
-`patch.dict(os.environ, ...)` in `tests/airflow/test_notifications.py` became
-`monkeypatch.setenv`, and `patch.dict(sys.modules, {"sensors": ...})` in
-`test_pack_bronze_html_dag.py` became `monkeypatch.setitem`. `mocker` is the
-wrong tool for all three and the rule already says so —
-`_MONKEYPATCH_ALLOWED` lists `setenv`, `setitem` and the rest, so the checker
-agrees.
-
-#### A unit test filed as an integration test, and two wrong answers before the right one
-
-`tests/integration/airflow/test_scrape_listings.py` carried no `integration`
-marker, so `pytest tests/integration/airflow/ -m integration` collected it and
-deselected all 7 of its tests. Its sibling `test_hourly_analytics_refresh.py`
-sets `pytestmark` and runs.
-
-**The first reading of that was wrong, and worth recording because it was wrong
-in a specific way.** It was read as "the suite is credited as invoked and runs
-nothing" — G1 one level down. The tests were in fact running the whole time, in
-the **unit** job, because the unit selector is `pytest tests/ -m "not
-integration"` and it walks every directory under `tests/`. The layer section of
-[`docs/TESTING.md`](../TESTING.md) states exactly this, and it had already been
-read once during this stage:
-
-> it collects **every** directory under `tests/` and runs whatever is not
-> marked `integration`, so a file's location does not decide whether it runs
-> here. The marker does.
-
-So the finding was an inference from one job's log rather than a measurement,
-and the measurement was one grep away.
-
-**The second answer was also wrong.** Adding the marker made the file match its
-directory — and the directory was the thing that was wrong.
-`airflow/dags/scrape_listings.py` imports only `logging`, `time` and `requests`
-at module level and guards its DAG construction behind `except ImportError`, so
-the 7 tests mock `requests` and `time.sleep` and need no Airflow, no database
-and no MinIO. That is a Layer 1 unit test by this contract's own definition, and
-`tests/airflow/` is the row that describes it: *"Unit tests of DAG modules.
-Runs in the main venv, so it must not import `airflow`."*
-
-**The file is now in `tests/airflow/`**, beside `test_notifications.py` and
-`test_coordination_admission.py`, which avoid importing Airflow by the same
-discipline. No marker, and `parents[3]` becomes `parents[2]`. It runs where it
-already ran, now for a stated reason rather than by accident, and
-`tests/integration/airflow/` collects 59 with zero deselections.
-
-**What caught it was the coverage number, and only the coverage number.** The
-marker moved the 7 tests out of the one job that runs `--cov`:
-
-| | master `b80ae88` | with the marker |
-|---|---:|---:|
-| `airflow/dags/scrape_listings.py` | 76% | **23%** |
-| total | 75.82% | 75.64% |
-
-Nothing failed. The tests passed in the Airflow venv, the step went green, and
-0.18 percentage points was the entire signal that a dependency-free test had
-been moved into the heaviest interpreter in CI. Stage 2 unblinded that
-instrument five stages ago; this is the first time it has caught something on
-its own.
-
-**The root cause of both wrong answers is one bad default: the directory was
-treated as ground truth and the file adjusted to match it.** The two flush files
-above came out right for a reason that does not generalise — their waiver said
-`"1, not 4"`, so the mechanism supplied the answer. `scrape_listings.py` makes
-no `Layer N` claim, so no waiver named it, so nothing prompted the same
-question, and unprompted judgement picked the wrong invariant twice in a row.
-That is this plan's own thesis about itself: where a mechanism exists the answer
-is right, and where one does not the answer is whatever someone assumed.
-
-**The mechanism that would have caught it is not written.**
-`test_every_integration_suite_is_invoked_by_a_ci_step` asks whether a
-*directory* appears in a step's arguments. A directory is not a suite, and no
-assertion here can currently distinguish "this file runs in CI" from "the
-directory containing this file is named in a `run:` line" — nor "this file is in
-`tests/integration/` and needs nothing that makes it one". Both need collection
-run against each step's real arguments and marker expression. Stage 10 already
-owns CI selection and is the place for it.
-
-#### The instrument was weaker than its own docstring
-
-Moving the two flush files into `tests/integration/sql/` made
-`archiver/sql/lake_snapshot_selectors/cooldown_events.sql`'s waiver go stale —
-the rule now considered that file covered. It is not covered. The stem
-`cooldown_events` had matched inside the *table name*
-`staging.blocked_cooldown_events`, because the check asked
-`Path(relative).stem not in layer_2` — a bare substring test over the
-concatenated source of every Layer 2 module.
-
-The move only surfaced the bug; two more files were already being credited the
-same way and would have gone on being credited if nothing had moved:
-
-| `.sql` file | Credited by | What that is | Since |
-|---|---|---|---|
-| `lake_snapshot_selectors/price_drop.sql` | `test_price_drops_no_filter` | a test method name | before the move |
-| `lake_snapshot_selectors/stale_listing.sql` | `test_price_stale_listing_is_also_held_by_the_backoff` | a test method name | before the move |
-| `lake_snapshot_selectors/cooldown_events.sql` | `staging.blocked_cooldown_events` | a table name | the move |
-
-None of the three is executed by anything. The match is now on a word boundary,
-and **G14 is 56 of 76, not 54** — the census undercounted, and Stage 7's scope
-grows by two files.
-
-This is worth more than its size. The plan's own claim is that *"the waiver
-list can only shrink, and three assertions enforce that"*, and progress being
-**mechanically visible** is what makes the plan schedulable. A checker that
-credits a `.sql` file for a substring inside an unrelated identifier lets the
-list shrink for free — the same failure as the paraphrased SQL its own docstring
-calls out, one level up, in the thing doing the measuring. Deleting the
-`cooldown_events` waiver on that reading would have recorded a repair that
-never happened.
-
-**Correcting a waiver count upward is allowed and this is the case for it.** The
-rule the plan states is that a waiver may not be *deleted* without a repair;
-nothing forbids the instrument getting more accurate and finding more. What
-would be forbidden is quietly keeping 54.
-
-#### Coverage is a unit-test instrument, and the integration answer is already built
-
-The `scrape_listings` refile raised a question worth settling once, because
-Stage 6 will ask it again: the 7 tests lost their coverage measurement by moving
-into an integration job, so should the integration jobs run `--cov` and
-`coverage combine` into one number?
-
-**No.** Combining answers *"was this line executed by any test"*, which fuses
-two claims of very different strength — a line pinned by a fast isolated test,
-and a line that happened to execute while a request flowed past it. A logging
-call or an unasserted error branch touched incidentally by a `TestClient`
-request would read identically to a line with a dedicated unit test behind it.
-The number would go up and the average evidence behind it would go down, which
-is the same defect as the substring match [two sections up](#the-instrument-was-weaker-than-its-own-docstring)
-and the same one this contract already names about paraphrased SQL: an
-instrument that gets easier to satisfy as it gets less meaningful.
-
-The contract settled this before the question was asked:
-
-> **Not a coverage percentage.** The floor is: every route reached through the
-> app, every production statement executed against a real engine, and every
-> failure branch that another service's behaviour depends on. Coverage
-> percentage is an instrument for finding gaps, not the definition of one.
-
-**So "fully covered" for integration is not a percentage of lines — it is a
-complete enumeration of the surfaces that must be exercised, and this repository
-has already built three of them.** They are this plan's own waiver tuples:
-
-| Instrument | Denominator | Standing after Stage 5 |
-|---|---|---:|
-| `CI_INVOCATION_WAIVERS` | every integration suite | **0** — closed by Stage 1 |
-| `ROUTE_WAIVERS` | every route in each app's schema | 12 unreached |
-| `LAYER_2_WAIVERS` | every production `.sql` file | 56 unexecuted |
-
-Each has a real denominator derived from the repository, cannot be satisfied by
-touching a line, and is *complete* when its tuple is empty. That is the
-integration coverage number, and Stages 6 and 7 are what move it. Line coverage
-stays what it is good at — unit tests, where the question genuinely is whether
-the line was exercised — measured on the one job that runs them.
-
-Which inverts the reading of the `scrape_listings` incident above. The 0.18
-points were not an instrument gap to be engineered away. **The instrument was
-working**: it complained because a unit test had been moved out of the job that
-measures unit tests, and it was right to.
-
-### Evidence — Stage 5b, separating production scripts from spent ones (CAR-55), 2026-09-01
+**Cost:** estimate 2 points. `In Progress` ran 05:11–06:02 UTC on 2026-09-01, 51m.
 
 **Fourteen scripts and seven test files moved, as renames.** `scripts/oneoff/`
 holds the work whose owning plan has archived; `tests/scripts/oneoff/` mirrors
@@ -1906,368 +3217,47 @@ correct classification for a branch that touches production paths, and the
 first exercise of the new `heavy` gate.
 
 **Linux and this checkout read the same number**, 13,588 statements and 3,035
-missed on both. Stage 2 found seven statements that differed between Linux and
+missed on both. Stage C found seven statements that differed between Linux and
 Windows and set the floor two points low to absorb them; that spread did not
 appear here, and the two points of headroom carried forward on the same
 reasoning rather than on a new measurement.
 
-#### The classification needed a third step the design did not name
+**The full record is [`docs/evidence/plan_162_stage_G_evidence.md`](../evidence/plan_162_stage_G_evidence.md)**, 7 sections:
 
-The stage's design section above says the bucket falls out of a join —
-docstring plan number against `completed_plans.md`, overridden by the
-binding-reference grep. That is two of the three steps actually required.
+1. The classification needed a third step the design did not name
+2. Three claims in the design section above were wrong
+3. The coupling finding ran the other way a second time
+4. Three repairs found on the way
+5. What the contract gained
+6. The CI zones compose, which was a second pass
+7. What was deliberately not done
 
-**Nine Python scripts declare no plan, not five.** Four beyond the design's
-list — `diff_log_analysis.py`, `estimate_recompression_savings.py`,
-`recompress_bronze_html.py` and `rewrite_parquet_layout.py` — so the residual
-the design called "four files to read" was really nine.
+### Stage H — route coverage and `container_health`'s test home
 
-**What closed the gap was a reverse join: the script's own name, grepped back
-through the archive and every plan document.** It settled six of the nine with
-no judgement at all. `estimate_recompression_savings.py` is the clearest case —
-Plan 116's archive row names the script outright, so the archive already
-contained the answer, read from the other end. Only three files
-(`backfill_unlisted_silver.py`, `diff_semantic_duplicate_html.py`,
-`audit_normalized_parquet_layout_once.py`) were genuinely read by hand.
+**Legacy:** Stage 6 · **Issue:** CAR-50 · **Closed:** 2026-09-01
 
-**The reverse join belongs in the method, not only in this section.** A script
-that declares its plan is the easy case; a script that does not is exactly the
-one whose classification a future reader will have to reconstruct, and the
-archive is where the answer already lives.
-
-#### Three claims in the design section above were wrong
-
-Recorded rather than quietly fixed, because the stage's own thesis is that an
-unasserted claim goes false without anyone noticing.
-
-**"No deploy surface is edited" is wrong by one.** `docker-compose.yml`
-defines a profile-gated `april-processor` service whose documented invocation
-is `python -m scripts.reconcile_april_detail`. One comment line was edited. The
-20-reference count across 11 surfaces also missed four:
-`docker-compose.lakehouse.a3.yml`, `maintenance-running-set.txt`,
-`healthcheck-exemptions.txt`, and `.claude/settings.json`, which is what binds
-`public_surface_gate.py` through a `PreToolUse` hook.
-
-**There are 39 Python scripts, not 35.**
-
-**`scripts/ops/` found no members and was not created.** The maintenance
-bucket's rule was "human-invoked, durable, named in a live runbook", and
-`host_maintenance.py` is the only script that satisfies it — but
-`ops/routers/coordination.py:14` does `from scripts.host_maintenance import
-HOST_VALIDATION_GATES` at module import, so the binding-reference override
-keeps it in production. Shipped as a two-bucket split. The third bucket is not
-deferred; it was dissolved by the same kind of override that dissolved the
-coupling finding, and a future script that is durable, human-invoked and
-imported by nothing can revive it.
-
-#### The coupling finding ran the other way a second time
-
-The design section records a coupling worry that the archive join dissolved:
-two production scripts importing scripts that *looked* spent, where the owning
-plans turned out to be open. The inverse case is the one it did not anticipate.
-
-`lake_snapshot_common.py` and `seed_lake_snapshot.py` both belong to Plan 120,
-which **is** archived, and neither is invoked by a workflow step. The stated
-rule — archived owning plan, no binding reference — puts both in `oneoff/`.
-They are imported by `download_lake_snapshot.py`, which an ops route documents,
-and by `preflight_local_lakehouse_snapshot.py`, which a Compose file names. So
-**a full import walk, not the reference grep alone, is what keeps them in
-production**; the rule as written would have moved them and broken two
-production imports. Nothing in the shipped split crosses a bucket boundary,
-verified in both directions across all 39 scripts.
-
-#### Three repairs found on the way
-
-**`verify_testing_contract_mutations.py` could not run at all.** Stage 5 closed
-G4 and deleted its row, and reworded G14 from "54 of 76" to "56 of 76", leaving
-three mutations anchored on text that no longer existed. The script aborted on
-its own staleness guard before reaching them — **the identical failure this
-plan already records against Stage 1**, where Stage 1's deletions stranded
-mutations on the removed G1 and G2 rows. Re-anchored to G6 and G14 as written.
-The guard worked twice; what has not been established is a habit of running the
-verifier after deleting a gap row.
-
-**Two moved test files anchored their paths by counting parents.**
-`test_audit_sectioned_html_storage.py` computed a fixture directory as
-`__file__.parent.parent` and broke outright, twelve failures.
-`test_estimate_recompression_savings.py` was the worse of the two: its
-subprocess cases pass `cwd=Path(__file__).parents[2]` and assert only
-`returncode != 0`, so "the script is not where I looked" and "argparse
-rejected the flags" are the same result — a wrong `cwd` would have left both
-cases **passing for the wrong reason**, invisibly. Both now resolve `tests/` by
-name.
-
-**One markdown link, and the line it drew.** Historical documents were
-deliberately not rewritten: a prose mention of `scripts/x.py` inside an
-archived plan records where the file sat when that plan ran, and editing it
-manufactures history. A markdown *link* is a different object — it is a promise
-that the target resolves, and `test_no_markdown_link_in_docs_is_dangling`
-asserts it. One link in `plan_147_scrape_state_ownership.md` was repointed and
-the prose around it left alone. Code, config and the two Plan 145 runbooks were
-rewritten because they have to execute.
-
-#### What the contract gained
-
-Two assertions, both proven able to fail by new entries in the mutation
-verifier, which now catches 23 of 23:
-
-- `test_every_script_directory_is_classified` — both directions: a script
-  directory the contract places nowhere, and a bucket the contract describes
-  that does not exist.
-- `test_every_unmeasured_script_bucket_is_omitted_from_coverage` — the prose
-  and `[tool.coverage.run] omit` are one statement. The dangerous direction is
-  the second: a bucket coverage omits while the contract calls it measured is
-  code that silently stopped being graded.
-
-`docs/TESTING.md` gained a *Where scripts sit* section and one row in *Where
-the newer suites sit*. One row rather than two, because one new test directory
-exists. `test_every_test_directory_is_assigned_a_layer` would in fact have been
-satisfied without it — `_layer_of` inherits from the nearest declared ancestor,
-so `tests/scripts/oneoff/` reads as Layer 1 through `tests/scripts/` — and the
-row was added anyway, because a bucket that exists to be classified should say
-its own layer rather than inherit one.
-
-#### The CI zones compose, which was a second pass
-
-`ci_change_scope.py` first shipped here with two mutually exclusive scopes,
-`docs_only` and `oneoff_only`, and a changeset spanning both fell through to
-the full workflow — a spent script edited alongside the note explaining why,
-which is an ordinary shape of change in this repository and the one the
-classifier helped with least.
-
-It now maps a changeset to the job groups it needs, and the zones compose:
-
-| changeset | `docs_tests` | `unit` | `heavy` |
-|---|---|---|---|
-| `docs/` only | yes | -- | -- |
-| `scripts/oneoff/` only | -- | yes | -- |
-| both | -- | yes | -- |
-| anything unclassified | -- | yes | yes |
-| empty, malformed, or no base sha | -- | yes | yes |
-
-`docs_tests` fires only when the unit suite is not running, because
-`pytest tests/` already contains `test_planning_docs.py` — the documentation
-job is a substitute for the unit run, never an addition to it. Moving the
-decision into the classifier also took the double negative out of six job
-conditions, which now read `needs.changes.outputs.heavy == 'true'`.
-
-**Fail-open is stated once.** The workflow's shell defaults are `unit=true
-heavy=true`, and every path that fails to classify leaves them standing.
-`test_paths_in_neither_zone_can_never_narrow_the_run` asserts that as a
-property over every mixture of zones, comparing against the whole decision row
-rather than the `heavy` flag alone.
-
-The question this raised and declined — classifying the incremental diff rather
-than the cumulative one — is scoped for Stage 10
-[above](#stage-10-inherits-a-question-stage-5b-raised-and-declined).
-
-#### What was deliberately not done
-
-- **`tests/integration/scripts/` was not split**, though all three of its files
-  are Plan 145's. `test_every_integration_suite_is_invoked_by_a_ci_step`
-  derives the invoked set from the literal path in each `ci.yml` step, so a new
-  subdirectory would have needed its own step or a `DORMANT_SUITES` entry —
-  cost for no coverage benefit, since the integration jobs are not what the
-  ratchet measures.
-- **`verify_testing_contract_mutations.py` stayed at `scripts/`** although
-  Plan 161 has archived. Plan 162 edits it, and this stage edited it twice. The
-  rule "the owning plan archived" is beaten by "an open plan maintains it",
-  which is the one place the archive join needed a human answer rather than a
-  better query.
-- **`docs/PLANS.md` was moved through the `plans` skill**, not edited here.
-  Row 1 keeps its build-order position; only its slice pointer advanced.
-
-### Evidence — Stage 6, route coverage and `container_health`'s test home (CAR-50), 2026-09-01
+**Cost:** estimate 2 points. `In Progress` ran 13:15–15:17 UTC on 2026-09-01, 2h01m.
 
 `ROUTE_WAIVERS` is `()`. G6 and G9 are deleted from the gap list. All twelve
 routes are reached through their app's routing table by a test that asserts a
 status code, `container_health` has both a `tests/container_health/` and a
 Layer 4 suite, and the two misfiled unit tests are in the former.
 
-#### Five of the twelve were never uncovered
+**The full record is [`docs/evidence/plan_162_stage_H_evidence.md`](../evidence/plan_162_stage_H_evidence.md)**, 7 sections:
 
-This is the finding, and it is the second instance of one Stage 5 already
-recorded under [the instrument was weaker than its own
-docstring](#the-instrument-was-weaker-than-its-own-docstring).
+1. Five of the twelve were never uncovered
+2. `container_health` had nowhere to put a `TestClient`, which is why G6 and G9 were one stage
+3. The Layer 4 suite has no database, and the substitute is a recording
+4. What the recording cannot see, and who owns that
+5. What was deliberately not done
+6. What CI said, and what only CI could have said
+7. Three times the same mistake: citing a precedent and copying half of it
 
-The three `/admin/snapshots/adaptive-refresh/` reads and the two safe-lifecycle
-coordination routes had tests going through `TestClient` and asserting status
-codes the whole time — 200, 409 and 503 among them, including four exemplary
-parametrized cases in `tests/ops/routers/test_coordination.py`. **The rule
-could not see them.** `_requested_routes` matched only an `ast.Constant` first
-argument, so both of the repository's ordinary ways of writing a request
-vanished:
+### Stage J — mechanising the encoding-sensitive I/O guard
 
-| Written as | Seen before | Where |
-|---|---|---|
-| `mock_client.get(f"{BASE}/latest")` | nothing | `test_snapshots.py`, 3 routes |
-| `mock_client.post(path)` under `parametrize` | nothing | `test_coordination.py`, 2 routes |
+**Legacy:** Stage 6b · **Issue:** CAR-60 · **Closed:** 2026-09-01
 
-So G6's census — "twelve routes reached by no test through any routing table" —
-was wrong about five of them, and wrong in the direction that costs work: it
-would have had someone rewrite five sound tests to satisfy a reader, leaving
-the next f-string just as invisible.
-
-**The repair widened how the argument is read, not what counts as a request.**
-`_resolve_path` now resolves a module-level string constant, `+` concatenation,
-an f-string whose parts resolve, and a `parametrize`-injected argument. It
-still requires an HTTP-verb call, and it still yields nothing for an expression
-it cannot resolve rather than guessing — because "named somewhere in `tests/`"
-is the weak reading `docs/TESTING.md` rejects by name, and a reader that
-degraded to it would pass 83 of 87 routes on the strength of a mention. `ops`
-went from 54 to 61 request literals against 54 routes with no test added.
-
-The three that were real gaps stayed failing until they got tests:
-`GET /coordination/status` and the two `/maintenance` routes were exercised
-only by calling their helpers. `/coordination/status` is the one
-`scripts/host_maintenance.py` polls before it will proceed, so a rename would
-have stranded the host maintenance workflow while this suite stayed green.
-
-#### `container_health` had nowhere to put a `TestClient`, which is why G6 and G9 were one stage
-
-Four routes were a genuine gap and could not have been closed separately. A
-test is attributed to a service by its directory, so
-`tests/test_container_health_app.py` could not have counted for
-`container_health` even after growing a `TestClient` while it sat at the top
-level. Moving it was not filing tidiness; it was the precondition.
-
-Both files moved to `tests/container_health/` and pass unchanged (39 tests).
-
-#### The Layer 4 suite has no database, and the substitute is a recording
-
-`container_health`'s dependency is the Docker API over real HTTP. Standing up
-the real `docker-socket-proxy` in CI was considered and rejected on a specific
-fact: `collector.health_values` raises `NoContainersFound` on an empty fleet by
-design, so a real proxy against a CI daemon returns 500 rather than an answer.
-The suite would have needed real containers labelled
-`com.docker.compose.project=cartracker` before it could assert one status code.
-
-`tests/integration/container_health/` therefore serves a corpus recorded from a
-real proxy through a strict fake on loopback. **Nothing is mocked** — the path
-runs `TestClient` → router → handler → `DockerApi` → `urllib` → HTTP → parsing,
-so the `v1.44` prefix, the `filters` JSON encoding and the two-step inspect are
-exercised rather than assumed. The fake 404s anything not recorded, and the
-session asserts both directions: an unrecorded request fails, and a recorded
-exchange nothing asked for fails too.
-
-The corpus was recorded against a daemon that also had an unrelated
-`de-podcast` project running, which is why the project-label filter has
-something real to exclude rather than a fixture built to agree with it.
-
-**The import-time hazard was handled deliberately.** `container_health.app`
-reads `DOCKER_API_URL` at module scope and builds two `DockerApi` instances
-from it, so an import that happened first would point the suite at
-`docker-socket-proxy:2375` and fail for a reason unrelated to the code. The
-fake binds its port before the app import, in conftest module scope — the same
-ordering `tests/integration/dbt_runner/conftest.py` keeps, and the
-harness-decides-the-outcome rule applied to ourselves.
-
-#### What the recording cannot see, and who owns that
-
-A fake is a recording, so nothing in the Layer 4 suite can notice the day
-Docker or the proxy changes a response shape. That is stated rather than
-implied, and it has an owner:
-`scripts/verify_container_health_docker_contract.py` stands up the real proxy
-against a throwaway labelled fleet and asserts the live responses still carry
-every field `collector.py` reads. It runs in its own
-`container_health Docker contract (real proxy)` job.
-
-This is the split Plan 141 already uses for Promtail — one corpus, two
-consumers, neither importing the other, so what runs where is a CI-wiring
-question rather than a code change. The script's `--record` mode is what
-refreshes the corpus, so the fixtures stay re-derivable instead of hand-edited.
-
-Both failure directions were exercised rather than assumed: a bogus required
-field makes the shape check fail, and the request-set comparison fails when the
-client asks for something the corpus does not hold.
-
-#### What was deliberately not done
-
-- **No Windows runner, and no ruff rule.** Both belong to Stage 6b, which this
-  stage filed rather than absorbed.
-- **The `de-podcast` containers on the recording machine were not cleaned up or
-  hidden.** They are somebody else's project and their presence is the point.
-- **Two plan documents still name `tests/test_container_health_app.py`** at its
-  old path — Plan 136 §3a and Plan 161. They are dated records of what was true
-  when written, and the gap list's own convention is that history lives in the
-  plan documents.
-- **The `enough` table's `container_health` row was updated, not its
-  neighbours.** The other counts are a dated measurement and re-deriving them
-  was not this stage's work.
-
-#### What CI said, and what only CI could have said
-
-Merged from run `33521767976` on `4b88d4b`, all eleven jobs green
-(`Documentation tests` skipped by design on a changeset that is not docs-only).
-
-| | |
-|---|---|
-| Unit suite | 3355 passed, 1 skipped, 479 deselected, 48.7s |
-| Coverage | **78%** against a floor of 75 |
-| `container_health` Layer 4 | **8 passed in 0.09s** |
-| `container_health` Docker contract (real proxy) | **green in 16s**, verify step ~4s |
-
-The Layer 4 suite passed in CI on its first attempt and needed no change. The
-loopback fake, the background thread and the conftest import ordering behave the
-same on `ubuntu-latest` as on Windows, which was the part with no prior evidence
-either way.
-
-**The real-proxy job earned its place on its first run by failing.** It died in
-nine seconds on `ModuleNotFoundError: No module named 'prometheus_client'`: the
-job ran `setup-python` and installed nothing. The cause is a consequence of a
-decision worth keeping — the verifier imports the production label constants
-from `container_health.collector` rather than restating them, because a copy of
-`com.docker.compose.project` in a checker is the paraphrase failure this contract
-names for SQL — and that import chain reaches `prometheus_client`. Repaired by
-installing `container_health/requirements.txt`, so the pin has one source.
-
-The repair was verified against a **cold venv**, not the development environment
-that already had the package, which is the only reason the fix was known to work
-before the second run rather than guessed at.
-
-**The corpus proved portable, which was the open risk.** It was recorded on a
-Windows machine against Docker 29.1.3 (api 1.52) and verified against the
-runner's own daemon — a different machine, a different daemon, the same seven
-exchanges. That is the property the whole two-part design rests on, and until
-this run it was an assumption.
-
-#### Three times the same mistake: citing a precedent and copying half of it
-
-Worth recording because the shape repeated inside one stage, and none of the
-three was caught by reading:
-
-1. The contract job was modelled on `promtail-config` and copied without its
-   `pip install` step. CI caught it.
-2. The verifier was modelled on `verify_promtail_contract.py` and shipped
-   without the test file that sits beside it. 171 uncovered statements, caught
-   by reading the coverage report rather than by any rule.
-3. The first pass at those tests stopped at 45% on the reasoning that the rest
-   "needs a daemon". Most of it did not: `main`'s exit codes, `_capture`'s
-   one-stats-read-per-capped-container rule and `_start_fleet`'s argument
-   construction are all decision logic over data, and every one of their failure
-   modes is silent. A dropped `--memory` does not fail anything; it removes
-   `memory_capped`'s only input and the corpus quietly stops carrying a stats
-   exchange for ever.
-
-Coverage after the third correction: the verifier 45% → **99%**, the two
-remaining lines being a one-line `subprocess` wrapper and the `__main__` guard.
-
-**The sister script was cleaned up in the same pass**, unscoped and deliberately
-so: `verify_promtail_contract.py` sat at 48% two files away, and the argument
-that the coverage was cheap applies identically. 48% → **69%**. What it gained is
-not more verdict testing but the replay *setup* — the image read from compose
-(so the checker cannot agree with a version production stopped running), the
-`docker: {}` envelope strip, the `service` label `_parse_entries` filters on,
-and `main`'s exit codes. One test written for it asserted the wrong thing and
-the code was right: absence on every attempt is a real drop, and inconclusive
-means lost and then recovered.
-
-Both scripts stop at the same line. `_run`'s `Popen` and threading needs a
-daemon, and faking it would assert the shape of the mocks rather than the
-behaviour of Promtail or Docker — rule 3 of what must never be mocked. That half
-is CI's in both cases, which is the whole argument of this stage stated twice.
-
-### Evidence — Stage 6b, mechanising the encoding-sensitive I/O guard (CAR-60), 2026-09-01
+**Cost:** estimate 1 point. `In Progress` ran 16:37–18:08 UTC on 2026-09-01, 1h31m.
 
 The stage was filed to close G13's *class* rather than repair another instance
 of it, and it was allowed to conclude that no mechanism was worth building. It
@@ -2275,255 +3265,20 @@ did not conclude that. A mechanism exists, it fails on the exact call that broke
 master, and the residue it cannot reach is now four named behaviours rather than
 an open-ended exception.
 
-#### The measurement that decided the design
+**The full record is [`docs/evidence/plan_162_stage_J_evidence.md`](../evidence/plan_162_stage_J_evidence.md)**, 8 sections:
 
-`PLW1514` was the obvious answer and the stage began by sizing it. Measured on
-this branch at `144db69`:
+1. The measurement that decided the design
+2. The class was dormant, not live, and that changed the cost argument
+3. Why the rule is a test and not a ruff setting
+4. The runtime check that found them, and why it is not in CI
+5. The exit criterion, demonstrated rather than asserted
+6. What was swept, and why the sweep is safe rather than merely large
+7. What CI said, and what only CI could have said
+8. What was deliberately not done
 
-| | Sites |
-|---|---|
-| `PLW1514` (`--preview`, explicit selection) | **28** |
-| `read_text`/`write_text` with no `encoding=` | **213** |
-| Ruff's share of the class | **~13%** |
+### Stage L — SQL execution from both directions
 
-**The stage's brief recorded 22 and the number is 28.** The difference is not
-drift in the repository — it is that the 22 was measured before Stage 6 merged.
-The count is stated here as re-measured rather than carried forward, because a
-figure quoted from a stale branch is exactly the kind of unchecked claim this
-plan exists to stop.
-
-Every one of the 28 is a directly-constructed receiver or a builtin `open`. The
-shapes ruff never reports: **92 built with `/` from a fixture path** — the
-idiom the defect used and nearly every fixture-writing test here uses — and
-roughly 110 more on a plain name. Finding 3 of the stage's brief was correct
-and, if anything, understated it.
-
-#### The class was dormant, not live, and that changed the cost argument
-
-The development machine is Windows with `cp1252` and UTF-8 mode off, which is
-precisely the environment that exposes this. The suite on that machine, before
-any change: **3401 passed in 36s.** All 213 sites were already there and not
-one of them was failing.
-
-That is the finding that ruled out the Windows runner. **A Windows job added
-today would have gone green and caught nothing** — it only earns its cost when
-a future commit puts a non-ASCII character through one of these calls. It bills
-at twice the minutes of a Linux runner, it cannot run the Docker, dbt or
-Postgres legs, so it would be a unit-only eleventh job, and
-[PEP 686](https://peps.python.org/pep-0686/) is Final for **Python 3.15**,
-where UTF-8 mode becomes the default and the class stops existing. The
-repository is on 3.13 in all ten jobs. Paying a permanent recurring cost to
-guard a class with a known expiry, against a job that catches nothing on the
-day it lands, is the trade that was declined.
-
-**This is a decision, not an omission**, and the thing it gives up is named in
-success criterion 2: path separators, line endings, case-insensitive filename
-collisions and locale-dependent collation stay invisible to CI.
-
-#### Why the rule is a test and not a ruff setting
-
-Ruff resolves a receiver by type. `Path("b.md").write_text(...)` is flagged;
-`(tmp_path / "a.md").write_text(...)` is not, with or without a `Path`
-annotation on the fixture. Ruff has no plugin interface, so a check that reads
-these calls has to be Python, and it lives beside the route and mocker rules
-because it is the same kind of rule.
-
-**The two instruments were given the halves each reads correctly.** `PLW1514`
-owns `open` and `tempfile.NamedTemporaryFile`, where type inference is the
-right approach and a name-only rule would be wrong — `tarfile.open` and
-`os.open` take no encoding and would be false positives. The new rule owns
-`read_text` and `write_text`, which only `pathlib` defines, so the method name
-is proof on its own and no inference is needed. No gap between them across
-those two shapes, and no call reported twice.
-
-**That last sentence was first written as "no gap between them" without
-qualification, and it was wrong.** The two static instruments between them
-cover `open`, `NamedTemporaryFile`, `read_text` and `write_text` — the shapes
-somebody thought to name. They do not cover the encoding class, and the way
-that was found is worth recording: this stage had already been committed when
-PEP 597 was checked, and turning its `EncodingWarning` on found **21 more
-sites in two shapes neither instrument could see at the time** —
-`subprocess.run(text=True)` without an encoding, which decodes a child
-process's output through the locale, and `logging.RotatingFileHandler`. Ten of
-the 21 are production or scripts, including three in `dbt_runner/app.py`
-capturing dbt's output and one in `archiver/processors/disk_usage.py`. Both
-shapes are named by the static rule now, so the sentence is true again — but it
-was bought rather than reasoned to, and the record says which.
-
-The `RotatingFileHandler` instance mattered more than its count. It writes the
-ops log that `ops/routers/admin.py` reads, and this stage had just pinned that
-reader to an explicit UTF-8 — so the sweep had made the pair *inconsistent*
-where it had previously been merely undefined. Fixing only what a static rule
-can see is how that happens.
-
-#### The runtime check that found them, and why it is not in CI
-
-[PEP 597](https://peps.python.org/pep-0597/) is Final in Python 3.10 and adds
-`EncodingWarning`, raised from inside CPython whenever a text operation falls
-back to the locale encoding. Turning it on — `PYTHONWARNDEFAULTENCODING=1`,
-with the warning as an error — is how the 21 sites above were found, after this
-stage had already been committed. **It earned its place as a discovery tool and
-was then deliberately not kept**, which is a distinction worth stating clearly
-because the first instinct was to wire it into CI, and doing so failed twice in
-a way that taught the actual lesson.
-
-**It is an interpreter-wide flag, so it has no notion of whose code it is
-judging.** Enabled in CI it measured dbt's and Airflow's own file handling
-against this repository's policy. dbt is invoked in-process by
-`tests/integration/dbt/real_build.py`, so `dbt.tracking`, `dbt.compilation` and
-`dbt.parser.manifest` raised inside our pytest process; Airflow's config loader
-did the same in the isolated venv job. Neither is our read passed downward —
-both are third-party code doing its own I/O on its own files, which this plan
-has no standing to fail a build over.
-
-**The escape hatch made it worse rather than better.** Silencing a module by
-name is the only lever the warnings machinery offers, and each ignore revealed
-the next frame down the same call chain: ignoring `airflow.configuration`
-surfaced stdlib `configparser`, one layer beneath it. Two CI rounds, each
-~2.5 minutes, with no way to know how many remained — and no way to find out
-locally, because that suite only exists inside a CI-only venv.
-
-**And the attribution those ignores depend on is not reliable.** The same
-`configparser.read()` with no encoding was blamed on **the calling file**
-locally and on **`configparser.py:739`** in CI. So a module-scoped ignore added
-for a library's sake can silence the identical defect in our own code, without
-a trace. An exception list that cannot be trusted to mean what it says is worse
-than no exception list, because it reads as coverage.
-
-**The scope test settles it.** This stage exists because a test written on one
-operating system behaves differently on another — *our* tests, *our* fixtures,
-*our* subprocess calls. A guard that also arbitrates dbt's internals is
-answering a question nobody asked, at the cost of an unreliable exception list
-that fails open. So the two shapes it found are checked the same way everything
-else here is: statically, over this repository's files, where ownership is not
-in question and no ignore is needed.
-
-**What that gives up, stated rather than glossed.** The static rule only sees
-shapes someone has named, so the *next* unnamed shape will not be caught by
-anything. That is a real loss and it is the price of not measuring other
-people's code. `EncodingWarning` remains available as a developer tool for
-exactly the job it did here — run it by hand when hunting for what no rule
-names yet:
-
-```
-PYTHONWARNDEFAULTENCODING=1 python -m pytest -m "not integration" -W error::EncodingWarning
-```
-
-#### The exit criterion, demonstrated rather than asserted
-
-The stage's second criterion asks for a mechanism that fails on
-`(tmp_path / "a.md").write_text("—")` with no `encoding=`. Both tools were run
-against that exact line:
-
-| Tool | Result |
-|---|---|
-| `ruff --select PLW1514 --preview` | `All checks passed!` |
-| `test_every_text_read_and_write_states_its_encoding` | **fails** |
-
-That comparison is kept as an assertion, not a note.
-`test_the_encoding_rule_sees_the_shape_ruff_cannot` pins all three receiver
-shapes the repository writes and pins the correct calls as clean, so if this
-rule ever narrows back to what ruff already sees, it fails instead of going
-quiet. The detection was split into `_encoding_free_text_io` for no other
-reason than to make that test possible: a structural check nothing exercises
-reports a clean repository whether or not it still works.
-
-#### What was swept, and why the sweep is safe rather than merely large
-
-All **213** sites were fixed; none were waived. The waiver list stays at 56.
-Waiving instead would have taken it to 269 and broken the one property the
-plan's three waiver assertions exist to protect — that the list only shrinks.
-
-**The sweep cannot change behaviour, and that is provable rather than hoped
-for.** Every one of these calls already runs in Linux CI, where the default
-encoding is UTF-8; writing `encoding="utf-8"` explicitly makes them do what
-they were already doing there. It was verified from both ends: green on Linux
-in CI, and green on the `cp1252` machine before (3401) and after (**3403**, the
-two new tests) — the platform where a wrong encoding would have shown up
-immediately.
-
-The edit was applied by AST position rather than by regex, in bytes rather than
-text. Both mattered: `col_offset` is a UTF-8 **byte** offset and this
-repository's docstrings are full of em-dashes, so a character-indexed insert
-would have landed in the wrong column on exactly the files this stage is about;
-and the working tree is CRLF, so a `read_text`/`write_text` round-trip would
-have rewritten every line ending in all 50 files. The diff was checked for
-mixed endings afterwards and has none.
-
-Twenty-four lines went over the 100-character limit once the keyword was added
-and were wrapped — fifteen sharing one shape, nine individually.
-
-The 21 `subprocess` and logging sites were swept the same way afterwards. With
-those fixed, the rule that now covers all three shapes passes on an **empty
-waiver list**, which is the check that the sweep and the rule agree.
-
-#### What CI said, and what only CI could have said
-
-Green on `c7d1d33`, run
-[`33539915522`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33539915522),
-all ten jobs (`Documentation tests` skipped by design on a changeset that is not
-docs-only). PR
-[#332](https://github.com/whitewalls86/new_car_tracker/pull/332).
-
-**It took three runs, and the two red ones are the evidence for the design.**
-The local suite could not have produced either: both failures were third-party
-code running inside jobs that exist only in CI.
-
-| Run | Head | Result |
-|---|---|---|
-| [`33537879926`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33537879926) | `f9a702b` | 9/11 — dbt and Airflow jobs red |
-| [`33538571583`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33538571583) | `27288e6` | 10/11 — Airflow job red |
-| [`33539915522`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33539915522) | `c7d1d33` | **green** |
-
-The first red run failed on dbt's own `dbt.tracking`, `dbt.compilation`,
-`dbt.parser.manifest` and `dbt.utils.utils`, plus `airflow.configuration` — 32
-occurrences of the latter. The second, after those were silenced by name,
-failed on stdlib `configparser.py:739`: the layer beneath the module that had
-just been ignored, reached through the same call chain. **The escape hatch was
-uncovering offenders one frame at a time, with no way to see how many were
-left**, because that suite runs in a venv built only by CI.
-
-That is the run that ended the approach rather than the one that fixed it. Two
-rounds of ~2.5 minutes each bought one fact worth more than a green build: a
-guard that has to be told, module by module, whose code it is allowed to judge
-is not measuring what this stage set out to measure.
-
-**The third run is green because the question changed**, not because the last
-module was found. The shapes are checked statically over this repository's
-files, and CI never had to arbitrate dbt's file handling at all. Nothing in the
-`ci.yml` diff survives; the only workflow change in the merged branch is none.
-
-**The waiver list is unchanged at 56.** `ENCODING_WAIVERS` is empty and joins
-`ALL_WAIVERS`, so the three assertions that keep the list honest now cover this
-rule too: a waiver here that stopped describing a violation would fail, as would
-one naming a missing gap entry or an archived owner.
-
-#### What was deliberately not done
-
-- **No Windows runner**, for the reasons recorded above. This is the stage's
-  substantive decision and success criterion 2 now names what it costs.
-- **`.open()` on a non-`pathlib` receiver is not checked by the new rule.**
-  `tarfile.open`, `os.open` and `pyarrow`'s filesystem `open` share the name
-  and take no encoding, so a name-only rule would report them and be wrong.
-  Ruff's type inference covers the `open` family instead, which is the whole
-  point of splitting the two.
-- **`PYTHONUTF8` was not set anywhere.** It would make the class disappear on
-  every machine that had it, but it is an interpreter start-up flag: a developer
-  running `pytest` without it still diverges, so it moves the harness dependency
-  rather than removing it. Explicit `encoding=` needs no environment to be
-  correct. `PYTHONWARNDEFAULTENCODING` is a different proposition — it changes
-  no behaviour, it only makes the fallback audible — and it was used once, by
-  hand, rather than wired into CI.
-- **Bytes-mode `subprocess` calls were not touched.** Only text mode qualifies,
-  because a bytes-mode call has no encoding to state. A call that gains
-  `text=True` later is caught by the rule the moment it does, without needing
-  to be executed.
-- **The 3.15 upgrade was not scheduled here.** PEP 686 will retire this class,
-  but that is a version bump with its own consequences and it is not Plan 162's
-  to make.
-
-
-### Evidence — Stage 7, SQL execution from both directions (CAR-51), 2026-09-01
+**Legacy:** Stage 7 · **Issue:** CAR-51 · **Closed:** 2026-09-01
 
 **G14 is closed and `LAYER_2_WAIVERS` is `()`.** With it, the whole of the
 original waiver list: the plan's own arithmetic was 4 + 50 + 12 + 56 = 122, and
@@ -2543,233 +3298,797 @@ stage found.
 Public surfaces: no mechanism, name or quantity either surface states was
 changed by this work.
 
-#### The finding that matters most: two production defects only execution found
+**The full record is [`docs/evidence/plan_162_stage_L_evidence.md`](../evidence/plan_162_stage_L_evidence.md)**, 10 sections:
 
-CI's first run failed two jobs, and both traced to one cause. **psycopg2 counts
-parameter placeholders across the whole statement string, comments included**,
-so a comment written to *explain* a parameter adds one.
+1. The finding that matters most: two production defects only execution found
+2. Three gaps this stage opened
+3. A merge that would have broken deploys silently
+4. The scan surface was the third instance of one mistake
+5. 18 files were never uncovered, and the ruler was the problem
+6. One file left the census, under G16's rule
+7. A guard the instrument itself needed
+8. What was deliberately not done
+9. The deploy, and the failure it was watched for
+10. Cost
 
-`ops/sql/set_deploy_intent.sql` explained its `interval` construct by quoting
-the placeholder. That made the statement expect four parameters where
-`ops/routers/deploy.py` passes three, so `/deploy/start` raised, the router
-caught it, and returned **503** — seven Layer 4 tests in
-`tests/integration/ops/test_deploy_intent.py` failed on that alone, in a code
-path this stage was not supposed to touch.
-`ops/sql/insert_blocked_cooldown_events_batch.sql` did the same to
-`execute_values`, which refuses outright any statement carrying two
-placeholders.
+### Stage K — a service that pauses no surface can be deployed alone
 
-A third was a live trap that had not sprung. `processing/sql/claim_artifacts.sql`
-carried a *named* placeholder in its first comment line and worked, because a
-named placeholder resolves from the same dict however many times it appears.
-Rename the parameter and it raises `KeyError` from a line that is not code.
+**Legacy:** Stage 6c · **Issue:** CAR-66 · **Closed:** 2026-09-02
 
-**Every static rule in `test_testing_contract.py` passed on all three files.**
-The statements were correctly extracted, correctly imported, correctly named,
-and byte-faithful to what they replaced — verified mechanically, on normalised
-whitespace, against the literals in `HEAD`. Two of them were broken. The suite
-was green locally before the push and green locally after. This is the
-argument for the stage, stated by the stage: **a statement that no layer
-executes is not covered by anything, however carefully it was read.** Rule 5e
-now fails on a placeholder inside a `.sql` comment, canaried in both
-directions.
+**The defect is closed in production.** `V050` applied 2026-09-02, and `bash
+scripts/redeploy.sh dashboard` — the exact command that returned 503
+`{"detail":"Database unavailable."}` on 2026-09-01 — now completes end to end.
 
-#### Three gaps this stage opened
+| Deploy | Drain | Healthy | Exit |
+|---|---|---|---|
+| `ops` | 5s | 6s | 0 |
+| `dashboard` alone | **0s** | 6s | 0 |
+| `archiver pack-worker processing scraper dbt_runner` | 1s | 8s | 0 |
 
-**G5's stated measure was blind by construction.** The gap list said
-"`.execute(` with a literal first argument"; `execute_values(cur, sql, rows)`
-carries its statement second, and `ops/routers/maintenance.py:152` was a
-literal `INSERT` sitting exactly there, in a module G5 never named. Measured
-properly it was 66 sites in 15 modules, not 10 — and two of the named ten did
-not belong: `shared/db.py`'s only match is inside `db_cursor`'s own docstring,
-and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup,
-which name no schema and so cannot drift from one.
+**"Drain confirmed after 0s" is this stage's own prediction, observed.** V050's
+comment argued that an empty scope is a true statement rather than a missing
+one, because `required_drain_sources(frozenset())` is empty and every source
+reports not-applicable. The `dashboard` deploy drained in zero seconds where
+every scoped deploy above it took one to five. The readers already agreed; only
+the constraint did not.
 
-**G15 is what closing G5 revealed.** A statement bound to a name and executed
-from there is invisible to both instruments at once: Rule 5b does not fire
-because it is not at a call site, and Rule 5's denominator cannot count it
-because there is no `.sql` file. Six were extracted by hand and only because
-someone happened to read the files; the measured cost of that blind spot was 23
-more in 11 modules, six of them in `ops/routers/admin.py`, a router this stage
-would never have touched because every one of its statements is assigned before
-it is executed.
+**The constraint keeps the invariant worth keeping.** Verified against
+production `pg_constraint` after the migration: the `scope <> '[]'` clause is
+gone and `targets <> '[]'` remains, so an active record must still name what it
+coordinates. Coordination advanced generation 59 → 65 across the three deploys
+and returned to `phase='none'` after each.
 
-**G17 was found by writing the tests.** `mark_artifact_status`,
-`insert_artifact_event` and `insert_blocked_cooldown_cleared_event` existed
-**byte-identically** under both `ops/sql/` and `processing/sql/`. Worse, Rule 5
-credits a file when Layer 2 names its *stem* — and each pair shared one, so a
-test of `processing`'s copy silently credited `ops`'s. Three files would have
-been reported covered by a test that never executed them: the paraphrase
-defect, arriving through the checker rather than through a test. They are one
-file each under `shared/sql/` now, re-exported so no call site changed, and
-G17 compares every production statement to every other so the next copy is a
-failure rather than a discovery.
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
 
-#### A merge that would have broken deploys silently
+#### The rollout found a gap in the deploy service list, of this stage's own kind
 
-`ops/routers/deploy.py` selects `(kind, phase, generation, requested_by)` and
-reads the result **positionally** — `row[1]` is phase. `coordination.py` selects
-the same four columns as `(phase, generation, kind, requested_by)`. Merging the
-two, which is what a tidy-up does when it sees duplicate SQL, puts `generation`
-at `row[1]` and compares a number to `'none'`: every deploy would report itself
-locked and nothing would fail. They are kept apart, each file saying why, and
-`test_the_two_four_column_reads_are_not_interchangeable` asserts both orders
-against the live server.
+`shared/db.py` changed, and every service that bakes it needed rebuilding. The
+recorded list was archiver, pack-worker, snapshot-worker, processing,
+april-processor, scraper and ops. Measured against the tree, it was wrong in
+both directions:
 
-#### The scan surface was the third instance of one mistake
+- **`dbt_runner` bakes `shared/` and was absent from the list** —
+  `dbt_runner/Dockerfile:19` copies it to `/usr/app/shared/`, and the service
+  is `restart: unless-stopped`. It would have kept the old module indefinitely.
+- **`snapshot-worker` and `april-processor` are `profiles:`-gated** and were
+  not running, so they are not deploy targets at all; they load new files on
+  their next invocation, as Stage L recorded for `docker compose run --rm`.
 
-Both new rules were written against `service_packages()`, which answers "is
-this a service" and not "is this production Python". The two coincided for the
-eight top-level packages and stopped coinciding exactly where it mattered:
-`airflow/` and `scripts/` hold no `__init__.py`, so they held no rule — and 26
-SQL sites, 22 of them in Plan 125's Iceberg and Spark tooling, which Gates C
-and D productionize.
-
-**The fix is deliberately not an `__init__.py`.** `service_packages()` drives
-seven rules — the layer-home mapping, the hidden-route check, route coverage
-which imports `<service>.app`, the "enough" table's rows in both directions,
-and the coverage `source` list. Making `scripts` a package would demand an
-"enough" row for something that is not a service and send the route rule
-looking for `scripts.app`. The contract already said so in
-`test_every_service_directory_is_in_the_coverage_source`. So
-`production_python_files()` is a second derivation, reading Stage 5b's declared
-bucket table, and `scripts/oneoff/` is excluded because that table declares it
-spent.
-
-The lesson generalises past this stage and is worth stating once rather than a
-fourth time: **a denominator that is listed, or scoped to what exists when it
-is written, will be wrong.** G14 was undercounted at 54, G5 at 10, the scan
-surface at eight packages, and `executemany` was left out of the name set
-because it matched nothing that day. The rules that have never been wrong are
-the derived ones.
-
-#### 18 files were never uncovered, and the ruler was the problem
-
-Every `archiver/sql/lake_snapshot_selectors/` file is executed in CI against
-real Parquet in MinIO by `tests/integration/archiver/`, whose
-`test_all_selectors_run_without_error` asserts the entire registry runs clean.
-The rule read only `tests/integration/sql/` and reported them absent — tests
-stronger than the check's own weak reading, called nothing at all.
-
-The suites it reads are now declared in `docs/TESTING.md` and derived here,
-matching `DORMANT_SUITES` and `script_buckets()`. **Deliberately not a glob:**
-measured on 2026-09-01, reading all of `tests/integration/` would have credited
-35 of the then-46 files on a name match alone, several from suites that mention
-a statement without running it.
-
-`cooldown_events.sql` needed a real repair rather than the widening. Five
-selectors share it through `sql_template`, so no test contained the token even
-though all five execute it — and it was the file Stage 5 caught being credited
-to an unrelated *table name* under the old substring reading. The indirection
-is asserted now instead: every selector `.sql` file is some runnable selector's
-template, and none names a template with no file.
-
-#### One file left the census, under G16's rule
-
-`processing/sql/get_active_search_configs.sql` read `params -> 'makes'` and
-`params -> 'models'` out of `search_configs` jsonb "for carousel make/model
-filtering", in its own words. That filtering still happens — `detail_writer.py`
-has a section header that still reads *Carousel search_config filtering* — but
-it reads `ops.tracked_models` joined to enabled configs, a normalised
-`(search_key, make, model)` grain, cached where the old one was not. Same
-question, same consumer, same `enabled = true` gate, different source. The
-superseded file had been dead since Plan 93 shipped it: no constant loaded it,
-and `git log -S` finds only the contract test that waived it.
-
-This is G16's first case, and recording *which* of the two ways a file may
-leave `production_sql_files()` this was is the entire point of that rule. A
-denominator may shrink; it may not shrink silently, and "nothing references it"
-is not on its own a reason — the reason is that something else does the work
-and can be pointed at.
-
-#### A guard the instrument itself needed
-
-`duckdb_con` skipped when `DUCKDB_PATH` was absent, and **55 Layer 2 tests take
-it** — every dashboard query and both analytics snapshots. A path that quietly
-went missing, or a dbt build that produced no file, would have skipped a
-quarter of the suite and left the step green. The pattern for fixing it was one
-fixture away: `airflow_metadata` has failed rather than skipped under
-`REQUIRE_AIRFLOW_SCHEMA` since Stage 3.
-
-`REQUIRE_DUCKDB` closes that fixture and `REQUIRE_LAYER_2_EXECUTION` closes the
-class — any skip in the suite fails the run. Both were verified in both
-directions before shipping, which is the only way a guard is worth having: with
-the flag set, 25 skipped tests exit 1 and name their reason; without it, the
-same run exits 0 and stays a local convenience.
-
-**CI's final run is what makes the 242 meaningful.** `242 passed` with
-`REQUIRE_LAYER_2_EXECUTION=1`, `REQUIRE_DUCKDB=1` and `REQUIRE_AIRFLOW_SCHEMA=1`
-all set — zero skips under that guard is proof of execution rather than of
-collection.
-
-#### What was deliberately not done
-
-- **15 G5 sites remain**, all in Plan 112 and Plan 125 audit and parity scripts.
-  Extracting them creates `scripts/sql/*.sql` files that immediately owe a
-  Layer 2 test, and several run against Spark and Iceberg — engines the Layer 2
-  job has none of. That would grow a list this plan only lets shrink, so they
-  stay waived until there is somewhere for their tests to run.
-- **`cancel_coordination_state.sql` and `release_deploy_coordination.sql` are
-  textually identical and stay two files.** They are two policies that agree
-  today — cancel refuses anything past `draining`, the deploy facade releases
-  unconditionally — and both rules live in the Python around the statements.
-  Consolidating would couple two policies allowed to diverge. This is the
-  weakest of the three "kept apart on purpose" decisions and is recorded as a
-  waiver rather than a comment, because a waiver is checked.
-- **The engine-binding check was scoped and not built.** Which engine a `.sql`
-  file targets is only worth asserting once
-  [Plan 125 Gate D2](plan_125_duckdb_to_iceberg_migration.md#gate-d-reader-migration)
-  has chosen a serving pattern: under "DuckDB as a non-authoritative Iceberg
-  cache" it is a no-op for all 26 affected files. It sits in Stage 11 with the
-  execution recorder.
-
-#### The deploy, and the failure it was watched for
-
-Deployed to production 2026-09-01. The risk this change carried was never the
-SQL — every statement was verified byte-faithful on normalised whitespace and
-242 Layer 2 tests execute them in CI — but that `load_query` reads at **import
-time**. A service started against an image built before `shared/sql/` existed
-does not degrade; it fails to start. `shared/compression.py` importing
-`shared.queries` at module scope put `scraper` in that class too.
-
-Five services were rebuilt and recreated in two commands, `ops` last, because
-`redeploy.sh` requests and releases deploy coordination through the *running*
-ops container and this stage rewrote every statement on that path. Deploying it
-alongside the others would have run the release path on new code with six
-services already mutated. Both commands exited 0; all five reached `healthy`
-(four in 7s, `ops` in 5s), and neither printed the "kept the same container"
-note that would have meant no new image was applied.
-
-The import-time failure did not occur, and that was checked in the containers
-rather than in the tree: `shared/sql/` holds 7 files inside each of the five,
-`import shared.queries` succeeds in each, and a log scan for
-`ModuleNotFoundError`, `FileNotFoundError`, `query_loader`, `queries.py` and
-`Traceback` across all five returned nothing.
-
-Two services the deploy runbook named were deliberately not passed to
-`redeploy.sh`. `snapshot-worker` and `april-processor` are `profiles:`-gated
-`docker compose run --rm` targets; naming a profile-gated service on the CLI
-enables its profile, so `docker compose up -d --no-deps` would have started
-them as long-lived containers. Both share an image tag with a service that was
-rebuilt — `cartracker-archiver` and `cartracker-processing` — so their next
-invocation loads the new files without being named.
-
-Airflow needed no rebuild, as the stage assumed: `./airflow/sql` is a
-*directory* bind mount, so `git pull` made `record_gate_observation.sql` visible
-to the dag-processor at once, and `airflow dags list-import-errors` returned no
-rows.
-
-Coordination released cleanly — generation 59, `phase: none`, deploy intent
-`none`. **`/deploy/start` returned no 503**, which is the negative result
-Stage 6c predicts rather than a contradiction of it: every service in this
-deploy maps to at least one surface, and `dashboard` and `pgadmin` — the only
-two that do not — were not in the set.
+`container_health` copies only its own package and `lakehouse` is not a Compose
+service, so neither is affected. **This is Stage K's defect one layer out** —
+a contract (which images bake `shared/`) and its consumer (the list an operator
+types) with nothing composing them, and the same failure mode: the list looked
+right and was never asserted against the tree.
 
 #### Cost
 
-Estimate 2 points, actual 1. The stage was the plan's largest by file count —
-18 commits, 118 files, +3,300/−650 — and cost less than its estimate because
-almost all of it was mechanical once the rules existed. **Building the checker
-first is what made it cheap**, and it is the reusable lesson: the rule found
-`maintenance.py:152`, `admin.py`'s six, and the byte-identical trio, none of
-which a reading pass had found in three prior stages of looking at these files.
+Estimate 1 point, actual 1. The stage was sized before the diagnosis was
+written down and still landed on its estimate, which is worth recording as
+plainly as an overrun would be: the expensive half was already spent finding
+the cause on 2026-09-01, and what remained — one migration, two exception
+paths, one shell function and the assertion — was the cheap half. **The
+unmasking cost almost nothing and is the part that pays later**, since the next
+unrelated failure on this path will name itself.
+
+### Stage M — the assertionless suite and the scraper's write path
+
+**Legacy:** Stage 8 · **Issue:** CAR-52 · **Closed:** 2026-09-02
+
+**G7 and G8 are both closed**, and the gap list is down to seven rows. Confirmed
+in [run 33665172964](https://github.com/whitewalls86/new_car_tracker/actions/runs/33665172964)
+on PR #347, all jobs green.
+
+| Ledger | Start | End |
+|---|---|---|
+| Assertions in `test_dashboard_queries.py` | **0** | 26 tests, all asserting |
+| Assertionless tests under `tests/integration/sql/` | **29** | **0** |
+| Layer 2 tests executed in CI | 242 | **244** |
+| `scraper` Layer 4 files | 1, Layer 2-shaped | **2, both unmocked** |
+| Mutations the harness actually runs | 7 of 24 | **24 of 24** |
+| Unit coverage | 78% | **78.68%** against a floor of 75 |
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+**The full record is [`docs/evidence/plan_162_stage_M_evidence.md`](../evidence/plan_162_stage_M_evidence.md)**, 9 sections:
+
+1. The rule found four violations no reading of the suite would have
+2. Writing the contract down found five dead columns, not three
+3. G8 was not the file count
+4. The pacing seam is keyed to the origin, and the direction was the decision
+5. The fixture had to be page 1, and the code was right
+6. The mutation harness had been aborting for two stages
+7. Two production changes, and the deploy that carried them
+8. Deployed 2026-09-02, and confirmed
+9. Cost
+
+### Stage N — the DAG tree's `.sql` convention
+
+**Legacy:** Stage 9 · **Issue:** CAR-53 · **Closed:** 2026-09-02
+
+**Cost:** estimate 2 points. `In Progress` ran 20:22 UTC on 2026-09-02 to 02:59 UTC on 2026-09-03, 6h36m.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Neither surface describes where SQL lives or what the
+drain reads, no DAG was added — `dag_queries.py` builds none, which the dagbag
+census confirms — and both still say "More than 3,000 tests run in CI", which
+3,523 satisfies.
+
+**Two of G12's three claims were already stale when the stage opened**, and
+finding that out changed the work. The gap row said `airflow/dags/` "has no
+`.sql` convention and cannot reach one" and that this "is what forces the
+single legitimate `ast` reader, `_sensor_constant()`". Measured:
+
+- `airflow/sql/` has existed since Stage L, holds two files, and is bind-mounted
+  to `/opt/airflow/sql` beside `/opt/airflow/dags` in `x-airflow-common`. Both
+  consumers already loaded from it.
+- **`_sensor_constant()` does not exist.** Stage L deleted it when it moved
+  `GATE_OBSERVATION_SQL` into `airflow/sql/record_gate_observation.sql`;
+  `test_ops_queries.py` reads the file and says so in a comment. So the
+  stage's second exit criterion was met by a sibling stage and needed
+  recording, not repair.
+
+This is the fourth time in this plan that a measure was fitted to the code in
+front of it, and the first time the *gap row itself* was the thing out of date.
+A row that names a function is falsifiable and this one had gone false, which
+is the argument for measures over prose stated from the other side.
+
+**The full record is [`docs/evidence/plan_162_stage_N_evidence.md`](../evidence/plan_162_stage_N_evidence.md)**, 13 sections:
+
+1. What actually remained was one statement, invisible to three instruments
+2. The exemption is from the loader clause, not the file rule
+3. The name had to be `dag_queries`, and the suite proved it
+4. Both guards were mutation-tested rather than assumed
+5. The Layer 2 tests were run against a real Postgres, and three failed first
+6. What Stage N did not do
+7. Rules 5b and 5c became one rule, and that reverses a Stage L decision
+8. The detour worth recording: an exemption that decided nothing
+9. Not reinventing a wheel, and the check is recorded
+10. What the change cost, and what was verified
+11. The two builders were rewritten, not waived
+12. Four things the rewrite broke, each worth naming
+13. The Layer 2 census demanded the new files, immediately
+
+### Stage P — dbt builds against production-shaped data
+
+**Legacy:** Stage 10 · **Issue:** CAR-54 · **Closed:** 2026-09-04
+
+**Cost:** estimate 2 points. `In Progress` ran 20:31 UTC on 2026-09-03 to 07:14 UTC on 2026-09-04, 10h43m.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work. Neither describes CI's job set or which snapshot it
+reads, and both still say "More than 3,000 tests run in CI", which CI's
+`3622 passed, 1 skipped` satisfies.
+
+The one skip is `test_every_sha_a_recap_names_is_a_real_commit`, and it is
+declared rather than incidental: it resolves recap SHAs against real git
+history, `actions/checkout@v4` clones at depth 1, and the test detects the
+shallow repository and skips. Its docstring predicts exactly this and locates
+its value locally, in the run `plan-week` makes after writing a recap. Noted
+because a bare count hides it, and because nothing mechanical holds it there —
+`REQUIRE_LAYER_2_EXECUTION` fails a run on any skip in
+`tests/integration/sql/`, but this is a Layer 0 test in the unit job and
+outside that guard's reach. What stops one declared skip becoming three is the
+docstring, which is the same shape as the gaps this plan has been closing and
+is left open here deliberately: the fix is a general declared-skip rule, not
+something Stage P should grow.
+
+**The gate was shown failing on a production row, not asserted to.** The exit
+demanded a demonstration because a green build proves the instrument runs and
+says nothing about whether it can fail — the failure mode this plan is named
+after.
+
+Recipe, both runs on PR #358, job `dbt build against a production snapshot`,
+against pinned snapshot `adaptive-refresh-2026-09-04-002234`:
+
+- **Green** — run [33830401797](https://github.com/whitewalls86/new_car_tracker/actions/runs/33830401797).
+  `Done. PASS=251 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=251`, covering 7
+  incremental models, 12 table models, 4 views, 161 data tests and 66 unit
+  tests in 9.95s. The seed reported `postgres_rows_by_table:
+  {public.search_configs: 13, ops.tracked_models: 13}` with `postgres_skipped:
+  []`, so all six sources were populated and `--require-non-empty` had
+  something to check.
+- **Red** — run [33830916950](https://github.com/whitewalls86/new_car_tracker/actions/runs/33830916950),
+  identical but for one statement run against the seeded database between the
+  seed and the build:
+
+      UPDATE public.search_configs SET params = params - 'makes'
+      WHERE search_key = (SELECT min(search_key) FROM public.search_configs);
+
+  Result: `21 of 250 FAIL 1 not_null_stg_search_configs_make_slug`, "Got 1
+  result, configured to fail if != 0", `Done. PASS=214 WARN=0 ERROR=1 SKIP=36
+  NO-OP=0 TOTAL=251`. The 36 skips are downstream models declining to build on
+  a failed ancestor.
+
+**One statement, one failing test, one row.** The mutation was routed through
+`public.search_configs` deliberately rather than through a Parquet source: a
+violation dbt catches there also proves the two `postgres_scan()` sources are
+load-bearing, since a snapshot without them builds this same project green over
+an empty world. One run answers both questions.
+
+**`dbt model tests (real build)` stayed green on the red run**, which is the
+job-separation argument holding: the synthetic fixture in its reserved
+`obs_year=2099` partition and the production snapshot in real partitions are two
+datasets on two runners, and corrupting one did not reach the other.
+
+**161 dbt data tests ran against 808,069 production silver rows and found
+nothing** — no `unique` violation, no `not_null` violation, no cast failure, no
+duplicate join key anywhere in the pinned cohort. That is a result, not an
+absence of one: nothing had ever asked the question before.
+
+Two limits on what the green half proves, both already recorded in the stage
+above and neither retired by this run: the whole build took 9.95s because the
+cohort is 5,127 VINs against production's 313,291, and a fresh DuckDB file takes
+every incremental model's cold path where production builds incrementally.
+
+### Stage U — every skip in CI is declared, or the run fails
+
+**Legacy:** Stage 13 · **Issue:** CAR-81 · **Closed:** 2026-09-04
+
+**Cost:** estimate 2 points on CAR-81, which was sized while it still carried
+Stage V; the stage section sized U alone at 1. Actual 1.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+**This closes the loop [Stage P's entry](#stage-p--dbt-builds-against-production-shaped-data)
+left open**, in the terms that entry set: it recorded one declared skip held in
+place by a docstring, noted that `REQUIRE_LAYER_2_EXECUTION` could not reach it,
+and said the fix was a general declared-skip rule rather than something Stage P
+should grow. `tests/plugins/declared_skips.py` is that rule.
+
+**The hook moved scope without changing shape.** The same
+`pytest_terminal_summary` mechanism now runs repo-wide under a workflow-level
+`REQUIRE_DECLARED_SKIPS`, failing an undeclared skip, a declared skip that was
+selected and did not skip, and one that skipped for text its declared
+`condition` does not match. It reports on green runs too, because a job where
+the plugin failed to load is otherwise indistinguishable from one where it was
+satisfied.
+
+**Registered through `addopts`, not a conftest, and that is forced rather than
+chosen.** `docs-tests` runs `pytest --noconftest` — it installs three packages
+and cannot import `tests/conftest.py` — and it is one of the two jobs holding a
+skip. `-p` loads through `--noconftest`; `pythonpath = ["."]` makes the module
+importable at plugin-registration time, before the collection that would
+otherwise put the repository root on `sys.path`.
+
+**`REQUIRE_LAYER_2_EXECUTION` is retired, and Layer 2 was kept absolute by
+deriving the rule rather than listing the path.** The general gate offers a door
+the suite-scoped hook did not: a Layer 2 skip used to be unconditionally fatal,
+and under a registry someone could make one legal in four lines.
+`test_no_declared_skip_sits_at_a_layer_that_admits_none` nails that door shut
+through `_layer_of`, which reads the contract's own headings — so a second Layer
+2 root is strict the day the contract declares it. A path list would have been a
+fresh instance of the enumeration
+[Stage N](#stage-n--the-dag-trees-sql-convention) deleted.
+
+**Nothing had guarded the variable it replaces.** `REQUIRE_LAYER_2_EXECUTION`
+was one line of YAML, and deleting it would have restored the blind spot with no
+test failing — still true of `REQUIRE_DUCKDB`, `REQUIRE_MINIO` and
+`REQUIRE_AIRFLOW_SCHEMA`, which the new gate check now covers as a side effect.
+Four checks stand behind the hook: every entry names a test that exists, none
+sits at a layer admitting none, the gate and the `-p` registration both survive,
+and `DECLARED_SKIP_CEILING` makes a third declaration move a number rather than
+append to a tuple. All four are in
+[`scripts/verify_testing_contract_mutations.py`](../../scripts/verify_testing_contract_mutations.py),
+28/28 caught.
+
+**Demonstrated across three runs on PR #374, not asserted:**
+
+- **Green** — [33914747213](https://github.com/whitewalls86/new_car_tracker/actions/runs/33914747213)
+  (`03553fb`). The hook reported in 9 pytest steps across 4 jobs. Both
+  declarations accepted for the condition each names — the recap skip in
+  `Unit tests (pytest)`, the dictionary skip in `Lake integration tests (MinIO)`.
+- **Red** — [33915286492](https://github.com/whitewalls86/new_car_tracker/actions/runs/33915286492)
+  (`fcec5ac`), one deliberately undeclared skip in
+  `tests/test_stage_u_demonstration.py`. `Unit tests (pytest)` failed alone;
+  eleven jobs stayed green; the summary read `3767 passed, 2 skipped, 662
+  deselected` with no `FAILED` line, and the step exited 1 on the `Declared
+  skips` section alone. **A skip is not a failure, which is why nothing noticed
+  before this stage.** The same section carried the refusal and an acceptance
+  together.
+- **Green again** — [33915566312](https://github.com/whitewalls86/new_car_tracker/actions/runs/33915566312)
+  (`7b8ea40`), the file deleted. Deleting rather than declaring is the
+  registry's intended move: fixing the cause is the default and a declaration is
+  the exception that has to be argued for.
+
+**The drift direction was demonstrated too, locally rather than in CI.**
+`PYTHONPATH=. REQUIRE_DECLARED_SKIPS=1 pytest --noconftest tests/test_planning_docs.py -q`
+on a full clone reports `1 declared skip(s) ran instead of skipping … (declared
+2026-09-04: shallow clone)` and exits 1 with 52 tests passing. CI cannot
+demonstrate it — every job clones at depth 1, so the condition is always true
+there — and this is the same invocation shape `docs-tests` uses, so it doubles
+as proof the plugin loads under `--noconftest`.
+
+**One job has still never run under the gate.**
+[`scripts/ci_change_scope.py`](../../scripts/ci_change_scope.py) makes
+`docs_tests` true only for a docs-only changeset, and all three runs were code
+changes, so `docs-tests` was skipped in each. The commit carrying this record
+entry is docs-only and is therefore the run that exercises it. That is why the
+plugin prints its accepted declarations rather than staying silent: for that
+job, the evidence is a green log rather than a watched failure.
+
+### Stage X — a test may not author SQL either, and what ran against which engine
+
+**Legacy:** Stage 16 · **Issue:** CAR-83 · **Closed:** 2026-09-06
+
+**Cost:** estimate 1 point, actual 2. CAR-83 recorded before the work that its
+estimate predated the recorder and was owed a revisit it never had; the
+recorder, the aggregation gate and `SqlText` were all invented here.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+**Every production statement in this repository executes against a real engine
+in CI**, on the strongest available reading — not that a test names the file,
+but that the file's text reached a database client. No waiver list: one landed
+with the gate and was deleted rather than kept empty, because an empty ledger
+and no ledger differ in exactly what the next statement that executes nowhere
+costs to repair.
+
+| | Start | End |
+|---|---|---|
+| SQL literals under `tests/` | 506 | **0** |
+| Statements under `tests/sql/` | 0 | 381 |
+| Production `.sql` files | 161 | 163 |
+| …recorded executing in CI | never measured | **163 of 163** |
+| `TEST_SQL_TEMPLATE_WAIVERS` (G19) | gap did not exist | 1 |
+| `DBT_CONTRACT_WAIVERS` (G20) | gap did not exist | 23, seeded full for Stage S |
+| `INLINE_SQL_WAIVERS` (G5) | 15 | 14 |
+| Judgement rules in the contract | 4 | **3** |
+
+**The aggregation was not in this exit and landed anyway.** The exit placed it
+"with or after Stage Q"; it is here, so Stage Q inherits less than its section
+claims — worth knowing before that stage is scoped.
+
+**Three readings below 161 were the instrument, not the repository, and the gate
+found all three** — CI discarding its own execution record, two loaders
+returning a plain `str`, and fourteen archiver selectors reading as dead while
+running nested inside `wrap_candidate_query.sql`. The last was fixed in the type
+rather than in the gate.
+
+**The full record is
+[`plan_162_stage_X_evidence.md`](../evidence/plan_162_stage_X_evidence.md)**, 9 sections:
+
+1. Where test SQL went, and the provenance decision taken at the top
+2. The aggregation this exit had deferred, and what Stage Q inherits now
+3. Three instrument defects the gate found, and two holes under the denominator
+4. A count the stage was scoped by was already wrong
+5. G19 drained 25 → 1 — seven never templates, seventeen the call site states
+6. One waiver that was prose, and why the predicate was left alone
+7. Plan 129's statements, and the obligation that forced a testability seam
+8. An authoring gap seen from outside, and the skill that answers it
+9. A failure this stage caused, and the guard that fixes it
+
+Its two companions stay as written:
+[the origin](../evidence/plan_162_stage_X_origin_2026-09-04.md), with its
+2026-09-06 correction, and [the recorder
+baseline](../evidence/plan_162_stage_X_recorder_baseline_2026-09-05.md), with
+the open contract-drift findings.
+
+### Stage S — branch coverage for the dbt models
+
+**Legacy:** Stage 11 · **Issue:** CAR-79 · **Closed:** 2026-09-07
+
+**Cost:** estimate 2 points. `In Progress` 2026-09-06 18:30Z → 2026-09-07
+18:52Z. The issue itself records that *"the estimate predates this rewrite and
+has not been revisited"*; the actual is the maintainer's to set.
+
+All nine exits met. The dbt project's obligation is now stated as branch
+coverage and held by three gates that fail loudly rather than by any list
+someone maintains.
+
+| | Start | End |
+|---|---|---|
+| Measurable branch points | 308 | **297** (11 removed as dead) |
+| …covered both arms | never measured | **297 of 297** |
+| `UNIT_TEST_WAIVERS` | 160, seeded full | **0** |
+| `BRANCH_COVERAGE_WAIVERS` | 142, seeded full | **0** |
+| `UNPROBEABLE_BRANCHES` | 12 | **0** |
+| `UNREACHABLE_BRANCHES` | 11 | **0** |
+| `DBT_CONTRACT_WAIVERS` (G20) | 23, seeded by Stage X | **0** |
+| dbt unit tests | 66, in 3 files | **105**, in 10 — 39 added here |
+| Models building zero rows | 5 of 23 | **0** |
+| Constraints shown load-bearing | never measured | **15 of 161**; 146 decorative |
+| `schema.yml` columns declared | 187 | **307**, all typed, 23/23 enforced |
+| `TEST_SQL_TEMPLATE_WAIVERS` (G19) | 1 | **5** |
+| `ALL_WAIVERS` | 44 | **25** |
+
+**"Unreachable" is not a category — it is a symptom of three different
+defects, and the ledger for it should never have existed.** Eleven branch
+points could be taken by no fixture row and no unit test. Read as a property
+of the code they would have been a permanent ledger nobody could drain. Read
+as a symptom they resolved into: **six guards against states the surrounding
+SQL already makes impossible** (dead code, deleted — `nullif(count(*), 0)`
+under a GROUP BY, a `coalesce` around an expression whose first argument is
+the literal 0, a LEFT JOIN whose two sides are grouped from the same relation
+on the same key), **one fixture too old to reach a 7-day recency window**, and
+**one genuine production bug**. Every entry the ledger ever held was removable.
+It is empty because the code went, not because anything was excused.
+
+**The bug it found is what the stage is for.** `mart_vehicle_snapshot`'s
+`listing_state` falls back to a recency test whose header says "seen on SRP
+within 7 days"; it read `int_price_history.last_seen_at`, which is
+`max(event_at)` over *price events*. A VIN seen an hour ago that never carried
+a price was published `'unlisted'`; a listing still on SRP aged into
+`'unlisted'` as soon as its price stopped moving. It had been wrong for as long
+as the model existed, `dbt build` was green throughout, and the fixture's own
+`not_null` constraint on the column passed vacuously because the model built
+zero rows.
+
+**The fixture had rotted on the calendar, inside the stage measuring it.**
+Every `_ts()` literal was an absolute 2026 date, so the newest fixture row aged
+away from `now()` as time passed. The 7-day arm above was covered the day it
+was written and had been silently uncoverable for weeks. `FIXTURE_EPOCH` plus a
+whole-day shift fixes it: every relationship the fixture encodes is a
+*difference* between two timestamps and a constant shift preserves all of them,
+so the scenarios survive and only the distance to `now()` changes. **A test
+that was true when written and quietly stopped being true is the failure mode
+this plan keeps rediscovering** — see Stage A's undercounts and Stage X's three
+instrument defects.
+
+**Five models built to zero rows with ~30 constraints asserting vacuously**,
+from two independent causes: `scripts/seed_lake_snapshot_fixture.py` seeded
+MinIO only, so `ops.tracked_models` was empty and `int_active_make_models`
+inner-joined nothing; and the recency arm above. `--require-non-empty` named
+this exact cascade in its own CI comment while guarding sources rather than
+models, in a different job. The non-vacuity gate has **no waiver list**, by
+decision: a list is exactly where these five would have been recorded instead
+of repaired.
+
+**146 of 161 declared constraints are decorative** — no mutation of the guard
+that produces them fails their test. That is not a defect to fix here; it is a
+measurement nobody had, and the ledger now records which 15 hold something up.
+
+**`dbt run --empty` is a prerequisite, not an optimisation, and the plan
+asserted the opposite.** §Stage S said unit tests could not reach
+`is_incremental()` machinery — *"structurally out of its reach"*. They can:
+`overrides: {macros: {is_incremental: true}}` with a mocked `- input: this`,
+after `dbt run --empty` creates the relations dbt needs to type the mocked
+rows. **The false claim was inferred from a failure rather than read from dbt's
+documentation, and inferred twice — once by an agent, once by the author
+checking the agent.** It cost eight correct unit tests, deleted on the bad
+diagnosis and restored when the maintainer asked for the public docs to be
+read. The bullet is corrected in place above rather than deleted, because the
+shape of the error — a measurement taken without a precondition, read as a
+property of the world — is this plan's own subject. 19 branch points are
+reachable no other way.
+
+**Attribution between the cold and warm compiles took four attempts**, and
+three of the four failures were surfaced by an agent or the maintainer rather
+than by the author. Tagging by compile root, then by predicate text, then by
+rendered form (which moved the gap from 0 to 25), then the rule that holds:
+unphased, or same condition, or same rendering.
+
+**Two instrument defects worth carrying forward.** Filing an execution error as
+`unprobeable` made a missing S3 config read as 143 legitimately excused
+branches *and the gate reported an improvement* — an instrument that cannot
+distinguish "no probe can express this" from "the probe broke" will always
+report progress when it breaks. `error` is now a separate state with its own
+assertion. And `sqlglot` 30 renamed the AST arg keys `from` and `with` to
+`from_` and `with_`, which silently made 212 branches read as having no source
+scope.
+
+**The gate was audited by mutation after it was built, and had a hole.** Ten
+anti-patterns were applied to a clean tree one at a time. Seven failed loudly:
+deleting a gate file, deleting a gate's CI step while keeping the `--ignore`,
+turning `enforced: true` off, dropping a `data_type` (dbt itself, `ERROR=1`),
+and adding a new untested branch to a model, which is exit 1 demonstrated
+rather than asserted. Two were correct passes — deleting a unit test that had
+become redundant when `mart_vehicle_snapshot` was fixed, and re-adding an
+absolute `datetime` to the fixture, which the shift makes harmless.
+
+**One was a real failure of the gate.** `UNPROBEABLE_BRANCHES` and
+`UNREACHABLE_BRANCHES` are asserted as exact sets, so neither can take an
+untrue entry. The two *waiver* ledgers had only the staleness half — a waived
+id must still name a live branch — and nothing asked whether the branch still
+needed waiving, so a waiver naming a fully covered branch passed 6 of 6.
+`test_no_coverage_waiver_names_a_branch_that_is_already_covered` closes it,
+verified by both mutations failing on it. That the ledger the whole stage
+drained to zero could be silently refilled is the same one-directional
+checking this plan keeps finding elsewhere, this time in its own instrument.
+
+**The one ledger that grew is `TEST_SQL_TEMPLATE_WAIVERS`, 1 → 5** — three
+constraint-mutation templates and one non-vacuity template whose renderings are
+generated SQL that Layer 0 cannot enumerate. Recorded as debt, not as a
+convenience.
+
+**A scoping count this stage was sized by was wrong**, again: 250 branch points
+became 216 became 297 as the enumerator learned that `count(*) filter (where
+…)` is one branch and not two, and that both compile phases must be counted.
+Stage A's finding — *"the direction of that error is the reusable finding"* —
+now holds three stages out of three where a by-eye count was checked.
+
+**Addendum, 2026-09-07, after review: the instrument was corrected, and the
+stage's numbers survive it at 295 of 295.** The PR #379 review found probes
+counting arms over rows the scope's own WHERE discards; corrected (and with
+the gates reordered ahead of the reseeding suite), the stricter read named
+exactly two branches — both dead code in `mart_deal_scores`, deleted per this
+stage's own precedent — and one fixture gap, repaired as data, so the
+fingerprint `unique`s stay demonstrably load-bearing and the 15-of-161 split
+is unchanged. All four ledgers are still empty and no exit reopens; 295 is
+derived (297 minus the two deletions — the CI log proves the gates pass but
+does not print the count). Full account with the recipe in
+[plan_162_stage_S_evidence.md](../evidence/plan_162_stage_S_evidence.md); CI
+run 34162171648 at `5b96948`.
+
+### Stage T — shared fixtures: what the suite duplicates
+
+**Legacy:** Stage 12 · **Issue:** CAR-80 · **Closed:** 2026-09-07
+
+**Cost:** estimate 2 points → **actual 1** — one session, one commit.
+
+All exits met, one with a confession attached: the exit requires re-measuring
+"against the same recipe that produced the table," and that recipe was never
+written down. It was re-derived — Plan 138 Stage 9's precedent — and is now
+recorded verbatim in
+[plan_162_stage_T_evidence.md](../evidence/plan_162_stage_T_evidence.md),
+which carries everything bulky about this stage. One row cross-checks exactly:
+the re-derived predicate reads 55 module-local seed helpers on the pre-stage
+tree, the number measured 2026-09-01.
+
+| | 2026-09-01 | before | after |
+|---|---:|---:|---:|
+| Tests collected | 3,988 | 4,483 | 4,483 |
+| Ad-hoc `INSERT`s in test modules | 96 | 2* | 2* |
+| Distinct read-back `SELECT`s | 161 | 0 | 0 |
+| Module-local seed helpers | 55 | 55 | **47** |
+| Helper names defined in >1 module | — | 52 | **43** |
+| …byte-identical | — | 19 | **12** |
+
+\* Stage X's deltas, observed rather than re-litigated; neither survivor is a
+seed (one is the contract's own mutation fixture, one a docstring).
+
+**Seven groups consolidated**, each into an existing natural home — the
+largest single deletion was `_get_conn` ×3, which re-derived a fixture the
+root conftest already had. Six duplicate seed `.sql` files deduped into
+conftest-owned copies on the way. **The 12 identical groups that remain are
+each a recorded decision**: twin test modules mirroring the parser that
+production itself duplicates, 2–5-line helpers below the consolidation floor,
+and one dormant suite. The ticket's flagship, `_insert_artifact` ×3, dissolved
+under Stage X into three visibly different statements — callers wanting
+different data, left alone.
+
+**The instrument the exit demands an answer about was found, and it is
+static, not the recorder**: Stage X's extraction made "two helpers execute the
+same statement" a textual property — normalized content equality over
+`tests/sql/` (43 identical groups across 96 of 385 files, 7 sharing no
+filename). Recorded as available, not made a rule: per-module seeds are Stage
+X's deliberate convention, and PREPARE already fails every copy on drift. For
+helpers that execute no SQL, no mechanical instrument exists; that half leaves
+prose behind.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work — the collection count did not move.
+
+PR #383, CI run 34181659530 green at `b695283`; locally 441 passed / 35
+skipped across the touched suites against a Flyway-migrated postgres:16.
+
+### Stage W — a test may not supply both halves of a contract
+
+**Legacy:** Stage 15 · **Issue:** CAR-82 · **Closed:** 2026-09-08
+
+**Cost:** estimate 2 points → **actual 1** — one session, four commits, and a
+full rebuild after the first design was rejected.
+
+*Numbers, transcripts, the rejected design and the two stated limits are in
+[plan_162_stage_W_evidence.md](../evidence/plan_162_stage_W_evidence.md).*
+
+**Built once as a registry and rejected, and the rejection is the useful part.**
+The first implementation was a curated tuple of cross-module contracts, each
+naming a producer, a consumer and a derivation, with one parametrized meta-test
+per entry. It worked and it was demonstrated failing. It was also **the thing
+this plan exists against**: `DORMANT_SUITES` and `DECLARED_SKIPS` are lists that
+work because each is compared against a *derived population* — directories on
+disk, skips pytest reported — so an unlisted member fails. The registry had no
+derived population, so nothing could say a third contract existed. One instance
+and no mechanism, at n=2. Commit `ca74ba3`, reset away, reachable in the reflog.
+
+**The rebuild's first derived pass found the third instance two files from one
+the registry covered.** `airflow/dags/sensors.py:95` checks the coordination
+phases, owned by a Flyway `CHECK` in `V043`, guarded only by
+`test_coordination_admission.py` asserting the literal appears in `sensors.py`'s
+*source text* — the paraphrase shape the contract warns about.
+
+**The census was wrong before it was right, and the error was the subject.** It
+first counted closed sets *in production* — 110, with 104 having a member
+restated under `tests/` — and asked who restates them; structurally that gives
+87 "cross-module contracts" dominated by `ok`, `error`, `year`, `price`. From
+that reading a curated list looks inevitable. The right subject is the **guard**:
+where a module tests an incoming value against a locally written literal.
+
+**262 such comparisons, in three buckets, and only one reachable.** Owned by git,
+markdown-it or Airflow — unreachable, nothing here owns them. Owned by the
+module's own package — reachable but nothing can drift. **Owned by another
+artifact here — the defect class**, and its owner corpus is derivable: **18
+`CHECK` columns in `db/migrations/` holding 14 distinct vocabularies**. Of 83
+comparisons naming a constrained column, **33 restate a member**; the other 50
+are `ok`, `success`, `unknown`, `locked` and must not be touched.
+
+**Membership is the whole discriminator, and the alternative was watched
+failing.** By column name alone the rule produced 9 false positives —
+`result.status == "ok"` reading as a claim about `artifacts_queue.status`. A
+module→constant→`.sql`→table derivation fixed those and cost a chain of
+machinery while **missing 11 sites in `scripts/host_maintenance.py`**, which
+reads the vocabulary over HTTP. Inverting the test to "the literal is a member"
+removed all 9 and recovered the 11, so the machinery was deleted.
+
+**What ships is two rules that do not work apart**, plus
+`shared/db_vocabularies.py` holding each vocabulary once as a `StrEnum`. One
+compares that module to the migrations in both directions and requires equality;
+the other fails a bare literal that is a member. A migration rename leaves the
+second green — the literal stops being a member, so the comparison leaves scope
+— and that vacuity was observed, not argued. **All 33 sites were repaired**
+across 8 modules, and the completed rename then propagated with **zero call-site
+edits**: two migration files and one enum member.
+
+**A third rule closes the instance the stage came from**, where the owner is a
+service and not a constraint. `airflow/dags/` is the one place here where the
+import that would remove the copy is impossible — compose mounts three
+directories into the Airflow containers — so both halves are derived instead:
+the service from the module's own `<NAME>_URL` constant, the module from the
+shared basename. Reintroducing `acceptable = {"created"}` fails it, naming the
+exporter's five statuses. The known reader hole is closed by a guard rather than
+a wider scan: a `status=` expression the reader cannot follow **fails** instead
+of narrowing the set silently.
+
+**Two limits stated rather than closed.** The tests hold their own copies — 115
+comparisons and 366 seeds across 49 modules. *This entry first read that those
+were "duplication, not the both-halves defect", on the strength of eight tests
+failing loudly under the rename mutation. Re-measured 2026-09-07 while scoping
+[Stage AD](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject),
+that is true of 183 of them and false of 298.* The **183 in
+`tests/integration/`** are policed already, and by the contract rather than by
+this stage: stale seeds are rejected with `CheckViolation` before the test can
+assert anything. The **298 unit tests** build a dict in memory and are checked
+by nothing — which is exactly where CAR-82's own instance lived. The class is
+not *a test that retypes a value*; it is **a test that fabricates data the
+database would have rejected**, and this stage does not reach it. And
+`sensors.py` reads its phases positionally out of a query result, so no column
+name appears; the link is derivable through `deploy_intent_gate.sql`'s `SELECT`
+list, the loose membership alternative was tried and produces a false positive
+on `notifications.py`, and closing it properly is the next stage's.
+
+**What this stage covers, as a matrix rather than as prose**, because the prose
+above was written before the surfaces were separated and reads as though the
+class were closed. One row of it is.
+
+| Where a stale word hides | `CHECK` today | ENUM (Stage AC) | Stage W |
+|---|---|---|---|
+| A Python comparison on a fetched value | silent | **silent** | **caught** |
+| A Python write of a bad value | loud | loud | — |
+| A read filter in a `.sql` file | **silent** | **loud** | no |
+| A read filter in a dbt model | **silent** | **loud** | no |
+| Any write, anywhere | loud | loud | — |
+| An in-memory test fixture | silent | silent | no |
+
+**The first row is why this stage is not made redundant by
+[Stage AC](#stage-ac-the-database-makes-a-stale-read-loud), and it was measured
+rather than argued.** psycopg2 returns an enum column to Python as a plain
+`str`, so after a rename `state["phase"] == "draining"` evaluates `False` with
+no error, while the same filter inside SQL raises `invalid input value for
+enum`. The database can make the *query* loud and can do nothing about the
+*comparison*. Those are the 33 sites this stage repaired.
+
+**The coupling runs the other way too.** Stage AC must update this stage's
+corpus reader, which parses `CHECK (<column> IN (...))` and will match nothing
+once those columns are enum types. It cannot do so silently:
+`test_the_check_constraint_corpus_is_not_empty` would find 0 against a floor of
+10 and fail. That guard went in on general principle and this is the first
+concrete thing it catches.
+
+**And this stage should have seeded a waiver tuple rather than repairing all 33
+sites outright.** Repairing them was right for the work; contributing nothing to
+the plan's progress meter was not, and it is the only reason the completion
+criterion looked unable to describe the contract stages. Stages Y to AD each
+seed and drain, which is Stage S's pattern and this plan's own answer.
+
+**Exit met, with clause 2 narrowed rather than dropped.** *"A test that restates
+a member as a literal rather than deriving it fails"* holds for the forms this
+stage declares reachable and not otherwise: the **183** copies in
+`tests/integration/` are policed by the constraint itself — a stale seed is
+rejected with `CheckViolation` before the test can assert anything, observed
+during the Stage AC experiment — and the **298** in-memory copies are policed by
+nothing. That residue is [G26](../TESTING.md#the-gap-list) and
+[Stage AD](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject).
+Clause 3 is what permits the narrowing, and the matrix above is the plain
+statement it asks for.
+
+**A regression this stage introduced, and caught before merge rather than after.**
+The repair replaced a hand-ordered list with `sorted(RequestableRole)`, which is
+alphabetical, silently reordering the access-request form's role dropdown from
+least-privileged-first to `observer, power_user, viewer`. That list is the
+`roles` context for seven template responses. **Nothing asserts the order, so
+the suite was green and CI was green** — a silent regression shipped by a change
+whose entire subject is silent regressions. It was found by asking what the
+repair had changed that no test looks at, before pushing. Fixed at the
+declaration rather than the call site: `RequestableRole` now declares its own
+members least-privileged first and the router takes `list(RequestableRole)`, so
+the order and the completeness are one fact instead of two that can disagree.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work — both still read *"More than 3,000 tests run in CI"* at
+3,801, and this stage added no migration against their *"40+ versioned Flyway
+migrations"*.
+
+PR #389, CI run 34190151416 green at `d2a6293` — including the jobs no local
+run reaches: the Layer 2 suite's DuckDB half, `dbt model tests (real build)`,
+`Service integration tests (Postgres)`, the Airflow metadata contracts and the
+SQL execution coverage gate. Locally 3,801 passed / 694 deselected.
+
+### Stage V — a variable the environment documents reaches the service that reads it
+
+**Legacy:** Stage 14 · **Issue:** CAR-88 · **Closed:** 2026-09-08
+
+**Cost:** estimate 1 point → **actual 1** — one session, three commits, and a
+scope change mid-stage that added the second direction.
+
+*The census both ways, the answer established for each key, and the six
+mutations watched failing are in
+[plan_162_stage_V_evidence.md](../evidence/plan_162_stage_V_evidence.md).*
+
+**Both directions landed, and the second was the larger defect.** The stage was
+written for Stage P's direction — a key `.env.example` documents that no Compose
+service delivers. Three failed it, with three different answers.
+`FASTAPI_ADMIN_KEY` was **deleted**: `git log -S` across all history shows it
+entered in `eb96c41` (2026-04-09) and never appeared in any file but
+`.env.example` and plan documents, so it was never wired because it was never
+read. `MLFLOW_TRACKING_URI` and `PROVENANCE_ENV` left the template as
+in-development Plan 112 Gate B variables, both read only by
+`scripts/log_lakehouse_experiment_provenance.py`, both with working defaults.
+
+**The reverse direction was added mid-stage, and Plan 142 had already found
+it.** `plan_142_planned_host_maintenance.md:812` records that `.env.example`
+documents none of the seven Airflow variables `docker-compose.yml` requires,
+counts "12 of the 42 variables Compose interpolates are missing in total", and
+declines the fix — wanting "either a full pass over the template or a test
+asserting every interpolated variable is documented". This stage did both.
+**Eight secrets required with no default were documented nowhere**, so a fresh
+provision got an empty Fernet key, an empty JWT secret and an empty Grafana
+admin password rather than a failure. `METRICS_DB_PASSWORD` is the sharpest:
+`docker-compose.yml:84-91` substitutes six role passwords into Flyway
+placeholders, creating each role with whatever is set, and the template
+documented three of the six.
+
+**References are read from parsed YAML values, never file text, and that is not
+a style choice.** `docker-compose.yml:169` names `SNAPSHOT_DOWNLOAD_TOKENS` in a
+comment three lines above the reference at `:172` that delivers it. A grep
+counts the comment, so a text-matching rule would have passed Stage P's defect
+on the day it was written — the mechanism meant to catch the class would have
+had the class built into it.
+
+**`$$` is Compose's escape, and missing it produced the census's one false
+positive.** `$${HOSTNAME}` in two Airflow health checks passes a literal
+`${HOSTNAME}` through to the container's own shell. Plan 142's 12 counted it;
+the 14 measured here does not.
+
+**The declared tier is named for what its members are, not for what the stage
+predicted.** The stage specified "script-only". Its one member,
+`SCRAPER_RESULTS_BASE_URL`, is read by `scraper/processors/scrape_results.py:34`
+— a production module inside a Compose service, taking a default production must
+never override — so the tier is `Undelivered`: documented, read by something,
+delivered to no container. It entered the corpus at all only because
+commented-out keys are counted, on the grounds that a `#` does not stop a file
+being read.
+
+**Both ledgers carry a third direction beyond the two `DORMANT_SUITES`
+established.** A declaration whose named consumer does not contain the key, or
+whose named Compose file does not interpolate the variable, fails rather than
+pointing nowhere. Each carries a ceiling so a new entry cannot be a quiet tuple
+append.
+
+**The stage did not turn production-gated**, which CAR-88 warned it might. Every
+documented-but-undelivered key resolved to delete-or-declare, nothing needed
+wiring into `docker-compose.yml`, and no Dockerfile copies `docs/` or
+`.env.example` — the merge is the whole delivery.
+
+**What it does not prove: delivery is not arrival.** The rule asserts that a
+service *names* the variable, which is the link Stage P broke, and cannot assert
+that the running container loaded a value. A key wired into Compose and left
+unset in the VM's `.env` still arrives empty with this file green.
+
+Public surfaces: `README.md`'s local quick start listed five things to edit
+before `docker compose up -d`, and the Airflow and Grafana secrets this stage
+added to the template were not among them. The line was corrected with this
+stage.

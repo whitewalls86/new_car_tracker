@@ -3,6 +3,7 @@ from datetime import datetime as dt
 
 import pytest
 
+from ops.queries import INSERT_COORDINATION_STATE_EVENT
 from ops.routers import deploy
 
 #: The shape returned when there is no row or the read failed. pause_long_jobs
@@ -170,7 +171,7 @@ def test_intent_release_no_return(mock_cursor_context):
 
 
 # ---------------------------------------------------------------------------
-# Which failure it was (Plan 162 Stage 6c)
+# Which failure it was (Plan 162 Stage K)
 #
 # Every one of these returned the bare string "error" and rendered as 503
 # "Database unavailable". Only the first of the three is about an unavailable
@@ -239,7 +240,7 @@ def test_set_intent_event_failure_rolls_back_both_records(mock_cursor_context):
     cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
 
     def fail_event(sql, params=None):
-        if "INSERT INTO staging.coordination_state_events" in sql:
+        if sql == INSERT_COORDINATION_STATE_EVENT:
             raise RuntimeError("history unavailable")
 
     cursor.execute.side_effect = fail_event

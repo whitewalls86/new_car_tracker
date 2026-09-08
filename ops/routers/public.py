@@ -26,6 +26,13 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 router = APIRouter()
 
+# FastAPI's ``@router.get`` registers GET alone, so HEAD answered 405 on every
+# public page until Stage 6's external route matrix ran it on 2026-09-04.
+# Nothing a browser does breaks on that, which is why it survived five stages --
+# but uptime monitors and link checkers use HEAD, and a 405 reads to them as the
+# site being down. Every public route answers both.
+_PUBLIC_METHODS = ["GET", "HEAD"]
+
 PUBLIC_BASE_URL = "https://cartracker.info"
 
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -66,7 +73,7 @@ def published_slugs() -> list[str]:
     return sorted(slugs, reverse=True)
 
 
-@router.get("/recaps", response_class=FileResponse)
+@router.api_route("/recaps", methods=_PUBLIC_METHODS, response_class=FileResponse)
 def recap_index() -> FileResponse:
     index = os.path.join(RECAPS_DIR, "index.html")
     if not os.path.isfile(index):
@@ -74,7 +81,9 @@ def recap_index() -> FileResponse:
     return FileResponse(index, media_type="text/html")
 
 
-@router.get("/recaps/{slug}", response_class=FileResponse)
+@router.api_route(
+    "/recaps/{slug}", methods=_PUBLIC_METHODS, response_class=FileResponse
+)
 def recap_page(slug: str) -> FileResponse:
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=404, detail="No such recap.")
@@ -84,7 +93,9 @@ def recap_page(slug: str) -> FileResponse:
     return FileResponse(page, media_type="text/html")
 
 
-@router.get("/robots.txt", response_class=PlainTextResponse)
+@router.api_route(
+    "/robots.txt", methods=_PUBLIC_METHODS, response_class=PlainTextResponse
+)
 def robots() -> PlainTextResponse:
     lines = ["User-agent: *", "Allow: /"]
     lines += [f"Disallow: {path}" for path in _DISALLOWED]
@@ -92,7 +103,7 @@ def robots() -> PlainTextResponse:
     return PlainTextResponse("\n".join(lines))
 
 
-@router.get("/sitemap.xml")
+@router.api_route("/sitemap.xml", methods=_PUBLIC_METHODS)
 def sitemap() -> Response:
     paths = ["/", "/recaps"] + [f"/recaps/{slug}" for slug in published_slugs()]
     urls = "".join(

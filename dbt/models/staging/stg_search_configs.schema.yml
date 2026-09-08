@@ -5,32 +5,45 @@ models:
     description: "Staging view for search configs. Explodes parameters into columns for easy retrieval."
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: search_key #PK
+        data_type: string
       - name: enabled
+        data_type: boolean
       - name: source
+        data_type: string
       - name: rotation_slot
+        data_type: integer
       - name: last_queued_at
+        data_type: timestamptz
       - name: zip
+        data_type: string
         description: "Target Zip Code for Local Scope Searches."
         data_tests:
           - not_null
       - name: radius_miles
+        data_type: integer
         description: "Distance for 'Local' Searches"
         data_tests:
           - not_null
       - name: max_listings
+        data_type: integer
         description: "Maximum number of listings per scrape"
 
       - name: max_safety_pages
+        data_type: integer
         description: "Maximum number of pages to iterate through during a search"
 
       - name: make_slug
+        data_type: string
         description: "Cars.com formatted manufacturer make, to add to URL"
         data_tests:
           - not_null
 
       - name: model_slug
+        data_type: string
         description: "Cars.com formatted model, to add to URL"
         data_tests:
           - not_null

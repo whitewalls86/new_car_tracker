@@ -168,7 +168,7 @@ class TestTheSensorSkipsRatherThanFails:
         has one, and it is still upstream of the work -- Plan 140 is explicit
         that these must be demoted rather than deleted.
 
-        Checked as a mapping rather than as a count (Plan 162 Stage 3): the
+        Checked as a mapping rather than as a count (Plan 162 Stage D): the
         DagBag census in tests/integration/airflow/test_dag_integrity.py counts
         sensor *tasks* where this counts DAG *files*, and the two numbers differ
         because `hourly_analytics_refresh` wires two. Both now derive from
@@ -205,7 +205,7 @@ class TestTheSensorSkipsRatherThanFails:
         real task ids. Nothing else connects the two: rename the suffix here and
         the integration test starts failing in the isolated Airflow venv against
         a declaration that looks correct, which is a worse version of the drift
-        Plan 162 Stage 3 removed.
+        Plan 162 Stage D removed.
         """
         tree = _tree(SENSORS)
         func = next(

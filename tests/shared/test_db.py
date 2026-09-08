@@ -6,6 +6,9 @@ import importlib
 import pytest
 
 from shared.db import db_cursor
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 # ---------------------------------------------------------------------------
 # DB_KWARGS resolution — DATABASE_URL vs PG* env vars
@@ -172,7 +175,7 @@ def test_db_cursor_fetchone(mocker):
     mocker.patch("shared.db.get_conn", return_value=mock_conn)
 
     with db_cursor() as cur:
-        cur.execute("SELECT * FROM table WHERE id = %s", (1,))
+        cur.execute(SQL("select_one_artifact"), (1,))
         result = cur.fetchone()
 
     assert result == (1, "test", True)
@@ -188,7 +191,7 @@ def test_db_cursor_fetchall(mocker):
     mocker.patch("shared.db.get_conn", return_value=mock_conn)
 
     with db_cursor() as cur:
-        cur.execute("SELECT * FROM table")
+        cur.execute(SQL("select_all_artifacts"))
         results = cur.fetchall()
 
     assert len(results) == 3
@@ -205,7 +208,7 @@ def test_db_cursor_rowcount(mocker):
     mocker.patch("shared.db.get_conn", return_value=mock_conn)
 
     with db_cursor() as cur:
-        cur.execute("DELETE FROM table WHERE id > %s", (10,))
+        cur.execute(SQL("delete_artifacts_above_id"), (10,))
         rowcount = cur.rowcount
 
     assert rowcount == 5

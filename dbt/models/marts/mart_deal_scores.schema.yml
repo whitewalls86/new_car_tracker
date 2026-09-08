@@ -9,17 +9,93 @@ models:
       price drop history, dealer inventory depth, and model supply.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: vin
+        data_type: string
       - name: current_price
+        data_type: integer
         data_tests:
           - not_null
       - name: deal_score
+        data_type: decimal(18,1)
         data_tests:
           - not_null
       - name: deal_tier
+        data_type: string
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['excellent', 'good', 'fair', 'weak']
+      - name: listing_id
+        data_type: string
+      - name: make
+        data_type: string
+      - name: model
+        data_type: string
+      - name: vehicle_trim
+        data_type: string
+      - name: model_year
+        data_type: smallint
+      - name: fuel_type
+        data_type: string
+      - name: body_style
+        data_type: string
+      - name: stock_type
+        data_type: string
+      - name: canonical_detail_url
+        data_type: string
+      - name: listing_state
+        data_type: string
+      - name: customer_id
+        data_type: string
+      - name: dealer_zip
+        data_type: string
+      - name: dealer_name
+        data_type: string
+      - name: price_observed_at
+        data_type: timestamptz
+      - name: msrp
+        data_type: integer
+      - name: msrp_discount_pct
+        data_type: double
+      - name: msrp_discount_amt
+        data_type: integer
+      - name: first_seen_at
+        data_type: timestamptz
+      - name: last_seen_at
+        data_type: timestamptz
+      - name: days_on_market
+        data_type: bigint
+      - name: first_price
+        data_type: integer
+      - name: min_price
+        data_type: integer
+      - name: max_price
+        data_type: integer
+      - name: price_drop_count
+        data_type: bigint
+      - name: price_increase_count
+        data_type: bigint
+      - name: total_price_observations
+        data_type: bigint
+      - name: total_price_drop_pct
+        data_type: double
+      - name: national_listing_count
+        data_type: bigint
+      - name: national_avg_price
+        data_type: integer
+      - name: national_median_price
+        data_type: integer
+      - name: national_p10_price
+        data_type: integer
+      - name: national_p25_price
+        data_type: integer
+      - name: national_avg_discount_pct
+        data_type: decimal(5,2)
+      - name: national_price_percentile
+        data_type: double
+      - name: dealer_inventory_count
+        data_type: bigint

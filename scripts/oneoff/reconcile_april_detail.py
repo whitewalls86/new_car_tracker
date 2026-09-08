@@ -3967,8 +3967,8 @@ def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -
 #    as a warning and the run would carry on believing it committed. Neither
 #    can be reused. One connection is opened here, all four writes run on it,
 #    it commits once, and exceptions propagate. The *column list* is reused --
-#    `_POSTGRES_COLS` and `_INSERT_SQL` are imported so a schema change cannot
-#    drift silently -- but not the function.
+#    `_POSTGRES_COLS` and `INSERT_SILVER_OBSERVATIONS` are imported so a schema
+#    change cannot drift silently -- but not the function.
 # 2. `staging.price_observation_events.listing_id` is `uuid NOT NULL` while
 #    `staging.silver_observations.listing_id` is `text`. Every listing id is
 #    validated against `_UUID_RE`, and a failure is a stop, not a skip.
@@ -4503,7 +4503,7 @@ def write_import_batch(
     """
     from psycopg2.extras import execute_values
 
-    from processing.writers.silver_writer import _INSERT_SQL as _SILVER_INSERT_SQL
+    from processing.queries import INSERT_SILVER_OBSERVATIONS as _SILVER_INSERT_SQL
     from processing.writers.silver_writer import _POSTGRES_COLS
 
     try:

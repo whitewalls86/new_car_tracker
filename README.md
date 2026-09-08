@@ -303,7 +303,6 @@ rather than finished.
 **Proven but not production-serving.** Each of these is exercised and evidenced,
 and none of them is in the path of anything a user sees today:
 
-- Production-shaped CI lake snapshots.
 - Iceberg tables registered through Lakekeeper and exercised through Spark.
 - dbt-Spark parity work and MLflow experiment provenance.
 - Adaptive-refresh feature and backtesting foundations.
@@ -377,8 +376,11 @@ Running the platform locally needs Docker and a populated `.env`.
 
 ```bash
 cp .env.example .env
-# Edit .env: POSTGRES_PASSWORD, the scoped role passwords, the Google OAuth
-# client, the cookie secret, and AUTH_EMAIL_SALT.
+# Edit .env: POSTGRES_PASSWORD, the six scoped role passwords, the Google OAuth
+# client, the cookie secret, AUTH_EMAIL_SALT, the Airflow secrets
+# (AIRFLOW_FERNET_KEY, AIRFLOW_JWT_SECRET, _AIRFLOW_WWW_USER_PASSWORD) and the
+# Grafana admin login. .env.example documents each one, with a generation
+# command where the value has to be a particular shape.
 
 # The network and the Postgres data volume are declared external.
 docker network create cartracker-net

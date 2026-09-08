@@ -89,7 +89,7 @@ INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = (
 )
 
 # Search-config administration (admin.py). Held as `sql = """..."""` locals at
-# their call sites until Plan 162 Stage 7 -- importable in principle, in no
+# their call sites until Plan 162 Stage L -- importable in principle, in no
 # .sql file in practice, so the Layer 2 census could not count them and
 # test_ops_queries.py had to retype two of them to test anything.
 SELECT_SEARCH_CONFIGS = _q("select_search_configs")
@@ -99,5 +99,16 @@ UPDATE_SEARCH_CONFIG = _q("update_search_config")
 TOGGLE_SEARCH_CONFIG_ENABLED = _q("toggle_search_config_enabled")
 RETIRE_SEARCH_CONFIG = _q("retire_search_config")
 
-# Read by the drain gate (coordination_drain.py).
+# Read by the drain gate (coordination_drain.py). The last three took f-strings
+# sized to their arguments until Plan 162 Stage N made them static; the params
+# each expects are documented in the .sql files and built by the query
+# functions in that module.
 SELECT_RUNNING_DETAIL_CLAIMS = _q("select_running_detail_claims")
+SELECT_PROCESSING_ARTIFACTS_BACKLOG = _q("select_processing_artifacts_backlog")
+SELECT_AIRFLOW_TASK_INSTANCES = _q("select_airflow_task_instances")
+SELECT_AIRFLOW_GATE_OBSERVATIONS = _q("select_airflow_gate_observations")
+
+# Plan 128: the blocked-cooldown cohort reconcile. Runs against DuckDB over the
+# ops_normalized Parquet, not Postgres -- the only statement in this module that
+# does, which is why the Parquet glob is a bound parameter the caller supplies.
+COUNT_BLOCKED_COOLDOWN_LISTINGS = _q("count_blocked_cooldown_listings")

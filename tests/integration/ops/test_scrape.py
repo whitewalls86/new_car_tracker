@@ -13,6 +13,10 @@ import uuid
 
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -34,25 +38,17 @@ def seed_search_config(verify_cur, test_key_prefix):
         enabled: bool = True,
     ) -> str:
         key = search_key or f"{test_key_prefix}sc-{uuid.uuid4().hex[:6]}"
-        verify_cur.execute("""
-            INSERT INTO search_configs (
-                search_key, params, enabled, rotation_slot, last_queued_at
-            )
-            VALUES (
-                %s,
-                '{"makes": ["honda"], "models": ["cr-v"], "scopes": ["national"]}'::jsonb,
-                %s,
-                %s,
-                %s
-            )
-        """, (key, enabled, rotation_slot, last_queued_at))
+        verify_cur.execute(
+            SQL("insert_search_configs"),
+            (key, enabled, rotation_slot, last_queued_at),
+        )
         inserted_keys.append(key)
         return key
 
     yield _seed
 
     verify_cur.execute(
-        "DELETE FROM search_configs WHERE search_key = ANY(%s)",
+        SQL("delete_search_configs"),
         (inserted_keys,),
     )
 
@@ -66,10 +62,7 @@ def seed_claim(verify_cur):
 
     def _seed(listing_id: str, claimed_by: str, status: str = "running"):
         verify_cur.execute(
-            """INSERT INTO detail_scrape_claims (listing_id, claimed_by, status)
-               VALUES (%s, %s, %s)
-               ON CONFLICT (listing_id) DO UPDATE
-                 SET claimed_by = EXCLUDED.claimed_by, status = EXCLUDED.status""",
+            SQL("insert_detail_scrape_claims"),
             (listing_id, claimed_by, status),
         )
         inserted_listing_ids.append(listing_id)
@@ -77,7 +70,7 @@ def seed_claim(verify_cur):
     yield _seed
 
     verify_cur.execute(
-        "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s::uuid[])",
+        SQL("delete_detail_scrape_claims"),
         (inserted_listing_ids,),
     )
 
@@ -95,18 +88,12 @@ def seed_observation(verify_cur):
 
     def _seed(listing_id: str, last_detail_fetched_at=None):
         verify_cur.execute(
-            """INSERT INTO ops.artifacts_queue
-                   (minio_path, artifact_type, fetched_at, status)
-               VALUES (%s, 'detail_page', now(), 'pending')
-               RETURNING artifact_id""",
+            SQL("insert_ops_artifacts_queue"),
             (f"s3://bronze/test/{uuid.uuid4()}.html.zst",),
         )
         artifact_id = verify_cur.fetchone()["artifact_id"]
         verify_cur.execute(
-            """INSERT INTO ops.price_observations
-                   (listing_id, price, make, model, last_seen_at,
-                    last_artifact_id, last_detail_fetched_at)
-               VALUES (%s::uuid, 30000, 'honda', 'crv', now(), %s, %s)""",
+            SQL("insert_ops_price_observations"),
             (listing_id, artifact_id, last_detail_fetched_at),
         )
         inserted_listing_ids.append(listing_id)
@@ -116,11 +103,11 @@ def seed_observation(verify_cur):
     yield _seed
 
     verify_cur.execute(
-        "DELETE FROM ops.price_observations WHERE listing_id = ANY(%s::uuid[])",
+        SQL("delete_ops_price_observations"),
         (inserted_listing_ids,),
     )
     verify_cur.execute(
-        "DELETE FROM ops.artifacts_queue WHERE artifact_id = ANY(%s)",
+        SQL("delete_ops_artifacts_queue"),
         (inserted_artifact_ids,),
     )
 
@@ -151,7 +138,7 @@ def test_advance_rotation_returns_slot_when_due(api_client, verify_cur, seed_sea
     # Pass min_gap_minutes=0 to bypass the gap guard (which would fire because
     # the parked configs now have last_queued_at = now()).
     verify_cur.execute(
-        "UPDATE search_configs SET last_queued_at = now() WHERE enabled = true"
+        SQL("update_search_configs_last_queued_at")
     )
 
     key = seed_search_config(rotation_slot=2, last_queued_at=None)
@@ -170,7 +157,7 @@ def test_advance_rotation_returns_slot_when_due(api_client, verify_cur, seed_sea
 
     # last_queued_at should be set on the claimed row
     verify_cur.execute(
-        "SELECT last_queued_at FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_last_queued_at_from_search_configs"), (key,)
     )
     row = verify_cur.fetchone()
     assert row["last_queued_at"] is not None
@@ -203,7 +190,7 @@ def test_advance_rotation_updates_last_queued_at_for_all_configs_in_slot(
     # Park all existing eligible configs so our slot-4 pair is chosen.
     # Pass min_gap_minutes=0 to bypass the gap guard.
     verify_cur.execute(
-        "UPDATE search_configs SET last_queued_at = now() WHERE enabled = true"
+        SQL("update_search_configs_last_queued_at")
     )
 
     key_a = seed_search_config(rotation_slot=4, last_queued_at=None)
@@ -216,7 +203,7 @@ def test_advance_rotation_updates_last_queued_at_for_all_configs_in_slot(
 
     for key in (key_a, key_b):
         verify_cur.execute(
-            "SELECT last_queued_at FROM search_configs WHERE search_key = %s", (key,)
+            SQL("select_last_queued_at_from_search_configs"), (key,)
         )
         assert verify_cur.fetchone()["last_queued_at"] is not None
 
@@ -253,7 +240,7 @@ def test_release_claims_deletes_claim_rows(api_client, verify_cur, seed_claim):
     })
 
     verify_cur.execute(
-        "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
+        SQL("select_1_from_detail_scrape_claims"), (listing_id,)
     )
     assert verify_cur.fetchone() is None
 
@@ -299,8 +286,7 @@ def test_release_claims_empty_results(api_client):
 
 def _fetched_at(verify_cur, listing_id):
     verify_cur.execute(
-        "SELECT last_detail_fetched_at FROM ops.price_observations"
-        " WHERE listing_id = %s::uuid",
+        SQL("select_last_detail_fetched_at_from_ops_price_observations"),
         (listing_id,),
     )
     return verify_cur.fetchone()["last_detail_fetched_at"]
@@ -351,7 +337,7 @@ def test_release_does_not_record_fetch_for_skipped(
 
     assert _fetched_at(verify_cur, listing_id) is None
     verify_cur.execute(
-        "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
+        SQL("select_1_from_detail_scrape_claims"), (listing_id,)
     )
     assert verify_cur.fetchone() is None, "the claim is still released"
 
@@ -376,7 +362,7 @@ def test_release_stamps_fetch_and_deletes_claim_together(
     })
 
     verify_cur.execute(
-        "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
+        SQL("select_1_from_detail_scrape_claims"), (listing_id,)
     )
     assert verify_cur.fetchone() is None
     assert _fetched_at(verify_cur, listing_id) is not None
@@ -397,7 +383,7 @@ def test_released_listing_leaves_the_queue_without_any_processing(
     seed_observation(listing_id)
 
     verify_cur.execute(
-        "SELECT 1 FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+        SQL("select_1_from_ops_ops_detail_scrape_queue"),
         (listing_id,),
     )
     assert verify_cur.fetchone() is not None, "unenriched listing should be queued"
@@ -409,7 +395,7 @@ def test_released_listing_leaves_the_queue_without_any_processing(
     })
 
     verify_cur.execute(
-        "SELECT 1 FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+        SQL("select_1_from_ops_ops_detail_scrape_queue"),
         (listing_id,),
     )
     assert verify_cur.fetchone() is None, (

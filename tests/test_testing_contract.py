@@ -18,13 +18,25 @@ directions, so a waiver that no longer describes a violation fails just as
 loudly as an unwaived violation does. That is what "the list only shrinks"
 means when a test says it rather than a document.
 
-Eight rules are mechanical and are asserted here, matching the table in
-`docs/TESTING.md` under *What CI asserts*. Four more are judgement -- whether
+The mechanical rules are asserted here, matching the table in
+`docs/TESTING.md` under *What CI asserts*. **Three** are judgement -- whether
 the thing under test is the thing being mocked, whether a failure branch
-matters to another service, whether an assertion is meaningful, and whether a
-``SELECT`` in a test file paraphrases production or seeds a fixture. Those
+matters to another service, and whether an assertion is meaningful. Those
 belong to ``.claude/skills/testing-contract/``, which flags them and refuses to
 certify them. **Nothing in this file should grow to imply it checks them.**
+
+There were four until Plan 162 Stage X, and the fourth left by being
+mechanised: *whether a ``SELECT`` in a test file paraphrases production or
+seeds a fixture*. It was judgement for an exact reason -- fixture seeds are SQL
+in test files too, and a checker that cannot tell them apart fails on correct
+code -- and that reason stopped applying when no SQL literal was left under
+``tests/`` for the ambiguity to live in. See Rule 5g.
+
+This docstring used to open "Eight rules are mechanical", which was already
+false: the table it points at had eleven rows. Counts in prose drift, which is
+the whole subject of this file, so the mechanical half is no longer stated as a
+number here -- the table is the count, and
+``test_every_asserted_rule_names_a_real_test`` is what keeps it honest.
 
 One further check faces the other way. Every rule above compares the contract
 to the repository; ``test_every_asserted_rule_names_a_real_test`` compares the
@@ -61,6 +73,18 @@ from pathlib import Path
 
 import pytest
 import yaml
+
+from archiver.processors.lake_snapshot_export_cache import INCLUDED_TABLES
+from archiver.processors.lake_source_audit import SOURCE_TABLE_SPECS
+from scripts.seed_lake_snapshot import dbt_source_tables
+from shared.db_vocabularies import DB_VOCABULARIES
+from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
+from tests.plugins.declared_skips import (
+    DECLARED_SKIP_CEILING,
+    DECLARED_SKIPS,
+    GATE,
+)
+from tests.sql_bindings import holds_a_placeholder, renderings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = "docs/TESTING.md"
@@ -321,6 +345,58 @@ def pytest_steps() -> tuple[tuple[str, str, str], ...]:
 # ---------------------------------------------------------------------------
 CI_INVOCATION_WAIVERS = ()
 
+_IGNORED_PATH = re.compile(r"--ignore=(\S+)")
+
+
+def test_every_ignored_path_is_invoked_by_another_step_in_the_same_job():
+    """A suite carved out of one invocation must be run by another one.
+
+    **Rule 1 is directory-grained, and this is the hole that leaves.** It reads
+    ``argument.split()[0]``, so a step invoking ``tests/integration/dbt/``
+    satisfies it for every file in that directory -- including files that step
+    explicitly ``--ignore``s. Delete the separate step that was supposed to run
+    them and everything stays green while the gate silently stops running,
+    which is precisely the failure rule 1 exists to prevent, reappearing one
+    level down.
+
+    It is not hypothetical. Plan 162 Stage S carved two suites out of
+    ``tests/integration/dbt/`` because neither can share a process with the
+    in-process dbt the other suites there use: ``test_branch_coverage.py`` for
+    ``dbt compile`` overwriting ``target/`` under its neighbours, and
+    ``test_constraint_mutation.py`` because ``attached_warehouse()`` opens the
+    warehouse under a configuration DuckDB refuses while dbt-duckdb holds it.
+    Both are load-bearing gates; both were, for one commit, deletable without
+    turning anything red.
+
+    The check is per job rather than per workflow deliberately. These suites
+    need what their job built -- a warehouse, a compiled project -- so a step in
+    some other job would satisfy a global check while running against a
+    warehouse that does not exist.
+    """
+    ignored: dict[tuple[str, str], set[str]] = {}
+    invoked: dict[str, set[str]] = {}
+    for job, step, argument in pytest_steps():
+        parts = argument.split()
+        invoked.setdefault(job, set()).update(
+            part for part in parts if part.startswith("tests")
+        )
+        for path in _IGNORED_PATH.findall(argument):
+            ignored.setdefault((job, step), set()).add(path)
+
+    orphaned = sorted(
+        f"{job}: `{step}` ignores {path}, and no other step in that job runs it"
+        for (job, step), paths in ignored.items()
+        for path in paths
+        if path not in invoked.get(job, set())
+    )
+    assert not orphaned, (
+        "these paths are excluded from one pytest invocation and invoked by no "
+        "other step in the same job, so the tests in them run nowhere -- and "
+        "the rule above still passes, because it reads the directory the "
+        "invocation names rather than the files it actually runs:\n  "
+        + "\n  ".join(orphaned)
+    )
+
 
 @dataclass(frozen=True)
 class Dormant:
@@ -367,7 +443,7 @@ def test_every_integration_suite_is_invoked_by_a_ci_step():
     -- 58 of them -- had never appeared in ``ci.yml`` in its history. Nothing
     failed. No mechanism existed that could notice.
 
-    Plan 162 Stage 1 ran them. 66 of the 73 passed; the 7 that did not were two
+    Plan 162 Stage B ran them. 66 of the 73 passed; the 7 that did not were two
     defects in the tests themselves, both of the kind only running finds -- a
     cleanup naming a table that no migration has ever created, and a fixture
     seeding a timestamp that made the behaviour under test a no-op. Both are
@@ -425,7 +501,7 @@ def test_no_dormant_suite_is_quietly_running():
 # ---------------------------------------------------------------------------
 # Rule 2 -- patching is ``mocker``.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 5 (CAR-49) converted all 34 on 2026-09-01 -- the
+# Empty since Plan 162 Stage F (CAR-49) converted all 34 on 2026-09-01 -- the
 # 17 that imported ``unittest.mock.patch``, the 17 that reached for
 # ``monkeypatch.setattr``, and the two that did both. The venv carve-out this
 # rule's docstring argues against went with them: ``ci.yml`` now installs
@@ -850,7 +926,7 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 # ---------------------------------------------------------------------------
 # Rule 5 -- every .sql file is executed by a Layer 2 test.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 7 (CAR-51). Every production .sql file is
+# Empty since Plan 162 Stage L (CAR-51). Every production .sql file is
 # executed by a Layer 2 test that imports the constant production imports.
 #
 # The last entry came off by deletion rather than by a test, which is allowed
@@ -920,6 +996,89 @@ _SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")
 _NOT_THE_REPOSITORY = (".claude/", ".venv/", ".git/", "target/", "__pycache__/")
 
 
+#: The floor under the production corpus, and the number is deliberately far
+#: below the 161 it actually holds. A floor's job is to catch a corpus that
+#: collapsed -- a broken glob, an exemption that swallowed a service -- not to
+#: be a second count that has to be edited every time a statement lands.
+_SQL_CORPUS_FLOOR = 100
+
+_EXEMPT_ROOT_ROW = re.compile(r"^\| `([^`]+)` \| ", re.MULTILINE)
+
+
+@lru_cache(maxsize=None)
+def declared_sql_exemptions() -> frozenset[str]:
+    """The roots the contract says are not production SQL, from its own table."""
+    section = _read(CONTRACT).split(
+        "**Which directories the production corpus excludes.**"
+    )[1].split("\n\n**")[0]
+    declared = frozenset(_EXEMPT_ROOT_ROW.findall(section))
+    assert declared, (
+        f"{CONTRACT}'s 'Which directories the production corpus excludes' "
+        f"table no longer parses into rows"
+    )
+    return declared
+
+
+def test_every_sql_corpus_exemption_is_declared():
+    """Both directions, and the stale one is the reason this exists.
+
+    ``production_sql_files()`` is the denominator of every coverage number in
+    this contract, and ``_SQL_EXEMPT_ROOTS`` is the only thing deciding what it
+    counts. Widening that tuple is the one edit that makes a gate read 100% by
+    counting less: adding ``dashboard/`` drops 24 files and the execution gate
+    still reports every file it counted as executing. Nothing noticed that
+    until Plan 162 Stage X, which is late for a rule the whole stage's headline
+    number rests on.
+
+    A mechanical rule cannot judge whether an exemption is *legitimate* -- that
+    is review's job. What it can do is make the edit visible: an exemption now
+    costs a row in the contract, and a row costs a diff someone reads.
+    """
+    declared = declared_sql_exemptions()
+    exempt = set(_SQL_EXEMPT_ROOTS)
+
+    assert not exempt - declared, (
+        f"these roots are exempt from production_sql_files() but not declared "
+        f"in {CONTRACT}'s 'Which directories the production corpus excludes': "
+        f"{sorted(exempt - declared)}. Every exemption shrinks the denominator "
+        f"of every coverage number here, so it owes a row saying why."
+    )
+    assert not declared - exempt, (
+        f"{CONTRACT} declares these roots excluded from the production SQL "
+        f"corpus, but _SQL_EXEMPT_ROOTS does not exempt them: "
+        f"{sorted(declared - exempt)}. The table has gone stale, which makes it "
+        f"a description of a rule nobody is running."
+    )
+
+    empty = sorted(
+        root for root in exempt
+        if not any((REPO_ROOT / root.rstrip("/")).rglob("*.sql"))
+    )
+    assert not empty, (
+        f"these roots are exempt but hold no .sql file: {empty}. An exemption "
+        f"for a directory that no longer has SQL in it is a hole standing open "
+        f"for whatever lands there next."
+    )
+
+
+def test_the_production_sql_corpus_is_not_empty():
+    """A set difference over an empty corpus is empty, and empty passes.
+
+    ``test_there_is_something_to_check`` puts exactly this guard on the *test*
+    corpus, for exactly this reason, and the production side never had one --
+    so a broken glob or an exemption that swallowed a service would have the
+    execution gate print ``0 of 0`` and exit green. The floor is low on
+    purpose: it catches a collapse, not a statement.
+    """
+    corpus = production_sql_files()
+    assert len(corpus) > _SQL_CORPUS_FLOOR, (
+        f"only {len(corpus)} production .sql files found, below the floor of "
+        f"{_SQL_CORPUS_FLOOR}. The tree moved, the glob broke, or an entry in "
+        f"_SQL_EXEMPT_ROOTS is swallowing a service -- and every coverage "
+        f"number in this contract is a fraction of this number."
+    )
+
+
 @lru_cache(maxsize=None)
 def production_sql_files() -> tuple[str, ...]:
     return tuple(
@@ -929,6 +1088,287 @@ def production_sql_files() -> tuple[str, ...]:
             for path in REPO_ROOT.rglob("*.sql")
         )
         if not relative.startswith(_SQL_EXEMPT_ROOTS + _NOT_THE_REPOSITORY)
+    )
+
+
+#: Every production ``.sql`` file, one line each, generated by calling
+#: :func:`production_sql_files` and never hand-typed. 163 paths on
+#: 2026-09-06.
+#:
+#: ``_SQL_CORPUS_FLOOR`` is not this. The floor is deliberately loose and
+#: catches a corpus that *collapsed*; it says nothing when one file leaves.
+#: This constant is the other half: it names the population, so the diff a
+#: reviewer reads shows exactly which statement went away.
+PRODUCTION_SQL_MANIFEST: tuple[str, ...] = (
+    "airflow/sql/delete_stale_emails.sql",
+    "airflow/sql/deploy_intent_gate.sql",
+    "airflow/sql/record_gate_observation.sql",
+    "archiver/sql/delete_cleanup_candidates.sql",
+    "archiver/sql/delete_silver_observations_up_to_id.sql",
+    "archiver/sql/delete_staging_rows_up_to_pk.sql",
+    "archiver/sql/get_queue_cleanup_candidates.sql",
+    "archiver/sql/lake_snapshot/select_artifact_ids.sql",
+    "archiver/sql/lake_snapshot/select_filtered_table_rows.sql",
+    "archiver/sql/lake_snapshot/select_listing_ids_for_vins.sql",
+    "archiver/sql/lake_snapshot/select_previous_listing_ids.sql",
+    "archiver/sql/lake_snapshot/select_row_keys_for_candidates.sql",
+    "archiver/sql/lake_snapshot/select_seed_vins_by_hash.sql",
+    "archiver/sql/lake_snapshot/select_source_table_stats.sql",
+    "archiver/sql/lake_snapshot/select_vins_for_listing_ids.sql",
+    "archiver/sql/lake_snapshot/select_vins_ranked_within_make_model.sql",
+    "archiver/sql/lake_snapshot/wrap_aggregate_query.sql",
+    "archiver/sql/lake_snapshot/wrap_candidate_query.sql",
+    "archiver/sql/lake_snapshot_selectors/active_to_unlisted.sql",
+    "archiver/sql/lake_snapshot_selectors/benchmark_dense_make_model.sql",
+    "archiver/sql/lake_snapshot_selectors/benchmark_sparse_make_model.sql",
+    "archiver/sql/lake_snapshot_selectors/carousel_only_or_low_priority.sql",
+    "archiver/sql/lake_snapshot_selectors/cooldown_events.sql",
+    "archiver/sql/lake_snapshot_selectors/detail_beats_srp.sql",
+    "archiver/sql/lake_snapshot_selectors/fresh_recent_listing.sql",
+    "archiver/sql/lake_snapshot_selectors/invalid_or_null_vin.sql",
+    "archiver/sql/lake_snapshot_selectors/no_price_history.sql",
+    "archiver/sql/lake_snapshot_selectors/price_changed_30d_only.sql",
+    "archiver/sql/lake_snapshot_selectors/price_changed_7d.sql",
+    "archiver/sql/lake_snapshot_selectors/price_drop.sql",
+    "archiver/sql/lake_snapshot_selectors/price_increase.sql",
+    "archiver/sql/lake_snapshot_selectors/relisted_vin.sql",
+    "archiver/sql/lake_snapshot_selectors/srp_fallback.sql",
+    "archiver/sql/lake_snapshot_selectors/stable_state_run.sql",
+    "archiver/sql/lake_snapshot_selectors/stale_listing.sql",
+    "archiver/sql/lake_snapshot_selectors/state_change_run.sql",
+    "archiver/sql/select_max_silver_observation_id.sql",
+    "archiver/sql/select_silver_observations_up_to_id.sql",
+    "archiver/sql/select_staging_max_pk.sql",
+    "archiver/sql/select_staging_rows_up_to_pk.sql",
+    "dashboard/sql/data_health_batch_outcomes.sql",
+    "dashboard/sql/data_health_block_rate.sql",
+    "dashboard/sql/data_health_cooldown_cohorts.sql",
+    "dashboard/sql/data_health_inventory_coverage.sql",
+    "dashboard/sql/data_health_price_freshness.sql",
+    "dashboard/sql/data_health_scrape_volume.sql",
+    "dashboard/sql/deals_days_on_market.sql",
+    "dashboard/sql/deals_makes.sql",
+    "dashboard/sql/deals_price_drops.sql",
+    "dashboard/sql/deals_price_vs_msrp.sql",
+    "dashboard/sql/deals_table.sql",
+    "dashboard/sql/deals_tier_distribution.sql",
+    "dashboard/sql/inventory_active_count.sql",
+    "dashboard/sql/inventory_by_make_model.sql",
+    "dashboard/sql/inventory_new_24h.sql",
+    "dashboard/sql/inventory_new_30d.sql",
+    "dashboard/sql/inventory_new_7d.sql",
+    "dashboard/sql/inventory_new_over_time.sql",
+    "dashboard/sql/inventory_top_dealers.sql",
+    "dashboard/sql/inventory_unlisted_over_time.sql",
+    "dashboard/sql/market_trends_days_on_market.sql",
+    "dashboard/sql/market_trends_national_supply.sql",
+    "dashboard/sql/market_trends_price_distribution.sql",
+    "dashboard/sql/mart_freshness.sql",
+    "dbt_runner/sql/analytics_metrics_snapshot.sql",
+    "dbt_runner/sql/public_stats_snapshot.sql",
+    "ops/sql/acquire_coordination_lock.sql",
+    "ops/sql/advance_coordination_state.sql",
+    "ops/sql/approve_access_request.sql",
+    "ops/sql/authorize_coordination_state.sql",
+    "ops/sql/cancel_coordination_state.sql",
+    "ops/sql/claim_detail_scrape_batch.sql",
+    "ops/sql/clear_deploy_intent.sql",
+    "ops/sql/complete_coordination_state.sql",
+    "ops/sql/count_blocked_cooldown_listings.sql",
+    "ops/sql/delete_authorized_user.sql",
+    "ops/sql/delete_detail_scrape_claims.sql",
+    "ops/sql/deny_access_request.sql",
+    "ops/sql/evict_delisted_cooldowns.sql",
+    "ops/sql/expire_orphan_detail_claims.sql",
+    "ops/sql/insert_access_request.sql",
+    "ops/sql/insert_blocked_cooldown_events_batch.sql",
+    "ops/sql/insert_completion_receipt.sql",
+    "ops/sql/insert_coordination_release_evidence.sql",
+    "ops/sql/insert_coordination_state_event.sql",
+    "ops/sql/insert_search_config.sql",
+    "ops/sql/mark_rotation_slot_queued.sql",
+    "ops/sql/mark_search_config_queued.sql",
+    "ops/sql/record_detail_fetches.sql",
+    "ops/sql/release_coordination_state.sql",
+    "ops/sql/release_deploy_coordination.sql",
+    "ops/sql/request_coordination_state.sql",
+    "ops/sql/request_deploy_coordination.sql",
+    "ops/sql/retire_search_config.sql",
+    "ops/sql/select_access_requests.sql",
+    "ops/sql/select_airflow_gate_observations.sql",
+    "ops/sql/select_airflow_task_instances.sql",
+    "ops/sql/select_authorized_users.sql",
+    "ops/sql/select_completion_receipt.sql",
+    "ops/sql/select_coordination_state.sql",
+    "ops/sql/select_coordination_state_actor.sql",
+    "ops/sql/select_coordination_state_for_deploy.sql",
+    "ops/sql/select_coordination_state_kind.sql",
+    "ops/sql/select_coordination_state_metrics.sql",
+    "ops/sql/select_deploy_intent_status.sql",
+    "ops/sql/select_last_queued_at.sql",
+    "ops/sql/select_legacy_search_config.sql",
+    "ops/sql/select_live_cooldown_listings.sql",
+    "ops/sql/select_next_rotation_slot.sql",
+    "ops/sql/select_pending_cleared_listings.sql",
+    "ops/sql/select_pending_request_details.sql",
+    "ops/sql/select_pending_request_for_email.sql",
+    "ops/sql/select_pending_request_id_for_email.sql",
+    "ops/sql/select_pending_request_notification_email.sql",
+    "ops/sql/select_processing_artifacts_backlog.sql",
+    "ops/sql/select_release_evidence.sql",
+    "ops/sql/select_rotation_slot_configs.sql",
+    "ops/sql/select_running_detail_claims.sql",
+    "ops/sql/select_search_config_by_key.sql",
+    "ops/sql/select_search_configs.sql",
+    "ops/sql/select_stuck_processing_artifacts.sql",
+    "ops/sql/select_user_role.sql",
+    "ops/sql/set_deploy_intent.sql",
+    "ops/sql/toggle_search_config_enabled.sql",
+    "ops/sql/update_search_config.sql",
+    "ops/sql/update_user_role.sql",
+    "ops/sql/upsert_authorized_user.sql",
+    "processing/sql/batch_lookup_vin_to_listing.sql",
+    "processing/sql/claim_artifact.sql",
+    "processing/sql/claim_artifacts.sql",
+    "processing/sql/clear_blocked_cooldown.sql",
+    "processing/sql/delete_price_observation.sql",
+    "processing/sql/delete_price_observation_by_vin.sql",
+    "processing/sql/delete_price_observations_for_missing_listings.sql",
+    "processing/sql/get_tracked_models.sql",
+    "processing/sql/insert_detail_claim_event.sql",
+    "processing/sql/insert_price_observation_event.sql",
+    "processing/sql/insert_silver_observations.sql",
+    "processing/sql/insert_tracked_model_event.sql",
+    "processing/sql/insert_vin_to_listing_event.sql",
+    "processing/sql/lookup_vin_collision.sql",
+    "processing/sql/release_detail_claims.sql",
+    "processing/sql/upsert_price_observation.sql",
+    "processing/sql/upsert_tracked_model.sql",
+    "processing/sql/upsert_vin_to_listing.sql",
+    "scraper/sql/enqueue_detail_artifact.sql",
+    "scraper/sql/enqueue_results_artifact.sql",
+    "scraper/sql/get_blocked_cooldown_attempts.sql",
+    "scraper/sql/insert_blocked_cooldown_event.sql",
+    "scraper/sql/insert_detail_artifact_event.sql",
+    "scraper/sql/insert_results_artifact_event.sql",
+    "scraper/sql/upsert_blocked_cooldown.sql",
+    "scripts/sql/insert_fixture_tracked_models.sql",
+    "scripts/sql/select_available_capture_months.sql",
+    "scripts/sql/select_corpus_sample.sql",
+    "scripts/sql/select_enabled_search_keys.sql",
+    "shared/sql/insert_artifact_event.sql",
+    "shared/sql/insert_blocked_cooldown_cleared_event.sql",
+    "shared/sql/insert_compression_dictionary.sql",
+    "shared/sql/mark_artifact_status.sql",
+    "shared/sql/replace_postgres_snapshot_table.sql",
+    "shared/sql/select_compression_dictionary.sql",
+    "shared/sql/select_compression_dictionary_registration.sql",
+    "shared/sql/select_deploy_intent_pause.sql",
+    "shared/sql/select_postgres_snapshot_table.sql",
+)
+
+
+#: The ledger of departures, and it is empty on the day it is written.
+#:
+#: One entry per ``.sql`` file that left ``production_sql_files()`` because its
+#: logic moved into a dbt model, paired with the model that absorbed it. That
+#: pairing is the whole rule: ``dbt/`` is a named exemption from the Layer 2
+#: census, so a statement moving from ``processing/sql/`` into a mart leaves a
+#: counted surface for an uncounted one and every coverage fraction in this
+#: file improves for a change that removed no risk. Naming the model does not
+#: make the logic covered -- Layer 3 owes that -- but it makes the trade
+#: legible, which is the difference between a migration and a silent shrink.
+#:
+#: **This is deliberately not in :data:`ALL_WAIVERS`, and the omission is a
+#: decision rather than an oversight.** A waiver is a draining queue:
+#: ``test_no_waiver_outlives_the_plan_that_owns_it`` fails any entry whose
+#: owner plan has archived, on the argument that nobody is left to fix it.
+#: There is nothing here to fix. An entry is permanent record of a move that
+#: already happened, and filing it as a waiver would turn the entire ledger red
+#: the day Plan 162 archives -- punishing the repository for having a history.
+SQL_ABSORBED_BY_DBT: tuple[tuple[str, str], ...] = ()
+
+
+def _is_a_dbt_model(model: str) -> bool:
+    return any((REPO_ROOT / "dbt" / "models").rglob(f"{model}.sql"))
+
+
+def test_the_sql_corpus_shrinks_only_by_naming_the_model_that_absorbed_it():
+    """G16's own rule, and the failure it prevents is a number improving.
+
+    Every coverage figure this file reports about SQL is a fraction whose
+    denominator is ``production_sql_files()``. ``_SQL_CORPUS_FLOOR`` guards the
+    denominator against collapsing and nothing guarded it against *eroding*:
+    delete one ``.sql`` file and the corpus is 162, every rule that iterates it
+    passes, and no assertion anywhere in this suite is worse off. That is the
+    same shape as Stage F's substring bug -- the list shrinking for free -- and
+    it is worse here, because ``dbt/`` is an exemption. Logic that moves out of
+    ``processing/sql/`` and into a mart does not stop running; it stops being
+    counted, and the census reads as if a statement were retired.
+
+    So the manifest above is the population, stated once, and this check reads
+    it against the live glob in both directions. A departure is legitimate only
+    when the change says which dbt model absorbed the statement, and the model
+    has to exist -- an entry naming ``mart_something_planned`` records an
+    intention, not an absorption, and would waive exactly the case the rule is
+    for.
+
+    **There is no ``--update`` flag and no regeneration helper, on purpose.** A
+    manifest that rewrites itself from the tree asserts that the tree equals
+    itself; the reviewable diff *is* the mechanism, and a one-command refresh
+    reduces it to a rubber stamp nobody reads. The messages below print the
+    exact lines to add or delete so the edit is mechanical, but a person makes
+    it, and that person is the check.
+    """
+    on_disk = set(production_sql_files())
+    manifest = set(PRODUCTION_SQL_MANIFEST)
+    absorbed = dict(SQL_ABSORBED_BY_DBT)
+
+    still_here = sorted(path for path, _ in SQL_ABSORBED_BY_DBT if path in on_disk)
+    assert not still_here, (
+        "these SQL_ABSORBED_BY_DBT entries claim a departure that did not "
+        "happen -- the file is still on disk:\n  " + "\n  ".join(still_here) +
+        "\n\nDelete the entry and put the path back in "
+        "PRODUCTION_SQL_MANIFEST, or the ledger is describing a repository "
+        "that does not exist."
+    )
+
+    unlisted = sorted(on_disk - manifest)
+    assert not unlisted, (
+        "these production .sql files are on disk and not in "
+        "PRODUCTION_SQL_MANIFEST, so nothing would notice if they left again. "
+        "Add these lines to the constant, in sorted order:\n"
+        + "\n".join(f'    "{path}",' for path in unlisted)
+    )
+
+    departed = sorted(manifest - on_disk)
+    unexplained = [path for path in departed if path not in absorbed]
+    assert not unexplained, (
+        "these .sql files left production_sql_files() and no entry says where "
+        "their logic went:\n  " + "\n  ".join(unexplained) + "\n\n"
+        "The corpus is the denominator of every SQL coverage number here, and "
+        "dbt/ is exempt from the Layer 2 census -- so a statement that moved "
+        "into a model has left a counted surface for an uncounted one, and the "
+        "count dropped for something that is not a repair. Name the dbt model "
+        "that absorbed each one: delete its line from PRODUCTION_SQL_MANIFEST "
+        "and add to SQL_ABSORBED_BY_DBT:\n"
+        + "\n".join(f'    ("{path}", "<the dbt model>"),' for path in unexplained)
+        + "\n\nIf nothing absorbed it -- the statement was dead, or it moved "
+        "somewhere that is still counted -- that is a different change and this "
+        "ledger is the wrong place for it."
+    )
+
+    imagined = sorted(
+        f"{path} -> {absorbed[path]}"
+        for path in departed
+        if not _is_a_dbt_model(absorbed[path])
+    )
+    assert not imagined, (
+        "these SQL_ABSORBED_BY_DBT entries name a model that is not a .sql "
+        "file under dbt/models/:\n  " + "\n  ".join(imagined) + "\n\n"
+        "A model that does not exist absorbed nothing. Either the name is a "
+        "typo, or the entry records an intention and the statement is simply "
+        "gone."
     )
 
 
@@ -1053,6 +1493,120 @@ def production_python_files() -> list[Path]:
                 continue
             seen[relative] = path
     return [seen[key] for key in sorted(seen)]
+
+
+# ---------------------------------------------------------------------------
+# Rule 5d -- a Layer 2 test asserts something about the result.
+# ---------------------------------------------------------------------------
+LAYER_2_ASSERTION_WAIVERS: tuple[Waiver, ...] = ()
+
+# Names that carry an assertion without being an ``assert`` statement. Both are
+# deliberate weakenings and both are narrow: ``pytest.raises`` asserts control
+# flow, and a helper called ``_assert_columns`` has moved the assertion rather
+# than dropped it. Widening this further -- crediting any helper call -- would
+# make the rule unfalsifiable, because every test calls something.
+_ASSERTING_CONTEXTS = frozenset({"raises", "warns", "deprecated_call"})
+
+
+def _asserts_on_its_result(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assert):
+            return True
+        if isinstance(child, ast.withitem):
+            call = child.context_expr
+            if isinstance(call, ast.Call):
+                name = getattr(call.func, "attr", getattr(call.func, "id", ""))
+                if name in _ASSERTING_CONTEXTS:
+                    return True
+        if isinstance(child, ast.Call):
+            name = getattr(child.func, "attr", getattr(child.func, "id", ""))
+            if name.lstrip("_").startswith("assert"):
+                return True
+    return False
+
+
+def test_no_layer_2_test_executes_a_statement_without_asserting_on_the_result():
+    """Layer 2 has two clauses and only the first was ever mechanised.
+
+    The contract says a statement must execute against a real engine **and
+    return the columns the caller expects**. ``test_every_production_sql_file_
+    is_touched_by_a_layer_2_test`` is the first clause; a test that executes a
+    statement and discards the result satisfies it while checking nothing, and
+    nothing could tell the difference.
+
+    That is not hypothetical. Until Plan 162 Stage M,
+    ``tests/integration/sql/test_dashboard_queries.py`` was 25 tests and zero
+    assertions -- the only Layer 2 suite with none -- and the rule this
+    docstring belongs to found four more hiding in suites whose *other* tests
+    assert: one each in the airflow-DAG and archiver suites and two in
+    ``test_ops_queries.py``. A per-suite eye could not have seen those, which
+    is the whole argument for a derived rule over a read-through.
+
+    **This checks that an assertion exists, not that it is a good one.**
+    Whether an assertion is *meaningful* is one of the four judgements
+    ``docs/TESTING.md`` says are not mechanically checkable, and this rule must
+    not be read as covering it -- ``assert True`` passes here. The skill owns
+    that half and refuses to certify it.
+
+    **Layer 2 only, and the scope is a decision.** The same shape exists
+    elsewhere in ``tests/``, but most of it is not the same defect: a Layer 1
+    test whose whole point is ``pytest.raises`` asserts perfectly well, and a
+    sweep that reported those would be a number nobody chose. Layer 2 is where
+    executing *is* the test, so executing and discarding is the failure. The
+    layer comes from :func:`_layer_of`, which reads the contract's own
+    headings, so a directory that becomes Layer 2 is covered without editing
+    this file.
+    """
+    bare = set()
+    for directory in _test_directories():
+        if _layer_of(directory) != 2:
+            continue
+        for path in sorted(directory.glob("test_*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if not node.name.startswith("test_"):
+                    continue
+                if not _asserts_on_its_result(node):
+                    bare.add(f"{_relative(path)}::{node.name}")
+
+    _assert_exactly(
+        bare,
+        LAYER_2_ASSERTION_WAIVERS,
+        "A Layer 2 test that executes a statement and asserts nothing about "
+        "the result is not a Layer 2 test. The contract's second clause is "
+        "that a statement returns the columns the caller expects; assert them, "
+        "or assert the rows when the fixture seeds any. "
+        "tests/integration/sql/test_dashboard_queries.py is the pattern.",
+    )
+
+
+def test_the_assertionless_rule_sees_a_test_that_only_executes():
+    """The rule's own worked example, so it cannot pass by finding nothing.
+
+    An empty result set is what this rule reports on a healthy tree, which is
+    exactly the state in which a broken checker and a working one look
+    identical. These four shapes are the ones that decide whether it works.
+    """
+    executes_only = ast.parse(
+        "def test_x(cur):\n    cur.execute(SQL)\n    cur.fetchall()\n"
+    ).body[0]
+    asserts = ast.parse(
+        "def test_x(cur):\n    cur.execute(SQL)\n    assert cur.rowcount == 0\n"
+    ).body[0]
+    raises = ast.parse(
+        "def test_x(cur):\n"
+        "    with pytest.raises(ProgrammingError):\n        cur.execute(SQL)\n"
+    ).body[0]
+    delegates = ast.parse(
+        "def test_x(cur):\n    _assert_columns(cur, ['a'])\n"
+    ).body[0]
+
+    assert not _asserts_on_its_result(executes_only)
+    assert _asserts_on_its_result(asserts)
+    assert _asserts_on_its_result(raises)
+    assert _asserts_on_its_result(delegates)
 
 
 # ---------------------------------------------------------------------------
@@ -1183,41 +1737,29 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G5", owner=162)
     for subject in (
         "scripts/audit_adaptive_refresh_features.py:123",
-        "scripts/audit_adaptive_refresh_features.py:147",
+        "scripts/audit_adaptive_refresh_features.py:148",
         "scripts/audit_adaptive_refresh_features.py:155",
-        "scripts/audit_adaptive_refresh_features.py:163",
-        "scripts/audit_adaptive_refresh_features.py:173",
+        "scripts/audit_adaptive_refresh_features.py:164",
+        "scripts/audit_adaptive_refresh_features.py:174",
         "scripts/compare_gate_a_parity.py:223",
         "scripts/compare_gate_b_parity.py:595",
-        "scripts/estimate_dictionary_savings.py:164",
-        "scripts/export_volatility_features_to_iceberg.py:123",
+        "scripts/export_volatility_features_to_iceberg.py:124",
         "scripts/export_volatility_features_to_iceberg.py:134",
-        "scripts/export_volatility_features_to_iceberg.py:155",
-        "scripts/preflight_local_lakehouse_snapshot.py:301",
+        "scripts/export_volatility_features_to_iceberg.py:156",
+        "scripts/preflight_local_lakehouse_snapshot.py:302",
         "scripts/run_dbt_spark.py:158",
-        "scripts/spike_iceberg_lakehouse.py:133",
-        "scripts/verify_dialect_datediff.py:128",
+        "scripts/spike_iceberg_lakehouse.py:134",
     )
 )
 
-# Every name in this stack that takes a SQL string, whether or not it is used
-# here today. Scoping the set to what the repository currently calls is the
-# mistake this plan keeps finding in its own instruments: the census undercounted
-# G14 and it undercounted G5, both because the check was fitted to the code in
-# front of it. ``executemany`` matches nothing on 2026-09-01 and is here anyway,
-# because the cost of a name that never fires is zero and the cost of a missing
-# one is a gap nothing reports. ``sql`` covers ``spark.sql(...)``, which is not
-# called yet either -- see the docstring below on what does and does not survive
-# PySpark.
-_SQL_CALL_NAMES = frozenset({
-    # DB-API and psycopg2
-    "execute", "executemany", "executescript", "execute_batch", "execute_values",
-    "mogrify", "copy_expert",
-    # DuckDB and Spark
-    "sql", "query", "from_query",
-    # pandas and SQLAlchemy
-    "read_sql", "read_sql_query", "read_sql_table", "text",
-})
+# ``_SQL_CALL_NAMES`` lived here until Plan 162 Stage N (2026-09-02) and is
+# deliberately not replaced. It was an inventory of database-client method
+# names -- execute, executemany, spark.sql, read_sql and their kin -- and the
+# rule that read it could be escaped by calling anything the list had not
+# heard of, including a helper defined three lines up in the same file.
+# Rule 5f below asks what the literal *is* instead, so there is no list to
+# keep current. See its comment block for the three sites that proved the
+# difference.
 
 # The verb is what makes a generous name set safe. ``df.query("price > 100")``
 # and ``resp.text`` reach the walk below and are rejected on content, so adding
@@ -1260,131 +1802,6 @@ _DDL_VERBS = frozenset({"CREATE", "DROP", "ALTER", "TRUNCATE"})
 _EXEMPT_VERBS = _SESSION_SETUP_VERBS | _DDL_VERBS
 
 
-def _leading_sql_literal(node: ast.AST) -> str | None:
-    """The literal text at the head of *node*, through the shapes that hide one.
-
-    A rule that only reads a bare ``ast.Constant`` makes concatenation the
-    escape hatch: ``"SELECT ..." + where`` and ``f"SELECT ... {col}"`` are the
-    two ways inline SQL is actually written once it needs a variable, and they
-    are the ones worth catching most.
-    """
-    if isinstance(node, ast.Constant):
-        return node.value if isinstance(node.value, str) else None
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _leading_sql_literal(node.left)
-    if isinstance(node, ast.JoinedStr) and node.values:
-        return _leading_sql_literal(node.values[0])
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        if node.func.attr in {"format", "dedent", "strip", "lstrip", "join"}:
-            return _leading_sql_literal(node.func.value)
-    return None
-
-
-def _inline_sql_sites(source: str, filename: str = "<canary>") -> set[int]:
-    """Line numbers where a SQL-taking call is handed a literal statement.
-
-    **Every argument is read, not the first.** ``execute_values(cur, sql, rows)``
-    puts its statement second, and a first-argument rule is blind to it by
-    construction -- which is not hypothetical: it is
-    ``ops/routers/maintenance.py:152``, a literal INSERT into
-    ``staging.blocked_cooldown_events`` that the census never named because the
-    gap list describes the shape as "``.execute(`` with a literal first
-    argument".
-    """
-    tree = ast.parse(source, filename=filename)
-    found = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if isinstance(node.func, ast.Attribute):
-            name = node.func.attr
-        elif isinstance(node.func, ast.Name):
-            name = node.func.id
-        else:
-            continue
-        if name not in _SQL_CALL_NAMES:
-            continue
-        arguments = list(node.args) + [keyword.value for keyword in node.keywords]
-        for argument in arguments:
-            text = _leading_sql_literal(argument)
-            if text is None:
-                continue
-            match = _SQL_VERB.match(text)
-            if match and match.group(1).upper() not in _EXEMPT_VERBS:
-                found.add(node.lineno)
-                break
-    return found
-
-
-def test_the_inline_sql_rule_sees_the_shapes_that_hide_a_statement():
-    """The rule below, tested on the shapes it exists to catch.
-
-    A structural check nothing exercises reports a clean repository whether or
-    not it still matches anything, which is the failure this whole file exists
-    to prevent -- so the detector is separated from the sweep and canaried here.
-    """
-    caught = _inline_sql_sites(
-        'cur.execute("SELECT 1")\n'                              # 1  bare literal
-        'cur.execute("SELECT * FROM t WHERE a = " + a)\n'        # 2  concatenated
-        'cur.execute(f"SELECT {col} FROM t")\n'                  # 3  f-string
-        'execute_values(cur, "INSERT INTO t VALUES %s", rows)\n'  # 4  second argument
-        'pd.read_sql(sql="SELECT 1", con=c)\n'                   # 5  keyword argument
-        'spark.sql("MERGE INTO t USING s ON t.id = s.id")\n'     # 6  Spark, no caller yet
-    )
-    assert caught == {1, 2, 3, 4, 5, 6}, (
-        f"the inline-SQL rule no longer sees every shape: caught {sorted(caught)}"
-    )
-
-    clean = _inline_sql_sites(
-        'cur.execute(CLAIM_ARTIFACTS, (limit,))\n'      # a loaded constant is the fix
-        'df.query("price > 100")\n'                     # not SQL: no leading verb
-        'con.execute("INSTALL httpfs")\n'               # session setup, exempt
-        'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
-    )
-    assert not clean, (
-        f"the inline-SQL rule fires on calls that are already correct: {sorted(clean)}"
-    )
-
-
-def test_no_production_module_holds_sql_at_its_execute_call_site():
-    """G5, which the census recorded in prose and nothing has ever checked.
-
-    Inline SQL is not merely untidy. It is what *manufactures* the paraphrase
-    the contract calls worse than no test: a statement written at its call site
-    cannot be imported, so the only way to give it a test is to retype it, and
-    a retyped statement passes forever while the original rots. Moving SQL into
-    a ``.sql`` file is not the goal -- it is what makes the retyping
-    unnecessary, and it is why this rule and
-    :func:`test_every_production_sql_file_is_touched_by_a_layer_2_test` are one
-    stage rather than two.
-
-    **What this does not survive is PySpark, and the residue is three named
-    things rather than an open question.** ``spark.sql("SELECT ...")`` is caught
-    already -- ``sql`` is in the name set and the verb guard does not care about
-    dialect. What is not caught: SQL *fragments* (``df.selectExpr("price >
-    msrp")``, ``F.expr(...)``, ``df.filter("year > 2020")``) start with no verb,
-    and the guard that makes a generous name set safe is exactly what makes it
-    blind to them; the DataFrame API is not text at all, so it can drift from a
-    schema with nothing textual to see; and a ``.sql`` file only earns its
-    keep if some engine executes it, which for Spark means the Lakekeeper and
-    PySpark services ``tests/integration/lakehouse`` is
-    :data:`DORMANT_SUITES`-declared against until Plan 125 Gate C returns them.
-    Static reading stops at the first of those three. The other two are caught
-    by executing them in CI or not at all.
-    """
-    found = {
-        f"{_relative(path)}:{line}"
-        for path in production_python_files()
-        for line in _inline_sql_sites(path.read_text(encoding="utf-8"), str(path))
-    }
-    _assert_exactly(
-        found,
-        INLINE_SQL_WAIVERS,
-        "these production modules hold SQL at the call site, where no test can "
-        "import it and only a paraphrase can cover it:",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Rule 5c -- no production module keeps a SQL statement in a Python literal.
 # ---------------------------------------------------------------------------
@@ -1392,132 +1809,1093 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G15", owner=162)
     for subject in (
         "archiver/processors/delete_packed_source_html.py:304",
-        "archiver/processors/lake_snapshot_cohort.py:109",
-        "archiver/processors/lake_snapshot_cohort.py:156",
-        "archiver/processors/lake_snapshot_cohort.py:354",
-        "archiver/processors/lake_snapshot_cohort.py:502",
-        "archiver/processors/lake_snapshot_cohort.py:535",
-        "archiver/processors/lake_snapshot_cohort.py:560",
-        "archiver/processors/lake_snapshot_cohort.py:594",
-        "archiver/processors/lake_snapshot_cohort.py:627",
-        "archiver/processors/lake_snapshot_export.py:130",
-        "archiver/processors/lake_snapshot_selectors.py:129",
-        "archiver/processors/lake_source_audit.py:113",
         "archiver/processors/pack_bronze_html.py:440",
-        "ops/routers/maintenance.py:36",
-        "processing/writers/silver_writer.py:38",
         "scripts/audit_adaptive_refresh_features.py:128",
-        "scripts/audit_adaptive_refresh_features.py:135",
-        "scripts/estimate_dictionary_savings.py:206",
-        "shared/deploy_intent.py:25",
+        "scripts/audit_adaptive_refresh_features.py:136",
+        "scripts/compare_gate_b_parity.py:510",
+        "scripts/compare_gate_b_parity.py:527",
     )
 )
 
 
-def _sql_literal_bindings(source: str, filename: str = "<canary>") -> set[int]:
-    """Line numbers where a SQL statement is bound to a Python name.
+# ---------------------------------------------------------------------------
+# Rule 5f -- no production module holds a SQL statement at all.
+#
+# **This is Rules 5b and 5c, unified, and the unification is the point.** Both
+# were keyed on the *shape* holding the statement -- 5b on a call site, 5c on
+# an assignment or a return -- and a rule keyed on shape is an enumeration
+# wearing a different coat. Stage 7 wrote the lesson down ("a denominator that
+# is listed, or scoped to what exists when it is written, will be wrong") and
+# then built 5b on ``_SQL_CALL_NAMES``, an inventory of client libraries.
+#
+# Three sites proved it, found 2026-09-02 by asking the question this rule asks
+# instead:
+#
+# * ``ops/coordination_drain.py`` passes a production SELECT to
+#   ``_database_count(...)`` -- a *project-local helper*. No inventory of
+#   database libraries can ever contain your own function names, so 5b could
+#   not have found this at any list length.
+# * ``scripts/compare_gate_b_parity.py`` holds two statements as **dict values**
+#   in ``TIE_QUERIES``. Not a call site and not an assignment: a third shape
+#   neither rule had.
+#
+# So this asks only what the literal *is*, never where it sits. The set of ways
+# to invoke SQL in Python is open and grows with every library and every helper
+# somebody writes; the set of ways to write a string literal is closed. Keying
+# on the closed one is the only version that cannot go stale.
+#
+# **And "not in Python" is exactly "in a .sql file", which is why one rule
+# replaces two.** There is nowhere else for a statement to live. Paired with
+# Rule 5 -- every .sql file is executed by a Layer 2 test -- the loop closes
+# with no judgement in it: a statement cannot be in Python, so it is in a file,
+# and the file is executed in CI.
+#
+# The detection heuristic is not novel and deliberately so. ``flake8-sql``
+# independently arrived at the same one -- a string is SQL if it holds
+# "select from", "insert into values", "update set" or "delete from" *in
+# order*. What no linter ships is this rule: ``flake8-sql`` and ``sql_str_lint``
+# style the SQL they find, and ruff's S608 flags only *interpolated* SQL, so it
+# passes clean on the correctly-parameterised literal Stage 9 moved out of
+# ``sensors.py``. Measured 2026-09-02.
+# ---------------------------------------------------------------------------
 
-    Rule 5b catches SQL *at* an ``.execute()`` call site, where it cannot be
-    imported at all. This catches the shape one step back: assigned to a name
-    first, then executed. That statement **is** importable, so the paraphrase
-    hazard is gone -- which is exactly why it is easy to miss, and why it
-    needs its own rule rather than a wider version of 5b's.
+# A clause keyword, required after the verb. This is SQL grammar, not an
+# inventory: new database libraries appear every year, new SQL clauses do not.
+# It is what separates a statement from the word -- `{"select": [...]}` in
+# `dbt_build.py` and `hourly_analytics_refresh.py` is a dag_run.conf key, and a
+# verb-only test reports 99 sites of which 62 are that. With the clause
+# required it reports 34, and one of those is argparse help text.
+_SQL_CLAUSE = re.compile(
+    r"\b(FROM|INTO|SET|VALUES|WHERE|TABLE|VIEW|INDEX|SCHEMA|JOIN|USING)\b", re.I
+)
 
-    A ``return`` is included because a function that hands back a statement is
-    the same binding with a different keyword, and scoping this to the
-    assignments that happen to exist today is the mistake this plan has now
-    made twice in its own instruments.
+
+# ``MERGE`` has exactly one form in SQL -- ``MERGE INTO target USING source``
+# -- so the ``INTO`` is adjacent to the verb, not merely somewhere after it.
+# Requiring that is grammar rather than a carve-out, and it is what stops the
+# rule reading git's own vocabulary as SQL: "Merge origin/master into
+# a-branch" and "Merge pull request #371 from whitewalls86/some-branch" are
+# both a MERGE verb followed at a distance by a clause keyword, and both are
+# commit subjects in ``tests/scripts/test_commit_msg_hook.py``'s exemption
+# list. Found 2026-09-05 by pointing this rule at ``tests/`` for the first
+# time, which is the hostile surface Stage X predicted it would meet.
+_MERGE_INTO = re.compile(r"\s*INTO\b", re.I)
+
+
+# DDL that *materialises a query* is not the DDL ``_DDL_VERBS`` exempts.
+# ``CREATE TABLE u AS SELECT ...`` names the columns it reads, so it drifts
+# from a schema exactly as a bare ``SELECT`` does -- the exemption's stated
+# reason ("there is no production schema for it to drift from") does not reach
+# it. Without this, a paraphrase can be written by putting ``CREATE TABLE x AS``
+# in front of it, which is a hole in a rule whose whole claim is that it keys
+# on the statement rather than its shape.
+#
+# Measured 2026-09-05 when Stage X first pointed this rule at ``tests/``:
+# **zero** production sites and one test site, ``test_analytics_connection_
+# guard``'s DuckDB scaffold. So this costs nothing today and closes the hole
+# before something walks through it.
+_MATERIALISING = re.compile(r"\bAS\s+(?:\(\s*)?(?:WITH|SELECT)\b", re.I)
+
+
+def _is_sql_statement(text: str) -> bool:
+    """Is *text* a SQL statement, judged only on its own content?"""
+    match = _SQL_VERB.match(text)
+    verb = match.group(1).upper() if match else ""
+    if not match:
+        return False
+    rest = text[match.end():]
+    if verb in _EXEMPT_VERBS and not (verb in _DDL_VERBS and _MATERIALISING.search(rest)):
+        return False
+    if verb == "MERGE" and not _MERGE_INTO.match(rest):
+        return False
+    return bool(rest.strip()) and bool(_SQL_CLAUSE.search(rest))
+
+
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    """Every docstring node, which is documentation and not a statement.
+
+    ``shared/db.py``'s ``db_cursor`` docstring carries a usage example with a
+    real SELECT in it. Excluding it is exact rather than heuristic -- a
+    docstring is the first statement of a module, class or function and nothing
+    else is -- so this is not a judgement call smuggled into the rule.
     """
-    tree = ast.parse(source, filename=filename)
     found = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            candidates = [node.value]
-        elif isinstance(node, ast.Return):
-            candidates = [node.value]
-        else:
+        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            text = _leading_sql_literal(candidate)
-            if text is None:
-                continue
-            match = _SQL_VERB.match(text)
-            if match and match.group(1).upper() not in _EXEMPT_VERBS:
-                found.add(node.lineno)
+        body = getattr(node, "body", None)
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+           and isinstance(body[0].value.value, str):
+            found.add(id(body[0].value))
     return found
 
 
-def test_the_sql_literal_rule_sees_a_statement_bound_to_a_name():
-    """The rule below, canaried on the shapes it exists to catch."""
-    caught = _sql_literal_bindings(
-        'SQL = "SELECT 1"\n'                                  # 1  module constant
-        'def f():\n'
-        '    sql = "SELECT * FROM t WHERE a = %s"\n'          # 3  function local
-        '    return sql\n'
-        'def g(where):\n'
-        '    return "SELECT * FROM t WHERE " + where\n'       # 6  returned, concatenated
-        'TEMPLATE: str = f"SELECT {cols} FROM t"\n'           # 7  annotated f-string
+def _statement_text(node: ast.AST) -> str | None:
+    """The full literal text of *node*, with interpolations reduced to markers.
+
+    **The whole text, not the leading literal**, and the difference is a real
+    hole rather than a refinement. Rule 5b's reader returned only the head;
+    ``f"SELECT {col} FROM t"`` has ``"SELECT "`` at its head, so a head-only
+    reader sees a verb with nothing after it and, under the clause grammar
+    above, judges it not a statement. 5b got away with that because it tested
+    the verb alone and let the callee's name carry the rest of the decision.
+    With the name gone, the grammar has to see the clause -- so every segment
+    is joined and each interpolation becomes a ``?`` marker, which keeps the
+    f-string shape caught. It is both the most common way inline SQL is
+    written and the most dangerous.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            value.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+            else " ? "
+            for value in node.values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return (_statement_text(node.left) or "") + (_statement_text(node.right) or " ? ")
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr in {"format", "dedent", "strip", "lstrip"}:
+            return _statement_text(node.func.value)
+    return None
+
+
+def _sql_statements_in_python(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers holding a SQL statement, wherever in the module it sits.
+
+    Deduplication is by line rather than by node because the shapes nest: a
+    ``BinOp`` and the ``Constant`` at its head report the same line, as does a
+    ``JoinedStr`` and its first segment.
+    """
+    tree = ast.parse(source, filename=filename)
+    docstrings = _docstring_ids(tree)
+    found = set()
+    for node in ast.walk(tree):
+        if id(node) in docstrings:
+            continue
+        text = _statement_text(node)
+        if text is not None and _is_sql_statement(text):
+            found.add(node.lineno)
+    return found
+
+
+def test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement():
+    """The detector, canaried on the shapes it exists to catch.
+
+    The last four are the ones Rules 5b and 5c could not see between them, and
+    they are here so that a future narrowing of this rule fails loudly rather
+    than quietly restoring the blind spot.
+    """
+    caught = _sql_statements_in_python(
+        'cur.execute("SELECT a FROM t")\n'                        # 1  call site
+        'sql = "INSERT INTO t VALUES (%s)"\n'                     # 2  assignment
+        'def f():\n    return "UPDATE t SET a = 1"\n'             # 3  return
+        'cur.execute("SELECT a FROM t WHERE b = " + b)\n'         # 4  concatenated
+        'cur.execute(f"SELECT {col} FROM t")\n'                   # 5  f-string
+        'QUERIES = {"tie": "SELECT DISTINCT vin FROM events"}\n'  # 6  dict value
+        '_count("x", "SELECT COUNT(*) FROM t")\n'                 # 7  local helper
+        'def g():\n    return ("SELECT a FROM t", params)\n'      # 8  tuple return
+        'CHOICES = ["DELETE FROM t WHERE id = %s"]\n'             # 9  list element
+        'cur.execute("MERGE INTO t USING s ON t.id = s.id")\n'    # 10 merge
+        'cur.execute("CREATE TABLE u AS SELECT a FROM t")\n'      # 11 DDL over a query
     )
-    assert caught == {1, 3, 6, 7}, (
-        f"the SQL-literal rule no longer sees every shape: caught {sorted(caught)}"
+    assert caught == {1, 2, 4, 5, 6, 7, 8, 10, 11, 12, 13}, (
+        f"the SQL-in-Python rule no longer sees every shape: {sorted(caught)}"
     )
 
-    clean = _sql_literal_bindings(
-        'CLAIM_ARTIFACTS = _q("claim_artifacts")\n'   # loaded from a .sql file: the fix
-        'name = "select_user_role"\n'                 # a filename, not a statement
-        'mode = "SETTINGS"\n'                         # not a SQL verb, despite the prefix
-        'PRAGMA_SQL = "PRAGMA threads=4"\n'           # session setup, exempt
+    clean = _sql_statements_in_python(
+        'cur.execute(CLAIM_ARTIFACTS, (limit,))\n'   # a loaded constant is the fix
+        'df.query("price > 100")\n'                  # not SQL: no leading verb
+        'conf = {"select": ["model"]}\n'             # the word, not a statement
+        'con.execute("INSTALL httpfs")\n'            # session setup, exempt
+        'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
+        'def h():\n    """Example: SELECT a FROM t."""\n    return 1\n'  # docstring
+        'SUBJECTS = ["Merge origin/master into a-branch"]\n'  # git, not SQL
+        'SUBJECTS = ["Merge pull request #371 from whitewalls86/b"]\n'  # git, not SQL
+        'raw.execute("CREATE TABLE u (a int)")\n'     # scaffolding DDL, exempt
+        'assert "CREATE TABLE public.gate_observations" in migration\n'  # migration text
     )
     assert not clean, (
-        f"the SQL-literal rule fires on bindings that are already correct: "
-        f"{sorted(clean)}"
+        f"the SQL-in-Python rule fires on code that is already correct: {sorted(clean)}"
     )
 
 
-def test_no_production_module_keeps_a_sql_statement_in_a_python_literal():
-    """G15, the gap that closing G5 revealed.
+def test_no_production_module_holds_a_sql_statement():
+    """Rules 5b and 5c as one, keyed on the statement instead of its container.
 
-    Stage 7 extracted six of these by hand -- three module-level constants in
-    ``ops/routers/coordination.py``, three function-local ``sql = \"\"\"...\"\"\"``
-    variables in ``ops/routers/deploy.py`` -- and only because a human happened
-    to read the files while doing something else. **Neither instrument could
-    see them.** Rule 5b does not fire, because the literal is not at the call
-    site. Rule 5 does not fire, because there is no ``.sql`` file to be
-    uncovered. They satisfied the letter of both while sitting outside both,
-    and the sweep that found them was not repeatable.
+    **What this buys over the two it replaces** is that it cannot be escaped by
+    inventing a new place to put a string. Both predecessors could: 5b by
+    calling a function it had never heard of, 5c by putting the statement
+    anywhere that is not an assignment or a return. Three production sites were
+    doing exactly that when this rule was written, and none of them was
+    reachable by lengthening a list.
 
-    The measured cost of that blind spot was 21 more, in modules nobody had
-    looked at: six in ``ops/routers/admin.py`` alone, a router Stage 7 never
-    touched because every one of its statements is assigned before it is
-    executed.
+    **The waiver ledgers are kept separate on purpose.** They record which gap
+    each site came from -- G5 for a call site, G15 for a binding -- and that
+    attribution is history worth keeping even though one rule now reads both.
+    Merging them would also break the mutation harness, which anchors on
+    ``Waiver(subject, gap="G5", owner=162)`` as literal source text.
 
-    **What this rule is not.** It is not a claim that a statement in a Python
-    string is untestable -- it is importable, so a test can execute the real
-    text, which is the whole point of the other two rules. It is a claim that
-    this repository decided its SQL lives in ``.sql`` files, and a statement
-    that does not is invisible to the census that counts them. Rule 5's
-    denominator is ``production_sql_files()``; anything held in Python is
-    outside it and can never be reported as uncovered.
+    **What this does not survive is PySpark**, unchanged from Rule 5b and still
+    three named things rather than an open question: SQL *fragments*
+    (``df.selectExpr("price > msrp")``, ``F.expr(...)``) start with no verb and
+    the grammar guard is blind to them by construction; the DataFrame API is
+    not text at all, so it can drift from a schema with nothing textual to see;
+    and a ``.sql`` file only earns its keep if some engine executes it, which
+    for Spark means the services ``tests/integration/lakehouse`` is
+    :data:`DORMANT_SUITES`-declared against until Plan 125 Gate C returns them.
+    Static reading stops at the first of those three; the other two are caught
+    by executing them in CI or not at all.
     """
     found = {
         f"{_relative(path)}:{line}"
         for path in production_python_files()
-        for line in _sql_literal_bindings(path.read_text(encoding="utf-8"), str(path))
+        for line in _sql_statements_in_python(path.read_text(encoding="utf-8"), str(path))
     }
     _assert_exactly(
         found,
-        SQL_LITERAL_WAIVERS,
-        "these production modules keep a SQL statement in a Python literal, so "
-        "it is in no .sql file and the Layer 2 census cannot count it:",
+        INLINE_SQL_WAIVERS + SQL_LITERAL_WAIVERS,
+        "these production modules hold a SQL statement in Python, so it is in "
+        "no .sql file and the Layer 2 census cannot count it:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5g -- no test module holds a SQL statement either.
+#
+# **This rule removes a judgement rule rather than adding a mechanical one**,
+# which is the whole shape of Plan 162 Stage X.
+#
+# ``tests/`` was exempt from the rule above, and the exemption was reasoned.
+# Plan 161 question 3 settled that telling a *paraphrase of production* from a
+# *legitimate fixture seed* is judgement, for one stated reason: fixture seeds
+# are SQL in test files too, and a checker that cannot tell them apart fails on
+# correct code. That is true, and it was load-bearing for the whole
+# judgement/mechanical split.
+#
+# **It stops applying once no SQL literal appears under ``tests/`` at all.**
+# The ambiguity has nothing left to live in: any SQL-shaped literal here is a
+# violation whichever kind it is, so the rule needs no judgement and the
+# contract's split moves 7 mechanical / 4 judgement -> 8 / 3.
+#
+# It is deliberately :func:`_is_sql_statement` -- the *same* predicate the
+# production rule uses, not a variant. A second copy of the grammar would be
+# two rules that can disagree, which is the defect this file exists to catch.
+# Pointing the one predicate at a second file set is what made it better: the
+# hostile surface here found the two holes recorded at ``_MERGE_INTO`` and
+# ``_MATERIALISING``, and both fixes apply to production too.
+#
+# Where the statements went is ``tests/sql/``, mirroring the test tree down to
+# the module -- see :mod:`tests.sql_loader`. That root is **not** in
+# :func:`production_sql_files`, so it inflates no production denominator and
+# owes no Layer 2 test. A read-back assertion is still not a production
+# statement; it is simply no longer a literal typed inside a test.
+# ---------------------------------------------------------------------------
+TEST_SQL_WAIVERS: tuple[Waiver, ...] = ()
+
+SQL_ROOT = TESTS_DIR / "sql"
+
+
+def all_test_modules() -> list[Path]:
+    """Every ``.py`` under ``tests/``, which is this rule's whole surface.
+
+    No package filter and no ``test_*`` filter: ``conftest.py`` held 17 of the
+    statements this stage moved, and a rule that skipped it would have left the
+    seeds most tests share behind.
+    """
+    return [
+        path
+        for path in sorted(TESTS_DIR.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    ]
+
+
+def test_no_test_module_holds_a_sql_statement():
+    """505 sites on 2026-09-05, and the count is not what sized the stage.
+
+    Stage T measured the same surface as *duplication* -- 96 ad-hoc ``INSERT``s
+    and 161 distinct read-back ``SELECT``s, 43 of them written more than once
+    for 145 total retypings, one of them seventeen times -- and reached for a
+    shared Python helper. A helper removes the retyping and leaves the drift:
+    one definition that still has to agree with a schema, with nothing
+    asserting that it does. A file under ``tests/sql/`` is checked against the
+    schema by ``PREPARE`` whether or not the test consuming it runs.
+
+    **What this does not claim.** It says nothing about whether a mock is
+    mocking the thing under test, or whether an assertion is meaningful. Those
+    two stay judgement, they stay in ``docs/TESTING.md``'s judgement section,
+    and the reviewer skill goes on refusing to certify them.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in all_test_modules()
+        for line in _sql_statements_in_python(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        TEST_SQL_WAIVERS,
+        "these test modules hold a SQL statement in Python. Move it to "
+        "tests/sql/ -- mirroring the module's own path -- and load it with "
+        "`SQL(\"name\")`, so that PREPARE checks it against the schema whether "
+        "or not this test runs. See tests/sql_loader.",
+    )
+
+
+def test_every_test_sql_file_is_named_by_the_module_it_mirrors():
+    """The other direction: a statement nothing loads is a statement nobody reads.
+
+    ``tests/sql/`` mirrors the test tree, so this needs no registry -- the
+    module a file belongs to *is* its path. Two ways to fail, and the second is
+    the one that bites over time: a directory whose module has been renamed or
+    deleted, and a file whose module no longer names it. Without this, deleting
+    a test leaves its statements behind to be PREPAREd forever against a schema
+    nothing reads.
+    """
+    orphaned_directories, unnamed = [], []
+    for path in sorted(SQL_ROOT.rglob("*.sql")):
+        relative = path.relative_to(SQL_ROOT)
+        parts = list(relative.parts)
+        if parts[-2] in _ENGINE_DIRECTORIES:
+            del parts[-2]
+        module = TESTS_DIR.joinpath(*parts[:-1]).with_suffix(".py")
+        if not module.is_file():
+            orphaned_directories.append(
+                f"{_relative(path)} mirrors {_relative(module)}, which does not exist"
+            )
+        elif not _names(path.stem, module.read_text(encoding="utf-8")):
+            unnamed.append(f"{_relative(path)} is named by no line of {_relative(module)}")
+    assert not orphaned_directories, (
+        "these statements mirror a test module that is gone:\n  "
+        + "\n  ".join(orphaned_directories)
+    )
+    assert not unnamed, (
+        "these statements are loaded by nothing:\n  " + "\n  ".join(unnamed)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5h -- every test statement is schema-checked, whether or not it runs.
+#
+# The engine is **derived from the path**, not declared in a table: a statement
+# sitting directly under its module's directory is Postgres's, and one under a
+# ``duckdb/`` or ``airflow/`` segment names the engine that owns it instead.
+#
+# The default is what gives the rule its failure direction, and it is the whole
+# reason there is no list. A statement for an engine nobody has thought about
+# lands in the default bucket, is handed to ``PREPARE`` against a
+# Flyway-migrated Postgres, and fails there until somebody files it. A table of
+# engines would have to be remembered; a default that fails does not.
+#
+# ``airflow/`` is a second *Postgres* schema rather than a second engine:
+# ``airflow.dag_run`` is created by ``airflow db migrate``, not by Flyway, so a
+# Flyway-only database cannot plan it. It is named here rather than waived
+# because it is a fact about where the schema comes from.
+# ---------------------------------------------------------------------------
+_ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
+
+# One statement holds a ``{placeholder}`` no static reading can fill.
+# ``insert_ops_price_observations`` builds ``{columns}`` and ``{values}`` with
+# ``", ".join(...)`` over lists assembled per case, so the text that reaches
+# Postgres exists only at run time. That is a real limit and it is the whole of
+# this ledger.
+#
+# **It held 25 on 2026-09-05, and 24 of those were the rule's fault rather than
+# the statements'.** The reading was ``"{" in text``, which is wrong twice
+# over. Seven were not templates: ``'{"makes": ["test"]}'::jsonb`` is a JSONB
+# literal whose braces sit inside a quoted string, beside a ``%s`` the driver
+# binds -- they plan exactly as written and were being held out of the check
+# they would have passed, which is a coverage hole wearing a known limit's
+# clothes. The other seventeen were templates, but their bindings are stated at
+# the call site in a module constant or a literal the module iterates
+# (``RECEIPT_TABLE``, ``PROTECTED_TABLES``, ``POSTGRES_SNAPSHOT_TABLES``, and
+# the ``for table in (...)`` loops). ``tests/sql_bindings.py`` reads the shape
+# from the call's AST and the values from the imported module, and
+# ``test_fixture_statements`` now PREPAREs every rendering rather than skipping
+# the file.
+#
+# Four more were here on 2026-09-05 and are not waivers, because they were
+# repaired instead: ``{claimed_at}``, ``{created_hours_ago}`` and
+# ``{proc_event_hours_ago}`` interpolated a *value* into a statement where the
+# driver would have bound one, which is interpolation wearing an identifier's
+# clothes. They are ``now() - (%s || ' hours')::interval`` now, and they
+# PREPARE.
+TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
+    for subject in (
+        "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
+    )
+) + tuple(
+    # Plan 162 Stage S's constraint-mutation gate. These three are the case
+    # ``tests/sql_bindings.py`` cannot reach, and the reason is not effort: what
+    # they interpolate is **a whole model's compiled SQL, and then that SQL with
+    # one branch deleted**. There is no call-site constant to read the bindings
+    # from, because the bindings are generated -- 23 model bodies and 216
+    # mutants of them, none of which exists until dbt has compiled and the
+    # enumerator has run. A statement whose renderings are enumerable at Layer 0
+    # would not be here; these are not, and saying so is what the ledger is for.
+    #
+    # They still execute, against the in-memory database the gate mutates in,
+    # and a rendering that will not run is what
+    # ``test_no_mutant_failed_to_execute`` exists to catch -- so the schema
+    # check ``PREPARE`` would give them is done by execution instead, on every
+    # one of the 216.
+    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 7))
+    for subject in (
+        "tests/sql/integration/dbt/test_constraint_mutation/count_failing_rows.sql",
+        "tests/sql/integration/dbt/test_constraint_mutation/count_relation_rows.sql",
+        "tests/sql/integration/dbt/test_constraint_mutation/materialize_relation.sql",
+        # Same reason, one gate over: the non-vacuity gate walks every model
+        # under dbt/models/ rather than naming any, so the relation is generated
+        # and there is no call-site constant to read the renderings from. A list
+        # of models beside the models is exactly the thing that goes stale and
+        # lets a new one escape the obligation.
+        "tests/sql/integration/dbt/test_models_are_not_vacuous/count_model_rows.sql",
+    )
+)
+
+
+def postgres_test_statements() -> list[Path]:
+    """Every ``tests/sql/`` statement a Flyway-migrated Postgres should plan."""
+    return [
+        path
+        for path in sorted(SQL_ROOT.rglob("*.sql"))
+        if not _ENGINE_DIRECTORIES & set(path.relative_to(SQL_ROOT).parts)
+    ]
+
+
+def test_every_test_statement_that_holds_a_template_is_waived():
+    """The template ledger describes reality, in both directions.
+
+    ``PREPARE`` is run by ``tests/integration/sql/test_fixture_statements.py``,
+    which needs an engine and therefore cannot say which files it *declined* to
+    check in a job that has no Postgres. This can, at Layer 0, with nothing:
+    a statement that stops being a template must leave the ledger, and one that
+    becomes a template must join it.
+
+    **Holding a placeholder is no longer enough to be waived, and that is the
+    repair.** The ledger seeded at 25 on the reading ``"{" in text``, which is
+    two mistakes in one. Seven of those were not templates at all -- braces
+    inside a ``::jsonb`` literal -- so they were excluded from the schema check
+    they would have passed. The remaining eighteen were templates whose
+    bindings the call site states out loud, in a module constant or a literal
+    the module iterates. What is waived now is the intersection that is
+    genuinely unplannable: a placeholder that is real, filled with something no
+    static reading can produce.
+    """
+    templated = {
+        _relative(path)
+        for path in postgres_test_statements()
+        if holds_a_placeholder(path.read_text(encoding="utf-8"))
+        and renderings(path) is None
+    }
+    _assert_exactly(
+        templated,
+        TEST_SQL_TEMPLATE_WAIVERS,
+        "a tests/sql statement holds a {placeholder} whose bindings cannot be "
+        "read from its call site, so nothing plans it against the schema. Bind "
+        "the value as a parameter if it is a value; name the relation in a "
+        "module constant or a literal the module iterates if it is a relation, "
+        "and tests/sql_bindings.py will render and PREPARE it. Waive against "
+        "G19 only when the call site computes the text:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5i -- a test may not invent the shape of a relation production defines.
+#
+# **The rule is not "a test may not create a table."** A scratch table standing
+# for nothing is legitimate scaffolding -- ``create table t as select 1`` is how
+# `test_analytics_connection_guard` gets something for its guard to refuse, and
+# forbidding it would fail on correct code. What a test may not do is declare a
+# schema for a relation *production already defines*, because that is a copy,
+# and a copy drifts.
+#
+# **The name match is the signature, not a heuristic.** A test stands up
+# ``int_listing_state_fingerprints`` precisely so that the code under test finds
+# it -- `audit_adaptive_refresh_features` looks the relation up by the name in
+# its own ``TABLE_SPECS``. Renaming the fixture to dodge this rule would stop
+# the production code finding it, so the test would stop testing anything. The
+# escape that does exist is a test passing an arbitrary relation name *into* the
+# code under test; that is a weaker test to begin with, and it is recorded here
+# rather than defended against.
+#
+# **Measured 2026-09-05, and the drift had already happened.** Three fixtures
+# hand-declare stand-ins for real dbt models: `int_listing_state_fingerprints`
+# declares 5 columns against the model's 8, `int_listing_state_runs` 1 against
+# 11, `int_listing_observation_fingerprints` 1 against 10. Nothing noticed,
+# because nothing compared them.
+#
+# **Subset, not equality, and that is the whole design.** Requiring equality
+# would force an 11-column fixture where the test needs one column, which is
+# ceremony. Subset catches the two failures that matter -- a renamed column and
+# a dropped one both remove it from the model's declaration -- and lets a narrow
+# fixture stay narrow. An *added* column does not fire, correctly: it cannot
+# break a fixture that never mentioned it.
+#
+# **What this does not catch is a retype.** Until 2026-09-06 it could not:
+# ``schema.yml`` carried column names and no ``data_type`` -- 0 of 187 on
+# 2026-09-05 -- so nothing in the repository declared what the model's
+# ``datediff_hours()`` actually returns. Stage S's contract work removed that
+# obstacle: 307 of 307 columns now declare a type that a build enforces, and
+# the answer is ``BIGINT`` against the fixture's ``run_duration_hours
+# INTEGER``. The comparison this rule would have to make now has both sides;
+# making it is the rest of CAR-90 and is stated in ``docs/TESTING.md`` as a
+# limit rather than counted as coverage.
+# ---------------------------------------------------------------------------
+_CREATE_TABLE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP\w*\s+|UNLOGGED\s+)*TABLE\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w.\"]*)\s*\(",
+    re.I,
+)
+_NOT_A_COLUMN = frozenset(
+    {"primary", "foreign", "unique", "check", "constraint", "exclude", "like"}
+)
+
+
+@lru_cache(maxsize=None)
+def dbt_model_columns() -> dict[str, frozenset[str]]:
+    """``{model name: declared columns}``, read from dbt's own schema files.
+
+    dbt's ``schema.yml`` is the only place in the repository that declares what
+    a model's columns are without executing it, which is why it is the
+    authority here rather than the model's final ``SELECT``. Since Plan 162
+    Stage S it is a complete one -- 23 of 23 models document every column their
+    final ``SELECT`` emits, 307 in all, each with a ``data_type`` under an
+    enforced contract -- so a name missing from it is a name the model does not
+    emit, and the rule below fails rather than this function guessing.
+    """
+    columns: dict[str, frozenset[str]] = {}
+    for path in sorted((REPO_ROOT / "dbt" / "models").rglob("*.yml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for model in document.get("models") or ():
+            columns[model["name"]] = frozenset(
+                column["name"] for column in model.get("columns") or ()
+            )
+    assert columns, "no dbt models parsed out of dbt/models/**/*.yml"
+    return columns
+
+
+@lru_cache(maxsize=None)
+def production_relations() -> frozenset[str]:
+    """Every relation production defines: dbt's models and Flyway's tables."""
+    models = {path.stem for path in (REPO_ROOT / "dbt" / "models").rglob("*.sql")}
+    flyway = {
+        _bare_relation(match)
+        for path in (REPO_ROOT / "db" / "migrations").glob("*.sql")
+        for match in _CREATE_TABLE.findall(path.read_text(encoding="utf-8"))
+    }
+    return frozenset(models | flyway)
+
+
+def _bare_relation(name: str) -> str:
+    """``ops.artifacts_queue`` -> ``artifacts_queue``. Fixtures are unqualified."""
+    return name.replace('"', "").rsplit(".", 1)[-1]
+
+
+def _declared_columns(text: str, start: int) -> list[str]:
+    """The column names in the parenthesised definition beginning at *start*."""
+    depth, body, index = 0, [], start
+    while index < len(text):
+        character = text[index]
+        if character == "(":
+            depth += 1
+            if depth == 1:
+                index += 1
+                continue
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        body.append(character)
+        index += 1
+    items, depth, current = [], 0, ""
+    for character in "".join(body):
+        if character in "([":
+            depth += 1
+        elif character in ")]":
+            depth -= 1
+        if character == "," and depth == 0:
+            items.append(current)
+            current = ""
+        else:
+            current += character
+    items.append(current)
+    names = []
+    for item in items:
+        first = item.strip().split()
+        if first and first[0].lower() not in _NOT_A_COLUMN:
+            names.append(first[0].strip('"').lower())
+    return names
+
+
+def _fixture_relations() -> list[tuple[str, str, list[str]]]:
+    """``(where, relation, columns)`` for every table a test defines itself."""
+    found = []
+    for path in all_test_modules():
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        docstrings = _docstring_ids(tree)
+        for node in ast.walk(tree):
+            if id(node) in docstrings:
+                continue
+            text = _statement_text(node)
+            if text is None:
+                continue
+            match = _CREATE_TABLE.search(text)
+            if match:
+                found.append((f"{_relative(path)}:{node.lineno}",
+                              _bare_relation(match.group(1)),
+                              _declared_columns(text, match.end() - 1)))
+    for path in sorted(SQL_ROOT.rglob("*.sql")):
+        text = path.read_text(encoding="utf-8")
+        match = _CREATE_TABLE.search(text)
+        if match:
+            found.append((_relative(path), _bare_relation(match.group(1)),
+                          _declared_columns(text, match.end() - 1)))
+    return found
+
+
+def test_no_test_invents_the_shape_of_a_relation_production_defines():
+    """A fixture may borrow production's relation name only on its own terms.
+
+    Two ways to fail. A relation production defines but nothing declares the
+    columns of -- every Flyway table today -- cannot be checked at all, so
+    standing one up in a test is refused outright rather than passed silently.
+    And a dbt model's fixture may name only columns that model declares, so a
+    rename or a drop in the model takes the fixture's column with it.
+    """
+    unknown_shape, undeclared = [], []
+    for where, relation, columns in _fixture_relations():
+        if relation not in production_relations():
+            continue
+        declared = dbt_model_columns().get(relation)
+        if declared is None:
+            unknown_shape.append(f"{where} declares a shape for `{relation}`")
+            continue
+        missing = sorted(set(columns) - {name.lower() for name in declared})
+        if missing:
+            undeclared.append(f"{where} `{relation}`: {', '.join(missing)}")
+    assert not unknown_shape, (
+        "these tests declare a schema for a relation production defines, and "
+        "nothing declares that relation's columns for them to be checked "
+        "against -- Flyway owns it, so build the fixture by applying the "
+        "migration rather than by retyping it:\n  " + "\n  ".join(unknown_shape)
+    )
+    assert not undeclared, (
+        "these fixtures name columns the model does not declare. Every model "
+        "declares every column it emits under an enforced contract, so the "
+        "declaration is not the incomplete half: the model renamed or dropped "
+        "them, the fixture is stale, and so is whatever reads it:\n  "
+        + "\n  ".join(undeclared)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5j -- schema.yml is the model's shape, and dbt is what enforces it.
+#
+# The rule above can only be as good as the declaration it reads, and until
+# Plan 162 Stage S that declaration was documentation: nothing made a model's
+# `schema.yml` agree with the model. `int_latest_observation.sql` said so in
+# its own prose -- *"a column added to stg_observations must be added here too,
+# or it silently stops appearing downstream. Nothing currently catches that
+# drift automatically ... this model's schema file documents only
+# vin17/source/make, not the full column list, so it is not a backstop."*
+#
+# `contract: {enforced: true}` is what turns it into a backstop: dbt fails the
+# build when a model's output stops matching its declared columns and types.
+#
+# The portability objection is already retired by measurement:
+# `docs/reference/plan_125_portability_audit.md` verified that `varchar` is a
+# hard Spark parse error and `string` is DuckDB's alias and Spark's native
+# name, "verified on both". So a declared type can be spelled once for both
+# engines, and Plan 125's migration is not a reason to leave this undeclared.
+# ---------------------------------------------------------------------------
+# Empty since Plan 162 Stage S (CAR-79). Seeded at 23 by Stage X on 2026-09-05
+# -- one waiver per model, because 0 of 23 declared a contract and a ledger
+# fails where a ticket does not -- and drained to 0 by Stage S on 2026-09-06.
+#
+# It drained in one operation rather than 23, because the thing that made it
+# expensive was never the `contract:` block. It was the declaration underneath:
+# 5 models documented 24 of the 144 columns they emit between them -- a
+# 120-column shortfall -- and no column anywhere in the project carried a
+# `data_type`. Both halves came from `DESCRIBE`
+# against the built relations rather than from reading the SQL -- 307 columns,
+# names and types together -- which is the same derivation the fixture rule
+# above now depends on, and the opposite of the hand-transcription that
+# produced the three stale fixtures Stage X found.
+DBT_CONTRACT_WAIVERS: tuple[Waiver, ...] = ()
+
+
+def _declares_an_enforced_contract(name: str, path: Path) -> bool:
+    """dbt accepts the contract in the model's own config or in its schema file."""
+    if re.search(r"contract\s*=\s*\{\s*['\"]enforced['\"]\s*:\s*[Tt]rue",
+                 path.read_text(encoding="utf-8")):
+        return True
+    for schema in sorted(path.parent.glob("*.yml")):
+        document = yaml.safe_load(schema.read_text(encoding="utf-8")) or {}
+        for model in document.get("models") or ():
+            if model["name"] != name:
+                continue
+            contract = (model.get("config") or {}).get("contract") or {}
+            if contract.get("enforced") is True:
+                return True
+    return False
+
+
+def test_every_dbt_model_declares_an_enforced_contract():
+    """0 waivers since 2026-09-06, and the zero is the point.
+
+    The fixture rule above trusts `schema.yml`. What makes `schema.yml` true is
+    dbt refusing to build a model whose output stops matching it. Without an
+    enforced contract a model's declaration is a comment that a checker happens
+    to read, which is why this was seeded fully waived at 23; every model now
+    carries one, so every declaration that rule reads is defended by a build.
+    """
+    unenforced = {
+        _relative(path)
+        for path in sorted((REPO_ROOT / "dbt" / "models").rglob("*.sql"))
+        if not _declares_an_enforced_contract(path.stem, path)
+    }
+    _assert_exactly(
+        unenforced,
+        DBT_CONTRACT_WAIVERS,
+        "these dbt models do not declare `contract: {enforced: true}`, so "
+        "nothing fails when the model's output stops matching its schema.yml "
+        "and every rule reading that file is trusting documentation:",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage S -- the lists that name the lake's source tables are
+# reconciled against dbt's own, because four of them existed and no two were
+# checked against each other.
+#
+# `--require-non-empty` is the gate that stops a snapshot build being green
+# over an empty world, and until Stage S the sources it checked were a tuple
+# typed into `scripts/seed_lake_snapshot.py`. A seventh source declared in
+# `dbt/models/sources.yml` would have been read by the build and counted by
+# nothing: the gate would have passed, saying six sources have rows, over a
+# world where the seventh had none. That is this plan's own recurring defect --
+# a maintained copy of a derivable list -- sitting inside the instrument the
+# stage depends on.
+#
+# The seeder now derives the list (`dbt_source_tables()`), so the forward
+# direction is closed at the point of use. What a derivation cannot do on its
+# own is fail when the *other* lists drift, and there are two more:
+#
+#   * `lake_source_audit.SOURCE_TABLE_SPECS` -- logical name -> Parquet glob,
+#     what the audit reads and what the seeder resolves `sources.yml` through;
+#   * `lake_snapshot_export_cache.INCLUDED_TABLES` -- what the snapshot writer
+#     puts in the archive, and what its fingerprint hashes.
+#
+# The join key is the path, not the name. `silver.observations` in sources.yml
+# and `silver_observations` in the specs look like they need a special case;
+# they do not, because both carry the identical string
+# `silver_normalized/observations/**/*.parquet`. Matching on paths means the
+# reconciliation needs no name-translation table of its own -- which would have
+# been a fifth list.
+# ---------------------------------------------------------------------------
+
+
+def test_the_non_empty_gate_reconciles_with_the_dbt_source_list():
+    """Every dbt source is seedable, and every seedable table is a dbt source.
+
+    Both directions, and each fails a different real mistake.
+
+    **Forward** -- a source declared in `sources.yml` that resolves to no known
+    spec is a source a snapshot cannot carry. The dbt build will read it; the
+    seed will not fill it; `--require-non-empty` will not mention it. This is
+    the failure Stage S closes, and `dbt_source_tables()` raising rather than
+    skipping is what closes it: an unrecognised source that is silently not
+    counted is indistinguishable from a source that is fine.
+
+    **Reverse** -- a spec or a Postgres allowlist entry that names no dbt
+    source is dead weight the exporter still writes, still ships in the
+    archive, and the gate still demands rows for. It fails a seed for a table
+    no build reads.
+
+    Asserting through the seeder's own resolver rather than re-parsing
+    `sources.yml` here is deliberate: a second parser in the test would let the
+    two disagree about what a source is, and the test would be checking itself.
+    """
+    resolved = dbt_source_tables()
+
+    lake = {key for kind, key in resolved.values() if kind == "lake"}
+    postgres = {key for kind, key in resolved.values() if kind == "postgres"}
+    known_postgres = {f"{schema}.{table}" for schema, table in POSTGRES_SNAPSHOT_TABLES}
+
+    assert lake == set(SOURCE_TABLE_SPECS), (
+        "the Parquet sources in dbt/models/sources.yml and "
+        "archiver.processors.lake_source_audit.SOURCE_TABLE_SPECS disagree. "
+        f"declared by dbt and carried by no spec: {sorted(lake - set(SOURCE_TABLE_SPECS))}; "
+        f"specced and named by no dbt source: {sorted(set(SOURCE_TABLE_SPECS) - lake)}. "
+        "The first is a source a snapshot cannot seed and --require-non-empty "
+        "cannot check; the second is a table the exporter writes for nobody."
+    )
+    assert postgres == known_postgres, (
+        "the postgres_scan() sources in dbt/models/sources.yml and "
+        "shared.lake_snapshot_postgres.POSTGRES_SNAPSHOT_TABLES disagree. "
+        f"declared by dbt and carried by no allowlist entry: {sorted(postgres - known_postgres)}; "
+        f"allowlisted and named by no dbt source: {sorted(known_postgres - postgres)}. "
+        "Left empty, stg_search_configs reads nothing and mart_vehicle_snapshot "
+        "builds green over an empty world -- which is the whole reason the "
+        "Postgres half travels inside the snapshot at all."
+    )
+
+
+def test_the_snapshot_writer_and_the_source_auditor_include_the_same_tables():
+    """`INCLUDED_TABLES` is not imported from `SOURCE_TABLE_SPECS`, and should not be.
+
+    Its comment states the reason: the export fingerprint has to hash exactly
+    what *this writer* includes, "independent of the source-audit module's own
+    evolution". That is sound. A fingerprint that changed because an unrelated
+    module grew a diagnostic column would invalidate every cached archive for
+    nothing, and one that silently followed another module's list would stop
+    describing the bytes it names.
+
+    But that reasoning argues against **importing**, not against being
+    **checked**. The two lists are still claims about the same four tables, and
+    nothing made them agree. The failure they permit is quiet in both
+    directions: a table added to the specs but not to the writer is audited and
+    never exported, so the seed's non-empty gate demands rows for something no
+    archive carries; a table added to the writer but not to the specs is
+    exported and never audited, so it ships with no row counts and no
+    timestamp bounds to say whether it is any good.
+
+    So the literal stays a literal and this test is what makes it true. Drift
+    fails here, in a test whose job is comparison, instead of at a snapshot
+    build weeks later.
+    """
+    assert set(INCLUDED_TABLES) == set(SOURCE_TABLE_SPECS), (
+        "archiver.processors.lake_snapshot_export_cache.INCLUDED_TABLES and "
+        "archiver.processors.lake_source_audit.SOURCE_TABLE_SPECS name "
+        "different lake tables. "
+        f"exported but not audited: {sorted(set(INCLUDED_TABLES) - set(SOURCE_TABLE_SPECS))}; "
+        f"audited but not exported: {sorted(set(SOURCE_TABLE_SPECS) - set(INCLUDED_TABLES))}. "
+        "INCLUDED_TABLES is deliberately a literal rather than an import, so "
+        "that the export fingerprint hashes what this writer includes -- keep "
+        "it a literal and fix the drift; do not replace it with an import."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5k -- the recorder wraps every client production reaches an engine
+# through, and the client set is derived rather than kept.
+#
+# **This is the rule the recorder's first design would have failed.** Keying
+# capture to the fixtures that hand out connections sees ``psycopg2`` and
+# ``duckdb`` and misses ``asyncpg`` and ``pyspark``; it would have shipped
+# recording nothing for ``scraper/sql/`` and gone on recording nothing when
+# Spark lands. The fix is not a longer list of clients -- that is
+# ``_SQL_CALL_NAMES`` with a different noun. It is to derive the *imports* and
+# make anything unclassified fail.
+#
+# So the surface is every third-party top-level import across production
+# Python, and the contract classifies each one as reaching an engine or not.
+# **A new engine is a new import**, and a new import fails here until somebody
+# decides which it is. That is the property a maintained client list cannot
+# have, and it is why this reads imports rather than clients.
+# ---------------------------------------------------------------------------
+_CLIENT_ROW = re.compile(r"^\| ((?:`\w+`(?:, )?)+) \| (\*\*yes\*\*|no) \|", re.M)
+
+
+@lru_cache(maxsize=None)
+def classified_imports() -> dict[str, bool]:
+    """``{import name: reaches an engine}``, from the contract's own table."""
+    section = _read(CONTRACT).split("### How production reaches an engine")[1]
+    section = section.split("### Mocking")[0]
+    classified: dict[str, bool] = {}
+    for names, verdict in _CLIENT_ROW.findall(section):
+        for name in re.findall(r"`(\w+)`", names):
+            classified[name] = verdict == "**yes**"
+    assert classified, (
+        f"{CONTRACT}'s 'How production reaches an engine' table no longer "
+        f"parses into rows"
+    )
+    return classified
+
+
+@lru_cache(maxsize=None)
+def production_imports() -> frozenset[str]:
+    """Every third-party top-level import across production Python.
+
+    The standard library and this repository's own packages are dropped
+    because neither can be a database client somebody forgot to wrap. The
+    local set includes the bare module names the dashboard and the DAG tree
+    import flat -- ``db``, ``queries``, ``sensors`` and their kin -- which are
+    this repository's modules reached through the dual import identity
+    ``docs/TESTING.md`` records as G18, not third-party packages.
+    """
+    local = set(service_packages()) | {
+        "tests", "scripts", "airflow", "dbt", "lakehouse", "dags",
+        "db", "queries", "pages", "sensors", "dag_queries", "notifications",
+        "pools", "coordination_contract",
+    }
+    found: set[str] = set()
+    for path in production_python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [(node.module or "").split(".")[0]]
+            else:
+                continue
+            found.update(
+                name for name in names
+                if name and name not in sys.stdlib_module_names and name not in local
+            )
+    return frozenset(found)
+
+
+def production_db_clients() -> frozenset[str]:
+    """The imports the contract says production reaches an engine through."""
+    return frozenset(name for name, reaches in classified_imports().items() if reaches)
+
+
+def test_every_production_import_is_classified():
+    """Both directions, and the second one is what keeps the table honest.
+
+    An unclassified import is the failure that matters: it is how a new engine
+    arrives, and the whole recorder rests on there being no such thing. A row
+    for an import nothing imports any more is the mirror -- a table describing
+    a tree that has moved on, which is `ARCHITECTURE.md:179` in miniature.
+    """
+    classified = set(classified_imports())
+    imported = set(production_imports())
+    assert not imported - classified, (
+        "these third-party imports are not classified in "
+        f"{CONTRACT}'s 'How production reaches an engine':\n  "
+        + "\n  ".join(sorted(imported - classified))
+        + "\n\nSay whether production reaches a database engine through each. "
+        "If it does, the recorder must wrap it; if not, the row says so."
+    )
+    assert not classified - imported, (
+        f"{CONTRACT} classifies imports that no production module imports any "
+        "more, so the table describes a tree that has moved on:\n  "
+        + "\n  ".join(sorted(classified - imported))
+    )
+
+
+def test_the_recorder_instruments_every_client_production_reaches():
+    """The contract and the plugin, compared rather than assumed to agree.
+
+    Declared rather than probed at runtime on both sides: what a job happens to
+    have installed must not decide what the contract says is owed. A job
+    without Spark records nothing for Spark and reports that it did not wrap
+    it -- which reads differently from Spark executing nothing, and has to.
+    """
+    from tests.plugins.sql_execution_recorder import INSTRUMENTED_CLIENTS
+
+    declared = production_db_clients()
+    unwrapped = sorted(declared - INSTRUMENTED_CLIENTS)
+    assert not unwrapped, (
+        "the contract says production reaches an engine through these, and the "
+        "execution recorder does not wrap them, so every statement they carry "
+        f"is invisible to the record: {unwrapped}"
+    )
+    phantom = sorted(INSTRUMENTED_CLIENTS - declared)
+    assert not phantom, (
+        "the execution recorder wraps clients the contract does not list as "
+        f"reaching an engine: {phantom}. Either the table is stale or the "
+        "recorder is wrapping something it should not."
+    )
+
+
+#: The gate that reads what the recorder wrote, and the pieces of ``ci.yml``
+#: without which it measures nothing. Named here rather than in the workflow
+#: alone because that is exactly how the record was lost the first time: the
+#: upload steps existed in some jobs and not others, the gate read what
+#: happened to arrive, and no test noticed.
+RECORD_ENV = "SQL_EXECUTION_RECORD"
+RECORDER_MODULE = "tests.plugins.sql_execution_recorder"
+COVERAGE_GATE_SCRIPT = "scripts/check_sql_execution_coverage.py"
+_RECORD_ARTIFACT = "sql-execution-"
+
+
+def _sql_execution_wiring() -> tuple[set[str], set[str], dict]:
+    """``(jobs running pytest, jobs uploading a record, the gate job)``."""
+    document = yaml.safe_load(_read(WORKFLOW))
+    running: set[str] = set()
+    uploading: set[str] = set()
+    gate: dict = {}
+    for key, job in document["jobs"].items():
+        for step in job.get("steps", []) or []:
+            run = str(step.get("run", ""))
+            for line in run.splitlines():
+                match = _PYTEST_INVOCATION.search(line.strip())
+                if match and match.group("args").startswith(("tests", "-", "--")):
+                    running.add(key)
+            if COVERAGE_GATE_SCRIPT in run:
+                gate = job | {"__key__": key, "__run__": run}
+            with_ = step.get("with", {}) or {}
+            if "upload-artifact" in str(step.get("uses", "")):
+                if str(with_.get("name", "")).startswith(_RECORD_ARTIFACT):
+                    uploading.add(key)
+    return running, uploading, gate
+
+
+def test_every_job_that_runs_pytest_has_its_record_read_by_the_gate():
+    """The four pieces, because any one of them missing measures nothing.
+
+    **This is the rule the first CI run needed and did not have.** The gate
+    landed with upload steps in some jobs and not others; it then read the
+    records that happened to arrive and reported a coverage number for the
+    whole repository from a fraction of it. Nothing failed, because the only
+    statement of which jobs owe a record was the workflow file agreeing with
+    itself.
+
+    So the owing set is *derived*: a job that runs pytest produces a record, so
+    a job that runs pytest owes an upload, and the gate owes a ``needs`` on it.
+    A job added next year is covered by the derivation rather than by anyone
+    remembering this file exists -- the same reason ``RECORD_ENV`` is set at
+    workflow level and asserted there.
+
+    The last clause is the ratchet: ``--report`` prints the reading and exits
+    0, which is what the gate needed for the two landings it took to get an
+    honest number. Leaving it in place would have made the gate a decoration,
+    so putting it back now costs a diff that touches this docstring.
+    """
+    document = yaml.safe_load(_read(WORKFLOW))
+    assert RECORD_ENV in document.get("env", {}), (
+        f"{WORKFLOW} no longer sets {RECORD_ENV} at workflow level, so a job "
+        f"written after this one records nothing and its statements read as "
+        f"never executed."
+    )
+
+    running, uploading, gate = _sql_execution_wiring()
+    silent = sorted(running - uploading)
+    assert not silent, (
+        f"jobs in {WORKFLOW} that run pytest but upload no execution record: "
+        f"{silent}. Every statement they execute is invisible to "
+        f"{COVERAGE_GATE_SCRIPT}, which will report it as executing nowhere."
+    )
+
+    assert gate, f"{WORKFLOW} no longer runs {COVERAGE_GATE_SCRIPT} at all."
+    unread = sorted(uploading - set(gate.get("needs", [])))
+    assert not unread, (
+        f"{gate['__key__']} does not wait on {unread}, which upload execution "
+        f"records. Without the dependency the gate can start before they "
+        f"finish and read a different set of records on every run."
+    )
+    assert "--report" not in gate["__run__"], (
+        f"{COVERAGE_GATE_SCRIPT} is running with --report, which prints the "
+        f"reading and exits 0. It existed to seed the ledger honestly and the "
+        f"ledger is seeded; with it the gate cannot fail."
+    )
+
+    config = tomllib.loads(_read("pyproject.toml"))["tool"]["pytest"]["ini_options"]
+    assert f"-p {RECORDER_MODULE}" in config.get("addopts", ""), (
+        f"pyproject.toml no longer registers {RECORDER_MODULE} through "
+        f"addopts, so every job sets {RECORD_ENV} and none of them records."
     )
 
 
 # ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 5 (CAR-49) swept all 16 on 2026-09-01. The rule
+# Empty since Plan 162 Stage F (CAR-49) swept all 16 on 2026-09-01. The rule
 # below is the whole of G11 now: it is what stops Plan 84's numbering coming
 # back the next time someone copies a docstring header from an older file.
 LAYER_NUMBER_WAIVERS: tuple[Waiver, ...] = ()
@@ -1627,12 +3005,18 @@ def test_every_pytest_invocation_in_ci_sets_pythonpath():
 
 @lru_cache(maxsize=None)
 def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
-    """The ``env:`` keys visible to one step -- its own, and its job's."""
+    """The ``env:`` keys visible to one step -- the workflow's, its job's, its own.
+
+    The workflow level was added by Plan 162 Stage U, which sets the
+    declared-skips gate there precisely so that a job nobody has written yet
+    inherits it. Reading only the two inner scopes would have reported every
+    step as ungated.
+    """
     document = yaml.safe_load(_read(WORKFLOW))
     for job in document["jobs"].values():
         if job.get("name") != job_name:
             continue
-        keys = list(job.get("env", {}))
+        keys = list(document.get("env", {})) + list(job.get("env", {}))
         for step in job.get("steps", []):
             if _step_name(step) == step_name:
                 keys += list(step.get("env", {}))
@@ -1906,7 +3290,7 @@ def test_every_script_directory_is_classified():
     tree, and the path is the only thing that says which. A subdirectory the
     contract does not classify is read one way by ``[tool.coverage.run]``,
     another by ``scripts/ci_change_scope.py``, and a third by whoever opens it
-    -- and nothing makes them agree. Plan 162 Stage 5b split the tree; this is
+    -- and nothing makes them agree. Plan 162 Stage G split the tree; this is
     what stops the next bucket arriving undeclared.
     """
     on_disk = {
@@ -1955,7 +3339,7 @@ def test_every_unmeasured_script_bucket_is_omitted_from_coverage():
 def test_every_service_directory_is_measured_by_coverage():
     """G10's first half: a service coverage cannot see reads as covered.
 
-    Until Plan 162 Stage 2 this list named six packages and omitted
+    Until Plan 162 Stage C this list named six packages and omitted
     ``container_health``, ``dashboard``, ``scripts`` and ``airflow/dags`` --
     so the two services the "enough" table puts furthest below the floor were
     the two the instrument was blind to, and the 88% it reported was 88% of
@@ -2023,6 +3407,163 @@ def test_the_coverage_number_the_unit_job_produces_is_consumed():
 
 
 # ---------------------------------------------------------------------------
+# Rule 9 -- every skip in a CI run is declared, and the gate that says so runs.
+#
+# The runtime half is ``tests/plugins/declared_skips.py``, which fails a run on
+# an undeclared skip, on a declared skip that stopped skipping, and on one that
+# skipped for something other than the condition it declares. What lives here
+# is the half a hook cannot check about itself: that the registry names real
+# tests, that it may not be used where a skip is inadmissible, that the gate
+# and the plugin registration are both still in place, and that the registry
+# only shrinks.
+# ---------------------------------------------------------------------------
+PLUGIN_MODULE = "tests.plugins.declared_skips"
+
+# The layers where no declaration is admissible at all. Layer 2 is the whole
+# list and the reason is the plan's origin: a Layer 2 test that skips executes
+# no SQL against a real engine, and the statement it covers is the one that
+# reached production unexecuted. ``REQUIRE_LAYER_2_EXECUTION`` used to say this
+# by naming ``tests/integration/sql/`` in that suite's own conftest, which made
+# it a fact about one path. Said as a layer it is derived from the contract's
+# headings through :func:`_layer_of`, so a second Layer 2 root is strict on the
+# day the contract declares it rather than on the day someone remembers.
+LAYERS_ADMITTING_NO_SKIP = frozenset({2})
+
+
+@lru_cache(maxsize=None)
+def _test_ids(relative: str) -> frozenset[str]:
+    """Every ``Class::function`` and bare ``function`` id defined in a test file."""
+    tree = ast.parse((REPO_ROOT / relative).read_text(encoding="utf-8"))
+    ids = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            ids.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    ids.add(f"{node.name}::{child.name}")
+    return frozenset(ids)
+
+
+def test_every_declared_skip_names_a_test_that_exists():
+    """A declaration that names nothing is a comment with a dataclass around it.
+
+    The nodeid is the join between the registry and the run, so a renamed or
+    deleted test has to fail here rather than quietly stop matching -- at which
+    point the entry would sit in the tuple describing a decision about a test
+    nobody can find, and the *real* skip, if it came back under the new name,
+    would read as undeclared and fail a run with no explanation attached.
+    """
+    missing = []
+    for entry in DECLARED_SKIPS:
+        path, _, test_id = entry.nodeid.partition("::")
+        if not (REPO_ROOT / path).is_file():
+            missing.append(f"{entry.nodeid} -- no such file")
+        elif test_id not in _test_ids(path):
+            missing.append(f"{entry.nodeid} -- {path} defines no {test_id}")
+    assert not missing, (
+        "DECLARED_SKIPS entries naming a test that does not exist:\n  "
+        + "\n  ".join(missing)
+        + "\nRename the entry with the test, or delete it."
+    )
+
+
+def test_no_declared_skip_sits_at_a_layer_that_admits_none():
+    """Retiring ``REQUIRE_LAYER_2_EXECUTION`` may not loosen Layer 2.
+
+    The general gate offers a door the suite-scoped hook did not: a skip there
+    used to be unconditionally fatal, and under a registry someone could make
+    one legal by adding four lines. This is the door being nailed shut for the
+    layer that needed it shut, in the one form that does not have to be
+    maintained -- :func:`_layer_of` reads the contract's own headings, so this
+    rule follows the contract rather than a path list beside it.
+
+    It fails at the registry rather than in the hook, which is deliberate: the
+    plugin loads in a job that installs three packages and must stay importable
+    with nothing but the standard library, and a rule read out of
+    ``docs/TESTING.md`` is not that.
+    """
+    layers = {
+        entry.nodeid: _layer_of((REPO_ROOT / entry.nodeid.split("::")[0]).parent)
+        for entry in DECLARED_SKIPS
+    }
+    inadmissible = sorted(
+        f"{nodeid} (Layer {layer})"
+        for nodeid, layer in layers.items()
+        if layer in LAYERS_ADMITTING_NO_SKIP
+    )
+    assert not inadmissible, (
+        f"these skips are declared at a layer that admits none "
+        f"{sorted(LAYERS_ADMITTING_NO_SKIP)}:\n  " + "\n  ".join(inadmissible)
+        + "\nA Layer 2 test that skips executes no SQL. Fix the fixture the "
+        "test depends on; there is no declaration for this."
+    )
+
+
+def test_every_pytest_step_runs_under_the_declared_skip_gate():
+    """Both halves, because either one alone is inert.
+
+    Nothing guarded ``REQUIRE_LAYER_2_EXECUTION``. It was one line of YAML, and
+    deleting it would have restored the blind spot with no test failing and no
+    reviewer prompted -- which is still true today of ``REQUIRE_DUCKDB``,
+    ``REQUIRE_MINIO`` and ``REQUIRE_AIRFLOW_SCHEMA``. So the general gate is
+    asserted from the workflow file itself, and loosening it now costs a diff
+    that touches this docstring.
+
+    The registration is the other half: with the gate set and no ``-p``, every
+    job passes having loaded no hook at all. ``docs-tests`` is why it is
+    ``addopts`` rather than a conftest -- it runs ``--noconftest``, and
+    ``pythonpath`` is what makes the module importable at the point ``-p``
+    resolves it, which is before the collection that would otherwise put the
+    repository root on ``sys.path``.
+    """
+    ungated = sorted(
+        f"{job}: {step}"
+        for job, step, _ in pytest_steps()
+        if GATE not in _step_env(job, step)
+    )
+    assert not ungated, (
+        f"pytest steps in {WORKFLOW} that do not run under {GATE}: {ungated}. "
+        f"The gate is set once at workflow level so that every job inherits "
+        f"it; a step this reports has shadowed or removed it."
+    )
+
+    config = tomllib.loads(_read("pyproject.toml"))["tool"]["pytest"]["ini_options"]
+    assert f"-p {PLUGIN_MODULE}" in config.get("addopts", ""), (
+        f"pyproject.toml no longer registers {PLUGIN_MODULE} through addopts, "
+        f"so {GATE} is set in every job and read in none of them."
+    )
+    assert "." in config.get("pythonpath", ()), (
+        f"pyproject.toml no longer puts the repository root on pythonpath, so "
+        f"`-p {PLUGIN_MODULE}` cannot import at plugin-registration time."
+    )
+
+
+def test_the_declared_skip_registry_only_ratchets_down():
+    """The ``--cov-fail-under`` idiom, pointed the other way.
+
+    A ceiling is what stops a third declaration being a quiet tuple append.
+    With one, adding a skip means moving a number that carries a comment, in
+    the same diff, and the number is the thing review argues about -- which is
+    the entire difference between a registry and a place to put things.
+
+    It fails in both directions for the same reason the waiver checks do: a
+    ceiling left above the real count is a budget nobody spent and everybody
+    may.
+    """
+    assert len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING, (
+        f"{len(DECLARED_SKIPS)} declared skips against a ceiling of "
+        f"{DECLARED_SKIP_CEILING}. Fix the cause, or make the case for raising "
+        f"the ceiling in the same diff."
+    )
+    assert len(DECLARED_SKIPS) == DECLARED_SKIP_CEILING, (
+        f"DECLARED_SKIP_CEILING is {DECLARED_SKIP_CEILING} and there are "
+        f"{len(DECLARED_SKIPS)} declared skips. A stage that removed one lowers "
+        f"the ceiling with it; headroom left behind is headroom that gets used."
+    )
+
+
+# ---------------------------------------------------------------------------
 # The contract's claims about its own enforcement.
 # ---------------------------------------------------------------------------
 _ASSERTED_BY_ROW = re.compile(r"^\|[^|]+\|([^|]+)\|[^|]+\|\s*$", re.M)
@@ -2071,9 +3612,23 @@ def test_every_asserted_rule_names_a_real_test():
         f"expected a markdown separator row, got '{separator.strip()}'"
     )
 
+    # **Every test module, not just this one.** Until Plan 162 Stage X this
+    # read only this file, which made the rules table unable to name a check
+    # living anywhere else -- and the first rule that legitimately does arrived
+    # with that stage: `PREPARE`-ing every `tests/sql/` statement needs an
+    # engine, so it belongs in a Layer 2 suite, not in this Layer 0 file. The
+    # narrow reading would have forced the choice between a row that lies about
+    # where its check is and no row at all.
+    #
+    # Widening it is derived rather than listed -- a second hardcoded filename
+    # would be the inventory this file refuses to keep -- and it costs only
+    # that a name could be satisfied by a same-named test in another module,
+    # which is a weaker guard than the original for a claim nobody makes by
+    # accident.
     defined = {
         node.name
-        for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+        for path in all_test_modules()
+        for node in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body
         if isinstance(node, ast.FunctionDef)
     }
 
@@ -2109,6 +3664,9 @@ ALL_WAIVERS = (
     + DUPLICATE_SQL_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
+    + TEST_SQL_WAIVERS
+    + TEST_SQL_TEMPLATE_WAIVERS
+    + DBT_CONTRACT_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -2211,6 +3769,9 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("duplicate SQL", DUPLICATE_SQL_WAIVERS),
         ("inline SQL", INLINE_SQL_WAIVERS),
         ("SQL literal", SQL_LITERAL_WAIVERS),
+        ("test SQL", TEST_SQL_WAIVERS),
+        ("test SQL template", TEST_SQL_TEMPLATE_WAIVERS),
+        ("dbt contract", DBT_CONTRACT_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )
@@ -2219,3 +3780,433 @@ def test_no_waiver_is_listed_twice(rule, waivers):
     subjects = [waiver.subject for waiver in waivers]
     duplicated = sorted({s for s in subjects if subjects.count(s) > 1})
     assert not duplicated, f"{rule} waivers listed more than once: {duplicated}"
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage W -- a checker may not retype a vocabulary the database owns.
+#
+# `check_snapshot_result` accepted only {"created"} while the exporter returns
+# "exported", and the test that should have caught it seeded the status itself.
+# Stage P repaired that instance. The class is wider and the census is in
+# docs/evidence/plan_162_stage_W_evidence.md: 262 literal comparisons across
+# production Python, of which the ones that can drift are the ones keyed on a
+# vocabulary some *other* artifact owns.
+#
+# `db/migrations/` is the largest such owner and the only one that is closed:
+# `CHECK (<column> IN (...))` is enforced by Postgres, so it is not one opinion
+# about the vocabulary, it is the vocabulary. That makes both sides of these
+# two rules derivable, which is the whole reason they are rules and not a
+# registry of contracts somebody remembered to add.
+# ---------------------------------------------------------------------------
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+_CREATE_TABLE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.]+)(.*?);",
+    re.IGNORECASE | re.DOTALL,
+)
+_CHECK_IN = re.compile(
+    r"CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.IGNORECASE | re.DOTALL
+)
+_SQL_STRING = re.compile(r"'([^']*)'")
+
+#: A floor under the derived owner corpus, far below the 18 it finds. A rule
+#: whose population comes from a regex fails open when the regex stops
+#: matching -- a set difference over an empty corpus is empty -- and this is
+#: the same guard `test_the_production_sql_corpus_is_not_empty` puts under the
+#: SQL rules for the same reason.
+_DB_VOCABULARY_FLOOR = 10
+
+
+def _without_sql_comments(text: str) -> str:
+    """Comment prose contains `FROM the` and `CHECK (` often enough to matter."""
+    return _SQL_LINE_COMMENT.sub(" ", _SQL_BLOCK_COMMENT.sub(" ", text))
+
+
+@lru_cache(maxsize=None)
+def check_constrained_columns() -> dict[tuple[str, str], frozenset[str]]:
+    """Every ``CHECK (<column> IN (...))`` in ``db/migrations/``, by table.
+
+    Read from the migrations rather than from a live database on purpose: this
+    is a Layer 0 rule and needs no engine, and the migrations are what a fresh
+    deployment gets. A constraint added by anything other than a migration is
+    invisible here, which is correct -- there is no such path.
+    """
+    found: dict[tuple[str, str], set[str]] = {}
+    for path in sorted((REPO_ROOT / "db" / "migrations").glob("*.sql")):
+        body = _without_sql_comments(path.read_text(encoding="utf-8"))
+        for table, definition in _CREATE_TABLE.findall(body):
+            for column, values in _CHECK_IN.findall(definition):
+                members = set(_SQL_STRING.findall(values))
+                if members:
+                    found.setdefault((table.split(".")[-1], column), set()).update(
+                        members
+                    )
+    return {key: frozenset(values) for key, values in found.items()}
+
+
+def test_the_check_constraint_corpus_is_not_empty():
+    """The floor under the rule below, and the reason it is not decoration.
+
+    Both rules that follow are set comparisons against this corpus. An empty
+    corpus makes both of them pass while checking nothing, so a regex that
+    stops matching -- a migration written with a different `CHECK` spelling,
+    a directory that moved -- has to fail here rather than quietly disarm the
+    two rules downstream.
+    """
+    owners = check_constrained_columns()
+    assert len(owners) >= _DB_VOCABULARY_FLOOR, (
+        f"only {len(owners)} CHECK-constrained column(s) found under "
+        f"db/migrations/, against a floor of {_DB_VOCABULARY_FLOOR}. Either the "
+        f"reader stopped matching or the constraints were dropped; both are "
+        f"failures, and the second is a much larger one."
+    )
+
+
+def test_every_check_constrained_column_has_one_declared_vocabulary():
+    """``shared/db_vocabularies.py`` is a copy, and this is what makes it safe.
+
+    Both directions, because each catches a different way the copy rots. A
+    ``CHECK`` with no vocabulary is a value set production types by hand at
+    every call site -- the state this stage found. A vocabulary naming a column
+    that no longer carries a constraint is a declaration nobody is reading.
+
+    And then equality, which is the direction that actually bites: a migration
+    that renames a value fails here until this module moves with it, and the
+    rule below is what makes every call site move too.
+    """
+    owners = check_constrained_columns()
+    declared = set(DB_VOCABULARIES)
+
+    undeclared = sorted(set(owners) - declared)
+    assert not undeclared, (
+        f"{len(undeclared)} CHECK-constrained column(s) with no vocabulary in "
+        f"shared/db_vocabularies.py: {undeclared}. Postgres already enforces "
+        f"the values; declaring them is what stops production retyping them "
+        f"one call site at a time."
+    )
+    orphaned = sorted(declared - set(owners))
+    assert not orphaned, (
+        f"{len(orphaned)} vocabulary/vocabularies in shared/db_vocabularies.py "
+        f"naming a column with no CHECK constraint: {orphaned}. Either the "
+        f"migration dropped it -- in which case nothing enforces these values "
+        f"any more and that is the finding -- or the name is wrong."
+    )
+    for key in sorted(owners):
+        table, column = key
+        assert frozenset(DB_VOCABULARIES[key]) == owners[key], (
+            f"{table}.{column}: the migration permits {sorted(owners[key])} and "
+            f"{DB_VOCABULARIES[key].__name__} declares "
+            f"{sorted(str(member) for member in DB_VOCABULARIES[key])}. The "
+            f"migration is the owner -- Postgres rejects a write outside it -- "
+            f"so this module is what moves."
+        )
+
+
+_COMPARISONS = (ast.In, ast.NotIn, ast.Eq, ast.NotEq)
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+_QUOTED_KEY = re.compile(r"""['"]([^'"]*)['"]""")
+
+
+def _literal_strings(node: ast.AST) -> list[str] | None:
+    """The string literals in *node*, or ``None`` if it is not all literals."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.Set, ast.Tuple, ast.List)):
+        found = []
+        for element in node.elts:
+            if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                found.append(element.value)
+            else:
+                return None
+        return found or None
+    return None
+
+
+def _subject_names(node: ast.AST) -> set[str]:
+    """Every identifier and quoted key in the expression being compared.
+
+    ``state["phase"]`` names ``phase`` as a subscript, ``current.get("kind")``
+    names ``kind`` as an argument, and a bare ``role`` names it directly. All
+    three are the same question -- which column is this value -- so the
+    expression is unparsed and read for both identifiers and quoted strings
+    rather than matched shape by shape.
+    """
+    text = ast.unparse(node)
+    return set(_IDENTIFIER.findall(text)) | set(_QUOTED_KEY.findall(text))
+
+
+def _database_vocabulary_retypings() -> list[str]:
+    """Every literal comparison that restates a value the database owns.
+
+    **Two conditions, and the second is what makes the rule usable.** The
+    expression must name a CHECK-constrained column, *and* the literal must be
+    a member of that column's vocabulary. Naming alone is far too loose:
+    ``status`` and ``kind`` are the most reused words in the repository, and
+    scoping by name only, ``result.status == "ok"`` in ``ops/routers/deploy.py``
+    reads as a claim about ``artifacts_queue.status``. Measured over the whole
+    corpus that is 83 comparisons naming a constrained column and **33** whose
+    literal is actually a member -- the other 50 are `ok`, `success`,
+    `unknown`, `locked`, vocabularies that belong to something else and that
+    this rule must not touch.
+
+    A membership test is what separates them, and it costs nothing in strength:
+    a literal that is not in the vocabulary cannot be a copy of it.
+    """
+    owners: dict[str, set[str]] = {}
+    for (_table, column), values in check_constrained_columns().items():
+        owners.setdefault(column, set()).update(values)
+
+    found = []
+    for path in production_python_files():
+        relative = _relative(path)
+        if relative == "shared/db_vocabularies.py":
+            continue
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        # A module-level or local name bound to a collection of literals is the
+        # same retyping one step removed -- `REQUESTABLE_ROLES = ("observer",
+        # ...)` then `role not in REQUESTABLE_ROLES`. Reported at the
+        # comparison, because that is where the column name appears.
+        literal_collections: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                members = _literal_strings(node.value)
+                if members:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            literal_collections[target.id] = members
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                continue
+            if not isinstance(node.ops[0], _COMPARISONS):
+                continue
+            right = node.comparators[0]
+            members = _literal_strings(right)
+            if members is None and isinstance(right, ast.Name):
+                members = literal_collections.get(right.id)
+            if members is None:
+                continue
+            names = _subject_names(node.left)
+            for column in sorted(owners):
+                if column not in names:
+                    continue
+                retyped = sorted(set(members) & owners[column])
+                if retyped:
+                    found.append(
+                        f"{relative}:{node.lineno} compares {column} against "
+                        f"{retyped}, which db/migrations/ owns"
+                    )
+                break
+    return found
+
+
+def test_no_module_retypes_a_database_vocabulary_it_could_import():
+    """The half that makes the declared vocabulary reach the call sites.
+
+    Without it, ``shared/db_vocabularies.py`` is a fifteenth copy: the rule
+    above would hold it equal to the constraint while every ``==
+    "draining"`` in the repository went on being its own copy, and a rename
+    would move the migration and the module together and leave the call sites
+    behind. **That is the failure mode this stage exists to close**, one level
+    down from where Stage P found it.
+
+    It is also what makes the pair non-vacuous. On its own this rule passes the
+    moment a migration renames a value -- the old literal stops being a member,
+    so the comparison stops being in scope and nothing fails. The rule above is
+    what fails in that instant, and this one is what makes the repair reach
+    further than one file.
+    """
+    retypings = _database_vocabulary_retypings()
+    assert not retypings, (
+        f"{len(retypings)} comparison(s) restate a value db/migrations/ owns "
+        f"instead of importing it from shared/db_vocabularies.py:\n  "
+        + "\n  ".join(retypings)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage W -- the other owner, and the instance the stage came from.
+#
+# `db/migrations/` owns the vocabularies above and a service's HTTP response
+# owns this one. The export DAG's `check_snapshot_result` accepted only
+# {"created"} while `archiver/processors/export_ci_lake_snapshot.py` returns
+# "exported": a DAG-triggered export would have published its archive and both
+# pointers and then failed the task.
+#
+# **`airflow/dags/` is the one place in this repository where the import that
+# would remove the copy is impossible**, and that is a fact about the deploy
+# rather than a preference: docker-compose.yml mounts `airflow/dags`,
+# `airflow/sql` and `airflow/plugins` into the Airflow containers and nothing
+# else, and `airflow/dags/dag_queries.py` records at length why mounting
+# `shared/` would put unimportable modules on the DAG tree's path. So the DAG
+# must restate the vocabulary, and what it restates has to be checked.
+#
+# Both halves are derived. The service comes from the module's own
+# `<NAME>_URL = "http://<host>:<port>"` constant, and the module that answers
+# for it is the one with the same basename -- the convention the tree already
+# follows for seven of its DAGs. A DAG that checks a status and resolves to no
+# counterpart fails here rather than being skipped, because "we could not tell
+# who owns this" is the state the defect lived in.
+# ---------------------------------------------------------------------------
+_SERVICE_URL = re.compile(
+    r"^([A-Z][A-Z0-9_]*)_URL\s*=\s*[\"']http://([a-z0-9_-]+):", re.MULTILINE
+)
+_DAG_SUPPORT_MODULES = frozenset(
+    {"coordination_contract", "dag_queries", "notifications", "pools", "sensors"}
+)
+
+
+def _emitted_statuses(path: Path) -> frozenset[str]:
+    """Every string *path* can put in a ``status=`` field.
+
+    Two shapes reach it and both have to be read. Most are a literal keyword;
+    the rest are returned by a helper and arrive through a local, as
+    ``status=failure_status``. A reader that saw only the first returns a set
+    short of ``coverage_failed`` -- which is what the single-instance repair
+    did, silently, for four days.
+
+    So an expression this cannot follow **fails** rather than being dropped. An
+    incomplete emitted set only makes the subset check below stricter, never
+    weaker, so this guard is not load-bearing for correctness -- it is here
+    because a reader that quietly narrows is the defect this stage is about,
+    wearing the instrument's uniform.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    produced_by: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            called = getattr(node.value.func, "id", None) or getattr(
+                node.value.func, "attr", ""
+            )
+            for target in node.targets:
+                if isinstance(target, ast.Name) and called in functions:
+                    produced_by[target.id] = called
+
+    found: set[str] = set()
+    unresolved: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "status":
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                found.add(value.value)
+            elif isinstance(value, ast.Name) and value.id in produced_by:
+                found |= {
+                    inner.value.value
+                    for inner in ast.walk(functions[produced_by[value.id]])
+                    if isinstance(inner, ast.Return)
+                    and isinstance(inner.value, ast.Constant)
+                    and isinstance(inner.value.value, str)
+                }
+            else:
+                unresolved.append(f"line {value.lineno}: status={ast.unparse(value)}")
+    assert not unresolved, (
+        f"{_relative(path)} passes a status this reader cannot follow to a "
+        f"literal: {unresolved}. The emitted set it returns is short, and a "
+        f"short set makes the check below fail on a status the service really "
+        f"does return."
+    )
+    return frozenset(found)
+
+
+def _dag_status_checks() -> dict[str, frozenset[str]]:
+    """Per DAG module, the statuses its checker will let through."""
+    accepted: dict[str, set[str]] = {}
+    for path in sorted((REPO_ROOT / "airflow" / "dags").glob("*.py")):
+        if path.stem in _DAG_SUPPORT_MODULES:
+            continue
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        literal_collections: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                members = _literal_strings(node.value)
+                if members:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            literal_collections.setdefault(target.id, []).extend(members)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                continue
+            if not isinstance(node.ops[0], _COMPARISONS):
+                continue
+            if "status" not in _subject_names(node.left):
+                continue
+            right = node.comparators[0]
+            members = _literal_strings(right)
+            if members is None and isinstance(right, ast.Name):
+                members = literal_collections.get(right.id)
+            if members:
+                accepted.setdefault(path.stem, set()).update(members)
+    return {stem: frozenset(values) for stem, values in accepted.items()}
+
+
+def _dag_counterpart(stem: str, source: str) -> list[Path]:
+    """The production module that answers for *stem*, via its own service URL."""
+    packages = {
+        host.replace("-", "_") for _name, host in _SERVICE_URL.findall(source)
+    }
+    packages = {
+        package for package in packages if (REPO_ROOT / package / "__init__.py").is_file()
+    }
+    return sorted(
+        path
+        for package in packages
+        for path in (REPO_ROOT / package).rglob(f"{stem}.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+def test_every_dag_status_check_accepts_only_statuses_its_service_emits():
+    """The assertion that would have caught it, with neither half written here.
+
+    A status the DAG accepts and the service never returns is a branch that can
+    only ever fail, which is exactly what ``created`` was -- and the test that
+    should have caught it seeded ``{"status": "created"}`` itself, so it passed
+    for any string its author picked.
+    """
+    for stem, accepted in sorted(_dag_status_checks().items()):
+        source = (REPO_ROOT / "airflow" / "dags" / f"{stem}.py").read_text(
+            encoding="utf-8"
+        )
+        counterparts = _dag_counterpart(stem, source)
+        assert len(counterparts) == 1, (
+            f"airflow/dags/{stem}.py checks a status against {sorted(accepted)} "
+            f"and this rule cannot tell which module produces it: it resolved "
+            f"{[_relative(path) for path in counterparts]}. A DAG that checks a "
+            f"status names one service in a `<NAME>_URL` constant and shares a "
+            f"basename with the module behind it; an undetermined owner is the "
+            f"state the defect this rule exists for lived in, so it fails here."
+        )
+        emitted = _emitted_statuses(counterparts[0])
+        unreachable = sorted(accepted - emitted)
+        assert not unreachable, (
+            f"airflow/dags/{stem}.py accepts {unreachable}, which "
+            f"{_relative(counterparts[0])} never returns. It returns "
+            f"{sorted(emitted)}."
+        )
+
+
+def test_the_dag_status_rule_has_something_to_check():
+    """A floor, for the same reason every other derived rule here has one.
+
+    This rule reads DAG modules for a shape. A rename in the DAG tree, or a
+    checker rewritten to compare something other than ``status``, empties the
+    population -- and a loop over nothing passes. The number is 1 because that
+    is what the repository holds, and it is the DAG this stage came from.
+    """
+    checks = _dag_status_checks()
+    assert checks, (
+        "no DAG module checks a status against literals any more. Either the "
+        "checker moved and this rule is reading the wrong shape, or the last "
+        "one was deleted; the first is a broken instrument and the second is a "
+        "change worth noticing."
+    )

@@ -354,7 +354,7 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
     # deleted cleanup_parquet.py and cleanup_artifacts.py, each of which wired
     # one check_archiver_health, for an endpoint that had been a no-op since
     # V036. That deletion updated the file count in test_health_sensor_demotion
-    # and missed this one, so Plan 162 Stage 3 gave both the same source: this
+    # and missed this one, so Plan 162 Stage D gave both the same source: this
     # counts sensor *tasks* and that counts the DAG *files* wiring them, and
     # both now derive from tests/health_sensor_census.py.
     assert sorted(health_sensors) == expected_sensor_task_ids(), (

@@ -15,38 +15,52 @@ models:
       downstream to mart_vehicle_snapshot to avoid a stale time-relative value).
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
+      on_schema_change: fail
     columns:
       - name: vin
+        data_type: string
         data_tests:
           - not_null
           - unique
       - name: current_price
+        data_type: integer
         data_tests:
           - not_null
       - name: price_observed_at
+        data_type: timestamptz
         data_tests:
           - not_null
       - name: first_price
+        data_type: integer
         data_tests:
           - not_null
       - name: min_price
+        data_type: integer
         data_tests:
           - not_null
       - name: max_price
+        data_type: integer
         data_tests:
           - not_null
       - name: total_price_observations
+        data_type: bigint
         data_tests:
           - not_null
       - name: price_drop_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: price_increase_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: first_seen_at
+        data_type: timestamptz
         data_tests:
           - not_null
       - name: last_seen_at
+        data_type: timestamptz
         data_tests:
           - not_null

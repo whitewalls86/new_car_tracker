@@ -1,0 +1,1 @@
+select listing_id, price, run_started_at, run_ended_at, observation_count, detail_observation_count, srp_observation_count, carousel_observation_count, distinct_source_count, is_open_run from main.int_listing_observation_runs where listing_id = ? order by run_started_at

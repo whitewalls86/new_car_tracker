@@ -316,7 +316,7 @@ CAR-7 sitting nine hours in `In Review` after PR #243 merged is strong evidence
 against it.
 
 **Accepted as manual for now.** Status transitions are performed by hand, which
-is what the `ticket-now`, `fill-cycle` and `close-out` skills already assume —
+is what the `ticket-now`, `fill-cycle` and `stage-close` skills already assume —
 none of them depends on an automation firing. The cost is that a stalled issue
 is invisible until someone looks, which is how CAR-7 sat in the wrong state for
 most of a day. If this is revisited, the next unexplored surfaces are the

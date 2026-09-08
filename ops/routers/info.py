@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ops.public_stats import public_stats_cache
+from ops.static_assets import asset_url
 
 router = APIRouter()
 
@@ -33,8 +34,18 @@ def _fmt_stat(value: int | float) -> str:
 
 templates.env.filters["fmt_stat"] = _fmt_stat
 
+# Stage 3c. Every asset the page loads goes through this, so the one-year
+# immutable cache on /static_ops/* cannot outlive a deploy that changed one.
+templates.env.globals["asset_url"] = asset_url
 
-@router.get("/info")
+
+# GET and HEAD, not GET alone: FastAPI does not add HEAD for you, and a monitor
+# or link checker that uses it got a 405 on every public route until Stage 6's
+# route matrix caught it on 2026-09-04.
+_PUBLIC_METHODS = ["GET", "HEAD"]
+
+
+@router.api_route("/info", methods=_PUBLIC_METHODS)
 def info_redirect() -> RedirectResponse:
     """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
 
@@ -45,7 +56,7 @@ def info_redirect() -> RedirectResponse:
     return RedirectResponse(url="/", status_code=308)
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.api_route("/", methods=_PUBLIC_METHODS, response_class=HTMLResponse)
 def info_page(request: Request):
     snapshot = public_stats_cache.get()
 

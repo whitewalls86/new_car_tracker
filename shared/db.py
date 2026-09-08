@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # the database reaching a verdict and refusing the statement. Callers that turn
 # an exception into an HTTP status need the difference: only these justify
 # "Database unavailable", and a caller that returns it for everything blames the
-# one component that was healthy. Plan 162 Stage 6c.
+# one component that was healthy. Plan 162 Stage K.
 UNREACHABLE_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")

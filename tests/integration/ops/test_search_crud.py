@@ -8,12 +8,11 @@ POST /admin/searches/{key}/delete against a real Postgres instance.
 Teardown: deletes all rows whose search_key contains the module-scoped
 test_key_prefix, including soft-deleted rows (renamed to _deleted_{key}_…).
 """
-import os
-
-import psycopg2
 import pytest
 
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 _VALID_FORM = {
     "makes": "honda",
@@ -23,24 +22,14 @@ _VALID_FORM = {
 }
 
 
-def _get_conn():
-    from urllib.parse import urlparse
-    url = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-    p = urlparse(url)
-    return psycopg2.connect(
-        host=p.hostname, port=p.port or 5432,
-        dbname=p.path.lstrip("/"), user=p.username, password=p.password,
-    )
-
-
 @pytest.fixture(autouse=True, scope="module")
-def cleanup_search_configs(test_key_prefix):
+def cleanup_search_configs(test_key_prefix, db_conn_factory):
     yield
-    conn = _get_conn()
+    conn = db_conn_factory()
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM search_configs WHERE search_key LIKE %s OR search_key LIKE %s",
+            SQL("delete_search_configs"),
             (f"{test_key_prefix}%", f"_deleted_{test_key_prefix}%"),
         )
     conn.close()
@@ -61,7 +50,7 @@ def test_create_search_persists_to_db(api_client, verify_cur, test_key_prefix):
     assert response.status_code == 303
 
     verify_cur.execute(
-        "SELECT params FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_params_from_search_configs"), (key,)
     )
     row = verify_cur.fetchone()
     assert row is not None
@@ -80,7 +69,7 @@ def test_create_search_params_shape_for_dbt(api_client, verify_cur, test_key_pre
         follow_redirects=False,
     )
     verify_cur.execute(
-        "SELECT params FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_params_from_search_configs"), (key,)
     )
     row = verify_cur.fetchone()
     assert row is not None
@@ -113,7 +102,7 @@ def test_create_search_invalid_zip_returns_422(api_client, verify_cur, test_key_
     assert response.status_code == 422
 
     verify_cur.execute(
-        "SELECT 1 FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_1_from_search_configs"), (key,)
     )
     assert verify_cur.fetchone() is None
 
@@ -157,7 +146,7 @@ def test_update_search_persists_to_db(api_client, verify_cur, test_key_prefix):
     )
 
     verify_cur.execute(
-        "SELECT params, updated_at, created_at FROM search_configs WHERE search_key = %s",
+        SQL("select_params_updated_at_created_at_from_search_configs"),
         (key,),
     )
     row = verify_cur.fetchone()
@@ -179,21 +168,21 @@ def test_toggle_search_flips_enabled(api_client, verify_cur, test_key_prefix):
         follow_redirects=False,
     )
     verify_cur.execute(
-        "SELECT enabled FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_enabled_from_search_configs"), (key,)
     )
     assert verify_cur.fetchone()["enabled"] is False
 
     # First toggle → True
     api_client.post(f"/admin/searches/{key}/toggle", follow_redirects=False)
     verify_cur.execute(
-        "SELECT enabled FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_enabled_from_search_configs"), (key,)
     )
     assert verify_cur.fetchone()["enabled"] is True
 
     # Second toggle → back to False
     api_client.post(f"/admin/searches/{key}/toggle", follow_redirects=False)
     verify_cur.execute(
-        "SELECT enabled FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_enabled_from_search_configs"), (key,)
     )
     assert verify_cur.fetchone()["enabled"] is False
 
@@ -218,13 +207,13 @@ def test_delete_search_renames_key(api_client, verify_cur, test_key_prefix):
 
     # Original key is gone
     verify_cur.execute(
-        "SELECT 1 FROM search_configs WHERE search_key = %s", (key,)
+        SQL("select_1_from_search_configs"), (key,)
     )
     assert verify_cur.fetchone() is None
 
     # Renamed row exists, disabled
     verify_cur.execute(
-        "SELECT search_key, enabled FROM search_configs WHERE search_key LIKE %s",
+        SQL("select_search_key_enabled_from_search_configs"),
         (f"_deleted_{key}%",),
     )
     row = verify_cur.fetchone()

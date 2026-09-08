@@ -9,31 +9,42 @@ models:
       are expected and would mask real scraping gaps. One row per (make, model).
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: make
+        data_type: string
         data_tests:
           - not_null
       - name: model
+        data_type: string
         data_tests:
           - not_null
       - name: total_vins
+        data_type: bigint
         data_tests:
           - not_null
       - name: fresh_lt_1d
+        data_type: bigint
         data_tests:
           - not_null
       - name: fresh_1_3d
+        data_type: bigint
         data_tests:
           - not_null
       - name: fresh_4_7d
+        data_type: bigint
         data_tests:
           - not_null
       - name: fresh_8_14d
+        data_type: bigint
         data_tests:
           - not_null
       - name: stale_gt_14d
+        data_type: bigint
         data_tests:
           - not_null
       - name: fresh_lt_7d_pct
+        data_type: double
         data_tests:
           - not_null

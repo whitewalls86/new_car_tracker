@@ -20,7 +20,6 @@ which seeds the fixture and
 starts MinIO). Skipped everywhere else.
 """
 import os
-from datetime import datetime, timezone
 
 import pytest
 
@@ -45,6 +44,20 @@ pytestmark = [
         reason="MINIO_ENDPOINT not set — no MinIO fixture to run selectors against",
     ),
 ]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _fixture_shift_is_current():
+    """Fail the module loudly if the seed and this process straddle midnight.
+
+    Every window below is derived through ``fx._ts()``, which shifts the
+    fixture's epoch-relative dates by an amount computed from *this* process's
+    clock. The data was shifted by the seeding process's clock. The two agree
+    for the whole of a UTC day and silently disagree by one day across
+    midnight — the marker turns that into a named reseed instead of windows
+    that sit a day off the rows they measure.
+    """
+    fx.assert_shift_matches()
 
 
 @pytest.fixture(scope="module")
@@ -75,13 +88,20 @@ class TestSourceAudit:
             assert audit["tables"][table]["rows"] > 0
 
     def test_window_filter_reduces_row_counts(self):
-        # The fixture's silver rows span 2026-01 (stale) through 2026-07; a
-        # narrow window must exclude the January stale rows.
+        # The fixture's silver rows span a stale month through a recent one; a
+        # narrow window over the recent end must exclude the stale rows.
+        #
+        # The bounds are derived from the fixture rather than written as dates.
+        # Plan 162 Stage S made the fixture's timestamps shift with the calendar
+        # -- they were absolute, and a guard elsewhere had quietly gone dead as
+        # the fixture aged past it. Absolute bounds here would not have failed;
+        # they would have kept passing as `0 < N`, asserting nothing, which is
+        # the worse outcome.
         full = audit_source_tables(base_path=None)
         windowed = audit_source_tables(
             base_path=None,
-            window_start=datetime(2026, 7, 1, tzinfo=timezone.utc),
-            window_end=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            window_start=fx._ts(2026, 7, 1),
+            window_end=fx._ts(2026, 8, 1),
         )
         assert (
             windowed["tables"]["silver_observations"]["rows"]
@@ -159,7 +179,9 @@ class TestPriceSelectors:
         # recency anchors to the requested window_end, not MAX(event_at).
         seven_d = _candidates(
             minio_con, "price_changed_7d",
-            window_end=datetime(2026, 12, 1, tzinfo=timezone.utc),
+            # Four months past the fixture's newest change, wherever the shift
+            # has put it -- see the note above on deriving bounds.
+            window_end=fx._ts(2026, 12, 1),
         )
         assert fx.LISTING_PRICE_7D not in seven_d
 

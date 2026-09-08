@@ -1,0 +1,15 @@
+-- How many rows a dbt data test returns when pointed at a mutant.
+--
+-- Plan 162 Stage S. dbt's compiled data tests are queries that return the rows
+-- violating the constraint, so a test passes when this counts zero and the
+-- constraint is dead when it counts more. The inner query is generated: it is
+-- the compiled test with its relation reference retargeted at the mutant, which
+-- is why this is a template.
+--
+-- Counting rather than fetching is deliberate. A mutation pass runs a model's
+-- every test against its every branch -- 216 mutants here -- and the verdict
+-- needs only whether the count is zero.
+--
+-- No braces in this comment beyond the placeholder: the whole file goes
+-- through str.format.
+SELECT count(*) FROM ({test_query})

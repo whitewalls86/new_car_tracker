@@ -10,8 +10,11 @@ models:
       bucket_order is the sort key.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: attempt_bucket
+        data_type: string
         data_tests:
           - not_null
           - unique
@@ -19,14 +22,18 @@ models:
               arguments:
                 values: ['1', '2', '3-4', '5-10', '11+']
       - name: bucket_order
+        data_type: integer
         data_tests:
           - not_null
       - name: listing_count
+        data_type: bigint
         data_tests:
           - not_null
       - name: min_attempts
+        data_type: integer
         data_tests:
           - not_null
       - name: max_attempts
+        data_type: integer
         data_tests:
           - not_null

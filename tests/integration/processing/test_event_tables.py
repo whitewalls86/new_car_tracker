@@ -12,6 +12,9 @@ from processing.queries import (
     INSERT_PRICE_OBSERVATION_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -33,7 +36,7 @@ class TestPriceObservationEvents:
         })
 
         cur.execute(
-            "SELECT * FROM staging.price_observation_events WHERE listing_id = %s::uuid",
+            SQL("select_all_from_staging_price_observation_events"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -58,7 +61,7 @@ class TestPriceObservationEvents:
         })
 
         cur.execute(
-            "SELECT * FROM staging.price_observation_events WHERE listing_id = %s::uuid",
+            SQL("select_all_from_staging_price_observation_events"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -81,7 +84,7 @@ class TestPriceObservationEvents:
         })
 
         cur.execute(
-            "SELECT source FROM staging.price_observation_events WHERE listing_id = %s::uuid",
+            SQL("select_source_from_staging_price_observation_events"),
             (listing_id,),
         )
         assert cur.fetchone()["source"] == "carousel"
@@ -102,7 +105,7 @@ class TestVinToListingEvents:
         })
 
         cur.execute(
-            "SELECT * FROM staging.vin_to_listing_events WHERE vin = %s",
+            SQL("select_all_from_staging_vin_to_listing_events"),
             (vin,),
         )
         row = cur.fetchone()
@@ -124,7 +127,7 @@ class TestVinToListingEvents:
         })
 
         cur.execute(
-            "SELECT * FROM staging.vin_to_listing_events WHERE vin = %s",
+            SQL("select_all_from_staging_vin_to_listing_events"),
             (vin,),
         )
         row = cur.fetchone()

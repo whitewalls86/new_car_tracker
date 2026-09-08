@@ -7,21 +7,11 @@ the two files a crawler asks for before anything else.
 """
 import json
 import re
-from types import MappingProxyType
 
 import pytest
 
-from ops.public_stats import PresentationSnapshot
 from ops.routers import public
-
-
-def _presentation(stats=None, *, status="ok", stale=False):
-    return PresentationSnapshot(
-        stats=MappingProxyType(stats or {}),
-        status=status,
-        stale=stale,
-        last_success_at="2026-08-18T18:00:00Z" if stats else None,
-    )
+from tests.ops.conftest import make_presentation
 
 
 @pytest.fixture
@@ -29,7 +19,7 @@ def landing(mock_client, mocker):
     """The landing page, with a snapshot that does not touch the database."""
     mocker.patch(
         "ops.routers.info.public_stats_cache.get",
-        return_value=_presentation({"active_listings": 500}),
+        return_value=make_presentation({"active_listings": 500}),
     )
     return mock_client.get("/").text
 
@@ -60,7 +50,7 @@ class TestCanonicalRoot:
     def test_the_redirect_is_one_hop_and_ends_on_the_page(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/info")
@@ -78,7 +68,7 @@ class TestCanonicalRoot:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/", follow_redirects=False)
@@ -265,3 +255,66 @@ class TestSitemap:
 
         for path in ("/dashboard", "/admin", "/request-access", "/grafana", "/airflow"):
             assert path not in body, f"{path} is behind OAuth and must not be indexed"
+
+
+class TestHeadIsAnsweredEverywhereGetIs:
+    """Plan 138 Stage 6, measured 2026-09-04.
+
+    FastAPI's ``@router.get`` registers GET alone, so every public route
+    answered HEAD with 405 until the external route matrix was finally run in
+    full. No browser does a bare HEAD on a page, which is why it survived from
+    Stage 2 through Stage 10 unnoticed -- but uptime monitors and link checkers
+    do, and to them a 405 reads as the site being down.
+
+    Asserted on the status *and* the content type, because the failure returned
+    ``application/json`` -- FastAPI's error body -- on routes whose GET is HTML.
+    A fix that answered HEAD with the wrong type would look correct in a status
+    check.
+    """
+
+    def _assert_head_matches_get(self, mock_client, path):
+        get = mock_client.get(path, follow_redirects=False)
+        head = mock_client.head(path, follow_redirects=False)
+
+        assert head.status_code == get.status_code, (
+            f"HEAD {path} answered {head.status_code} where GET answered "
+            f"{get.status_code}"
+        )
+        assert head.headers.get("content-type") == get.headers.get("content-type")
+
+    def test_the_landing_page_answers_head(self, mock_client):
+        mock_client.head("/")
+        self._assert_head_matches_get(mock_client, "/")
+
+    def test_the_recap_index_answers_head(self, mock_client):
+        mock_client.head("/recaps")
+        self._assert_head_matches_get(mock_client, "/recaps")
+
+    def test_a_recap_page_answers_head(self, mock_client):
+        # A literal path, not an f-string: the routing-table assertion in
+        # tests/test_testing_contract.py reads request literals out of the
+        # source, and a computed slug is invisible to it. The guard below is
+        # what keeps the literal honest if this recap ever stops being
+        # published.
+        assert "2026-08-30" in public.published_slugs(), (
+            "this test names a recap page by hand so the routing-table "
+            "assertion can see it; pick another published slug"
+        )
+
+        mock_client.head("/recaps/2026-08-30")
+        self._assert_head_matches_get(mock_client, "/recaps/2026-08-30")
+
+    def test_robots_answers_head(self, mock_client):
+        mock_client.head("/robots.txt")
+        self._assert_head_matches_get(mock_client, "/robots.txt")
+
+    def test_the_sitemap_answers_head(self, mock_client):
+        mock_client.head("/sitemap.xml")
+        self._assert_head_matches_get(mock_client, "/sitemap.xml")
+
+    def test_the_info_redirect_answers_head_too(self, mock_client):
+        """The URL printed on a resume, so a link checker will HEAD it."""
+        head = mock_client.head("/info", follow_redirects=False)
+
+        assert head.status_code == 308
+        assert head.headers["location"] == "/"

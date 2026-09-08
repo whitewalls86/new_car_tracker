@@ -3,6 +3,7 @@ import html as html_lib
 import json
 import logging
 import math
+import os
 import random
 import re
 import threading
@@ -24,7 +25,33 @@ from scraper.queries import ENQUEUE_RESULTS_ARTIFACT, INSERT_RESULTS_ARTIFACT_EV
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://www.cars.com/shopping/results/"
+# The SRP origin. Overridable because `build_results_url` composes the URL
+# rather than taking one -- unlike the detail path, where `payload.url` is a
+# caller input and Layer 4 can point a request wherever it likes. Production
+# leaves this unset; `tests/integration/scraper/` sets it to a loopback origin
+# so the SRP fetch path can run against the recorded page with nothing mocked.
+BASE_URL = os.environ.get(
+    "SCRAPER_RESULTS_BASE_URL", "https://www.cars.com/shopping/results/"
+)
+
+# Origins exempt from the human-cadence pacing below, and the list names the
+# *exemptions* rather than the real sites on purpose.
+#
+# Pacing exists to look human to a listing site, so it is meaningless against a
+# loopback test double and required against everything else. An allowlist of
+# paced origins would invert the failure: add a second scrape target, forget to
+# add it here, and it scrapes un-paced -- which looks perfectly healthy right
+# up until the site notices, and is the hardest kind of outage to attribute.
+# Written this way, a new target is paced from its first request and only a
+# test double has to be declared.
+_UNPACED_ORIGIN_PREFIXES = ("http://127.0.0.1:", "http://localhost:")
+PACING_APPLIES = not BASE_URL.startswith(_UNPACED_ORIGIN_PREFIXES)
+
+
+def _pace(seconds: float) -> None:
+    """Sleep for the human-cadence delay, unless the origin is a test double."""
+    if PACING_APPLIES:
+        time.sleep(seconds)
 _SITE_ACTIVITY_RE = re.compile(r'data-site-activity="([^"]+)"')
 _VIN_RE = re.compile(r'"vin"\s*:\s*"([A-HJ-NPR-Z0-9]{17})"')
 
@@ -416,7 +443,7 @@ def scrape_results(
     consecutive_errors = 0
 
     # === Phase 1: Fetch page 1 to learn total page count ===
-    time.sleep(human_delay(1))
+    _pace(human_delay(1))
 
     url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
     result_p1 = _fetch_page(url_p1, search_key, scope, 1, known_vins, run_id)
@@ -501,7 +528,7 @@ def scrape_results(
             penalty = _srp_adaptive_penalty
         delay = human_delay(page_num) + penalty
         # Never sleep past the deadline
-        time.sleep(min(delay, max(remaining_s - 5, 0)))
+        _pace(min(delay, max(remaining_s - 5, 0)))
 
         url = build_results_url(makes, models, zip_code, scope,
                                 radius_miles, page_num, sort_order)

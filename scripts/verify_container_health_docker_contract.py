@@ -29,7 +29,7 @@ every field the collector reads is still present and still typed the way the
 corpus recorded it. Values are the Layer 4 suite's business, where they are
 fixed by the recording and therefore assertable.
 
-Plan 162 Stage 6.
+Plan 162 Stage H.
 """
 from __future__ import annotations
 
@@ -332,7 +332,7 @@ def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--record", action="store_true",
-        help="refresh the committed corpus from the live API",
+        help="re-record the committed corpus from the live API",
     )
     parser.add_argument("--keep", action="store_true", help="leave the fleet running")
     args = parser.parse_args(argv)

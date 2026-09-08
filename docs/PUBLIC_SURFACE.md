@@ -25,6 +25,57 @@ Three things carry this contract, and they are meant to be the same contract:
 | For a person | this document | Plan 138 / CAR-67 |
 | For a coding agent | [`.claude/skills/public-surface-check/`](../.claude/skills/public-surface-check/SKILL.md) | Plan 138 / CAR-56 |
 | For the commit gate | [`scripts/public_surface_gate.py`](../scripts/public_surface_gate.py) | Plan 138 / CAR-56 |
+| For `git commit` itself | [`.githooks/pre-commit`](../.githooks/pre-commit), installed with `git config core.hooksPath .githooks` | Plan 175 / CAR-89 |
+
+### What guards each published surface
+
+**Seven things reach a stranger, and they are not guarded the same way.**
+Written down by Stage 10 because the gate covers two of them and the previous
+version of gap P4 left the other five reading as though they were unowned.
+
+| # | Published surface | Guarded by | Kind |
+|---:|---|---|---|
+| 1 | `README.md` | `.githooks/pre-commit`, running `public_surface_gate.py` inside `git commit` | **cannot be forgotten** |
+| 2 | `ops/templates/info.html` | `.githooks/pre-commit`, running `public_surface_gate.py` inside `git commit` | **cannot be forgotten** |
+| 3 | a plan document's `## What this plan is for` | the `plan-draft` skill, which authors it | remembered |
+| 4 | a plan document's `## Public summary` | the `close-out` skill, which authors it | remembered |
+| 5 | a `docs/PLANS.md` row, and the archive Description | the `plans` skill, when `--check` says the artifact moved | remembered |
+| 6 | `project-updates.json` | its generator and `--check` | derived — cannot disagree with its source |
+| 7 | the generated recap pages | their generator and `--check` | derived — cannot disagree with its source |
+
+Three notes, each of which was learned rather than assumed:
+
+- **Surfaces 6 and 7 need no claim check.** They are projections; a claim in
+  them is a claim in `docs/PLANS.md` or `docs/recaps/`, and `--check` fails the
+  build if the projection drifts from its source. Guarding them would be
+  guarding the same sentence twice.
+- **Surfaces 3, 4 and 5 are guarded at the moment of authoring, not the moment
+  of commit**, and the trigger for 5 is that `build_public_roadmap.py --check`
+  reports the artifact stale. That is the only reliable signal an edit reached
+  the page: the published window's boundary moves on its own, so an insert that
+  renumbers can carry a plan across it with nobody editing that plan's row.
+- **A remembered check is weaker than the gate, and that is the residue gap P4
+  records.** It is affordable only because each of those three sections has
+  exactly one sanctioned author, and because `docs/PLAN_DOCUMENT.md` freezes
+  `## What this plan is for` against casual editing. A hand-edit that bypasses
+  the authoring skill is already a contract violation on its own terms.
+- **The gate runs inside `git commit`, and no longer only before an agent's
+  `Bash` call.** Plan 175 Stage A found that the `PreToolUse` hook reads the
+  index *before* the command runs, so a commit that staged its own changes --
+  `git add README.md && git commit`, or `git commit -am` -- showed it an empty
+  index and passed while reading nothing. `.githooks/pre-commit` runs after
+  `-a` has staged, whoever typed the command, which closed that hole and the
+  agent-only limit together. What the `PreToolUse` hook now adds is the one
+  thing a git hook cannot do for itself: refuse until `core.hooksPath` is
+  installed, since git does not track hooks and an uninstalled one is silent.
+
+**Presence is enforced in CI; content is not.** `tests/test_planning_docs.py`
+holds both published windows to their sections with **no waiver permitted**, and
+`test_no_waiver_covers_a_published_plan` fails when a plan on a waiver list
+enters the published window — telling the author to write the section and drop
+the waiver. None of those assertions reads what the sentence says. That is what
+the authoring-time checks above are for, and why CI passing is not evidence a
+published claim is true.
 
 **There is no fourth row, and `docs/TESTING.md` has one.** No CI job asserts
 anything in this document. See [Specified here, not yet
@@ -71,7 +122,6 @@ gate's glob has a cost and it is a decision, not a typo.
 
 ## §2 Proven but not production-serving
 
-- Production-shaped CI lake snapshots.
 - Iceberg tables registered through Lakekeeper and exercised through Spark.
 - dbt-Spark parity work and MLflow experiment provenance.
 - Adaptive-refresh feature and backtesting foundations.
@@ -102,6 +152,20 @@ The public feed is a projection of the roadmap, not a second roadmap:
 
 - "Planned next" comes from the ordered rows in `docs/PLANS.md`'s **Default
   build order** table. Publish only the first four executable rows.
+- **A planned row's summary is the plan document's `## What this plan is for`,
+  and the build order's Next executable slice cell is not published copy.** The
+  feed says what a plan is *for*; which stage is next is an internal pointer,
+  rewritten every time one lands, and republishing it put a file path, a ticket
+  identifier and a stage number on the page and rewrote them every few days. The
+  slice cell remains the fallback for a row whose plan has no such section, so
+  the page degrades to the old behaviour rather than to nothing — but a row in
+  the published window is required to carry one, and that is asserted rather than
+  trusted. Decided and measured in Plan 138 Stage 9.
+- **The rest of the row still is published copy.** Title, priority, effort,
+  order and the plan link reach the page verbatim, and a build-order insert
+  renumbers and can carry a plan across the four-row boundary in either
+  direction. "The slice cell is not published copy" is not "`PLANS.md` is not
+  published copy."
 - "Recently completed" comes from the newest-first table in
   [`planning/completed_plans.md`](planning/completed_plans.md). Publish only the
   first four rows. **This is a different file from the build order.** Plan 146
@@ -205,6 +269,7 @@ other agreement on substance.
 | `/info` | Public | 308 to `/` |
 | `/recaps` | Public | Generated recap index, newest first, HTTP 200 |
 | `/recaps/YYYY-MM-DD` | Public | One generated recap page, HTTP 200 |
+| `/writings` | Public | The author's published articles, one card each, linking out. HTTP 200. **Specified 2026-09-03, not yet built** — Plan 138 Stage 1g |
 | `/static_ops/*` | Public | Versioned local assets with long-lived caching |
 | `/robots.txt` | Public | Allows the public root and references the sitemap |
 | `/sitemap.xml` | Public | Contains only canonical public URLs |
@@ -244,12 +309,13 @@ entry, and no inbound link — in that order.
 | Destination | For | Shape | Linked from |
 |---|---|---|---|
 | `/` | The explanation of the system, for someone who arrived with no context | page | README, external links |
-| `/recaps` | The long-form account of what happened, week by week | page (index) | **nothing** — [P2](#the-gap-list) |
+| `/recaps` | The long-form account of what happened, week by week | page (index) | **nothing** — [P2](#the-gap-list); Plan 138 Stage 1g gives it a door from `/` |
 | `/recaps/YYYY-MM-DD` | One week's record | page | its index |
-| The live stats block | What the system is doing right now | section of `/` | **nothing; it has no anchor id** — [P3](#the-gap-list) |
+| The live stats block | What the system is doing right now | section of `/`, anchored at `#live-stats` | the page it sits in; the anchor makes it linkable from elsewhere, added by Plan 138 Stage 4 |
 | `/dashboard` | The application a granted role grants | page, `viewer`+ | **nothing** — [P1](#the-gap-list) |
 | `/request-access` | The way to ask for a role | page, Google-authenticated | `/` hero and footer |
-| The published articles | The author's own account, in their own register | external, third-party | nothing yet — Plan 138 Stage 1g |
+| `/writings` | The author's own account of the work, in their own register | page (cards, linking out) | **not yet built** — Plan 138 Stage 1g gives it a door from `/` |
+| The published articles | One article, on the third-party platform that hosts it | external, third-party | `/writings`, and the newest from `/` — Plan 138 Stage 1g |
 
 **Outbound links are visibly outbound**, and an item that scrolls rather than
 navigates is not presented as though it navigates. A list that flattens an
@@ -260,13 +326,21 @@ lie of omission.
 
 | # | Question | Settled by |
 |---|---|---|
-| D1 | Does `/recaps` survive as its own destination, or become a section of `/`? | Plan 138 Stage 3d |
-| D2 | Is long-form writing one place or two? Stage 1g currently puts articles inline on `/` and reaches recaps through their index — a local call never checked against a whole-surface picture | Plan 138 Stage 3d and 1g together |
+| ~~D1~~ | ~~Does `/recaps` survive as its own destination, or become a section of `/`?~~ **Answered 2026-09-02: it survives, and gains weight.** Plan 138 Stage 3d decided `/recaps` leads with the newest published week rendered in full, with its week stated at the top and `rel=canonical` pointing at that week's own page. A destination you land on and read is not a candidate for folding into `/` | Plan 138 Stage 3d |
+| ~~D2~~ | ~~Is long-form writing one place or two?~~ **Answered 2026-09-03: two, and neither is inline on `/`.** `/recaps` is the account of what happened; `/writings` is the author's own articles. `/` carries one "more depth" section holding a door to each plus the newest article as a card, so the reader still has a single place to look. The withdrawn answer — articles inline, reusing the recap index's row — failed for two reasons recorded in Plan 138: 3d gave `/recaps` real weight, so pairing a page against four inline links was not two destinations; and the row reuse was never shared code, since `.index-list` lives in the recap generator's own stylesheet, which `/` cannot load | Plan 138 Stage 1g |
 | D3 | What earns a destination slot at all? Without a rule, the next generated artifact repeats the route-then-sitemap-then-no-link sequence | Plan 138 Stage 3d |
 | D4 | Does a public navigation element exist, and on which surfaces? A nav shared with the recap pages changes what `scripts/build_public_recaps.py` emits | deferred behind D1–D3 |
 
-**D1–D3 are recorded here rather than answered.** Answering them by omission is
-what produced the gap list below.
+**D3 is recorded here rather than answered.** Answering it by omission is what
+produced the gap list below. D1 was answered on 2026-09-02 and D2 on
+2026-09-03, within a day and two days of this contract first recording them,
+which is the mechanism working: the questions were written down where the
+stage that owns them would see them.
+
+**D2's answer adds a destination, which is a data point D3 still has to
+generalise.** `/writings` earned a slot on the argument that it is a
+destination a reader lands on and reads, the same test D1 applied to
+`/recaps`. That is a precedent, not yet the rule D3 asks for.
 
 ---
 
@@ -297,16 +371,15 @@ fixed elsewhere. An entry is deleted when it is repaired, not marked closed.
 |---|---|---|
 | P1 | **`/dashboard` is linked from no public surface.** `ops/templates/info.html` has no `<nav>` and mentions the route nowhere; its only calls to action are `/request-access`, at the hero and the footer. A visitor who requests access, is granted a role, and returns has no path to the thing they were granted | Plan 138, deferred navigation stage |
 | P2 | **`/recaps` has a canonical route, a sitemap entry, and no inbound link.** The landing page's only recap mention resolves to GitHub | Plan 138 Stage 3d / D1 |
-| P3 | **The live stats section carries no anchor id**, so nothing can link to it — including the roadmap section directly above it | Plan 138 Stage 4 |
-| P4 | **The commit gate covers two of five public surfaces.** `public_surface_gate.py` fires on `README.md` and `ops/templates/info.html`; the generated artifacts and the `docs/PLANS.md` slice cell are outside it. The slice cell is covered instead by the `plans` skill, which knows it is publishing; the generated artifacts are covered by their sources and their `--check` | Plan 138 |
-| P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/` | Plan 138 Stage 1g |
+| P4 | **Seven things are published; the commit gate holds two of them.** Narrowed by Stage 10 (2026-09-04) from an unowned "two of five" to a stated division of labour, because the gate was never going to cover all seven and pretending otherwise hid which ones had nothing. See [what guards each surface](#what-guards-each-published-surface) below. What remains, stated rather than closed: the four surfaces outside the gate are held by **remembered** checks in their authoring skills, not by a mechanism that cannot be forgotten — Stage 1c's own standard — and two narrow bypasses of the gate itself: **`git commit --no-verify`**, and **a clone where `git config core.hooksPath .githooks` was never run and the committer is a person at a terminal** rather than an agent, whose `PreToolUse` hook refuses until it is. Narrowed again by [Plan 175](plans/plan_175_commit_gate_bundling.md) Stage A (2026-09-04), which moved enforcement inside `git commit` and so removed the larger residue this entry used to record -- that the gate held an agent's commits and not one typed in a terminal, and that a commit staging its own changes passed it unread. All three remaining are accepted, and are why this entry stays open rather than being deleted | Plan 138 Stage 10, Plan 175 Stage A |
+| P5 | **Article A contradicts Article C on bronze retention**, and both stay published under the same name. Accepted, dated, and recorded by Plan 138 Stage 1f: an article is a point-in-time artifact. Listed here because a reader may arrive at the surfaces from a document that disagrees with them, and because Stage 1g proposes to link both from `/writings` | Plan 138 Stage 1g |
 
 ---
 
 ## What this contract does not decide
 
-- **Which destinations exist.** D1–D4 above are open, and Plan 138's Stages 3d
-  and 1g settle them.
+- **Which destinations exist.** D3 and D4 above are open. D1 and D2 are
+  answered, both by Plan 138's Stages 3d and 1g.
 - **The navigation element's design.** A nav is a projection of the destination
   inventory; it is deliberately deferred until the inventory is closed.
 - **Whether the published articles are maintained.** Plan 138 Stage 1f decided

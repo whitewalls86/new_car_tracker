@@ -51,16 +51,39 @@ Five of the build order's rows fail a strict ``XS|S|M|L|XL`` match, so a whole
 cell vocabulary check fails on the day it is written. The qualifier stays in
 ``PLANS.md``, where it is doing real work.
 
-**A plan says how it wants to be described in public, and extraction is the
-fallback.** The archive's Description cells run to several hundred words of
-incident narrative naming migrations, services, columns and object paths --
-exactly what §4 bars from the feed -- and they are written for a reader who
-already knows the system. So a plan document may carry a ``## Public summary``
-section, which the close-out skill writes at the moment the archive row is
-written, and this script prefers it. Where there is none the archive cell is
-cut at its first sentence as before, and the script names every plan it had to
-do that to: that list is Gate 1d's worklist, and it empties itself as sections
-get written rather than needing the same four rows re-read every build.
+**A plan says how it wants to be described in public, and a table cell is the
+fallback.** This holds on both sides, for the same reason and against two
+different tables.
+
+The archive's Description cells run to several hundred words of incident
+narrative naming migrations, services, columns and object paths -- exactly what
+§4 bars from the feed -- and they are written for a reader who already knows the
+system. So a plan document may carry a ``## Public summary`` section, which the
+close-out skill writes at the moment the archive row is written, and this script
+prefers it. Where there is none the archive cell is cut at its first sentence as
+before.
+
+**The build order's Next executable slice cell had the same problem in the other
+tense.** That cell is the index's answer to "what could anyone pick up next", so
+it is rewritten every time a stage lands, and publishing it verbatim put a file
+path, a ticket identifier and a stage number on the landing page and rewrote them
+every few days. So a plan document's ``## What this plan is for`` is preferred for
+a planned row, and the slice cell is the fallback -- which is why a slice edit
+alone no longer moves this artifact. Unlike the archive cell it is taken whole
+rather than cut: ``docs/PLAN_DOCUMENT.md`` caps that section at
+``MAX_SUMMARY_CHARS`` and ``tests/test_planning_docs.py`` holds the published
+window to it, so there is nothing to cut.
+
+**The fallback guards a row, not a tree.** Every row in the published window
+carries the section today. What changes is *which* rows are in the window: it is
+the first four executable build-order rows, and membership moves whenever the
+order does. The assertion that keeps the window conforming is generated locally
+and enforced in CI, so the order is regenerate, then fail -- and the fallback is
+what stops an empty summary reaching the page in between.
+
+The script names every plan on either side it had to describe from a table cell:
+that list is Gate 1d's worklist, and it empties itself as sections get written
+rather than needing the same rows re-read every build.
 
 Nothing here was solved by adding a column to ``completed_plans.md``. That file
 is Plan 146's, and a public-copy column in it would be a change to someone
@@ -113,14 +136,26 @@ BUILD_ORDER_COLUMNS = (
 )
 ARCHIVE_COLUMNS = ("Plan", "Description", "Date")
 
-# The section a plan document may carry to say how it wants to be described in
-# public. Preferred over extracting the archive cell; see authored_summary.
+# The two sections a plan document may carry to say how it wants to be described
+# in public, one per published window. Each is preferred over the table cell its
+# side would otherwise publish; see authored_summary and purpose_summary.
+# ``docs/PLAN_DOCUMENT.md`` owns both and names them in this tense: present for
+# planned work, past for completed.
 PUBLIC_SUMMARY_HEADING = "Public summary"
+PLANNED_SUMMARY_HEADING = "What this plan is for"
+
+# Gate 1d's worklist, reported one side at a time. The two sides fall back to
+# different cells and are fixed by writing different sections, so a single list
+# of plan numbers would name the rows and not the work.
+FALLBACK_SOURCES = {
+    "planned": (PLANNED_SUMMARY_HEADING, "the build order's slice cell"),
+    "completed": (PUBLIC_SUMMARY_HEADING, "the archive's Description cell"),
+}
 
 # A published summary is one or two sentences. The cap is not a style rule --
-# it is what makes an unauthored archive cell fail loudly instead of pushing a
-# paragraph of incident narrative onto the landing page, and the fix it points
-# at is writing the plan's own Public summary section.
+# it is what makes an unauthored table cell fail loudly instead of pushing a
+# paragraph of internal prose onto the landing page, and the fix it points at is
+# writing the plan's own public section.
 MAX_SUMMARY_CHARS = 320
 
 EFFORT_TOKENS = ("XS", "XL", "S", "M", "L")
@@ -351,6 +386,46 @@ def plan_document(number: str) -> Path:
     )
 
 
+def _section(path: Path, heading: str) -> str | None:
+    """One ``##`` section's body, or ``None`` when the document has no such
+    heading.
+
+    Bounded by the next heading of *any* level rather than by the next ``##``,
+    so a ``###`` subsection cannot smuggle itself into public copy.
+    """
+    text = path.read_text(encoding="utf-8")
+    match = re.search(rf"^##\s+{re.escape(heading)}\s*$(.*?)(?=^#|\Z)", text, re.M | re.S)
+    return match.group(1) if match else None
+
+
+def purpose_summary(path: Path) -> str | None:
+    """A plan's own **What this plan is for**, when its author wrote one.
+
+    The planned side's counterpart to ``authored_summary``, differing in one
+    way: the build order already carries a Title column, so this section is
+    summary only and has no bolded lead to split off.
+
+    It is taken whole rather than cut at a sentence. ``docs/PLAN_DOCUMENT.md``
+    caps it at ``MAX_SUMMARY_CHARS`` and ``tests/test_planning_docs.py`` holds
+    the published window to that cap, so this is copy already written to fit and
+    truncating it would be the mistake ``authored_summary`` avoids on the other
+    side.
+
+    Returns ``None`` when the section is absent, which is when the build order's
+    slice cell is published in its place.
+    """
+    body = _section(path, PLANNED_SUMMARY_HEADING)
+    if body is None:
+        return None
+
+    summary = flatten_markdown(body)
+    if not summary:
+        raise RoadmapBuildError(
+            f"{_display(path)}: '## {PLANNED_SUMMARY_HEADING}' is empty"
+        )
+    return summary
+
+
 def authored_summary(path: Path) -> tuple[str, str] | None:
     """A plan's own **Public summary** section, when its author wrote one.
 
@@ -372,14 +447,11 @@ def authored_summary(path: Path) -> tuple[str, str] | None:
     Returns ``None`` when the section is absent, which is the normal state for
     the 118 plans archived before this existed.
     """
-    text = path.read_text(encoding="utf-8")
-    match = re.search(
-        rf"^##\s+{PUBLIC_SUMMARY_HEADING}\s*$(.*?)(?=^#|\Z)", text, re.M | re.S
-    )
-    if not match:
+    body = _section(path, PUBLIC_SUMMARY_HEADING)
+    if body is None:
         return None
 
-    paragraphs = [block.strip() for block in match.group(1).split("\n\n") if block.strip()]
+    paragraphs = [block.strip() for block in body.split("\n\n") if block.strip()]
     if not paragraphs:
         raise RoadmapBuildError(
             f"{_display(path)}: '## {PUBLIC_SUMMARY_HEADING}' is empty"
@@ -395,13 +467,17 @@ def authored_summary(path: Path) -> tuple[str, str] | None:
     return title, summary
 
 
-def _linked_plan(cell: str, where: str) -> tuple[str, str]:
-    """Plan number and href from a build-order Plan cell.
+def _linked_plan(cell: str, where: str) -> tuple[str, Path]:
+    """Plan number and document path from a build-order Plan cell.
 
     The cell is a link, sometimes followed by a bold stage marker
     (``[154](...) **Stage 0**``), so the link is matched rather than the cell
     parsed. The target is checked against the tree: a build-order row pointing
     at a document that does not exist would publish a 404.
+
+    The path rather than the URL, because the row's own link is also where the
+    planned summary is read from -- one resolution, so the document that is
+    published and the document that is quoted cannot be two different files.
     """
     match = _LINK_RE.search(cell)
     if not match:
@@ -414,7 +490,7 @@ def _linked_plan(cell: str, where: str) -> tuple[str, str]:
     path = (REPO_ROOT / "docs" / target).resolve()
     if not path.is_file():
         raise RoadmapBuildError(f"{where}: plan {number} links to a missing file: {target}")
-    return number, _blob_url(path)
+    return number, path
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +507,14 @@ def _as_of(index_text: str) -> str:
     return match.group(1)
 
 
-def planned_items(index_text: str) -> list[dict]:
+def planned_items(index_text: str, fallbacks: list[tuple[str, str]] | None = None) -> list[dict]:
+    """Assemble the planned side, preferring each plan's own public copy.
+
+    ``fallbacks`` collects the plans that had no **What this plan is for**
+    section and so were described by republishing the build order's slice cell.
+    It is the same worklist the completed side appends to, tagged by side
+    because the section to write differs.
+    """
     rows = _table_under_heading(index_text, BUILD_ORDER_HEADING, BUILD_ORDER_COLUMNS, INDEX)
 
     orders = [row[0].strip() for row in rows]
@@ -456,7 +539,27 @@ def planned_items(index_text: str) -> list[dict]:
         if not 0 <= priority <= 100:
             raise RoadmapBuildError(f"{INDEX}: Priority {priority} is outside 0-100")
 
-        number, href = _linked_plan(plan_cell, INDEX)
+        number, document = _linked_plan(plan_cell, INDEX)
+        summary = authored = purpose_summary(document)
+        if summary is None:
+            summary = flatten_markdown(slice_cell)
+            if fallbacks is not None:
+                fallbacks.append(("planned", number))
+
+        if len(summary) > MAX_SUMMARY_CHARS:
+            # Two remedies, because a message naming the wrong one is worse than
+            # no message: the section is either too long or not there at all.
+            remedy = (
+                f"Shorten '## {PLANNED_SUMMARY_HEADING}' in {_display(document)}"
+                if authored
+                else f"Write a '## {PLANNED_SUMMARY_HEADING}' section in {_display(document)}"
+            )
+            raise RoadmapBuildError(
+                f"plan {number}: the published summary is {len(summary)} characters, "
+                f"over the {MAX_SUMMARY_CHARS} cap. {remedy} rather than widening "
+                f"the cap"
+            )
+
         items.append(
             {
                 "plan": number,
@@ -465,20 +568,23 @@ def planned_items(index_text: str) -> list[dict]:
                 "priority": priority,
                 "effort": leading_effort_token(effort_cell),
                 "state": "planned",
-                "summary": flatten_markdown(slice_cell),
-                "href": href,
+                "summary": summary,
+                "href": _blob_url(document),
             }
         )
     return items
 
 
-def completed_items(archive_text: str, extracted: list[str] | None = None) -> list[dict]:
+def completed_items(
+    archive_text: str, fallbacks: list[tuple[str, str]] | None = None
+) -> list[dict]:
     """Assemble the completed side, preferring each plan's own public copy.
 
-    ``extracted`` collects the plans that had no **Public summary** section and
-    so were described by cutting a sentence out of their archive row. That list
-    is Gate 1d's worklist: it names exactly the rows a human still has to read,
-    and it empties itself as close-out writes the sections.
+    ``fallbacks`` collects the plans that had no **Public summary** section and
+    so were described by cutting a sentence out of their archive row. Together
+    with the planned side's entries that list is Gate 1d's worklist: it names
+    exactly the rows a human still has to read, and it empties itself as the
+    sections get written.
     """
     rows = _sole_table(archive_text, ARCHIVE_COLUMNS, ARCHIVE)
 
@@ -499,8 +605,8 @@ def completed_items(archive_text: str, extracted: list[str] | None = None) -> li
         else:
             title, remainder = bolded_lead(description)
             summary = first_sentence(flatten_markdown(remainder))
-            if extracted is not None:
-                extracted.append(number)
+            if fallbacks is not None:
+                fallbacks.append(("completed", number))
 
         if len(summary) > MAX_SUMMARY_CHARS:
             raise RoadmapBuildError(
@@ -529,14 +635,14 @@ def completed_items(archive_text: str, extracted: list[str] | None = None) -> li
     return items
 
 
-def build(extracted: list[str] | None = None) -> dict:
+def build(fallbacks: list[tuple[str, str]] | None = None) -> dict:
     index_text = (REPO_ROOT / INDEX).read_text(encoding="utf-8")
     archive_text = (REPO_ROOT / ARCHIVE).read_text(encoding="utf-8")
     return {
         "schema_version": SCHEMA_VERSION,
         "as_of": _as_of(index_text),
-        "planned": planned_items(index_text),
-        "completed": completed_items(archive_text, extracted),
+        "planned": planned_items(index_text, fallbacks),
+        "completed": completed_items(archive_text, fallbacks),
     }
 
 
@@ -554,23 +660,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    extracted: list[str] = []
+    fallbacks: list[tuple[str, str]] = []
     try:
-        rendered = render(build(extracted))
+        rendered = render(build(fallbacks))
     except RoadmapBuildError as exc:
         print(f"build_public_roadmap: {exc}", file=sys.stderr)
         return 2
 
-    # Gate 1d, reduced to the rows it still applies to. A plan with its own
-    # Public summary has already been read by the person who wrote it; the
-    # names printed here are the ones described by machine.
-    if extracted:
+    # Gate 1d, reduced to the rows it still applies to. A plan carrying its own
+    # public section has already been read by the person who wrote it; the names
+    # printed here are the ones described by machine, on either side.
+    for side, (heading, source) in FALLBACK_SOURCES.items():
+        numbers = [number for tagged, number in fallbacks if tagged == side]
+        if not numbers:
+            continue
         print(
-            f"build_public_roadmap: Gate 1d -- {len(extracted)} completed "
-            f"{'summary was' if len(extracted) == 1 else 'summaries were'} cut from "
-            f"the archive rather than authored: plans {', '.join(extracted)}. "
-            f"Read what they publish, or add '## {PUBLIC_SUMMARY_HEADING}' to those "
-            f"plan documents.",
+            f"build_public_roadmap: Gate 1d -- {len(numbers)} {side} "
+            f"{'summary was' if len(numbers) == 1 else 'summaries were'} taken from "
+            f"{source} rather than authored: plans {', '.join(numbers)}. "
+            f"Read what they publish, or add '## {heading}' to those plan documents.",
             file=sys.stderr,
         )
 

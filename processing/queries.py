@@ -50,3 +50,8 @@ INSERT_ARTIFACT_EVENT = shared_queries.INSERT_ARTIFACT_EVENT
 INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = (
     shared_queries.INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
 )
+
+# Plan 98: the batch insert into staging.silver_observations, the queue the
+# archiver later flushes to Parquet. Issued through psycopg2.extras
+# execute_values, whose `VALUES %s` placeholder the driver expands and binds.
+INSERT_SILVER_OBSERVATIONS = _load("insert_silver_observations")

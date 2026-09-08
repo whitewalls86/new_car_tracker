@@ -16,7 +16,7 @@ verified that the DAG was constructing the same format when calling the API.
 guards its DAG construction behind `except ImportError`. It sat in
 `tests/integration/airflow/` unmarked, so the Airflow step deselected all 7 and
 the unit job ran them anyway -- the right result by accident. Moved here by Plan
-162 Stage 5 (CAR-49), beside the other DAG-module unit tests that avoid
+162 Stage F (CAR-49), beside the other DAG-module unit tests that avoid
 importing airflow by the same discipline.
 """
 import sys

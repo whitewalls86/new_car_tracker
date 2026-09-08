@@ -17,6 +17,25 @@ on:
   # run.
   workflow_dispatch:
 
+# Plan 162 Stage U. Workflow level rather than per step, and that is the whole
+# point: a skip subtracts from what a run proves in whatever job it happens in,
+# so the gate belongs where every job -- including one nobody has written yet
+# -- inherits it. `tests/plugins/declared_skips.py` reads it; a step that opts
+# out by shadowing the key fails
+# `test_every_pytest_step_runs_under_the_declared_skip_gate`.
+env:
+  REQUIRE_DECLARED_SKIPS: "1"
+  # Plan 162 Stage X, and workflow level for the same reason as the line above.
+  # `tests/plugins/sql_execution_recorder.py` records what text executed against
+  # which client; it writes an artifact only when this names somewhere to put
+  # it, and until this existed every job recorded faithfully and threw the
+  # record away at exit.
+  #
+  # A **directory**, not a file: `service-integration` runs pytest five times
+  # and `schema-contracts` twice, so one filename would leave each job
+  # reporting its last suite as its whole record.
+  SQL_EXECUTION_RECORD: sql-execution
+
 jobs:
 
   changes:
@@ -26,6 +45,7 @@ jobs:
       docs_tests: ${{ steps.scope.outputs.docs_tests }}
       unit: ${{ steps.scope.outputs.unit }}
       heavy: ${{ steps.scope.outputs.heavy }}
+      snapshot_dbt: ${{ steps.scope.outputs.snapshot_dbt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +68,11 @@ jobs:
           docs_tests=false
           unit=true
           heavy=true
+          # Plan 162 Stage P. Reads true here for the same fail-open reason
+          # as the two above, even though the group it gates is an allowlist
+          # rather than a complement: a run that could not classify anything
+          # is not a run that gets to skip a gate.
+          snapshot_dbt=true
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base_sha="$PR_BASE_SHA"
@@ -71,6 +96,7 @@ jobs:
                   docs_tests=true|docs_tests=false) docs_tests="${line#*=}" ;;
                   unit=true|unit=false) unit="${line#*=}" ;;
                   heavy=true|heavy=false) heavy="${line#*=}" ;;
+                  snapshot_dbt=true|snapshot_dbt=false) snapshot_dbt="${line#*=}" ;;
                 esac
               done <<< "$classified"
             fi
@@ -79,6 +105,7 @@ jobs:
           echo "docs_tests=$docs_tests" >> "$GITHUB_OUTPUT"
           echo "unit=$unit" >> "$GITHUB_OUTPUT"
           echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "snapshot_dbt=$snapshot_dbt" >> "$GITHUB_OUTPUT"
 
   docs-tests:
     name: Documentation tests
@@ -93,7 +120,8 @@ jobs:
       # markdown-it-py is what Stage 1e's recap projection renders with. It is
       # present locally only as a transitive dependency of `rich`, so this job
       # names it rather than relying on something else's dependency tree.
-      - run: pip install pytest markdown-it-py
+      # pytest-mock is what the two generator suites below patch with.
+      - run: pip install pytest pytest-mock markdown-it-py
       # Plan 138 Stage 1d. The public roadmap projection is generated from
       # docs/PLANS.md and docs/planning/completed_plans.md, so a roadmap edit is
       # exactly the change that can leave it stale -- and it is also the change
@@ -117,6 +145,23 @@ jobs:
       # every relative link classified, and no page left behind by a recap that
       # stopped being published.
       - run: python scripts/build_public_recaps.py --check
+      # Plan 138 Stage 9. `--check` above is a byte comparison against a
+      # regeneration, so it catches a stale or hand-edited artifact and nothing
+      # else. What it cannot see is a *correctly regenerated* artifact whose
+      # content is wrong -- markup the flattener left in a summary, a link that
+      # resolves to nothing, a planned field the landing page does not read --
+      # and those are properties of `docs/`, so a docs-only changeset is the
+      # exact path that introduces them. Plan 138 Stage 9 put
+      # `ops/static_ops/generated/` in the docs zone, which is what made this
+      # path reachable without the unit job; these two suites are the assertions
+      # the unit job would otherwise have run.
+      - run: >
+          pytest --noconftest -q
+          tests/scripts/test_build_public_roadmap.py
+          tests/scripts/test_build_public_recaps.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          LOG_PATH: /tmp/app.log
       - run: pytest --noconftest tests/test_planning_docs.py -q
         env:
           # The repo root carries an __init__.py, so pytest's package-root walk
@@ -127,6 +172,19 @@ jobs:
           # fails. Every other pytest step here already sets this.
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-docs-tests
+          path: sql-execution/
+          if-no-files-found: warn
 
   lint:
     name: Lint (ruff)
@@ -193,6 +251,35 @@ jobs:
       - name: Verify the recorded Docker API contract against the real proxy
         run: python scripts/verify_container_health_docker_contract.py
 
+  git-ref-hygiene:
+    name: Git ref hygiene contract (real remote)
+    runs-on: ubuntu-latest
+    # No `changes` gate. What this asserts lives on the remote, not in the
+    # tree, so it can drift without a single file changing -- somebody flipping
+    # a setting in the GitHub UI is exactly the regression it exists to catch,
+    # and that produces no changeset at all.
+    if: github.repository == 'whitewalls86/new_car_tracker'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Load-bearing. The accretion count reads refs/remotes/origin/*, and
+          # the default single-branch shallow clone has none of them. The
+          # verifier fails closed rather than counting zero, so getting this
+          # wrong is loud rather than a false green.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Reads two facts nothing in the tree can hold: that the remote deletes
+      # merged head branches, and that every PR still lands as a merge commit.
+      # The second is what keeps `plan-week` able to attribute a commit whose
+      # own text names no plan -- a squash or rebase merge leaves no merge
+      # commit, so the branch name stops being permanent history.
+      - name: Verify the remote is not configured to accrete refs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/verify_git_ref_hygiene_contract.py
+
   unit-tests:
     name: Unit tests (pytest)
     runs-on: ubuntu-latest
@@ -219,16 +306,16 @@ jobs:
             -r dashboard/requirements.txt \
             -r dbt_runner/requirements.txt
       # --cov-fail-under is what makes the number mean something: before Plan
-      # 162 Stage 2 this step measured coverage and threw it away, over six of
+      # 162 Stage C this step measured coverage and threw it away, over six of
       # the ten production directories. The floor is a ratchet, not a target --
       # raise it when a stage raises the number, never lower it to fit a
       # regression.
       #
-      # 74 -> 75 at Stage 5b, which did not improve any coverage: it removed
+      # 74 -> 75 at Stage G, which did not improve any coverage: it removed
       # `scripts/oneoff/` from the denominator, 19,733 statements -> 13,585,
       # and the reported number went 75.91% -> 77.65% for that reason alone.
       # The floor moves with it or it stops being a floor. Two points of
-      # headroom is the Stage 2 convention -- seven statements read differently
+      # headroom is the Stage C convention -- seven statements read differently
       # on Linux and Windows, and the rest is ordinary churn, which a smaller
       # denominator now amplifies rather than damps.
       - run: >-
@@ -249,6 +336,19 @@ jobs:
           path: coverage.xml
           if-no-files-found: error
 
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-unit-tests
+          path: sql-execution/
+          if-no-files-found: warn
+
   docker-build:
     name: Docker build (all services)
     runs-on: ubuntu-latest
@@ -256,10 +356,54 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
     steps:
       - uses: actions/checkout@v4
+      # Plan 170 Stage B. The fleet's cold build footprint, measured where a
+      # full build already happens rather than by running one against the VM.
+      #
+      # This is a CEILING for the production host, never its number. A GitHub
+      # runner starts with no images at all, so this delta includes pulling
+      # every base image, which the VM already has; and the runner is x86
+      # while the VM is ARM64. Over-estimating is the safe direction for a
+      # headroom floor, but anything reading this must treat it as an upper
+      # bound.
+      #
+      # It is here to be watched over time. When an image grows -- Plan 125
+      # takes cartracker-lakehouse to roughly 2.34 GB on its next rebuild --
+      # the footprint moves on the PR that does it, not on the deploy that
+      # discovers the disk is full.
+      - name: Record free space before the build
+        run: |
+          avail_kb="$(df -k --output=avail / | tail -1 | tr -d ' ')"
+          echo "FOOTPRINT_BEFORE_KB=$avail_kb" >> "$GITHUB_ENV"
       - run: docker compose build
+      - name: Report the build footprint
+        if: always()
+        run: |
+          after_kb="$(df -k --output=avail / | tail -1 | tr -d ' ')"
+          used_kb=$(( FOOTPRINT_BEFORE_KB - after_kb ))
+          before_gib="$(awk -v k="$FOOTPRINT_BEFORE_KB" 'BEGIN{printf "%.2f", k/1048576}')"
+          after_gib="$(awk -v k="$after_kb" 'BEGIN{printf "%.2f", k/1048576}')"
+          used_gib="$(awk -v k="$used_kb" 'BEGIN{printf "%.2f", k/1048576}')"
+          {
+            echo "### Cold build footprint (ceiling)"
+            echo ""
+            echo "| | GiB |"
+            echo "|---|---:|"
+            echo "| Free before | $before_gib |"
+            echo "| Free after | $after_gib |"
+            echo "| **Consumed by the build** | **$used_gib** |"
+            echo ""
+            echo "Upper bound for the production host, not its number: this"
+            echo "runner starts with no images, so the figure includes pulling"
+            echo "every base image, and it is x86 while the VM is ARM64."
+            echo ""
+            echo '```'
+            docker system df 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "cold build footprint: $used_gib GiB (ceiling)"
 
   # ---------------------------------------------------------------------------
-  # Plan 162 Stage 4 (Plan 139 Stages B and C) replaced one `dbt build + test`
+  # Plan 162 Stage E (Plan 139 Stages B and C) replaced one `dbt build + test`
   # job with the four below.
   #
   # What that job was: eight pytest suites run one after another on a single
@@ -356,7 +500,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -403,9 +547,45 @@ jobs:
         # materializes int_listing_state_runs/int_latest_observation against real
         # data. Written under the reserved 2099 partition so it never collides
         # with the empty-schema compilation seed above.
-        run: python scripts/seed_lake_snapshot_fixture.py
+        #
+        # --postgres-url is the other half of the fixture: two of dbt's six
+        # sources resolve through postgres_scan(), and ops.tracked_models is
+        # written by the processing service in production and by nothing in
+        # this job. Left unseeded, int_active_make_models inner-joins an empty
+        # table and five models build over an empty world -- the exact state
+        # test_models_are_not_vacuous.py exists to refuse, in this job.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
@@ -422,6 +602,102 @@ jobs:
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
 
+      - name: Run the dbt branch-coverage gate
+        # Plan 162 Stage S. Its own pytest process, and the separation is the
+        # design rather than tidiness.
+        #
+        # **Ordering is load-bearing: the two gate steps run before the
+        # equivalence suite below, not after it.** That suite's real-build
+        # tests seed later fixture phases into the shared 2099 partition and
+        # rebuild a subset of models, leaving a warehouse no single `dbt build`
+        # produced — some models holding phase-2/3 rows beside marts still on
+        # phase 1, with the stg_* views reading the enlarged Parquet live.
+        # Measured here instead, the gates describe exactly what the build step
+        # above produced, which is the state the documented repro (`seed, build,
+        # run the gate alone`) reproduces.
+        #
+        # `test_incremental_models_real_build.py` and
+        # `test_observation_fingerprints_real_build.py` call `run_dbt()`, which
+        # invokes dbt **in-process** — Plan 139 Stage C measured that as ~3s of
+        # every 4.4s saved, and `tests/integration/dbt/real_build.py` argues the
+        # trade. What it costs is a lock: dbt-duckdb caches its adapter, so it
+        # holds DUCKDB_PATH open read-write for the life of the interpreter, and
+        # DuckDB refuses a second handle to one file under a *different*
+        # configuration. Which suite shares a pytest process with those two is
+        # therefore not a scheduling preference. It decides what a suite in that
+        # process is permitted to open.
+        #
+        # **Branch coverage would survive the shared process today**, and is
+        # split out anyway. `analytics_con()` opens the same path under the same
+        # configuration, which is the one thing dbt's open handle allows — so
+        # folding this back in goes green, which is exactly why someone would.
+        # The next gate on Stage S's list cannot: the constraint-mutation gate
+        # needs `attached_warehouse()`, a separate `:memory:` database with the
+        # warehouse ATTACHed READ_ONLY so a mutated model can be materialized
+        # somewhere that is not the warehouse under assertion, and READ_ONLY is
+        # precisely the different configuration DuckDB will not grant.
+        # `assert_no_in_process_dbt()` is there so that arrives as a sentence
+        # instead of a lock error six frames deep.
+        #
+        # **What breaks if the two are merged.** Nothing, on the commit that
+        # merges them. The seam is what is lost: the mutation gate then turns up
+        # needing a step that has to be carved back out of a passing one, and
+        # the argument for carving it has to be reconstructed from a DuckDB
+        # error message by whoever is unlucky enough to hit it. Split while it
+        # costs an --ignore and a step; not later, when it costs a bisect.
+        #
+        # It needs the build step's environment entire, not a subset:
+        # `compiled_in_both_phases()` runs `dbt compile --full-refresh` and then
+        # `dbt compile` to capture both renderings of the seven models whose
+        # incremental form differs from their cold one, and dbt's `on-run-start`
+        # hook reads Postgres on every invocation regardless of what is
+        # selected. TZ is pinned rather than inherited: GitHub runners are UTC
+        # already, so it changes nothing today — it is here because a pinned
+        # expectation that resolves to a timestamp is not a fact about the
+        # models if it also depends on the runner's clock offset, and that
+        # property should be readable at the step rather than held by a default
+        # nobody chose.
+        run: >-
+          pytest tests/integration/dbt/test_branch_coverage.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TZ: UTC
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run the dbt constraint-mutation gate
+        # Its own invocation for a harder reason than the gate above it. This
+        # suite calls `attached_warehouse()`, which opens an in-memory DuckDB
+        # and ATTACHes the warehouse READ_ONLY -- a *different configuration*
+        # for the same file, which DuckDB refuses outright when dbt-duckdb
+        # already holds it open read-write. Every other suite in that directory
+        # calls run_dbt(), and dbt stays imported for the life of the
+        # interpreter, so sharing a process is not slow here: it does not work.
+        # The suite says so itself, via assert_no_in_process_dbt(), rather than
+        # surfacing as a lock error six frames down.
+        #
+        # It mutates 216 branches and runs each model's own data tests against
+        # the mutant, in about seven seconds, entirely inside the in-memory
+        # database -- the warehouse this job built is never written to, so the
+        # steps around it still describe what dbt produced.
+        run: >-
+          pytest tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TZ: UTC
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: Run selector/dbt equivalence tests
         # Compares the real dbt build above against the Plan 120 selector SQL
         # over the same MinIO data — the coupling guard requested in Gate B
@@ -431,10 +707,230 @@ jobs:
         # once: this step is the critical path now that nothing else shares
         # its job, so the per-test breakdown has to stay readable in the log
         # rather than living only in a plan document that ages.
-        run: pytest tests/integration/dbt/ -v -m integration --durations=20
+        #
+        # The --ignore is the other half of the two gate steps above, and
+        # neither half works alone: this argument is a directory, so a file
+        # added to it joins this process by default, and the gates' whole
+        # reason for existing is that those two files must not. It also runs
+        # after them, deliberately — its real-build tests reseed and rebuild,
+        # and the gates must measure the untouched build.
+        run: >-
+          pytest tests/integration/dbt/
+          --ignore=tests/integration/dbt/test_branch_coverage.py
+          --ignore=tests/integration/dbt/test_constraint_mutation.py
+          -v -m integration --durations=20
         env:
           PYTHONPATH: ${{ github.workspace }}
           DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-dbt-models
+          path: sql-execution/
+          if-no-files-found: warn
+
+  snapshot-dbt:
+    name: dbt build against a production snapshot
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.snapshot_dbt == 'true') && needs.lint.result == 'success'
+    # Plan 162 Stage P. The only instrument here that can see a production row.
+    # dbt unit tests run on inputs their author chose and the Plan 120 synthetic
+    # fixture seeds authored business-state scenarios, so neither can surface a
+    # `unique` violation, a `not_null` violation, a cast failure or a duplicate
+    # join key that exists in production -- no production row is ever in their
+    # denominator. `dbt build` (not `run`: the assertions are dbt's own data
+    # tests) over a pinned, production-derived snapshot is.
+    #
+    # **Deliberately not a step in `dbt-models`.** That job seeds the synthetic
+    # fixture into a reserved obs_year=2099 partition so it cannot collide with
+    # the empty-schema compilation seed. A production snapshot lands in real
+    # partitions under the same globs, as a third dataset, so sharing a runner
+    # would put fixture-plus-production under the equivalence assertions in
+    # `tests/integration/dbt/`. Separate jobs get independent runners with no
+    # shared filesystem, which dissolves the collision rather than managing it,
+    # and the wall clock stays at max() rather than sum().
+    #
+    # **What a green here does not prove**, recorded rather than solved:
+    #   * Production builds incrementally (`--full-refresh` is conditional in
+    #     dbt_runner/app.py and off by default) while a fresh DuckDB file takes
+    #     every incremental model's cold path, so the two exercise different code.
+    #   * A subset cannot invent a duplicate or a null, so `unique`/`not_null`
+    #     failures here are true positives about production -- but
+    #     `relationships` failures may be artifacts of incomplete cohort
+    #     closure, which Plan 120 records as the hard part and once got wrong.
+    #   * A snapshot captured after production's last dbt run can be red while
+    #     production is green, only because production has not run yet.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cartracker
+          POSTGRES_PASSWORD: cartracker
+          POSTGRES_DB: cartracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        command: server /data
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations (Flyway)
+        # Not only for dbt's on-run-start hook, as in `dbt-models`: this job's
+        # seed writes rows into public.search_configs and ops.tracked_models,
+        # and it writes them into tables Flyway created rather than creating its
+        # own. A column a migration added after the pinned snapshot was exported
+        # arrives NULL and fails on its NOT NULL -- which is the correct signal
+        # to bump the pin, and is only available because the schema is real.
+        uses: docker://flyway/flyway:10-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/cartracker
+            -user=cartracker
+            -password=cartracker
+            -locations=filesystem:/github/workspace/db/migrations
+            -detectEncoding=true
+            -placeholders.viewerPassword=ci_viewer
+            -placeholders.scraperPassword=ci_scraper
+            -placeholders.dbtPassword=ci_dbt
+            -placeholders.authEmailSalt=ci_salt
+            -placeholders.adminEmail=ci@example.com
+            -placeholders.airflowPassword=ci_airflow
+            -placeholders.airflowAppPassword=ci_airflow_app
+            -placeholders.metricsPassword=ci_metrics
+            -defaultSchema=public
+            migrate
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # Same measured-rather-than-assumed install as the other heavy jobs.
+        # Needs: httpx (the downloader's API mode), boto3/botocore and zstandard
+        # (the seeder), psycopg2 (its Postgres half), duckdb (the extension
+        # install below). requirements-dev supplies the first three; archiver's
+        # supplies psycopg2 and duckdb.
+        run: |
+          pip install \
+            -r requirements-dev.txt \
+            -r archiver/requirements.txt
+
+      - name: Create MinIO bucket
+        run: python .github/scripts/create_ci_bucket.py
+
+      - name: Install dbt
+        # Pinned to match dbt_runner/Dockerfile, same as `dbt-models`. A drift
+        # between the two would make this job's verdict about a dbt version
+        # production does not run.
+        run: pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1"
+
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Install DuckDB extensions
+        run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
+
+      - name: Download the pinned lake snapshot
+        # The id comes from .github/ci_lake_snapshot_pin.json, never from
+        # latest.json: a pointer that moves between two runs of the same commit
+        # destroys re-runnability on the one check whose job is telling you what
+        # a change did. See that file for how to bump it.
+        id: snapshot
+        shell: bash
+        env:
+          CARTRACKER_SNAPSHOT_TOKEN: ${{ secrets.CARTRACKER_SNAPSHOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          snapshot_id="$(jq -er .snapshot_id .github/ci_lake_snapshot_pin.json)"
+          echo "snapshot_id=$snapshot_id" >> "$GITHUB_OUTPUT"
+          archive="$(python scripts/download_lake_snapshot.py \
+            --snapshot-id "$snapshot_id" \
+            --base-url https://cartracker.info)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Seed the snapshot into MinIO and Postgres
+        # --require-non-empty is the whole point of the step. Four of the six dbt
+        # sources are Parquet in MinIO and two resolve through postgres_scan();
+        # left empty, stg_search_configs reads nothing, int_active_make_models
+        # inner-joins to nothing, and mart_vehicle_snapshot builds green over an
+        # empty world -- in the job whose purpose is proving the build survives
+        # real data. Without this flag that is a pass.
+        run: |
+          python scripts/seed_lake_snapshot.py \
+            --snapshot "${{ steps.snapshot.outputs.archive }}" \
+            --minio-endpoint http://localhost:9000 \
+            --bucket bronze \
+            --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker \
+            --require-non-empty
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/snapshot_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt build (DuckDB — production-shaped data)
+        working-directory: dbt
+        run: dbt build --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/snapshot_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
@@ -513,7 +1009,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -562,9 +1058,42 @@ jobs:
           MINIO_BUCKET: bronze
 
       - name: Seed lake snapshot fixture data
-        run: python scripts/seed_lake_snapshot_fixture.py
+        # --postgres-url so the Postgres-backed sources carry rows here too:
+        # this job's build feeds the SQL contract tests that read main.mart_*,
+        # and a mart built over an unseeded ops.tracked_models is empty, which
+        # turns every assertion over it vacuous.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: dbt run --empty (create the relations unit tests need)
+        # Plan 162 Stage S. **Not an optimisation -- the build below fails
+        # without it.** A dbt unit test on an incremental model overrides
+        # `is_incremental` true and mocks `- input: this`, and dbt then reads the
+        # model's own relation to type those mocked rows. But dbt runs a model's
+        # unit tests *before* materializing it, so on a clean warehouse the test
+        # needs a relation the test is itself blocking: "Not able to get columns
+        # for unit test ... because the relation doesn't exist".
+        #
+        # That reads as a deadlock and is not one -- dbt's documentation
+        # prescribes exactly this. `--empty` builds each model with a LIMIT 0 so
+        # the relations exist, and `run` rather than `build` because `build`
+        # would run the very unit tests that need them. Measured 2026-09-07:
+        # without this step four unit tests fail and their four models are still
+        # absent after a second build; with it, a clean warehouse reaches
+        # PASS=282 ERROR=0. 19 branch points are reachable no other way -- the
+        # Plan 123 late-arrival lookback windows exist only in the warm form.
+        working-directory: dbt
+        run: dbt run --empty --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
@@ -632,10 +1161,27 @@ jobs:
           # Same reasoning one fixture over. 55 of this suite's tests read the
           # DuckDB file the dbt build above produced; if it were missing they
           # would skip and this step would still pass, hiding a quarter of
-          # Layer 2. REQUIRE_LAYER_2_EXECUTION is the general form: any skip in
-          # this suite is a broken job, not a local convenience.
+          # Layer 2.
+          #
+          # REQUIRE_LAYER_2_EXECUTION stood here as the general form and was
+          # retired by Plan 162 Stage U, which made it general in fact: the
+          # workflow-level REQUIRE_DECLARED_SKIPS fails any undeclared skip in
+          # any job, and no declaration is admissible for a Layer 2 test at
+          # all. That last rule is derived from the contract's layer table
+          # rather than from this suite's path, so a second Layer 2 root
+          # inherits it on the day the contract declares it.
           REQUIRE_DUCKDB: "1"
-          REQUIRE_LAYER_2_EXECUTION: "1"
+          # Plan 162: the one ops statement that reads MinIO Parquet directly
+          # rather than Postgres or the analytics file -- the blocked-cooldown
+          # reconcile. This job already runs a MinIO service and seeds the lake
+          # fixture into it; these four are what let the duckdb_s3_con fixture
+          # reach it, and REQUIRE_MINIO closes its skip the same way the two
+          # above close theirs.
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+          REQUIRE_MINIO: "1"
 
       - name: Run Airflow integration tests
         run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration
@@ -644,6 +1190,19 @@ jobs:
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow.db
           AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-schema-contracts
+          path: sql-execution/
+          if-no-files-found: warn
 
   service-integration:
     name: Service integration tests (Postgres)
@@ -696,7 +1255,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -708,14 +1267,15 @@ jobs:
         # needed is an ImportError at collection, named and immediate. Add the
         # file back when a suite grows an import; do not pre-empt it.
         #
-        # Five suites, needing bs4, duckdb, fastapi, prometheus_client,
+        # Four suites, needing bs4, duckdb, fastapi, prometheus_client,
         # prometheus_fastapi_instrumentator, psycopg2, pyarrow, s3fs,
         # boto3 and zstandard.
-        # 
-        # Not scraper/requirements.txt, despite the scraper suite running
-        # here: tests/integration/scraper/ imports processing.queries and
-        # scraper.queries, both pure load_query modules, so curl_cffi
-        # (13.5MB) and asyncpg are never reached.
+        #
+        # The scraper suite left this job in Plan 162 Stage M -- its Layer 4
+        # half writes to MinIO, which only `lake-integration` has. The note
+        # that used to stand here, that the suite reached neither curl_cffi
+        # nor asyncpg, was true of a suite that only executed SQL constants
+        # and is exactly what G8 said was missing.
         run: |
           pip install \
             -r requirements-dev.txt \
@@ -731,7 +1291,7 @@ jobs:
           LOG_PATH: /tmp/ops_test.log
 
       - name: Run container_health integration tests (Layer 4)
-        # Plan 162 Stage 6. Needs no service: the suite stands up a strict fake
+        # Plan 162 Stage H. Needs no service: the suite stands up a strict fake
         # of docker-socket-proxy on loopback and serves the recorded corpus, so
         # the whole request path runs with nothing mocked and no daemon. The
         # real proxy is exercised once, in `container-health-contract`.
@@ -751,7 +1311,7 @@ jobs:
           LOG_PATH: /tmp/scripts_test.log
 
       - name: Run Processing integration tests
-        # Plan 162 Stage 1. These 58 tests had never appeared in this file in
+        # Plan 162 Stage B. These 58 tests had never appeared in this file in
         # its history -- written, reviewed and merged against a step that did
         # not exist. Two defects had been sitting in them the whole time: six
         # cleanups named `staging.artifact_events`, a table no migration has
@@ -764,15 +1324,6 @@ jobs:
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/processing_test.log
 
-      - name: Run Scraper integration tests
-        # Plan 162 Stage 1, and the whole of what G8 deferred: the 403 blocked
-        # cooldown upsert-plus-event path, against real Postgres.
-        run: pytest tests/integration/scraper/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          LOG_PATH: /tmp/scraper_test.log
-
       - name: Run dbt_runner integration tests
         # DUCKDB_PATH here is this job's own throwaway file, not the one the
         # dbt build writes -- these tests create what they read, which is why
@@ -783,6 +1334,19 @@ jobs:
           DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
           POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/dbt_runner_test.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-service-integration
+          path: sql-execution/
+          if-no-files-found: warn
 
   lake-integration:
     name: Lake integration tests (MinIO)
@@ -849,7 +1413,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # Plan 162 Stage E: this job installs requirements-dev.txt plus only
         # the service requirements that supply what its own suites import,
         # measured rather than assumed. The blanket seven-file install put the
         # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
@@ -863,10 +1427,17 @@ jobs:
         #
         # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
         # zstandard -- all of which archiver/requirements.txt supplies.
+        #
+        # scraper/requirements.txt joined it in Plan 162 Stage M, when the
+        # scraper suite moved here and stopped being two imports of pure
+        # load_query modules. Its Layer 4 half imports `scraper.app`, so it
+        # needs what the app needs: curl_cffi for the real fetch, asyncpg for
+        # the lifespan pool, and prometheus-fastapi-instrumentator.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r archiver/requirements.txt
+            -r archiver/requirements.txt \
+            -r scraper/requirements.txt
 
       - name: Create MinIO bucket
         run: python .github/scripts/create_ci_bucket.py
@@ -874,7 +1445,12 @@ jobs:
       - name: Seed lake snapshot fixture data
         # The archiver's selector and cohort tests run their SQL against
         # production-shaped Parquet; this is where that Parquet comes from.
-        run: python scripts/seed_lake_snapshot_fixture.py
+        # --postgres-url seeds the Postgres half of the same fixture, so the
+        # source-table world this job tests against matches the one the dbt
+        # jobs build from.
+        run: >-
+          python scripts/seed_lake_snapshot_fixture.py
+          --postgres-url postgresql://cartracker:cartracker@localhost:5432/cartracker
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000
@@ -883,7 +1459,7 @@ jobs:
           MINIO_BUCKET: bronze
 
       - name: Run Shared integration tests
-        # Plan 162 Stage 1. Plan 131's pack fallback end-to-end against real
+        # Plan 162 Stage B. Plan 131's pack fallback end-to-end against real
         # MinIO -- the property Stage 4 deletes source objects on the strength
         # of. INTEGRATION_HTML_DICT_ID is deliberately unset: the dictionary
         # case declares its own skip rather than asserting against a
@@ -906,3 +1482,72 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
+
+      - name: Run Scraper integration tests (Layer 4)
+        # Moved here from `service-integration` by Plan 162 Stage M. The suite
+        # used to be the blocked-cooldown statements against Postgres alone;
+        # it now runs `POST /scrape_detail` end to end, and that path writes
+        # the page to MinIO before it writes the queue row, so it needs both
+        # services and this is the only job that has them.
+        #
+        # FLARESOLVERR_URL is set empty on purpose. It is read into a module
+        # constant at import and defaults to a non-empty `http://flaresolverr:8191`,
+        # so leaving it unset does not disable the solver -- it sends every
+        # fetch into the solver branch to wait for a connection error before
+        # falling back. Empty takes the plain curl_cffi path directly.
+        run: pytest tests/integration/scraper/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          FLARESOLVERR_URL: ""
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+          LOG_PATH: /tmp/scraper_test.log
+
+      # Plan 162 Stage X. The record is per job because a statement may execute
+      # in any of them; the gate downloads every one of these and reads them
+      # together. `warn` rather than `error` while the gate is landing -- once
+      # it is, a job that produced no record fails there, which is the check
+      # that means something.
+      - name: Upload this job's SQL execution record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-execution-lake-integration
+          path: sql-execution/
+          if-no-files-found: warn
+
+  # Plan 162 Stage X. The half of the execution recorder no pytest job can be.
+  # A statement may execute in any of the jobs above, so no single job's record
+  # is a coverage reading; only something downstream of all of them is. This is
+  # what replaces `_names(stem, text)` -- crediting a file because a Layer 2
+  # module mentions its name -- with whether the file's text actually reached a
+  # database client.
+  sql-execution-coverage:
+    name: SQL execution coverage
+    runs-on: ubuntu-latest
+    needs: [changes, lint, docs-tests, unit-tests, dbt-models, schema-contracts, service-integration, lake-integration]
+    # The heavy gate, matching its siblings: a run that could not classify still
+    # runs this, and one that classified itself as light has no records to read.
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The gate reads `production_sql_files()` out of the contract test rather
+      # than deriving the file list a second time -- two derivations are two
+      # answers, and the one nobody runs is the one that drifts.
+      - run: pip install pytest pyyaml
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sql-execution-*
+          path: sql-execution-records
+      # `--report` is gone: it existed for exactly the two landings it took to
+      # get an honest reading, and the reading is 161 of 161 with an empty
+      # ledger. From here a statement that executes nowhere fails this job.
+      - name: Every production statement executed somewhere, or waived
+        run: python scripts/check_sql_execution_coverage.py

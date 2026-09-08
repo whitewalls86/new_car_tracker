@@ -1,6 +1,6 @@
 """Create the `bronze` bucket on the CI MinIO service container.
 
-Lifted out of an inline heredoc in `ci.yml` by Plan 162 Stage 4. The job split
+Lifted out of an inline heredoc in `ci.yml` by Plan 162 Stage E. The job split
 gave three jobs a MinIO service, and three copies of the same twelve lines is
 three places for the endpoint and credentials to drift apart.
 

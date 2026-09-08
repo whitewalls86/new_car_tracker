@@ -20,6 +20,14 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+# The only non-stdlib import in this file, and deliberately the cheapest one
+# available: `shared/db_vocabularies.py` imports nothing but `enum`, so an
+# operator running this from the checkout during a host window needs no
+# installed dependency for it. The script talks to the coordination API over
+# `urllib` and never to Postgres, but the phases it compares against are the
+# database's, so this is where they come from.
+from shared.db_vocabularies import CoordinationKind, CoordinationPhase
+
 # The coordination API is ops on 8060, which is what ``scripts/redeploy.sh``
 # already uses. The previous default of 5050 is pgAdmin (``"5050:80"`` in
 # docker-compose.yml), so every command run without ``--api-url`` answered 500
@@ -1568,7 +1576,7 @@ def load_preflight_bundle(path: Path) -> dict[str, Any]:
 def run_validate_host(args: argparse.Namespace) -> dict[str, Any]:
     """Collect and record host validation without changing coordination state."""
     checkpoint = latest_checkpoint(args.checkpoint)
-    if checkpoint.get("phase") != "validating":
+    if checkpoint.get("phase") != CoordinationPhase.VALIDATING:
         raise MaintenanceError(
             f"cannot validate host from checkpoint phase {checkpoint.get('phase')!r}"
         )
@@ -1594,7 +1602,10 @@ def run_validate_host(args: argparse.Namespace) -> dict[str, Any]:
         failed = [name for name, gate in gates.items() if gate["verdict"] != "pass"]
         raise MaintenanceError(f"host validation did not pass: {', '.join(failed)}")
     state = api_request(args.api_url, "GET", "/coordination/status")
-    if state.get("phase") != "validating" or state.get("kind") != "host_maintenance":
+    if (
+        state.get("phase") != CoordinationPhase.VALIDATING
+        or state.get("kind") != CoordinationKind.HOST_MAINTENANCE
+    ):
         raise MaintenanceError("coordination is not validating host maintenance")
     generation = state.get("generation")
     if not isinstance(generation, int) or generation < 1:
@@ -1738,7 +1749,7 @@ def transition(
 ) -> dict[str, Any]:
     current = api_request(args.api_url, "GET", "/coordination/status")
     if current.get("phase") == expected_phase:
-        if current.get("kind") != "host_maintenance":
+        if current.get("kind") != CoordinationKind.HOST_MAINTENANCE:
             raise MaintenanceError(f"phase {expected_phase!r} belongs to another coordination kind")
         recorded_manifest = current.get("manifest_location")
         if recorded_manifest and recorded_manifest != args.manifest:
@@ -1764,15 +1775,15 @@ def complete_transition(args: argparse.Namespace) -> dict[str, Any]:
         "generation": generation,
         "manifest_sha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
     }
-    if current.get("phase") == "validating":
-        if current.get("kind") != "host_maintenance":
+    if current.get("phase") == CoordinationPhase.VALIDATING:
+        if current.get("kind") != CoordinationKind.HOST_MAINTENANCE:
             raise MaintenanceError("validating coordination belongs to another kind")
         if current.get("manifest_location") != args.manifest:
             raise MaintenanceError("manifest does not match the active coordination")
-    elif current.get("phase") != "none":
+    elif current.get("phase") != CoordinationPhase.NONE:
         raise MaintenanceError("host maintenance is not ready to complete")
     result = api_request(args.api_url, "POST", "/coordination/complete", payload)
-    if result.get("phase") != "none" or result.get("generation") != generation:
+    if result.get("phase") != CoordinationPhase.NONE or result.get("generation") != generation:
         raise MaintenanceError("coordination API did not confirm completion")
     append_checkpoint(args.checkpoint, "complete", args.manifest)
     return result
@@ -1781,15 +1792,18 @@ def complete_transition(args: argparse.Namespace) -> dict[str, Any]:
 def wait_until_active(args: argparse.Namespace) -> dict[str, Any]:
     """Wait without a short deadline, logging drain evidence at a bounded rate."""
     current = api_request(args.api_url, "GET", "/coordination/status")
-    if current.get("phase") == "active":
-        if current.get("kind") != "host_maintenance":
+    if current.get("phase") == CoordinationPhase.ACTIVE:
+        if current.get("kind") != CoordinationKind.HOST_MAINTENANCE:
             raise MaintenanceError("active coordination belongs to another kind")
         recorded_manifest = current.get("manifest_location")
         if recorded_manifest and recorded_manifest != args.manifest:
             raise MaintenanceError("manifest does not match the active coordination")
         append_checkpoint(args.checkpoint, "active", args.manifest)
         return current
-    if current.get("kind") != "host_maintenance" or current.get("phase") != "draining":
+    if (
+        current.get("kind") != CoordinationKind.HOST_MAINTENANCE
+        or current.get("phase") != CoordinationPhase.DRAINING
+    ):
         raise MaintenanceError("host maintenance is not draining")
 
     next_progress_at = 0.0

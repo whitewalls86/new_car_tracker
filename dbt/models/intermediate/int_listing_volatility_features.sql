@@ -84,7 +84,16 @@ runs_with_meta as (
         m.make,
         m.model
     from {{ ref('int_listing_state_runs') }} r
-    left join vin_listing_meta m using (vin17, listing_id)
+    -- ON rather than USING, and the difference is not cosmetic: USING *merges*
+    -- the key columns, so vin17/listing_id come back non-null whether or not
+    -- `m` matched, and nothing in the result distinguishes a matched row from a
+    -- null-extended one. Plan 162 Stage S's branch prober reads a left join's
+    -- two outcomes as a branch and could not express this one at all. Same rows
+    -- out either way -- the only change is that the join's own condition is now
+    -- visible to a reader and to a probe.
+    left join vin_listing_meta m
+        on m.vin17 = r.vin17
+       and m.listing_id = r.listing_id
 ),
 
 open_runs as (
@@ -211,7 +220,9 @@ select
     vs.listing_id_change_count,
     {{ datediff_days('o.run_started_at', 'ao.ts') }} as days_since_last_state_change,
     o.artifact_count                                as unchanged_observation_streak,
-    coalesce(lsc.listing_state_change_count, 0)     as listing_state_change_count,
+    -- No coalesce: the join below cannot miss, so this is never NULL. See the
+    -- note on that join.
+    lsc.listing_state_change_count                  as listing_state_change_count,
 
     -- Price signals
     ph.current_price,
@@ -259,8 +270,27 @@ select
 
 from open_runs o
 cross join as_of ao
-join vin_stats vs                             using (vin17)
-left join listing_state_change_counts lsc     using (vin17)
+join vin_stats vs                             on vs.vin17  = o.vin17
+-- ON rather than USING for the same reason as the vin_listing_meta join above:
+-- USING merges vin17, so a row that found no state-change count would be
+-- indistinguishable from one that did. The inner join above is converted too,
+-- so the two joins read the same way.
+--
+-- And an inner join rather than a LEFT one, because it cannot miss. Both
+-- `vin_stats` and `listing_state_change_counts` group `runs_with_meta` by
+-- vin17 with nothing filtered between them, so their key domains are identical
+-- by construction; a row here has already survived the inner join to
+-- `vin_stats` on the same key. Plan 162 Stage S's branch prober could not take
+-- the null-extended arm with any data, and no dbt unit test can construct one
+-- either -- a unit test mocks `ref()`s, and both CTEs descend from the same
+-- ref, so no mocked input puts a vin17 in one and not the other.
+--
+-- Left as a LEFT JOIN it read as a guard against something that cannot happen,
+-- and cost a permanent entry in a coverage ledger nobody could ever drain. If
+-- a filter is ever added between `runs_with_meta` and this CTE, the domains
+-- stop matching and this join starts dropping rows -- loudly, which is the
+-- failure worth having rather than silent nulls flowing into a feature column.
+join listing_state_change_counts lsc          on lsc.vin17 = o.vin17
 left join price_changes pc                    on pc.vin  = o.vin17
 left join {{ ref('int_price_history') }} ph   on ph.vin  = o.vin17
 left join {{ ref('int_benchmarks') }} bm      on bm.make = o.make and bm.model = o.model

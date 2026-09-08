@@ -21,6 +21,7 @@ from ops.queries import (
     CLAIM_DETAIL_SCRAPE_BATCH,
     CLEAR_DEPLOY_INTENT,
     COMPLETE_COORDINATION_STATE,
+    COUNT_BLOCKED_COOLDOWN_LISTINGS,
     DELETE_AUTHORIZED_USER,
     DELETE_DETAIL_SCRAPE_CLAIMS,
     DENY_ACCESS_REQUEST,
@@ -74,6 +75,10 @@ from ops.queries import (
 )
 from ops.routers.coordination import _TRANSITIONS, COORDINATION_LOCK_ID
 from ops.routers.deploy import STALE_LOCK_MINUTES
+from shared.query_loader import load_query
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -81,13 +86,19 @@ pytestmark = pytest.mark.integration
 # The sensor's own statement, read from the file the sensor reads.
 #
 # This was an AST scrape of a module-level constant in sensors.py until Plan
-# 162 Stage 7 moved the statement into airflow/sql/, which is what the scrape
+# 162 Stage L moved the statement into airflow/sql/, which is what the scrape
 # was working around: this suite runs in the main venv and cannot import
 # Airflow. Reading the .sql file is the same guarantee -- one copy, executed
 # here -- without parsing Python to get at a string.
-GATE_OBSERVATION_SQL = (
-    Path(__file__).parents[3] / "airflow" / "sql" / "record_gate_observation.sql"
-).read_text(encoding="utf-8")
+# Loaded rather than read, and Plan 162 Stage X is why. ``read_text`` returns a
+# plain ``str``; ``shared.query_loader`` returns ``SqlText``, which carries the
+# file it came from, so the execution recorder can say this statement ran. Read
+# with ``read_text`` it executed against a real Postgres on every run with
+# nothing able to attribute it -- the coverage gate reported exactly that on its
+# first CI run, which is the instrument working.
+GATE_OBSERVATION_SQL = load_query(
+    Path(__file__).parents[3] / "airflow" / "sql", "record_gate_observation"
+)
 
 # The surfaces a full-fleet deploy expands to; see ops/coordination_contract.py.
 DEPLOY_SCOPE = frozenset(
@@ -114,31 +125,21 @@ class TestSearchConfigQueries:
     def test_insert_search_config(self, cur):
         key = f"smoke-{uuid.uuid4().hex[:8]}"
         cur.execute(
-            """
-            INSERT INTO search_configs
-                (search_key, enabled, params, rotation_order, rotation_slot, created_at, updated_at)
-            VALUES (%s, %s, %s::jsonb, %s, %s, now(), now())
-            """,
+            SQL("insert_search_configs"),
             (key, True, '{"makes": ["test"]}', 1, 0),
         )
         assert cur.rowcount == 1
 
     def test_update_search_config(self, cur, seed_search_config):
         cur.execute(
-            """
-            UPDATE search_configs
-            SET enabled = %s, params = %s::jsonb, rotation_order = %s,
-                rotation_slot = %s, updated_at = now()
-            WHERE search_key = %s
-            """,
+            SQL("update_search_configs_enabled"),
             (False, '{"makes": ["updated"]}', 2, 1, seed_search_config),
         )
         assert cur.rowcount == 1
 
     def test_toggle_search_config(self, cur, seed_search_config):
         cur.execute(
-            "UPDATE search_configs SET enabled = NOT enabled, updated_at = now()"
-            " WHERE search_key = %s",
+            SQL("update_search_configs_enabled_2"),
             (seed_search_config,),
         )
         assert cur.rowcount == 1
@@ -146,8 +147,7 @@ class TestSearchConfigQueries:
     def test_soft_delete_search_config(self, cur, seed_search_config):
         deleted_key = f"deleted_{seed_search_config}"
         cur.execute(
-            "UPDATE search_configs SET enabled = false, search_key = %s, updated_at = now()"
-            " WHERE search_key = %s",
+            SQL("update_search_configs_enabled_3"),
             (deleted_key, seed_search_config),
         )
         assert cur.rowcount == 1
@@ -160,37 +160,13 @@ class TestSearchConfigQueries:
 class TestDeployIntentQueries:
 
     def test_intent_status(self, cur):
-        cur.execute("""
-            WITH pending_artifacts AS (
-                SELECT COUNT(*) AS number_running,
-                       MIN(created_at) AS min_started_at
-                FROM ops.artifacts_queue
-                WHERE status IN ('pending', 'processing')
-            ), running_detail_claims AS (
-                SELECT COUNT(*) AS number_running,
-                       MIN(claimed_at) AS min_started_at
-                FROM ops.detail_scrape_claims
-                WHERE status = 'running'
-            )
-            SELECT di.intent, di.requested_at, di.requested_by,
-                   pa.number_running + rdc.number_running AS number_running,
-                   LEAST(pa.min_started_at, rdc.min_started_at) AS min_started_at
-            FROM deploy_intent di
-            LEFT JOIN pending_artifacts pa ON 1=1
-            LEFT JOIN running_detail_claims rdc ON 1=1
-            WHERE di.id = 1
-        """)
+        cur.execute(SQL("select_di_intent_di_requested_at_di_requested_by_from_deploy_intent"))
         row = cur.fetchone()
         assert row is not None
 
     def test_set_intent(self, cur):
         cur.execute(
-            """UPDATE deploy_intent
-               SET intent = 'pending', requested_at = now(), requested_by = %s
-               WHERE id = 1
-                 AND (intent = 'none'
-                      OR requested_at < now() - interval '%s minutes')
-               RETURNING intent""",
+            SQL("update_deploy_intent_intent"),
             ("smoke_test", 30),
         )
         row = cur.fetchone()
@@ -322,22 +298,13 @@ class TestArtifactsQueueSchema:
     """Layer 2 smoke tests: verify ops.artifacts_queue table and constraints exist."""
 
     def test_table_exists_and_has_expected_columns(self, cur):
-        cur.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'artifacts_queue'
-            ORDER BY ordinal_position
-        """)
+        cur.execute(SQL("column_types_of_artifacts_queue"))
         cols = {row["column_name"] for row in cur.fetchall()}
         for expected in ("artifact_id", "minio_path", "artifact_type", "status", "created_at"):
             assert expected in cols, f"ops.artifacts_queue missing column: {expected}"
 
     def test_minio_path_is_not_nullable(self, cur):
-        cur.execute("""
-            SELECT is_nullable FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'artifacts_queue'
-              AND column_name = 'minio_path'
-        """)
+        cur.execute(SQL("column_type_of_artifacts_queue_minio_path"))
         row = cur.fetchone()
         assert row is not None
         assert row["is_nullable"] == "NO"
@@ -345,8 +312,7 @@ class TestArtifactsQueueSchema:
     def test_insert_valid_row_succeeds(self, cur):
         minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
         cur.execute(
-            """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
-               VALUES (%s, 'results_page', now(), 'pending') RETURNING artifact_id""",
+            SQL("insert_artifacts_queue"),
             (minio_path,),
         )
         row = cur.fetchone()
@@ -357,8 +323,7 @@ class TestArtifactsQueueSchema:
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         with pytest.raises(psycopg2.errors.CheckViolation):
             cur.execute(
-                """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
-                   VALUES (%s, 'results_page', now(), 'invalid_status')""",
+                SQL("insert_artifacts_queue_3"),
                 (minio_path,),
             )
 
@@ -367,8 +332,7 @@ class TestArtifactsQueueSchema:
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         with pytest.raises(psycopg2.errors.CheckViolation):
             cur.execute(
-                """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
-                   VALUES (%s, 'bad_type', now(), 'pending')""",
+                SQL("insert_artifacts_queue_4"),
                 (minio_path,),
             )
 
@@ -382,19 +346,13 @@ class TestArtifactsQueueEventsSchema:
     def _insert_queue_row(self, cur) -> int:
         minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
         cur.execute(
-            """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
-               VALUES (%s, 'results_page', now(), 'pending') RETURNING artifact_id""",
+            SQL("insert_artifacts_queue"),
             (minio_path,),
         )
         return cur.fetchone()["artifact_id"]
 
     def test_table_exists_and_has_expected_columns(self, cur):
-        cur.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'staging' AND table_name = 'artifacts_queue_events'
-            ORDER BY ordinal_position
-        """)
+        cur.execute(SQL("column_types_of_artifacts_queue_events"))
         cols = {row["column_name"] for row in cur.fetchall()}
         for expected in ("event_id", "artifact_id", "status", "event_at",
                          "minio_path", "artifact_type", "fetched_at", "listing_id", "run_id"):
@@ -404,10 +362,7 @@ class TestArtifactsQueueEventsSchema:
         artifact_id = self._insert_queue_row(cur)
         minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
         cur.execute(
-            """INSERT INTO artifacts_queue_events
-                   (artifact_id, status, minio_path, artifact_type, fetched_at)
-               VALUES (%s, 'pending', %s, 'results_page', now())
-               RETURNING event_id""",
+            SQL("insert_artifacts_queue_events"),
             (artifact_id, minio_path),
         )
         row = cur.fetchone()
@@ -417,10 +372,7 @@ class TestArtifactsQueueEventsSchema:
         artifact_id = self._insert_queue_row(cur)
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         cur.execute(
-            """INSERT INTO artifacts_queue_events
-                   (artifact_id, status, minio_path, artifact_type)
-               VALUES (%s, 'pending', %s, 'results_page')
-               RETURNING event_at""",
+            SQL("insert_artifacts_queue_events_2"),
             (artifact_id, minio_path),
         )
         row = cur.fetchone()
@@ -431,13 +383,11 @@ class TestArtifactsQueueEventsSchema:
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         for status in ("pending", "processing", "complete"):
             cur.execute(
-                """INSERT INTO artifacts_queue_events
-                       (artifact_id, status, minio_path, artifact_type)
-                   VALUES (%s, %s, %s, 'results_page')""",
+                SQL("insert_artifacts_queue_events_4"),
                 (artifact_id, status, minio_path),
             )
         cur.execute(
-            "SELECT COUNT(*) as cnt FROM artifacts_queue_events WHERE artifact_id = %s",
+            SQL("select_cnt_from_artifacts_queue_events"),
             (artifact_id,),
         )
         assert cur.fetchone()["cnt"] == 3
@@ -446,19 +396,16 @@ class TestArtifactsQueueEventsSchema:
         """Verifies the scraper write pattern: artifacts_queue + event in one transaction."""
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         cur.execute(
-            """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
-               VALUES (%s, 'detail_page', now(), 'pending') RETURNING artifact_id""",
+            SQL("insert_artifacts_queue_2"),
             (minio_path,),
         )
         artifact_id = cur.fetchone()["artifact_id"]
         cur.execute(
-            """INSERT INTO artifacts_queue_events
-                   (artifact_id, status, minio_path, artifact_type, fetched_at)
-               VALUES (%s, 'pending', %s, 'detail_page', now())""",
+            SQL("insert_artifacts_queue_events_3"),
             (artifact_id, minio_path),
         )
         cur.execute(
-            "SELECT status FROM artifacts_queue_events WHERE artifact_id = %s",
+            SQL("select_status_from_artifacts_queue_events"),
             (artifact_id,),
         )
         assert cur.fetchone()["status"] == "pending"
@@ -478,9 +425,7 @@ def _insert_dag_run(cur, dag_id: str, run_id: str) -> None:
     this fixture now catches: these columns are Airflow's to change.
     """
     cur.execute(
-        "INSERT INTO airflow.dag_run"
-        " (dag_id, run_id, state, start_date, run_type, run_after)"
-        " VALUES (%s, %s, 'running', now(), 'manual', now())",
+        SQL("airflow/insert_airflow_dag_run"),
         (dag_id, run_id),
     )
 
@@ -503,17 +448,35 @@ class TestCoordinationDrainQueries:
         row = cur.fetchone()
         assert row is not None and row["count"] >= 0
 
+    def test_processing_artifacts_backlog_resolves(self, cur):
+        cur.execute(coordination_drain.SELECT_PROCESSING_ARTIFACTS_BACKLOG)
+        row = cur.fetchone()
+        assert row is not None and row["count"] >= 0
+
     def test_airflow_task_instance_query_resolves(self, cur, airflow_metadata):
-        query = coordination_drain.task_instance_query(DEPLOY_SCOPE)
-        assert query is not None, "the deploy scope must drain some task instances"
-        cur.execute(*query)
+        cur.execute(*coordination_drain.task_instance_query(DEPLOY_SCOPE))
         assert cur.fetchone() is not None
 
     def test_gate_observation_query_resolves(self, cur, airflow_metadata):
-        query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)
-        assert query is not None, "the deploy scope must cover some admission DAGs"
-        cur.execute(*query)
+        cur.execute(*coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1))
         assert cur.fetchone() is not None
+
+    def test_an_empty_scope_counts_zero_rather_than_being_special_cased(
+        self, cur, airflow_metadata
+    ):
+        """Plan 162 Stage N deleted the branch that used to answer this.
+
+        Both statements were f-strings building a VALUES list, and a VALUES
+        list with no rows is a syntax error -- so the builders returned None on
+        an empty scope and every call site had to translate that back into
+        zero. The array form is legal when empty, so the engine answers
+        directly and there is no branch to get wrong.
+        """
+        cur.execute(*coordination_drain.task_instance_query(frozenset()))
+        assert cur.fetchone()["count"] == 0
+
+        cur.execute(*coordination_drain.gate_observation_query(frozenset(), 1))
+        assert cur.fetchone()["count"] == 0
 
     # --- Plan 158: the seam. The two statements above and below never met.
     # --- `coordination_gate_observations` was empty for every generation that
@@ -526,7 +489,7 @@ class TestCoordinationDrainQueries:
     ):
         generation = 158
         query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, generation)
-        affected = query[1][:-1]
+        affected = query[1][0]
         runs = [(dag_id, f"{dag_id}-{uuid.uuid4().hex[:8]}") for dag_id in affected]
         for dag_id, run_id in runs:
             _insert_dag_run(cur, dag_id, run_id)
@@ -543,7 +506,7 @@ class TestCoordinationDrainQueries:
     def test_an_observation_does_not_satisfy_the_next_generation(
         self, cur, airflow_metadata
     ):
-        dag_id = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[1][0]
+        dag_id = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[1][0][0]
         run_id = f"{dag_id}-{uuid.uuid4().hex[:8]}"
         _insert_dag_run(cur, dag_id, run_id)
         cur.execute(GATE_OBSERVATION_SQL, (158, dag_id, run_id))
@@ -567,8 +530,7 @@ class TestCoordinationDrainQueries:
             cur.execute(GATE_OBSERVATION_SQL, (158, "orphan_checker", run_id))
 
         cur.execute(
-            "SELECT COUNT(*) FROM public.coordination_gate_observations"
-            " WHERE generation = %s AND dag_id = %s AND run_id = %s",
+            SQL("select_count_from_public_coordination_gate_observations"),
             (158, "orphan_checker", run_id),
         )
         assert cur.fetchone()["count"] == 1
@@ -578,8 +540,9 @@ class TestCoordinationDrainQueries:
         sql = " ".join(
             [
                 coordination_drain.RUNNING_DETAIL_CLAIMS_SQL,
-                coordination_drain.task_instance_query(DEPLOY_SCOPE)[0],
-                coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[0],
+                coordination_drain.SELECT_PROCESSING_ARTIFACTS_BACKLOG,
+                coordination_drain.SELECT_AIRFLOW_TASK_INSTANCES,
+                coordination_drain.SELECT_AIRFLOW_GATE_OBSERVATIONS,
             ]
         )
         for table in (
@@ -592,7 +555,7 @@ class TestCoordinationDrainQueries:
 
 
 # ===========================================================================
-# Statements imported from ops.queries — Plan 162 Stage 7
+# Statements imported from ops.queries — Plan 162 Stage L
 # ===========================================================================
 
 class TestExtractedOpsStatements:
@@ -629,7 +592,7 @@ class TestExtractedOpsStatements:
 
 
 # ===========================================================================
-# ops/routers/*.py — Plan 162 Stage 7
+# ops/routers/*.py — Plan 162 Stage L
 #
 # The four routers held 49 statements at their .execute() call sites, which no
 # test could import and so no test could execute. They are .sql files now, and
@@ -662,7 +625,7 @@ def _open_coordination_request(cur, kind: str = "host_maintenance") -> int:
             json.dumps(["host"]),
             json.dumps(["host"]),
             "layer-2-test",
-            "Plan 162 Stage 7 smoke test",
+            "Plan 162 Stage L smoke test",
             json.dumps([]),
             None,
             None,
@@ -975,8 +938,7 @@ class TestScrapeStatements:
         keys = sorted(f"layer2-{uuid.uuid4().hex}" for _ in range(2))
         for order, key in enumerate(keys):
             cur.execute(
-                "INSERT INTO search_configs (search_key, params, rotation_slot,"
-                " rotation_order) VALUES (%s, '{}'::jsonb, %s, %s)",
+                SQL("insert_search_configs_3"),
                 (key, slot, order),
             )
 
@@ -998,7 +960,7 @@ class TestScrapeStatements:
 
     def test_legacy_search_config_claim(self, cur):
         cur.execute(
-            "INSERT INTO search_configs (search_key, params) VALUES (%s, '{}'::jsonb)",
+            SQL("insert_search_configs_2"),
             (f"layer2-{uuid.uuid4().hex}",),
         )
         cur.execute(SELECT_LEGACY_SEARCH_CONFIG, (1439,))
@@ -1023,8 +985,7 @@ class TestScrapeStatements:
         run_id = str(uuid.uuid4())
         listing_id = str(uuid.uuid4())
         cur.execute(
-            "INSERT INTO detail_scrape_claims (listing_id, claimed_by, status)"
-            " VALUES (%s::uuid, %s, 'running')",
+            SQL("insert_detail_scrape_claims"),
             (listing_id, run_id),
         )
         cur.execute(DELETE_DETAIL_SCRAPE_CLAIMS, ([listing_id], run_id))
@@ -1036,7 +997,7 @@ class TestScrapeStatements:
 
 
 # ===========================================================================
-# The maintenance statements, executed — Plan 162 Stage 7
+# The maintenance statements, executed — Plan 162 Stage L
 # ===========================================================================
 
 class TestMaintenanceStatements:
@@ -1049,12 +1010,23 @@ class TestMaintenanceStatements:
     """
 
     def test_select_stuck_processing_artifacts(self, cur):
+        # The reaper builds its retry payload from these six by name, so the
+        # projection is the contract; nothing here is stuck, which is why the
+        # columns rather than the rows are what this asserts.
         cur.execute(SELECT_STUCK_PROCESSING_ARTIFACTS)
-        cur.fetchall()
+        assert cur.fetchall() == []
+        assert _column_names(cur) == [
+            "artifact_id", "minio_path", "artifact_type", "fetched_at",
+            "listing_id", "run_id",
+        ]
 
     def test_expire_orphan_detail_claims(self, cur):
+        # No fixture seeds a running claim, so the 2-hour predicate matches
+        # nothing and this proves the statement plans and returns what the
+        # caller reads without expiring a claim the test did not create.
         cur.execute(EXPIRE_ORPHAN_DETAIL_CLAIMS)
-        cur.fetchall()
+        assert cur.fetchall() == []
+        assert _column_names(cur) == ["listing_id"]
 
     def test_evict_delisted_cooldowns_takes_a_listing_with_no_observation(self, cur):
         # A cooldown whose listing has no price observation is precisely what
@@ -1062,8 +1034,7 @@ class TestMaintenanceStatements:
         # than only proving the statement plans.
         listing_id = str(uuid.uuid4())
         cur.execute(
-            "INSERT INTO ops.blocked_cooldown (listing_id, num_of_attempts) "
-            "VALUES (%s, 1)",
+            SQL("insert_ops_blocked_cooldown"),
             (listing_id,),
         )
         cur.execute(EVICT_DELISTED_COOLDOWNS)
@@ -1072,8 +1043,7 @@ class TestMaintenanceStatements:
     def test_select_live_cooldown_listings(self, cur):
         listing_id = str(uuid.uuid4())
         cur.execute(
-            "INSERT INTO ops.blocked_cooldown (listing_id, num_of_attempts) "
-            "VALUES (%s, 2)",
+            SQL("insert_ops_blocked_cooldown_2"),
             (listing_id,),
         )
         cur.execute(SELECT_LIVE_COOLDOWN_LISTINGS)
@@ -1095,7 +1065,7 @@ class TestMaintenanceStatements:
 
 
 class TestSearchConfigAdminStatements:
-    """admin.py's writes, which nothing executed until Plan 162 Stage 7.
+    """admin.py's writes, which nothing executed until Plan 162 Stage L.
 
     All six were ``sql = \"\"\"...\"\"\"`` locals -- importable in principle and in
     no .sql file in practice, so the Layer 2 census could not count them and
@@ -1152,3 +1122,50 @@ class TestDrainGateStatement:
         # MIN is what separates "busy" from "stuck", so it must come back even
         # when there is nothing running.
         assert count == 0 or oldest is not None
+
+
+class TestBlockedCooldownReconcileStatement:
+    """The one ops statement that runs against DuckDB rather than Postgres.
+
+    `POST /maintenance/reconcile-cooldown-cohorts` reads the blocked-cooldown
+    lifecycle log straight from the ops_normalized Parquet, because the
+    persisted analytics.duckdb view over the same files would contend with dbt's
+    write lock. It sat in a Python literal with nothing executing it until Plan
+    162 -- and it is the statement that decides which listings get a 'cleared'
+    event written for them, so a drift in its arg_max columns would emit events
+    for the wrong cohort rather than failing.
+    """
+
+    def test_returns_listings_whose_latest_event_is_still_blocking(
+        self, duckdb_s3_con, blocked_cooldown_parquet,
+    ):
+        rows = duckdb_s3_con.execute(
+            COUNT_BLOCKED_COOLDOWN_LISTINGS, [blocked_cooldown_parquet],
+        ).fetchall()
+
+        # The caller builds `{str(listing_id): attempts}` from these two
+        # positionally, so the projection is the contract.
+        for listing_id, attempts in rows:
+            assert listing_id is not None
+            assert attempts is None or isinstance(attempts, int)
+
+    def test_a_cleared_listing_is_excluded(
+        self, duckdb_s3_con, blocked_cooldown_parquet,
+    ):
+        """arg_max over event_at is the whole statement: a listing blocked and
+        later cleared must not come back, or the reconcile emits a second
+        'cleared' event for a listing that already has one."""
+        counted = {
+            str(listing_id)
+            for listing_id, _ in duckdb_s3_con.execute(
+                COUNT_BLOCKED_COOLDOWN_LISTINGS, [blocked_cooldown_parquet],
+            ).fetchall()
+        }
+        cleared = {
+            str(row[0])
+            for row in duckdb_s3_con.execute(
+                SQL("duckdb/select_listing_id_from_select_listing_id_latest_from_read_parquet"),
+                [blocked_cooldown_parquet],
+            ).fetchall()
+        }
+        assert not (counted & cleared)

@@ -12,7 +12,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 # Imported for its registration side effect: the Plan 136 Stage 2 outcome
 # counters must exist on the default registry before the first /metrics scrape.
 import scraper.metrics  # noqa: F401
-from db import close_pool, get_pool
+from scraper.db import close_pool, get_pool
 from scraper.processors.scrape_detail import (
     DEFAULT_DETAIL_MAX_WORKERS,
     DEFAULT_DETAIL_TIMEOUT_S,

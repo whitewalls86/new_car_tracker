@@ -20,9 +20,11 @@ ones:**
 
 Nothing else is in scope here. Not `docs/`, not the overviews, not the published
 articles. The three generated surfaces are governed by their sources and their
-`--check`; the `docs/PLANS.md` slice cell is covered by the `plans` skill, which
-knows it is publishing. That split is recorded as the contract's **P4** rather
-than silently widened.
+`--check`; the `docs/PLANS.md` build-order row is covered by the `plans` skill,
+which knows it is publishing; and since Plan 138 Stage 9 a planned row's
+published sentence is a plan document's `## What this plan is for`, held only by
+`tests/test_planning_docs.py`. That split is recorded as the contract's **P4**
+rather than silently widened.
 
 ## Read the diff, not the files
 
@@ -120,7 +122,10 @@ acceptable.
   surface is a different, larger job, and it is not this gate.
 - **Edit either surface.** Report; the author writes.
 - **Touch a plan document, `docs/PLANS.md`, a status marker or the archive.**
-  Those belong to the `plans` and `close-out` skills.
+  `docs/PLANS.md` and the archive belong to `plans`; a plan document belongs to
+  `plan-draft`, `plan-start`, `note-evidence`, `stage-close` and `close-out`,
+  each at its own grain. A new-contract document carries no status marker at
+  all.
 - **Stamp a diff it did not read**, or stamp around a finding to unblock a
   commit. The gate is worth exactly as much as that rule.
 - **Judge the deployed page.** These files are the template and the source; the

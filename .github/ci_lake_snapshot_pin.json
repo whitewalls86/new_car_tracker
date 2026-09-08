@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "The Plan 120 snapshot the snapshot-dbt CI job builds against (Plan 162",
+    "Stage 10). Pinned rather than read from latest.json, because a pointer that",
+    "moves between two runs of the same commit destroys re-runnability on the one",
+    "check whose job is telling you what a change did. Pinning also turns",
+    "'production data changed and a model now fails' into this file's diff: a",
+    "reviewable bump PR with an owner, rather than an ambient red landing on",
+    "whoever opened a PR that morning.",
+    "",
+    "To bump: run an export through snapshot-worker (or the export DAG, once its",
+    "status check is fixed), take the snapshot_id it reports, and open a PR",
+    "changing this file alone. The job's own path gate names it, so that PR runs",
+    "the build it changes.",
+    "",
+    "A snapshot exported before Plan 162 Stage 10 does not carry the two Postgres",
+    "dimension tables and will fail the seed's --require-non-empty check rather",
+    "than build green over an empty world."
+  ],
+  "snapshot_id": "adaptive-refresh-2026-09-04-002234",
+  "tier": "ci",
+  "exported_at": "2026-09-04T00:22:34Z",
+  "pinned_at": "2026-09-04",
+  "counts": {
+    "closed_vins": 5127,
+    "listing_ids": 5523,
+    "silver_observations": 808069,
+    "price_observation_events": 790088,
+    "vin_to_listing_events": 91795,
+    "blocked_cooldown_events": 1663,
+    "public.search_configs": 13,
+    "ops.tracked_models": 13
+  },
+  "archive_bytes": 34624265,
+  "note": "First export carrying the two postgres_scan() sources. Source window 2025-08-31 to 2026-08-31; the lake holds data from 2026-01-22, so the window covers all of it."
+}

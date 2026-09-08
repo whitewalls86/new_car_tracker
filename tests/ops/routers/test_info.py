@@ -1,17 +1,8 @@
 import re
-from types import MappingProxyType
 
-from ops.public_stats import PresentationSnapshot
 from ops.routers.info import _fmt_stat
-
-
-def _presentation(stats=None, *, status="ok", stale=False):
-    return PresentationSnapshot(
-        stats=MappingProxyType(stats or {}),
-        status=status,
-        stale=stale,
-        last_success_at="2026-08-18T18:00:00Z" if stats else None,
-    )
+from ops.static_assets import STATIC_DIR
+from tests.ops.conftest import make_presentation
 
 
 class TestFmtStat:
@@ -40,7 +31,7 @@ class TestInfoEndpoint:
         }
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(stats),
+            return_value=make_presentation(stats),
         )
 
         response = mock_client.get("/")
@@ -51,10 +42,25 @@ class TestInfoEndpoint:
         assert "Last pipeline run" not in response.text
         assert "2026-08-18T17:00:00Z" in response.text
 
+    def test_the_live_stats_section_can_be_linked_to(self, mock_client, mocker):
+        """Gap P3: the section had no anchor id, so nothing could point at it.
+
+        An id is what makes it a destination rather than a passage of the page.
+        Whether anything links it is Plan 174 Stage E's exit, not this one's.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation({"active_listings": 500}),
+        )
+
+        response = mock_client.get("/")
+
+        assert '<section id="live-stats">' in response.text
+
     def test_partial_snapshot_returns_200_and_omits_missing_fields(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 500}),
+            return_value=make_presentation({"active_listings": 500}),
         )
 
         response = mock_client.get("/")
@@ -67,7 +73,7 @@ class TestInfoEndpoint:
         stats = {"analytics_data_through_iso": "2026-08-18T17:00:00Z"}
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(stats, status="failed", stale=True),
+            return_value=make_presentation(stats, status="failed", stale=True),
         )
 
         response = mock_client.get("/")
@@ -78,7 +84,7 @@ class TestInfoEndpoint:
     def test_empty_snapshot_keeps_narrative_available(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(status="not_ready", stale=True),
+            return_value=make_presentation(status="not_ready", stale=True),
         )
 
         response = mock_client.get("/")
@@ -90,7 +96,7 @@ class TestInfoEndpoint:
     def test_request_path_does_not_touch_storage_or_upstream(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation({"active_listings": 1}),
+            return_value=make_presentation({"active_listings": 1}),
         )
         duckdb_connect = mocker.patch(
             "duckdb.connect", side_effect=AssertionError("DuckDB must not be queried")
@@ -163,6 +169,11 @@ _BARRED_PHRASES = [
     "lives entirely in a dbt",
 ]
 
+def _stylesheet() -> str:
+    """The landing page's CSS, which Stage 3c lifted out of the template."""
+    return (STATIC_DIR / "info.css").read_text(encoding="utf-8")
+
+
 def _flat(html: str) -> str:
     """Collapse whitespace, so an assertion can quote a sentence the template wraps."""
     return re.sub(r"\s+", " ", html)
@@ -171,9 +182,10 @@ def _flat(html: str) -> str:
 def _body_only(html: str) -> str:
     """The markup below </head>.
 
-    The stylesheet comments its own blocks with the same section names, and they
-    sit above the hero, so an order check over the whole document reads the
-    stylesheet's order instead of the page's.
+    The head is metadata about the page rather than the page, and an order check
+    over the whole document would read it as content. It mattered more before
+    Stage 3c: the stylesheet used to be inline above the hero, commenting its own
+    blocks with the same section names this file asserts the order of.
     """
     _, sep, body = html.partition("</head>")
     assert sep, "response is not a full HTML document"
@@ -194,7 +206,7 @@ class TestLandingPageStructure:
     def test_sections_appear_in_the_plans_order(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = _body_only(mock_client.get("/").text)
@@ -211,7 +223,7 @@ class TestLandingPageStructure:
     def test_the_data_journey_names_its_stages_in_order(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         # The stylesheet carries data-layer selectors too, and they sit above the
@@ -234,7 +246,7 @@ class TestLandingPageStructure:
         """An SVG carrying the page's central explanation owes a text equivalent."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         flat = _flat(mock_client.get("/").text)
@@ -255,13 +267,16 @@ class TestLandingPageStructure:
         """Stage 3a's rule, met on the way in rather than retrofitted."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         flat = _flat(mock_client.get("/").text)
 
         assert 'class="edge loop"' in flat
-        assert ".flow-diagram .edge.loop { stroke-dasharray" in flat
+        # Stage 3c moved the stylesheet out of the document, so the rule that
+        # carries this is read where it now lives. The property asserted is
+        # unchanged: the loop is dashed as well as coloured.
+        assert ".flow-diagram .edge.loop { stroke-dasharray" in _stylesheet()
         assert "what to fetch next" in flat
         # Every node states its layer as text, so the stroke colour is redundant.
         assert flat.count('class="badge"') >= 9
@@ -276,7 +291,7 @@ class TestLandingPageStructure:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         flat = _flat(mock_client.get("/").text)
@@ -296,7 +311,7 @@ class TestLandingPageStructure:
         """Gate 0 row 7. Processing writes the HOT row and its event together."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -311,7 +326,7 @@ class TestLandingPageStructure:
         """Gate 0 row 8. dbt reads the events; the ops view makes the decision."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -324,7 +339,7 @@ class TestLandingPageStructure:
         """Truth contract §2: nothing may imply the public dashboard reads Iceberg."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -342,7 +357,7 @@ class TestLandingPageStructure:
     ):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -356,10 +371,50 @@ class TestLandingPageStructure:
         # canonical form.
         assert 'href="/recaps"' in body
 
+    def test_each_work_list_carries_its_no_javascript_fallback(
+        self, mock_client, mocker
+    ):
+        """Plan 138 Stage 5. The containers existing is not the same as the page
+        working with JavaScript off.
+
+        ``info.js`` renders the feed by clearing each list and appending, so the
+        authored ``<li>`` inside it *is* the fallback — for a reader with
+        JavaScript disabled, for a fetch that 404s, and for a malformed or
+        unsupported-schema artifact, all of which leave the loader returning
+        early. Emptying those list items would blank the section for every one
+        of those readers and still satisfy the container assertions above.
+
+        The loader's own branching is not asserted anywhere: this repository has
+        no JavaScript runtime in its test suite, and Stage 5 accepted that rather
+        than adding one. This is the half of that contract that lives in
+        server-rendered HTML, which is testable here.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation(_FULL_STATS),
+        )
+
+        body = mock_client.get("/").text
+
+        for list_id, fallback_href in (
+            ("work-planned", "/blob/master/docs/PLANS.md"),
+            ("work-completed", "/blob/master/docs/planning/completed_plans.md"),
+        ):
+            opening = body.index(f'id="{list_id}"')
+            closing = body.index("</ul>", opening)
+            rendered = body[opening:closing]
+            assert "<li>" in rendered, (
+                f"{list_id} has no authored list item, so the section is blank "
+                f"with JavaScript disabled"
+            )
+            assert fallback_href in rendered, (
+                f"{list_id}'s fallback no longer links to {fallback_href}"
+            )
+
     def test_no_barred_phrase_survives_on_the_page(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text.lower()
@@ -373,7 +428,7 @@ class TestLandingPageStructure:
         """Gate 0 row 1. Three different values rendered on one page load before."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = mock_client.get("/").text
@@ -392,7 +447,7 @@ class TestLandingPageStructure:
         """
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(_FULL_STATS),
+            return_value=make_presentation(_FULL_STATS),
         )
 
         body = _body_only(mock_client.get("/").text)
@@ -415,7 +470,7 @@ class TestLandingPageStructure:
         """Goal 6: the page stays useful when the marts are locked or unavailable."""
         mocker.patch(
             "ops.routers.info.public_stats_cache.get",
-            return_value=_presentation(status="not_ready", stale=True),
+            return_value=make_presentation(status="not_ready", stale=True),
         )
 
         body = _body_only(mock_client.get("/").text)
@@ -425,3 +480,153 @@ class TestLandingPageStructure:
             if heading == "Live stats":
                 continue
             assert heading in body, f"lost with the stats snapshot: {heading}"
+
+
+# ---------------------------------------------------------------------------
+# Stage 3b and 3c: nothing on this page comes from somewhere else
+# ---------------------------------------------------------------------------
+
+# The attributes that make the browser fetch something. An <a href> or a
+# <link rel="canonical"> names a place; these name a dependency.
+_SUBRESOURCE_SRC = re.compile(
+    r'<(?:img|script|video|source|iframe|audio|embed)\b[^>]*\ssrc="([^"]+)"'
+)
+_LINK_TAG = re.compile(r"<link\b[^>]*>")
+_ATTR = re.compile(r'(\w[\w-]*)="([^"]*)"')
+
+
+def _subresources(html: str) -> list[str]:
+    urls = _SUBRESOURCE_SRC.findall(html)
+    for tag in _LINK_TAG.findall(html):
+        attrs = dict(_ATTR.findall(tag))
+        # rel=canonical and rel=alternate name an address; the rest are fetched.
+        if attrs.get("rel") in {"canonical", "alternate"}:
+            continue
+        if "href" in attrs:
+            urls.append(attrs["href"])
+    return urls
+
+
+class TestTheLandingPageIsSameOrigin:
+    """Stage 3c's outcome, asserted as the page rather than as a file list.
+
+    Before it the page could not render without cdn.jsdelivr.net and eleven
+    requests to cdn.simpleicons.org, which is what stopped it running under a
+    same-origin CSP and made two third parties a dependency of a portfolio page.
+    """
+
+    def test_every_subresource_the_page_loads_is_same_origin(
+        self, mock_client, mocker
+    ):
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation(_FULL_STATS),
+        )
+
+        html = mock_client.get("/").text
+
+        offsite = [url for url in _subresources(html) if "//" in url]
+        assert not offsite, f"the page still fetches from elsewhere: {offsite}"
+        assert _subresources(html), "found nothing to check; the parser missed"
+
+    def test_every_asset_it_names_exists_and_carries_a_content_hash(
+        self, mock_client, mocker
+    ):
+        """The fingerprint is what makes the one-year immutable cache safe.
+
+        An asset referenced without one would be cached for a year at whatever
+        bytes the first visitor got, and the next deploy would not reach them.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation(_FULL_STATS),
+        )
+
+        html = mock_client.get("/").text
+
+        for url in _subresources(html):
+            assert url.startswith("/static_ops/"), url
+            path, _, query = url.partition("?")
+            assert re.fullmatch(r"v=[0-9a-f]{12}", query), f"{url} has no content hash"
+            assert (STATIC_DIR / path[len("/static_ops/"):]).is_file(), f"{url} is a 404"
+
+    def test_the_service_logos_are_all_local(self, mock_client, mocker):
+        """Eleven Simple Icons plus the dbt mark, which was already on-origin."""
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation(_FULL_STATS),
+        )
+
+        html = mock_client.get("/").text
+
+        logos = re.findall(r'<img class="service-logo" src="([^"]+)"', html)
+        assert len(logos) == 12, f"expected 12 service logos, found {len(logos)}"
+        assert all(url.startswith("/static_ops/") for url in logos)
+        assert "cdn.simpleicons.org" not in html
+        assert "cdn.jsdelivr.net" not in html
+
+    def test_nothing_inline_is_left_for_a_csp_to_have_to_allow(
+        self, mock_client, mocker
+    ):
+        """`script-src 'self'` and `style-src 'self'` with no 'unsafe-inline'.
+
+        A <style> element, a style attribute or an onerror handler would each be
+        blocked outright, and the page would render wrong in production while
+        every test here still passed. The JSON-LD block is the one exception and
+        needs no allowance: a <script> whose type is not a JavaScript MIME type
+        is a data block and never executes.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation(_FULL_STATS),
+        )
+
+        html = mock_client.get("/").text
+
+        assert "<style" not in html
+        assert not re.search(r'\sstyle="', html), "an inline style attribute survives"
+        assert not re.search(r"\son[a-z]+=", html), "an inline event handler survives"
+
+        scripts = re.findall(r"<script\b([^>]*)>", html)
+        assert scripts, "found no script tags; the parser missed"
+        for attrs in scripts:
+            parsed = dict(_ATTR.findall(attrs))
+            assert "src" in parsed or parsed.get("type") == "application/ld+json", (
+                f"an executable inline script survives: <script{attrs}>"
+            )
+
+    def test_the_hero_video_is_gone_from_the_page(self, mock_client, mocker):
+        """Stage 3b, decided 2026-09-02.
+
+        The dashboard is the project's weakest public surface and Plan 150 says
+        it will not improve on this plan's timescale, so a 41 MB autoplaying
+        loop of it only made a weaker first impression arrive faster. Removing
+        it also retires one of Stage 3a's reduced-motion defects.
+        """
+        mocker.patch(
+            "ops.routers.info.public_stats_cache.get",
+            return_value=make_presentation(_FULL_STATS),
+        )
+
+        html = mock_client.get("/").text
+
+        assert "<video" not in html
+        assert "demo.mp4" not in html
+
+    def test_the_video_file_itself_stays_in_the_repository(self):
+        """Deleting it is a separate decision, and not Plan 138's to make."""
+        assert (STATIC_DIR / "demo.mp4").is_file()
+
+    def test_the_vendored_assets_carry_their_licence_notices(self):
+        """Self-hosting a third party's file does not self-host its terms.
+
+        Pico's MIT notice rides in the minified file's own banner; Simple Icons
+        has no in-file notice, so the directory carries one.
+        """
+        pico = (STATIC_DIR / "vendor" / "pico.min.css").read_text(encoding="utf-8")
+        assert "Licensed under MIT" in pico[:400]
+
+        notice = (STATIC_DIR / "vendor" / "NOTICE.md").read_text(encoding="utf-8")
+        assert "CC0 1.0 Universal" in notice
+        for icon in sorted((STATIC_DIR / "vendor" / "icons").glob("*.svg")):
+            assert icon.name in notice, f"{icon.name} is vendored but not attributed"

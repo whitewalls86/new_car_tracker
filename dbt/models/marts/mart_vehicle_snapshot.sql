@@ -21,7 +21,11 @@ with latest_state as (
     select distinct on (vin17)
         vin17,
         listing_state,
-        source       as state_source
+        source       as state_source,
+        -- Carried so the recency fallback below can measure when the listing
+        -- was last *seen*. It was measuring when a price last changed, which is
+        -- a different thing -- see the note on the coalesce.
+        fetched_at   as state_observed_at
     from {{ ref('stg_observations') }}
     where vin17 is not null
     order by vin17, fetched_at desc
@@ -32,7 +36,22 @@ select
     obs.listing_id,
     coalesce(
         case when ls.state_source = 'detail' then ls.listing_state end,
-        case when ph.last_seen_at >= {{ now_ts() }} - interval '7 days' then 'active'
+        -- Recency of the last *observation*, not of the last price event.
+        --
+        -- This read `ph.last_seen_at` until 2026-09-07, and `ph` is
+        -- int_price_history, whose `last_seen_at` is `max(event_at)` over price
+        -- observation *events*. So the fallback measured price-change recency
+        -- while the header two dozen lines up says "seen on SRP within 7 days",
+        -- and the two come apart in both directions: a VIN seen on SRP an hour
+        -- ago that has never carried a price got NULL >= x -- which is NULL, so
+        -- the CASE fell through -- and was published 'unlisted'; and a listing
+        -- still appearing on SRP aged into 'unlisted' as soon as its price
+        -- stopped moving.
+        --
+        -- Found by Plan 162 Stage S's branch prober, which could not take the
+        -- 'active' arm with any fixture data and made the reason visible.
+        case when ls.state_observed_at >= {{ now_ts() }} - interval '7 days'
+             then 'active'
              else 'unlisted'
         end
     )                           as listing_state,

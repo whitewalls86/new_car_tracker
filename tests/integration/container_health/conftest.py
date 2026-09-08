@@ -33,7 +33,7 @@ What it cannot see is the corpus drifting from the real API -- no test that
 does not talk to a daemon can. That is the verifier script's job, named above,
 and the split is deliberate rather than an omission.
 
-Plan 162 Stage 6.
+Plan 162 Stage H.
 """
 import json
 import os

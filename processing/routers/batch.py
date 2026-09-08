@@ -25,6 +25,7 @@ from processing.writers.detail_writer import (
 )
 from processing.writers.srp_writer import write_srp_observations
 from shared.db import db_cursor
+from shared.db_vocabularies import ArtifactStatus, ArtifactType
 from shared.job_counter import active_job
 from shared.minio import read_html
 
@@ -204,9 +205,9 @@ def _process_detail_page(artifact: Dict[str, Any]) -> Dict[str, Any]:
 def _process_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatch to the correct processor based on artifact_type."""
     artifact_type = artifact.get("artifact_type")
-    if artifact_type == "results_page":
+    if artifact_type == ArtifactType.RESULTS_PAGE:
         return _process_results_page(artifact)
-    if artifact_type == "detail_page":
+    if artifact_type == ArtifactType.DETAIL_PAGE:
         return _process_detail_page(artifact)
 
     logger.warning(
@@ -259,17 +260,17 @@ def process_batch(
             result = _process_artifact(artifact)
             status = result.get("status")
 
-            if status == "complete":
-                if result.get("artifact_type") == "results_page":
+            if status == ArtifactStatus.COMPLETE:
+                if result.get("artifact_type") == ArtifactType.RESULTS_PAGE:
                     srp_count += 1
                 else:
                     detail_count += 1
                 # Count silver write failures from successful processing
-                if result.get("silver_written", 0) == 0 and status == "complete":
+                if result.get("silver_written", 0) == 0 and status == ArtifactStatus.COMPLETE:
                     silver_write_failures += 1
-            elif status == "retry":
+            elif status == ArtifactStatus.RETRY:
                 retry_count += 1
-            elif status == "skip":
+            elif status == ArtifactStatus.SKIP:
                 skip_count += 1
 
         return {

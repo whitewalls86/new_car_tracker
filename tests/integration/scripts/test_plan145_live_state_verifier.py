@@ -13,6 +13,9 @@ import pytest
 
 from scripts.oneoff.verify_recovery_live_state import run
 from shared.db import get_conn
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -42,7 +45,7 @@ def test_a_committed_write_between_the_snapshots_is_seen_and_fails(pg_conn, tmp_
     def _canary():
         with pg_conn.cursor() as cur:            # pg_conn is autocommit
             cur.execute(
-                "INSERT INTO ops.blocked_cooldown (listing_id) VALUES (%s)",
+                SQL("insert_ops_blocked_cooldown"),
                 (str(marker),),
             )
 
@@ -60,5 +63,5 @@ def test_a_committed_write_between_the_snapshots_is_seen_and_fails(pg_conn, tmp_
         assert b["after"]["rows"] == b["before"]["rows"] + 1
     finally:
         with pg_conn.cursor() as cur:
-            cur.execute("DELETE FROM ops.blocked_cooldown WHERE listing_id = %s",
+            cur.execute(SQL("delete_ops_blocked_cooldown"),
                         (str(marker),))

@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from processing.queries import INSERT_SILVER_OBSERVATIONS
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
@@ -34,22 +35,6 @@ _POSTGRES_COLS = [
     # carousel-specific fields
     "body", "condition",
 ]
-
-_INSERT_SQL = """
-    INSERT INTO staging.silver_observations (
-        artifact_id, listing_id, vin, canonical_detail_url,
-        source, listing_state, fetched_at,
-        price, make, model, trim, year, mileage, msrp,
-        stock_type, fuel_type, body_style,
-        dealer_name, dealer_zip, customer_id, seller_id,
-        dealer_street, dealer_city, dealer_state, dealer_phone,
-        dealer_website, dealer_cars_com_url, dealer_rating,
-        financing_type, seller_zip, seller_customer_id,
-        page_number, position_on_page, trid, isa_context,
-        body, condition
-    )
-    VALUES %s
-"""
 
 
 def write_silver_observations_postgres(
@@ -90,7 +75,7 @@ def write_silver_observations_postgres(
             rows.append(tuple(row[col] for col in _POSTGRES_COLS))
 
         with db_cursor(error_context="silver_write") as cur:
-            execute_values(cur, _INSERT_SQL, rows)
+            execute_values(cur, INSERT_SILVER_OBSERVATIONS, rows)
             return cur.rowcount
 
     except Exception as e:

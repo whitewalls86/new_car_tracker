@@ -22,15 +22,21 @@ class TestQueueCleanupQueries:
     """Plan 97's artifacts_queue cleanup, both halves.
 
     ``DELETE_CLEANUP_CANDIDATES`` was inline at its call site in
-    ``archiver/processors/cleanup_queue.py`` until Plan 162 Stage 7, so it
+    ``archiver/processors/cleanup_queue.py`` until Plan 162 Stage L, so it
     could not be imported and nothing executed it. Its sibling
     ``GET_QUEUE_CLEANUP_CANDIDATES`` was already a file and was already waived
     for having no Layer 2 test; both are executed here.
     """
 
     def test_get_queue_cleanup_candidates(self, cur):
+        # cleanup_queue.py reads all four by name to build the delete batch and
+        # the MinIO key list, so the projection is what this asserts; no
+        # fixture seeds a completed artifact, so there is no row to assert on.
         cur.execute(GET_QUEUE_CLEANUP_CANDIDATES)
-        cur.fetchall()
+        assert cur.fetchall() == []
+        assert [column[0] for column in cur.description] == [
+            "artifact_id", "minio_path", "artifact_type", "status",
+        ]
 
     def test_delete_cleanup_candidates_matching_nothing(self, cur):
         # -1 matches no artifact_id, so this proves the statement plans and its

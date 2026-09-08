@@ -37,11 +37,41 @@ before committing.
 3. Stage only the files belonging to the slice.
 4. Review the staged diff and ensure it contains no secrets, generated debris,
    or unrelated edits.
-5. Commit with a concise outcome-focused subject and explicit attribution in
+5. **Write the stamp**, which is what lets the commit through:
+
+   ```bash
+   date -u +%Y-%m-%dT%H:%M:%SZ > "$(git rev-parse --git-dir)/commit-attribution-stamp"
+   ```
+
+6. Commit with a concise outcome-focused subject and explicit attribution in
    the subject or body.
-6. Report the commit SHA, subject, attribution, checks run, and any remaining
+7. Report the commit SHA, subject, attribution, checks run, and any remaining
    working-tree changes. Push only when the user requested it or the active
    workflow already clearly includes updating an existing remote branch or PR.
+
+## The gate, and why the stamp is per-commit
+
+Two mechanisms enforce this skill rather than trusting that it is remembered,
+and they hold different halves of the contract:
+
+| | Enforces | Runs |
+|---|---|---|
+| [`scripts/commit_attribution_gate.py`](../../../scripts/commit_attribution_gate.py) | that this skill was **invoked** for this commit | `PreToolUse` on `Bash`, before the command |
+| [`.githooks/commit-msg`](../../../.githooks/commit-msg) | that the **message** carries attribution | inside `git commit`, however it was invoked |
+
+The stamp exists because a message can be given the right shape by hand while
+the mapping in it was never checked against `docs/PLANS.md`. Confirming the
+plan is this skill's job, and the stamp is the evidence it happened.
+
+**`.githooks/commit-msg` deletes the stamp when the message passes**, so it is
+spent by the commit it was written for. That is deliberate: a stamp that
+outlived its commit would make the rule "invoke the skill once per session",
+which is exactly the rule that failed -- five commits in one session, one
+invocation.
+
+Do not write the stamp except as step 5 of a commit you are actually making
+through this skill. Writing it to clear the gate for a commit this skill did
+not compose is the one thing that makes the whole mechanism worthless.
 
 ## Boundaries
 

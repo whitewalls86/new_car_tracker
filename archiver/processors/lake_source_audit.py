@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from archiver.queries import SELECT_SOURCE_TABLE_STATS
 from shared.duckdb_s3 import get_duckdb_s3_connection
 from shared.minio import BUCKET
 
@@ -110,10 +111,8 @@ def _audit_table(
         params.append(window_end)
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-    query = (
-        f"SELECT {', '.join(select_parts)} "
-        f"FROM read_parquet('{path}', union_by_name=true) "
-        f"{where_sql}"
+    query = SELECT_SOURCE_TABLE_STATS.format(
+        select_parts=", ".join(select_parts), path=path, where_sql=where_sql,
     )
 
     try:

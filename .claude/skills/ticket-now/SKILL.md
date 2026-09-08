@@ -177,7 +177,7 @@ Do not paste the plan's problem statement, architecture, rejected alternatives,
 runbook or evidence into the issue. Plan 149 is explicit: if the issue needs
 that context, it **links** to it.
 
-## Status on creation
+## Status and assignee on creation
 
 `Ready` if it is genuinely pullable now. `Backlog` if it is not, in which case
 say why it was added to the cycle at all — an unpullable mid-cycle addition is
@@ -186,6 +186,11 @@ usually a sign the work belongs in the next seeding instead.
 Never create an issue directly in `In Progress`. If the user is already doing
 the work, create it `Ready` and say that it needs moving — the transition is
 theirs, and a ticket that is born mid-flight has no start time.
+
+**Always pass `assignee: "me"` to `save_issue`.** This has been inconsistent
+when left to Linear's own defaults — an issue created here with no explicit
+assignee has sometimes landed unassigned. Set it every time, on every issue
+this skill creates, rather than relying on the workspace to infer it.
 
 ## After creating
 
@@ -223,3 +228,4 @@ actually happened rather than against what was planned.
   measure this skill is built around.
 - **create more than one issue.** Several issues at once is seeding, and
   seeding is `fill-cycle`.
+- **leave `assignee` unset.** Pass `"me"` on every issue this skill creates.

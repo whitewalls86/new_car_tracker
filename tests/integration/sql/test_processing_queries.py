@@ -6,6 +6,7 @@ with Flyway migrations applied. Does not invoke MinIO or the parsers — those
 are tested elsewhere. Goal: catch schema breakage before it hits production.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -22,6 +23,7 @@ from processing.queries import (
     INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     INSERT_PRICE_OBSERVATION_EVENT,
+    INSERT_SILVER_OBSERVATIONS,
     INSERT_TRACKED_MODEL_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
     LOOKUP_VIN_COLLISION,
@@ -31,6 +33,9 @@ from processing.queries import (
     UPSERT_TRACKED_MODEL,
     UPSERT_VIN_TO_LISTING,
 )
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
 
 pytestmark = pytest.mark.integration
 
@@ -45,12 +50,7 @@ def _insert_artifact(cur, artifact_type="results_page", status="pending") -> int
         f"/artifact_type={artifact_type}/{uuid.uuid4()}.html.zst"
     )
     cur.execute(
-        """
-        INSERT INTO ops.artifacts_queue
-            (minio_path, artifact_type, fetched_at, status)
-        VALUES (%s, %s, now(), %s)
-        RETURNING artifact_id, minio_path, artifact_type, listing_id, run_id, fetched_at
-        """,
+        SQL("insert_ops_artifacts_queue"),
         (minio_path, artifact_type, status),
     )
     return cur.fetchone()
@@ -67,12 +67,7 @@ def _random_listing_id() -> str:
 class TestPriceObservationsSchema:
 
     def test_columns_exist(self, cur):
-        cur.execute("""
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'price_observations'
-            ORDER BY ordinal_position
-        """)
+        cur.execute(SQL("column_types_of_price_observations"))
         cols = {r["column_name"]: r["data_type"] for r in cur.fetchall()}
         assert "listing_id" in cols
         assert "vin" in cols
@@ -82,19 +77,11 @@ class TestPriceObservationsSchema:
         assert "last_artifact_id" in cols
 
     def test_vin_is_text_not_uuid(self, cur):
-        cur.execute("""
-            SELECT data_type FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'price_observations'
-              AND column_name = 'vin'
-        """)
+        cur.execute(SQL("column_type_of_price_observations_vin"))
         assert cur.fetchone()["data_type"] == "text"
 
     def test_listing_id_is_uuid(self, cur):
-        cur.execute("""
-            SELECT data_type FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'price_observations'
-              AND column_name = 'listing_id'
-        """)
+        cur.execute(SQL("column_type_of_price_observations_listing_id"))
         assert cur.fetchone()["data_type"] == "uuid"
 
 
@@ -105,12 +92,7 @@ class TestPriceObservationsSchema:
 class TestVinToListingSchema:
 
     def test_columns_exist(self, cur):
-        cur.execute("""
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'vin_to_listing'
-            ORDER BY ordinal_position
-        """)
+        cur.execute(SQL("column_types_of_vin_to_listing"))
         cols = {r["column_name"]: r["data_type"] for r in cur.fetchall()}
         assert "vin" in cols
         assert "listing_id" in cols
@@ -118,11 +100,7 @@ class TestVinToListingSchema:
         assert "artifact_id" in cols
 
     def test_vin_is_text_not_uuid(self, cur):
-        cur.execute("""
-            SELECT data_type FROM information_schema.columns
-            WHERE table_schema = 'ops' AND table_name = 'vin_to_listing'
-              AND column_name = 'vin'
-        """)
+        cur.execute(SQL("column_type_of_vin_to_listing_vin"))
         assert cur.fetchone()["data_type"] == "text"
 
 
@@ -133,21 +111,11 @@ class TestVinToListingSchema:
 class TestDetailScrapeClaimEventsSchema:
 
     def test_run_id_is_text_not_uuid(self, cur):
-        cur.execute("""
-            SELECT data_type FROM information_schema.columns
-            WHERE table_schema = 'staging'
-              AND table_name = 'detail_scrape_claim_events'
-              AND column_name = 'run_id'
-        """)
+        cur.execute(SQL("column_type_of_detail_scrape_claim_events_run_id"))
         assert cur.fetchone()["data_type"] == "text"
 
     def test_vin_is_text_not_uuid(self, cur):
-        cur.execute("""
-            SELECT data_type FROM information_schema.columns
-            WHERE table_schema = 'staging'
-              AND table_name = 'detail_scrape_claim_events'
-              AND column_name = 'vin'
-        """)
+        cur.execute(SQL("column_type_of_detail_scrape_claim_events_vin"))
         assert cur.fetchone()["data_type"] == "text"
 
 
@@ -162,16 +130,7 @@ class TestClaimBatchSQL:
         artifact_id = artifact["artifact_id"]
 
         cur.execute(
-            """
-            UPDATE ops.artifacts_queue SET status = 'processing'
-            WHERE artifact_id IN (
-                SELECT artifact_id FROM ops.artifacts_queue
-                WHERE status IN ('pending', 'retry')
-                ORDER BY artifact_id LIMIT 10
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING artifact_id
-            """,
+            SQL("update_ops_artifacts_queue_status"),
         )
         claimed_ids = [r["artifact_id"] for r in cur.fetchall()]
         assert artifact_id in claimed_ids
@@ -181,16 +140,7 @@ class TestClaimBatchSQL:
         artifact_id = artifact["artifact_id"]
 
         cur.execute(
-            """
-            UPDATE ops.artifacts_queue SET status = 'processing'
-            WHERE artifact_id IN (
-                SELECT artifact_id FROM ops.artifacts_queue
-                WHERE status IN ('pending', 'retry')
-                ORDER BY artifact_id LIMIT 10
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING artifact_id
-            """,
+            SQL("update_ops_artifacts_queue_status"),
         )
         claimed_ids = [r["artifact_id"] for r in cur.fetchall()]
         assert artifact_id in claimed_ids
@@ -200,16 +150,7 @@ class TestClaimBatchSQL:
         artifact_id = artifact["artifact_id"]
 
         cur.execute(
-            """
-            UPDATE ops.artifacts_queue SET status = 'processing'
-            WHERE artifact_id IN (
-                SELECT artifact_id FROM ops.artifacts_queue
-                WHERE status IN ('pending', 'retry')
-                ORDER BY artifact_id LIMIT 10
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING artifact_id
-            """,
+            SQL("update_ops_artifacts_queue_status"),
         )
         claimed_ids = [r["artifact_id"] for r in cur.fetchall()]
         assert artifact_id not in claimed_ids
@@ -219,17 +160,7 @@ class TestClaimBatchSQL:
         detail_artifact = _insert_artifact(cur, artifact_type="detail_page")
 
         cur.execute(
-            """
-            UPDATE ops.artifacts_queue SET status = 'processing'
-            WHERE artifact_id IN (
-                SELECT artifact_id FROM ops.artifacts_queue
-                WHERE status IN ('pending', 'retry')
-                  AND artifact_type = %s
-                ORDER BY artifact_id LIMIT 10
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING artifact_id
-            """,
+            SQL("update_ops_artifacts_queue_status_2"),
             ("results_page",),
         )
         claimed_ids = [r["artifact_id"] for r in cur.fetchall()]
@@ -241,18 +172,14 @@ class TestClaimBatchSQL:
         artifact_id = artifact["artifact_id"]
 
         cur.execute(
-            """
-            INSERT INTO staging.artifacts_queue_events
-                (artifact_id, status, minio_path, artifact_type, fetched_at, listing_id, run_id)
-            VALUES (%s, 'processing', %s, %s, %s, %s, %s)
-            """,
+            SQL("insert_staging_artifacts_queue_events"),
             (
                 artifact_id, artifact["minio_path"], artifact["artifact_type"],
                 artifact["fetched_at"], artifact["listing_id"], artifact["run_id"],
             ),
         )
         cur.execute(
-            "SELECT status FROM staging.artifacts_queue_events WHERE artifact_id = %s",
+            SQL("select_status_from_staging_artifacts_queue_events"),
             (artifact_id,),
         )
         assert cur.fetchone()["status"] == "processing"
@@ -269,11 +196,11 @@ class TestSetStatusSQL:
         artifact_id = artifact["artifact_id"]
 
         cur.execute(
-            "UPDATE ops.artifacts_queue SET status = 'complete' WHERE artifact_id = %s",
+            SQL("update_ops_artifacts_queue_status_3"),
             (artifact_id,),
         )
         cur.execute(
-            "SELECT status FROM ops.artifacts_queue WHERE artifact_id = %s",
+            SQL("select_status_from_ops_artifacts_queue"),
             (artifact_id,),
         )
         assert cur.fetchone()["status"] == "complete"
@@ -281,11 +208,11 @@ class TestSetStatusSQL:
     def test_set_retry(self, cur):
         artifact = _insert_artifact(cur)
         cur.execute(
-            "UPDATE ops.artifacts_queue SET status = 'retry' WHERE artifact_id = %s",
+            SQL("update_ops_artifacts_queue_status_4"),
             (artifact["artifact_id"],),
         )
         cur.execute(
-            "SELECT status FROM ops.artifacts_queue WHERE artifact_id = %s",
+            SQL("select_status_from_ops_artifacts_queue"),
             (artifact["artifact_id"],),
         )
         assert cur.fetchone()["status"] == "retry"
@@ -296,11 +223,7 @@ class TestSetStatusSQL:
 
         for status in ("processing", "complete"):
             cur.execute(
-                """
-                INSERT INTO staging.artifacts_queue_events
-                    (artifact_id, status, minio_path, artifact_type, fetched_at, listing_id, run_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
+                SQL("insert_staging_artifacts_queue_events_2"),
                 (
                     artifact_id, status, artifact["minio_path"],
                     artifact["artifact_type"], artifact["fetched_at"],
@@ -309,8 +232,7 @@ class TestSetStatusSQL:
             )
 
         cur.execute(
-            "SELECT status FROM staging.artifacts_queue_events"
-            " WHERE artifact_id = %s ORDER BY event_id",
+            SQL("select_status_from_staging_artifacts_queue_events_2"),
             (artifact_id,),
         )
         statuses = [r["status"] for r in cur.fetchall()]
@@ -328,19 +250,12 @@ class TestPriceObservationsUpsert:
         listing_id = _random_listing_id()
 
         cur.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            """,
+            SQL("insert_ops_price_observations"),
             (listing_id, "1HGCM82633A004352", 35000, "Honda", "Accord",
              "cust-001", artifact["artifact_id"]),
         )
         cur.execute(
-            """
-                SELECT vin, price, customer_id 
-                FROM ops.price_observations WHERE listing_id = %s::uuid
-            """,
+            SQL("select_vin_price_customer_id_from_ops_price_observations"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -354,24 +269,13 @@ class TestPriceObservationsUpsert:
 
         for price in (35000, 33000):
             cur.execute(
-                """
-                INSERT INTO ops.price_observations
-                    (listing_id, vin, price, make, model, 
-                     customer_id, last_seen_at, last_artifact_id)
-                VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-                ON CONFLICT (listing_id) DO UPDATE SET
-                    price            = EXCLUDED.price,
-                    customer_id      = COALESCE(EXCLUDED.customer_id, 
-                                                ops.price_observations.customer_id),
-                    last_seen_at     = EXCLUDED.last_seen_at,
-                    last_artifact_id = EXCLUDED.last_artifact_id
-                """,
+                SQL("insert_ops_price_observations_3"),
                 (listing_id, "1HGCM82633A004352", price, "Honda", "Accord",
                  "cust-001", artifact["artifact_id"]),
             )
 
         cur.execute(
-            "SELECT price FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_price_from_ops_price_observations"),
             (listing_id,),
         )
         assert cur.fetchone()["price"] == 33000
@@ -383,33 +287,19 @@ class TestPriceObservationsUpsert:
 
         # Detail write sets customer_id
         cur.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            """,
+            SQL("insert_ops_price_observations"),
             (listing_id, "1HGCM82633A004352", 35000, "Honda", "Accord",
              "cust-detail", artifact["artifact_id"]),
         )
         # SRP write with NULL customer_id
         cur.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            ON CONFLICT (listing_id) DO UPDATE SET
-                price            = EXCLUDED.price,
-                customer_id      = COALESCE(EXCLUDED.customer_id, 
-                                            ops.price_observations.customer_id),
-                last_seen_at     = EXCLUDED.last_seen_at,
-                last_artifact_id = EXCLUDED.last_artifact_id
-            """,
+            SQL("insert_ops_price_observations_2"),
             (listing_id, "1HGCM82633A004352", 34000, "Honda", "Accord",
              None, artifact["artifact_id"]),
         )
 
         cur.execute(
-            "SELECT price, customer_id FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_price_customer_id_from_ops_price_observations"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -422,15 +312,11 @@ class TestPriceObservationsUpsert:
         vin = "1FTFW1ET5DFC10312"  # real-format VIN, not a UUID
 
         cur.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            """,
+            SQL("insert_ops_price_observations"),
             (listing_id, vin, 42000, "Ford", "F-150", None, artifact["artifact_id"]),
         )
         cur.execute(
-            "SELECT vin FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_vin_from_ops_price_observations"),
             (listing_id,),
         )
         assert cur.fetchone()["vin"] == vin
@@ -440,19 +326,15 @@ class TestPriceObservationsUpsert:
         listing_id = _random_listing_id()
 
         cur.execute(
-            """
-            INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
-            """,
+            SQL("insert_ops_price_observations"),
             (listing_id, None, 30000, "Toyota", "RAV4", None, artifact["artifact_id"]),
         )
         cur.execute(
-            "DELETE FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("delete_ops_price_observations"),
             (listing_id,),
         )
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_price_observations"),
             (listing_id,),
         )
         assert cur.fetchone()["cnt"] == 0
@@ -470,14 +352,11 @@ class TestVinToListingUpsert:
         listing_id = _random_listing_id()
 
         cur.execute(
-            """
-            INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)
-            VALUES (%s, %s::uuid, now(), %s)
-            """,
+            SQL("insert_ops_vin_to_listing"),
             (vin, listing_id, artifact["artifact_id"]),
         )
         cur.execute(
-            "SELECT listing_id FROM ops.vin_to_listing WHERE vin = %s",
+            SQL("select_listing_id_from_ops_vin_to_listing"),
             (vin,),
         )
         assert str(cur.fetchone()["listing_id"]) == listing_id
@@ -490,19 +369,12 @@ class TestVinToListingUpsert:
 
         for listing_id in (listing_id_1, listing_id_2):
             cur.execute(
-                """
-                INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)
-                VALUES (%s, %s::uuid, now(), %s)
-                ON CONFLICT (vin) DO UPDATE SET
-                    listing_id  = EXCLUDED.listing_id,
-                    mapped_at   = EXCLUDED.mapped_at,
-                    artifact_id = EXCLUDED.artifact_id
-                """,
+                SQL("insert_ops_vin_to_listing_2"),
                 (vin, listing_id, artifact["artifact_id"]),
             )
 
         cur.execute(
-            "SELECT listing_id FROM ops.vin_to_listing WHERE vin = %s",
+            SQL("select_listing_id_from_ops_vin_to_listing"),
             (vin,),
         )
         assert str(cur.fetchone()["listing_id"]) == listing_id_2
@@ -516,12 +388,7 @@ class TestClaimRelease:
 
     def _insert_claim(self, cur, listing_id: str) -> None:
         cur.execute(
-            """
-            INSERT INTO ops.detail_scrape_claims
-                (listing_id, claimed_by, claimed_at, status)
-            VALUES (%s::uuid, 'test-run', now(), 'running')
-            ON CONFLICT (listing_id) DO NOTHING
-            """,
+            SQL("insert_ops_detail_scrape_claims"),
             (listing_id,),
         )
 
@@ -530,11 +397,11 @@ class TestClaimRelease:
         self._insert_claim(cur, listing_id)
 
         cur.execute(
-            "DELETE FROM ops.detail_scrape_claims WHERE listing_id = %s::uuid",
+            SQL("delete_ops_detail_scrape_claims"),
             (listing_id,),
         )
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.detail_scrape_claims WHERE listing_id = %s::uuid",
+            SQL("select_cnt_from_ops_detail_scrape_claims"),
             (listing_id,),
         )
         assert cur.fetchone()["cnt"] == 0
@@ -544,16 +411,11 @@ class TestClaimRelease:
         run_id = str(uuid.uuid4())  # text, not uuid column type
 
         cur.execute(
-            """
-            INSERT INTO staging.detail_scrape_claim_events
-                (listing_id, run_id, status)
-            VALUES (%s::uuid, %s, 'processed')
-            """,
+            SQL("insert_staging_detail_scrape_claim_events"),
             (listing_id, run_id),
         )
         cur.execute(
-            "SELECT run_id, status FROM staging.detail_scrape_claim_events"
-            " WHERE listing_id = %s::uuid",
+            SQL("select_run_id_status_from_staging_detail_scrape_claim_events"),
             (listing_id,),
         )
         row = cur.fetchone()
@@ -570,8 +432,7 @@ class TestQueueIsEmpty:
     def test_returns_zero_when_empty(self, cur):
         # Any pre-existing pending rows will be rolled back by the test transaction
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.artifacts_queue"
-            " WHERE status IN ('pending', 'retry')"
+            SQL("select_cnt_from_ops_artifacts_queue")
         )
         # Just verifies the query executes without error
         assert cur.fetchone()["cnt"] >= 0
@@ -579,14 +440,13 @@ class TestQueueIsEmpty:
     def test_nonzero_after_insert(self, cur):
         _insert_artifact(cur, status="pending")
         cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.artifacts_queue"
-            " WHERE status IN ('pending', 'retry')"
+            SQL("select_cnt_from_ops_artifacts_queue")
         )
         assert cur.fetchone()["cnt"] >= 1
 
 
 # ===========================================================================
-# Statements imported from processing.queries — Plan 162 Stage 7
+# Statements imported from processing.queries — Plan 162 Stage L
 # ===========================================================================
 
 class TestExtractedProcessingStatements:
@@ -617,7 +477,7 @@ class TestExtractedProcessingStatements:
 
 
 # ===========================================================================
-# Every remaining processing statement, executed — Plan 162 Stage 7
+# Every remaining processing statement, executed — Plan 162 Stage L
 # ===========================================================================
 
 class TestProcessingQueueStatements:
@@ -794,9 +654,92 @@ class TestDetailClaimAndCooldownStatements:
         cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": _random_listing_id()})
         assert cur.fetchone() is None
 
+    def test_clear_blocked_cooldown_removes_an_existing_entry(self, cur):
+        """The clear that actually clears, moved here by Plan 162 Stage M.
+
+        It came from ``tests/integration/scraper/test_blocked_cooldown.py``,
+        which was a Layer 2 suite living in a Layer 4 directory: it executed
+        statements against ``cur`` and never touched a route. The rest of that
+        file duplicated ``test_scraper_queries.py`` and was deleted; this case
+        did not, because the sibling above only proves the statement plans
+        against a listing that matches nothing. A ``DELETE`` whose predicate
+        never matches would pass that test forever.
+
+        The seeding statement is the scraper's, because the two services share
+        this table: the scraper writes the cooldown on a 403 and processing
+        clears it on the next success.
+        """
+        from scraper.queries import UPSERT_BLOCKED_COOLDOWN
+
+        listing_id = _random_listing_id()
+        cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
+        cur.execute(
+            SQL("select_cnt_from_ops_blocked_cooldown"),
+            (listing_id,),
+        )
+        assert cur.fetchone()["cnt"] == 1
+
+        cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
+        cur.execute(
+            SQL("select_cnt_from_ops_blocked_cooldown"),
+            (listing_id,),
+        )
+        assert cur.fetchone()["cnt"] == 0
+
     def test_insert_blocked_cooldown_cleared_event(self, cur):
         cur.execute(INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT, {
             "listing_id": _random_listing_id(),
             "num_of_attempts": 3,
         })
         assert cur.rowcount == 1
+
+
+class TestSilverObservationWrite:
+    """The batch insert into `staging.silver_observations` — Plan 162.
+
+    The head of the whole silver pipeline: what this writes, the archiver
+    flushes to Parquet, dbt reads and every mart is built on. It carries 37
+    columns in a fixed order that positional tuples are built against, and it
+    lived in a Python literal with nothing executing it until now — so a column
+    a migration added in the middle would have shifted every value one place to
+    the right, silently, in production.
+    """
+
+    def test_the_column_list_matches_the_order_the_rows_are_built_in(self, cur):
+        """Not a parse check. `execute_values` binds tuples positionally, so the
+        statement's column list and `_POSTGRES_COLS` are one contract in two
+        files, and this is the only place they meet."""
+        from psycopg2.extras import execute_values
+
+        from processing.writers.silver_writer import _POSTGRES_COLS
+
+        row = {col: None for col in _POSTGRES_COLS}
+        row["artifact_id"] = 987_654_321
+        row["listing_id"] = _random_listing_id()
+        row["vin"] = "VIN00000000000001"
+        row["source"] = "detail"
+        row["listing_state"] = "active"
+        row["fetched_at"] = datetime.now(timezone.utc)
+        row["price"] = 31_500
+        row["make"] = "toyota"
+        row["model"] = "camry"
+        row["year"] = 2026
+
+        execute_values(
+            cur, INSERT_SILVER_OBSERVATIONS,
+            [tuple(row[col] for col in _POSTGRES_COLS)],
+        )
+        assert cur.rowcount == 1
+
+        cur.execute(
+            SQL("select_vin_source_price_from_staging_silver_observations"),
+            (row["artifact_id"],),
+        )
+        written = cur.fetchone()
+        # Read back by name: a shifted column list inserts successfully and puts
+        # the year in the price, which only a value comparison catches.
+        assert written["vin"] == "VIN00000000000001"
+        assert written["source"] == "detail"
+        assert written["price"] == 31_500
+        assert written["make"] == "toyota"
+        assert written["year"] == 2026

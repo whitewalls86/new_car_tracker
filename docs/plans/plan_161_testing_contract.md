@@ -438,7 +438,7 @@ difference between the two passes is itself informative.
 |---|---|---|
 | 21 files mix two mocking styles | **10 files mix two patching mechanisms**; 10 more use `unittest.mock.patch`, none of them legitimately | The first pass counted `from unittest.mock import MagicMock` as a competing style. It is a value constructor, not a patching mechanism |
 | 16 modules still carry inline SQL | **10 modules** carry inline SQL at an `.execute()` call site | The first pass counted `SELECT`-shaped lines, which matched docstrings and comments |
-| 10 modules carry inline SQL at an `.execute()` call site | **66 sites in 15 modules** (Plan 162 Stage 7, 2026-09-01) | The second pass was measured by reading, and the measure it recorded — "`.execute(` with a literal first argument" — is blind by construction. `execute_values(cur, sql, rows)` carries its statement *second*; `ops/routers/maintenance.py:152` is a literal `INSERT` sitting there, in a module this list never named. Two of the ten do not belong either: `shared/db.py`'s only match is inside `db_cursor`'s own docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup, which name no schema to drift from |
+| 10 modules carry inline SQL at an `.execute()` call site | **66 sites in 15 modules** (Plan 162 Stage L, 2026-09-01) | The second pass was measured by reading, and the measure it recorded — "`.execute(` with a literal first argument" — is blind by construction. `execute_values(cur, sql, rows)` carries its statement *second*; `ops/routers/maintenance.py:152` is a literal `INSERT` sitting there, in a module this list never named. Two of the ten do not belong either: `shared/db.py`'s only match is inside `db_cursor`'s own docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup, which name no schema to drift from |
 | `/project-status/{project}` and `/oneoff-processes` are the only two routes with no reference anywhere in `tests/` | Both have had unit tests since `4d6ed4a` (2026-08-26). **Four routes are reached by no test through any routing table**, those two among them | Fixed between the planning session and this one — and the correction *strengthens* the argument, because the tests that exist call the handlers directly and were green throughout the 404 |
 | 32 of 35 routes are at least named by a test | **83 of 87** | The first pass counted a subset of services |
 
@@ -460,7 +460,7 @@ that could notice they never ran.
 
 ### The question this document did not ask
 
-**Added 2026-09-01, from Plan 162 Stage 7.** Question 5 asks what a *service*
+**Added 2026-09-01, from Plan 162 Stage L.** Question 5 asks what a *service*
 owes before it ships, and question 6 asks what "enough" means *per service*.
 Both answers are keyed to a Python package: `service_packages()` derives the
 eight top-level packages that hold an `__init__.py`, and

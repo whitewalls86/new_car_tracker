@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from ops.queries import (
+    INSERT_COORDINATION_RELEASE_EVIDENCE,
+    INSERT_COORDINATION_STATE_EVENT,
+)
 from ops.routers import coordination
 
 
@@ -77,7 +81,7 @@ def test_forward_transitions(mock_cursor_context, operation, source, target, tim
     assert f"{timestamp} = now()" in sql
     assert params == (target,)
     event_sql, event_params = cursor.execute.call_args_list[-1].args
-    assert "INSERT INTO staging.coordination_state_events" in event_sql
+    assert event_sql == INSERT_COORDINATION_STATE_EVENT
     assert event_params == (7, source, target, "service_maintenance", "operator")
 
 
@@ -153,7 +157,7 @@ def test_begin_drain_endpoint_maps_failures(mock_client, mocker, result, status_
 
 
 def test_status_route_is_registered(mock_client, mocker):
-    """G6, Plan 162 Stage 6. `test_status_serializes_timestamps` calls `_status`.
+    """G6, Plan 162 Stage H. `test_status_serializes_timestamps` calls `_status`.
 
     That covers the serialisation and says nothing about the URL -- and this is
     the route `scripts/host_maintenance.py` polls as `GET /coordination/status`
@@ -395,7 +399,7 @@ def test_host_evidence_rejects_stale_generation(mock_cursor_context):
 
     assert result == "stale"
     assert evidence == {"reason": "evidence generation is stale"}
-    assert all("INSERT INTO staging.coordination_release_evidence" not in call.args[0]
+    assert all(call.args[0] != INSERT_COORDINATION_RELEASE_EVIDENCE
                for call in cursor.execute.call_args_list)
 
 
@@ -419,7 +423,7 @@ def test_host_evidence_is_accepted_and_returned(mock_cursor_context):
     assert evidence["evidence_id"] == 4
     assert evidence["actor"] == "operator"
     sql, params = cursor.execute.call_args_list[-1].args
-    assert "INSERT INTO staging.coordination_release_evidence" in sql
+    assert sql == INSERT_COORDINATION_RELEASE_EVIDENCE
     assert params[0:2] == (7, "operator")
 
 
@@ -554,7 +558,7 @@ def test_event_failure_rolls_back_state_mutation(mock_cursor_context):
     cursor.fetchone.side_effect = [("none",), (7,)]
 
     def fail_event(sql, params=None):
-        if "INSERT INTO staging.coordination_state_events" in sql:
+        if sql == INSERT_COORDINATION_STATE_EVENT:
             raise RuntimeError("history unavailable")
 
     cursor.execute.side_effect = fail_event
@@ -648,7 +652,7 @@ def test_a_refused_request_names_the_cause_instead_of_blaming_the_database(
 ):
     """`/coordination/request` masked its failures exactly as `/deploy/start`
     did, and expands the same contract, so `service_maintenance` on `dashboard`
-    hit the same constraint by the same route. Plan 162 Stage 6c.
+    hit the same constraint by the same route. Plan 162 Stage K.
     """
     violation = (
         'new row for relation "coordination_state" violates check constraint '

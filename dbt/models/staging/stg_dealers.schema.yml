@@ -7,10 +7,15 @@ models:
       One row per customer_id with the most recent known name and zip.
     config:
       tags: ["hourly_core"]
+      contract:
+        enforced: true
     columns:
       - name: customer_id
+        data_type: string
         data_tests:
           - not_null
           - unique
       - name: name
+        data_type: string
       - name: zip
+        data_type: string

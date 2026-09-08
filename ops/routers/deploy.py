@@ -35,7 +35,7 @@ class IntentResult(NamedTuple):
 
     ``detail`` is set only for ``error``, the status that means *the database
     answered and refused*. It exists because the alternative was a caller with
-    nothing to say: before Plan 162 Stage 6c every failure here returned the
+    nothing to say: before Plan 162 Stage K every failure here returned the
     bare string ``"error"`` and the route rendered it as 503 "Database
     unavailable", so a CHECK violation and an unreachable Postgres were
     indistinguishable in the response, in the log and to the operator. Two
@@ -171,7 +171,7 @@ def _intent_release() -> IntentResult:
     Other coordination kinds can never be released through this facade.
 
     Returns the same statuses ``_set_intent`` does, minus 'invalid'. It returned
-    a bare ``bool`` until Plan 162 Stage 6c, collapsing five outcomes into
+    a bare ``bool`` until Plan 162 Stage K, collapsing five outcomes into
     ``False`` -- and one of the five is not a failure at all: refusing to
     release another kind's coordination is this facade working, and 'locked'
     is the word the request path already uses for it.

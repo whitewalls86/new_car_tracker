@@ -56,8 +56,43 @@ def _write(relative: str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _delete(relative: str) -> None:
+    """Remove a file the snapshot list will restore afterwards.
+
+    The rule this serves is about the corpus *shrinking*, which no edit can
+    express -- the file has to actually leave the tree. Restoration works
+    because the harness snapshots content and writes it back, recreating the
+    file; a deleted path must therefore always appear in its mutation's
+    snapshot list.
+    """
+    path = REPO_ROOT / relative
+    if not path.is_file():
+        raise AssertionError(
+            f"cannot delete {relative}: it is not on disk. The mutation has "
+            f"gone stale, which means it has stopped testing anything."
+        )
+    path.unlink()
+
+
 # (assertion that should notice, what changed, how to change it, files to
 # snapshot before changing, files that only exist during the mutation)
+_TEST_SQL = REPO_ROOT / "tests" / "sql" / "integration" / "sql" / "test_ops_views"
+
+
+def _statement(name: str) -> str:
+    """A real statement, read from the file that owns it.
+
+    **This harness may not type SQL either**, and the rule it exists to verify
+    is what said so: ``scripts/`` is production Python, so a mutation payload
+    written as a SQL literal here fails
+    ``test_no_production_module_holds_a_sql_statement``. Reading the statement
+    out of the file it already lives in is both the fix and the better
+    mutation -- what gets inlined is the *real* text, not a plausible-looking
+    stand-in for it.
+    """
+    return (_TEST_SQL / f"{name}.sql").read_text(encoding="utf-8")
+
+
 MUTATIONS = [
     (
         "test_every_integration_suite_is_invoked_by_a_ci_step",
@@ -142,12 +177,31 @@ MUTATIONS = [
         [],
     ),
     (
+        "test_no_layer_2_test_executes_a_statement_without_asserting_on_the_result",
+        "a Layer 2 test executes a statement and discards the result",
+        lambda: _write(
+            "tests/integration/sql/test_widget_queries.py",
+            '"""Layer 2 — widgets."""\n\n\n'
+            "def test_widget_query_runs(cur):\n"
+            "    cur.execute(WIDGET_QUERY)\n"
+            "    cur.fetchall()\n",
+        ),
+        [],
+        ["tests/integration/sql/test_widget_queries.py"],
+    ),
+    (
         "test_every_waiver_names_a_gap_entry_that_exists",
         "a gap entry a waiver depends on is renamed in the contract",
+        # Re-anchored from G6 to G5 by Plan 162 Stage M. G6 was deleted by
+        # Stage 6 when route coverage closed, and this anchor went with it --
+        # so the harness aborted here and every mutation after it stopped
+        # running, unnoticed, for two stages. That is the same failure Stage 1
+        # hit on G1 and G2, and the staleness guard is what said so both times.
+        # G5 is one of the three gaps a live waiver still names.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G6 | **Twelve routes reached",
-            "| G6x | **Twelve routes reached",
+            "| G5 | **Inline SQL at a SQL-taking call site.",
+            "| G5x | **Inline SQL at a SQL-taking call site.",
         ),
         ["docs/TESTING.md"],
         [],
@@ -179,11 +233,16 @@ MUTATIONS = [
     (
         "test_no_gap_entry_outlives_the_plan_that_owns_it",
         "a gap entry's owner plan is archived and the entry stays behind",
+        # Re-anchored twice by Plan 162 Stage M. Stage 7 struck G14's text
+        # through when it closed the gap, so the old anchor stopped matching;
+        # and the row it renamed G14 to, G15, is a real entry Stage 7 added, so
+        # the replacement would now write a duplicate. G99 is used precisely
+        # because no gap will ever have that letter.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G14 | **56 of 76 production `.sql` files",
+            "| G14 | ~~**56 of 76 production `.sql` files",
             "| G14 | **PLACEHOLDER** | -- | Plan 84 |\n"
-            "| G15 | **56 of 76 production `.sql` files",
+            "| G99 | ~~**56 of 76 production `.sql` files",
         ),
         ["docs/TESTING.md"],
         [],
@@ -191,10 +250,12 @@ MUTATIONS = [
     (
         "test_no_waiver_outlives_the_plan_that_owns_it",
         "a waiver's owner plan is archived and the waiver stays behind",
+        # Re-anchored from G6 to G5 by Plan 162 Stage M, for the reason above:
+        # ROUTE_WAIVERS is `()` since Stage 6, so no waiver names G6 any more.
         lambda: _edit(
             TEST,
-            'Waiver(subject, gap="G6", owner=162)',
-            'Waiver(subject, gap="G6", owner=84)',
+            'Waiver(subject, gap="G5", owner=162)',
+            'Waiver(subject, gap="G5", owner=84)',
         ),
         [TEST],
         [],
@@ -287,6 +348,248 @@ MUTATIONS = [
             'omit = ["scripts/oneoff/*", "scripts/*"]',
         ),
         ["pyproject.toml"],
+        [],
+    ),
+    # Plan 162 Stage U. The runtime half of this rule is a hook, and a hook
+    # that stopped noticing would leave every job green -- so the four checks
+    # standing behind it are the ones that most need to have been watched fail.
+    (
+        "test_every_declared_skip_names_a_test_that_exists",
+        "a declared skip goes on naming a test that has been renamed away",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "::test_every_sha_a_recap_names_is_a_real_commit",
+            "::test_every_sha_a_recap_names_is_a_real_commit_renamed",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "test_no_declared_skip_sits_at_a_layer_that_admits_none",
+        "a Layer 2 skip is declared instead of the fixture being fixed",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "DECLARED_SKIPS = (",
+            "DECLARED_SKIPS = (\n"
+            "    DeclaredSkip(\n"
+            '        "tests/integration/sql/test_dashboard_queries.py::test_widgets",\n'
+            '        reason="the widget table is not seeded in CI",\n'
+            '        condition="no widgets",\n'
+            "        since=date(2026, 9, 4),\n"
+            "    ),",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "test_every_pytest_step_runs_under_the_declared_skip_gate",
+        "the workflow-level gate is removed, as one unguarded line once was",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            'env:\n  REQUIRE_DECLARED_SKIPS: "1"\n',
+            "",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_pytest_step_runs_under_the_declared_skip_gate",
+        "the plugin registration is dropped, leaving the gate set and unread",
+        lambda: _edit(
+            "pyproject.toml",
+            'addopts = "-p tests.plugins.declared_skips'
+            ' -p tests.plugins.sql_execution_recorder"\n',
+            "",
+        ),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "test_the_declared_skip_registry_only_ratchets_down",
+        "a third skip is declared without the ceiling moving with it",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "DECLARED_SKIPS = (",
+            "DECLARED_SKIPS = (\n"
+            "    DeclaredSkip(\n"
+            '        "tests/scripts/test_audit_git_refs.py::test_divergence",\n'
+            '        reason="git behaves differently on the runner",\n'
+            '        condition="no git",\n'
+            "        since=date(2026, 9, 4),\n"
+            "    ),",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    # ----------------------------------------------------------------------
+    # Plan 162 Stage X. Seven rules arrived at once, and the stage's own
+    # argument is that a denominator fitted to what exists when it is written
+    # will be wrong -- so each is mutated in the direction it exists to catch.
+    # ----------------------------------------------------------------------
+    (
+        "test_no_test_module_holds_a_sql_statement",
+        "a test goes back to typing its statement inline",
+        lambda: _edit(
+            "tests/integration/sql/test_ops_views.py",
+            'SQL("insert_ops_blocked_cooldown"),',
+            repr(_statement("insert_ops_blocked_cooldown")) + ",",
+        ),
+        ["tests/integration/sql/test_ops_views.py"],
+        [],
+    ),
+    (
+        "test_every_test_sql_file_is_named_by_the_module_it_mirrors",
+        "a test statement is left behind with nothing loading it",
+        lambda: _write(
+            "tests/sql/integration/sql/test_ops_views/select_orphaned.sql",
+            _statement("insert_ops_blocked_cooldown"),
+        ),
+        [],
+        ["tests/sql/integration/sql/test_ops_views/select_orphaned.sql"],
+    ),
+    (
+        "test_every_test_statement_that_holds_a_template_is_waived",
+        "a statement becomes a template without joining the G19 ledger",
+        lambda: _edit(
+            "tests/sql/integration/sql/test_ops_views/insert_ops_blocked_cooldown.sql",
+            "ops.blocked_cooldown",
+            "{schema}.blocked_cooldown",
+        ),
+        ["tests/sql/integration/sql/test_ops_views/insert_ops_blocked_cooldown.sql"],
+        [],
+    ),
+    (
+        "test_no_test_invents_the_shape_of_a_relation_production_defines",
+        "a fixture declares a column its dbt model does not",
+        lambda: _edit(
+            "tests/scripts/test_audit_adaptive_refresh_features.py",
+            "CREATE TABLE int_listing_state_runs (run_duration_hours INTEGER)",
+            "CREATE TABLE int_listing_state_runs (run_hours INTEGER)",
+        ),
+        ["tests/scripts/test_audit_adaptive_refresh_features.py"],
+        [],
+    ),
+    (
+        "test_every_dbt_model_declares_an_enforced_contract",
+        "a model drops its enforced contract and nothing waives it",
+        lambda: _edit(
+            "dbt/models/staging/stg_dealers.schema.yml",
+            '    config:\n      tags: ["hourly_core"]\n'
+            "      contract:\n        enforced: true",
+            '    config:\n      tags: ["hourly_core"]',
+        ),
+        ["dbt/models/staging/stg_dealers.schema.yml"],
+        [],
+    ),
+    (
+        "test_every_production_import_is_classified",
+        "a new engine arrives as an unclassified import",
+        lambda: _edit(
+            "shared/db.py",
+            "import psycopg2",
+            "import psycopg2\nimport sqlalchemy",
+        ),
+        ["shared/db.py"],
+        [],
+    ),
+    (
+        "test_the_recorder_instruments_every_client_production_reaches",
+        "the recorder stops wrapping a client the contract says reaches an engine",
+        lambda: _edit(
+            "tests/plugins/sql_execution_recorder.py",
+            '"psycopg2", "duckdb", "asyncpg", "pyspark"',
+            '"psycopg2", "duckdb", "asyncpg"',
+        ),
+        ["tests/plugins/sql_execution_recorder.py"],
+        [],
+    ),
+    (
+        "test_every_sql_corpus_exemption_is_declared",
+        "an exemption quietly shrinks the coverage denominator",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")',
+            '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/", "dashboard/")',
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_the_production_sql_corpus_is_not_empty",
+        "the corpus glob stops matching and every coverage number reads 0 of 0",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            "            for path in REPO_ROOT.rglob(\"*.sql\")",
+            "            for path in REPO_ROOT.rglob(\"*.sqlx\")",
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_every_job_that_runs_pytest_has_its_record_read_by_the_gate",
+        "a job runs pytest and uploads no execution record",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "          name: sql-execution-unit-tests\n",
+            "          name: coverage-unit-tests\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_job_that_runs_pytest_has_its_record_read_by_the_gate",
+        "the coverage gate goes back to only reporting",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "run: python scripts/check_sql_execution_coverage.py",
+            "run: python scripts/check_sql_execution_coverage.py --report",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    # ----------------------------------------------------------------------
+    # Plan 162 Stage S. Four rules guard the carved-out CI gates and the
+    # source lists they read; each is mutated in the direction it exists to
+    # catch.
+    # ----------------------------------------------------------------------
+    (
+        "test_every_ignored_path_is_invoked_by_another_step_in_the_same_job",
+        "the dedicated step that runs an --ignored gate is deleted",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "pytest tests/integration/dbt/test_branch_coverage.py",
+            "echo skipping the branch coverage gate",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_the_sql_corpus_shrinks_only_by_naming_the_model_that_absorbed_it",
+        "a production .sql file leaves the corpus with nothing naming its absorber",
+        lambda: _delete("scripts/sql/select_enabled_search_keys.sql"),
+        ["scripts/sql/select_enabled_search_keys.sql"],
+        [],
+    ),
+    (
+        "test_the_non_empty_gate_reconciles_with_the_dbt_source_list",
+        "a table joins the Postgres snapshot allowlist that no dbt source reads",
+        lambda: _edit(
+            "shared/lake_snapshot_postgres.py",
+            '    ("ops", "tracked_models"),',
+            '    ("ops", "tracked_models"),\n    ("ops", "widget_queue"),',
+        ),
+        ["shared/lake_snapshot_postgres.py"],
+        [],
+    ),
+    (
+        "test_the_snapshot_writer_and_the_source_auditor_include_the_same_tables",
+        "a table leaves the snapshot writer and stays in the audit specs",
+        lambda: _edit(
+            "archiver/processors/lake_snapshot_export_cache.py",
+            '    "blocked_cooldown_events",\n',
+            "",
+        ),
+        ["archiver/processors/lake_snapshot_export_cache.py"],
         [],
     ),
 ]

@@ -90,7 +90,7 @@ class TestArtifactEnqueueQueries:
 class TestBlockedCooldownQueries:
     """The 403 cooldown trio, executed as the detail fetcher executes it.
 
-    These three ``.sql`` files predate Plan 162 Stage 7 and were waived for
+    These three ``.sql`` files predate Plan 162 Stage L and were waived for
     having no Layer 2 test. Order matters: the upsert has to land before the
     attempt count can be read, and the event insert records what that count was.
     """

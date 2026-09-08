@@ -24,8 +24,12 @@ models:
       landed is not picked up until the next `--full-refresh`.
     config:
       tags: ["feature_daily", "backtest"]
+      contract:
+        enforced: true
+      on_schema_change: fail
     columns:
       - name: observation_id
+        data_type: string
         description: >
           md5(concat_ws('|', artifact_id, listing_id)) — durable row identity and
           incremental unique_key. A source batch with more than one row for the
@@ -38,16 +42,20 @@ models:
           - not_null
           - unique
       - name: artifact_id
+        data_type: bigint
         description: Source artifact identifier. Not unique alone — SRP/carousel artifacts can carry many listing_ids.
         data_tests:
           - not_null
       - name: listing_id
+        data_type: string
         description: Listing identifier active when this observation was fetched. Required — rows without it are excluded.
         data_tests:
           - not_null
       - name: vin17
+        data_type: string
         description: Validated 17-character VIN when present/resolved. Nullable — not required for SRP/carousel rows.
       - name: source
+        data_type: string
         description: Observation source.
         data_tests:
           - not_null
@@ -55,10 +63,12 @@ models:
               arguments:
                 values: ['detail', 'srp', 'carousel']
       - name: fetched_at
+        data_type: timestamptz
         description: Timestamp when this observation was fetched.
         data_tests:
           - not_null
       - name: parsed_fingerprint
+        data_type: string
         description: >
           md5 hash of source-aware business-state fields: listing_id, vin17, source,
           price, mileage, model_year, make, model, vehicle_trim, listing_state,
@@ -70,8 +80,11 @@ models:
         data_tests:
           - not_null
       - name: price
+        data_type: integer
         description: Parsed listing price — denormalized from stg_observations.
       - name: mileage
+        data_type: integer
         description: Parsed mileage — denormalized from stg_observations.
       - name: listing_state
+        data_type: string
         description: Listing state (active/unavailable/unknown) — denormalized from stg_observations.

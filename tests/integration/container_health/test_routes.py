@@ -11,7 +11,7 @@ So every assertion here goes through `TestClient` and checks the status code
 first. G6 in docs/TESTING.md is the rule; this file and the ops suite are what
 empty its waiver list.
 
-Plan 162 Stage 6.
+Plan 162 Stage H.
 """
 import pytest
 

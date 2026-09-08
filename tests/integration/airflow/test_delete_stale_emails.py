@@ -5,34 +5,29 @@ Validates the UPDATE logic directly against a real DB — no Airflow machinery
 needed. Seeds a stale row (> 48h) and a recent row (< 48h), runs the exact
 SQL the DAG uses, then asserts only the stale row was nulled.
 """
-import os
 from pathlib import Path
 
-import psycopg2
 import pytest
 from psycopg2.extras import RealDictCursor
 
-_DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
+from shared.query_loader import load_query
+from tests.sql_loader import queries
 
-_SQL = (
-    Path(__file__).parents[3] / "airflow" / "sql" / "delete_stale_emails.sql"
-).read_text(encoding="utf-8")
+SQL = queries(__file__)
 
-
-def _get_conn():
-    from urllib.parse import urlparse
-    url = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
-    p = urlparse(url)
-    return psycopg2.connect(
-        host=p.hostname, port=p.port or 5432,
-        dbname=p.path.lstrip("/"), user=p.username, password=p.password,
-    )
+# Read through ``shared.query_loader``, not with ``read_text``, and the
+# difference is the whole of Plan 162 Stage X's recorder: ``SqlText`` carries
+# the file it came from, a plain ``str`` carries nothing, and this statement
+# was executing against a real Postgres with nothing able to say which file the
+# text came from. The gate reported it as executed-but-unattributable on its
+# first CI run.
+_SQL = load_query(Path(__file__).parents[3] / "airflow" / "sql", "delete_stale_emails")
 
 
 @pytest.fixture()
-def db():
+def db(db_conn_factory):
     """Autocommit connection for seeding and verification."""
-    conn = _get_conn()
+    conn = db_conn_factory()
     conn.autocommit = True
     yield conn.cursor(cursor_factory=RealDictCursor)
     conn.close()
@@ -46,20 +41,14 @@ def seeded_rows(db):
     Cleans up both rows after the test regardless of outcome.
     """
     db.execute(
-        """
-        INSERT INTO access_requests (email_hash, requested_role, notification_email, requested_at)
-        VALUES
-            ('test-stale-hash', 'viewer', 'stale@example.com', now() - interval '3 days'),
-            ('test-recent-hash', 'viewer', 'recent@example.com', now())
-        RETURNING id, email_hash
-        """,
+        SQL("insert_access_requests"),
     )
     rows = db.fetchall()
     ids = [r["id"] for r in rows]
 
     yield ids
 
-    db.execute("DELETE FROM access_requests WHERE id = ANY(%s)", (ids,))
+    db.execute(SQL("delete_access_requests"), (ids,))
 
 
 @pytest.mark.integration
@@ -67,7 +56,7 @@ def test_stale_email_is_nulled(db, seeded_rows):
     db.execute(_SQL)
 
     db.execute(
-        "SELECT notification_email FROM access_requests WHERE email_hash = 'test-stale-hash'",
+        SQL("select_notification_email_from_access_requests"),
     )
     assert db.fetchone()["notification_email"] is None
 
@@ -77,6 +66,6 @@ def test_recent_email_is_preserved(db, seeded_rows):
     db.execute(_SQL)
 
     db.execute(
-        "SELECT notification_email FROM access_requests WHERE email_hash = 'test-recent-hash'",
+        SQL("select_notification_email_from_access_requests_2"),
     )
     assert db.fetchone()["notification_email"] == "recent@example.com"

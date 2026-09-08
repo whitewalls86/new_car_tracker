@@ -8,6 +8,10 @@ which handles teardown automatically.
 """
 import pytest
 
+from tests.sql_loader import queries
+
+SQL = queries(__file__)
+
 # ---------------------------------------------------------------------------
 # Role change
 # ---------------------------------------------------------------------------
@@ -27,7 +31,7 @@ def test_change_user_role_updates_db(
     assert response.status_code == 303
 
     verify_cur.execute(
-        "SELECT role FROM authorized_users WHERE id = %s", (user_id,)
+        SQL("select_role_from_authorized_users"), (user_id,)
     )
     assert verify_cur.fetchone()["role"] == "observer"
 
@@ -47,7 +51,7 @@ def test_change_user_role_invalid_role_no_change(
     assert response.status_code == 303
 
     verify_cur.execute(
-        "SELECT role FROM authorized_users WHERE id = %s", (user_id,)
+        SQL("select_role_from_authorized_users"), (user_id,)
     )
     assert verify_cur.fetchone()["role"] == "viewer"
 
@@ -69,7 +73,7 @@ def test_revoke_user_removes_row(
     assert response.status_code == 303
 
     verify_cur.execute(
-        "SELECT 1 FROM authorized_users WHERE id = %s", (user_id,)
+        SQL("select_1_from_authorized_users"), (user_id,)
     )
     assert verify_cur.fetchone() is None
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-**In production as of 2026-08-13.** Stage 0 passed (−73.15% held-out).
+**Complete as of 2026-09-03.** Stage 0 passed (−73.15% held-out).
 Dictionary v1 (`dict_id` 1367127621) is registered, the read path is deployed,
 the scraper writes dictionary frames, and the Stage 4 backfill is running.
 Comes out of Plan 114 Stage 3, which measured it as the cheapest storage win
@@ -478,6 +478,32 @@ liveness checks there must test for the checkpoint file rather than the process.
 - Metric: decompression failures by reason.
 - Alert when the rolling ratio degrades past a threshold — that is markup drift
   and the signal to retrain.
+
+### Closeout evidence — 2026-09-03
+
+The closeout inventory ran against production. April through August each held
+zero loose `detail_page` objects; September held 74,968. An exhaustive read of
+all 74,968 September frames found dictionary v1 (`dict_id` 1367127621) on every
+object. Every stored frame matched deterministic level-9 output byte for byte,
+none matched level 3, and no read or decompression failed. The running scraper
+also reported level 9 and dictionary v1 as its loaded writer configuration.
+
+The log-derived daily rolling compressed/raw ratio held between 4.94% and
+5.13% after the initial rollout day. Loki contained zero compression/decode
+error lines across the preceding 21 days. The closeout evidence therefore uses
+the structured write log plus the direct object audit rather than a dedicated
+Stage 5 Prometheus metric or named threshold alert, which was not found in the
+deployed code.
+
+Public surfaces: no correction is required; `README.md` and
+`ops/templates/info.html` already state the trained-dictionary mechanism and
+its storage outcome.
+
+## Public summary
+
+**Trained dictionary compression for raw HTML** — Cut stored detail-page HTML
+to about 5% of its original size while preserving lossless, independently
+readable artifacts and compatibility with older captures.
 
 ---
 

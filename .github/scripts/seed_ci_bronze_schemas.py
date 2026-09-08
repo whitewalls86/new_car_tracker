@@ -1,7 +1,7 @@
 """Seed MinIO with the empty Parquet schemas dbt model compilation needs.
 
 Lifted verbatim out of a 115-line inline heredoc in `ci.yml` by Plan 162
-Stage 4, which gave two jobs their own `dbt build` and so would otherwise have
+Stage E, which gave two jobs their own `dbt build` and so would otherwise have
 duplicated all 115 lines. The schemas here are the *shape* of the external
 sources, not data: `dbt build --target duckdb` reads them so every model
 compiles against the real column set even before the Plan 120 lake-snapshot

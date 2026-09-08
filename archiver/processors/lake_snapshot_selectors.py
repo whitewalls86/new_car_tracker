@@ -26,6 +26,7 @@ from archiver.processors.lake_snapshot_selector_config import (
     load_selector_configs,
 )
 from archiver.processors.lake_source_audit import resolve_table_path
+from archiver.queries import WRAP_AGGREGATE_QUERY
 from shared.duckdb_s3 import get_duckdb_s3_connection
 from shared.query_loader import load_query
 
@@ -126,25 +127,9 @@ def build_selector_query(
 def _wrap_aggregate_query(candidate_sql: str, entity_key: str) -> str:
     """Wrap a selector's candidate-row query so counting/sampling happens in
     DuckDB rather than pulling every candidate row into archiver memory."""
-    return f"""
-WITH selector_candidates AS (
-{candidate_sql}
-)
-SELECT
-    count(*) AS candidate_rows,
-    count(DISTINCT {entity_key}) AS entities,
-    (
-        SELECT list(entity_value)
-        FROM (
-            SELECT DISTINCT {entity_key} AS entity_value
-            FROM selector_candidates
-            WHERE {entity_key} IS NOT NULL
-            ORDER BY entity_value
-            LIMIT 5
-        ) AS sample
-    ) AS sample_entities
-FROM selector_candidates
-"""
+    return WRAP_AGGREGATE_QUERY.format(
+        candidate_sql=candidate_sql, entity_key=entity_key,
+    )
 
 
 def run_selector(

@@ -38,7 +38,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -338,6 +338,376 @@ class TestPlanTableCoverage:
             f"{collisions} -- each plan number belongs to exactly one table. "
             f"A plan in two makes 'is plan N done?' unanswerable from the "
             f"index; delete the stale row."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Plan 172 Stage D: docs/PLAN_DOCUMENT.md's two public sections, mechanised
+# for the two published windows, then widened to every live plan behind a
+# named, dated waiver list.
+# ---------------------------------------------------------------------------
+_SECTION_MEASURED = date(2026, 9, 3)
+
+
+def _has_section(path: str, heading: str) -> bool:
+    """Presence only. Length is ``_section_over_cap``'s job."""
+    return re.search(rf"^## {re.escape(heading)}\s*$", _read(path), re.M) is not None
+
+
+def _section_over_cap(path: str, heading: str, cap: int | None = None) -> int | None:
+    """The section's rendered length past ``cap``, or ``None`` if it fits.
+
+    Measured the way a reader would see it, not the way the file spells it:
+    ``build_public_roadmap.flatten_markdown`` strips the formatting a public
+    page would otherwise render literally. Raises via ``_section_body`` if the
+    heading is absent -- call ``_has_section`` first.
+
+    ``cap`` defaults to ``build_public_roadmap.MAX_SUMMARY_CHARS`` rather than
+    restating its value. ``docs/PLAN_DOCUMENT.md`` caps both public sections at
+    one number; spelling it here as well would let the two published windows
+    drift apart silently the first time that number moved.
+    """
+    from scripts import build_public_roadmap as roadmap
+
+    if cap is None:
+        cap = roadmap.MAX_SUMMARY_CHARS
+    body = _section_body(_read(path), heading)
+    rendered = roadmap.flatten_markdown(body)
+    return len(rendered) - cap if len(rendered) > cap else None
+
+
+def _plan_document_path(number: int) -> str | None:
+    """The plan's main document, or ``None`` if it has none yet.
+
+    Delegates to ``build_public_roadmap.plan_document`` rather than picking
+    ``documents_by_plan_number()[number][0]`` arbitrarily -- that function
+    already disambiguates a number that matches more than one file (a stage
+    handoff sharing a prefix, as Plan 125 did with three documents at once) by
+    reading the ``# Plan N: ...`` heading, which is exactly the property this
+    file's own module docstring declines to assume holds.
+    """
+    from scripts import build_public_roadmap as roadmap
+
+    try:
+        return str(roadmap.plan_document(str(number)).relative_to(REPO_ROOT))
+    except roadmap.RoadmapBuildError:
+        return None
+
+
+# Live plans with no document at all -- a bare '**88**' backlog row, an idea
+# not yet drafted. Named explicitly so a plan missing its document is this
+# repository's decision to track it, not ``_plan_document_path`` returning
+# ``None`` and the plan quietly vanishing from both the compliant and the
+# waived counts below.
+NO_DOCUMENT_LIVE_PLANS = frozenset({88})
+
+
+# Plan 172 is the contract's own plan. A waiver's ``plan`` must be strictly
+# below this: everything from here on was drafted under the contract (or is
+# the contract), and 'plan-draft' already writes the section, so a plan this
+# new reaching the waiver list is not debt grandfathered in -- it is the
+# contract being bypassed the week it landed. Enforced by
+# ``test_no_waiver_names_a_plan_that_postdates_the_contract``, not by
+# convention.
+_CONTRACT_PLAN = 172
+
+# Plan 172 Stage G. ``docs/PLAN_DOCUMENT.md`` says of the waiver list: "The
+# list only shrinks." The three tests below each enforce that a *particular*
+# entry is legitimate -- present, not stale, not postdating the contract --
+# and none of them enforces that sentence, because every check is per-entry: a
+# list that grows by one legitimate-looking pre-contract waiver passes all
+# three cleanly. These two ceilings are the sentence, asserted on the count.
+#
+# Recorded 2026-09-03, the day Stage G took them. **Lower them as plans are
+# fixed; never raise one.** Raising a ceiling is the bypass this exists to
+# catch -- a waiver added instead of the section being written.
+#
+# Growth in either list is a bypass rather than new debt, for a different
+# reason per list:
+#
+# * ``WHAT_THIS_PLAN_IS_FOR_WAIVERS`` can only grow if a pre-172 plan re-enters
+#   a live table from the archive or the superseded table. The contract's
+#   Adoption section already says a live plan acquires the applicable public
+#   section, so that section is what such a plan owes -- not an entry here.
+# * ``THE_CHECKS_WAIVERS`` can only grow when a plan enters closeout owing
+#   ``## The checks``. Since Stage E that section is 'close-out''s to write on
+#   exactly that transition, so a new entry means the skill was bypassed. This
+#   is the ceiling that gets tested first: all five entries are pre-172 plans
+#   still live, and more will reach closeout.
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 35
+MAX_THE_CHECKS_WAIVERS = 5
+
+
+@dataclass(frozen=True)
+class SectionWaiver:
+    """One live plan that predates ``docs/PLAN_DOCUMENT.md`` and has not been
+    touched since. Cleared the next time the plan is touched and the section
+    is added -- not on a schedule. A plan in the published build-order or
+    archive window may never appear here: the published-window tests below
+    hold no waiver list at all, by design. Nor may a plan numbered
+    ``_CONTRACT_PLAN`` or above -- see there.
+    """
+
+    plan: int
+    since: date = _SECTION_MEASURED
+
+
+# 44 live plans, of which: 8 already carry '## What this plan is for'
+# (162 and 134 were backfilled landing Stage D, because the published
+# build-order window required it; 164 followed when Plan 172 archived and
+# promoted it into that window, which is also what paid the ceiling above down
+# from 39; 154 and 151 followed on the same mechanism twice more on 2026-09-04,
+# as Plan 138 archived and Plan 164 left for closeout -- each departure moved
+# the published boundary one row further down and caught the plan beneath it.
+# 173 and 174 carry the section already and needed no backfill; 170 was
+# backfilled 2026-09-07, and is the first one no departure forced -- it was
+# written because the plan was being restructured for `plan-start`, not because
+# a row above it left); 1, Plan 88, has no document at all and is named in
+# NO_DOCUMENT_LIVE_PLANS instead of here; the remaining 35 are waived below.
+# 8 + 1 + 35 = 44.
+#
+# **The mechanism is worth naming, because it has now fired three times.** A
+# plan is promoted into the published window by a row *above* it leaving, which
+# nobody edits and no reviewer of that change is looking at. Plans 172, 138 and
+# 175 are no longer counted here -- they archived and left the live tables, and
+# each departure is what put a fresh plan on the landing page.
+#
+# Plans 117 and 163 are the two whose shape does not fit stages at all (an
+# umbrella and a register); the contract's own Design section names a waiver as
+# the right instrument for that too, not a permanent plan kind.
+WHAT_THIS_PLAN_IS_FOR_WAIVERS = (
+    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),
+    SectionWaiver(79), SectionWaiver(94), SectionWaiver(108), SectionWaiver(112),
+    SectionWaiver(113), SectionWaiver(117), SectionWaiver(119), SectionWaiver(121),
+    SectionWaiver(122), SectionWaiver(125), SectionWaiver(126), SectionWaiver(127),
+    SectionWaiver(130), SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
+    SectionWaiver(149), SectionWaiver(150), SectionWaiver(152),
+    SectionWaiver(155), SectionWaiver(156), SectionWaiver(157),
+    SectionWaiver(159), SectionWaiver(160), SectionWaiver(163), SectionWaiver(165),
+    SectionWaiver(166), SectionWaiver(167), SectionWaiver(168),
+    SectionWaiver(169), SectionWaiver(171),
+)
+
+# The closeout plans owing '## The checks' -- currently all five of them, so
+# this test is a forward gate only and constrains nothing live yet. Plan 129
+# archived 2026-09-03 and left this list on its way out -- it is not waived
+# here because it is no longer live. Plans 117 and 163 are not here: neither
+# is in closeout, so neither owes this section.
+THE_CHECKS_WAIVERS = (
+    SectionWaiver(136), SectionWaiver(142), SectionWaiver(146),
+    SectionWaiver(149), SectionWaiver(160),
+)
+
+
+def _live_plan_numbers() -> frozenset[int]:
+    return plan_numbers(BUILD_ORDER) | plan_numbers(BACKLOG) | plan_numbers(CLOSEOUT)
+
+
+class TestPlanDocumentContract:
+    """``docs/PLAN_DOCUMENT.md`` Stage D: its two public sections, asserted
+    rather than merely written.
+
+    Two different strengths, on purpose. The published windows -- what a
+    reader outside this repository actually sees -- hold with **no waiver
+    list at all**, and hold the section's character cap as well as its
+    presence: a plan reaching either window without its section, or over
+    cap, is a failure, full stop, because publishing the gap is worse than
+    not publishing. Every other live plan holds against the presence rule
+    only, behind a named, dated waiver, because 38 of the 43 predate the
+    contract and rewriting all of them on Stage D's one day would be exactly
+    the kind of backfill ``plan_172_plan_authoring_skill.md``'s Adoption
+    section rules out. A waiver cannot cover a plan numbered
+    ``_CONTRACT_PLAN`` or above, or one that has no document at all --
+    see ``NO_DOCUMENT_LIVE_PLANS``.
+    """
+
+    def test_published_build_order_window_carries_what_this_plan_is_for(self):
+        from scripts import build_public_roadmap as roadmap
+
+        missing = []
+        over_cap = []
+        for row in rows(BUILD_ORDER)[: roadmap.MAX_ITEMS]:
+            number = index_plan_number(BUILD_ORDER, row["Plan"])
+            path = _plan_document_path(number)
+            if path is None or not _has_section(path, "What this plan is for"):
+                missing.append(number)
+                continue
+            over = _section_over_cap(path, "What this plan is for")
+            if over is not None:
+                over_cap.append((number, over))
+        assert not missing, (
+            f"published build-order plans {missing} lack '## What this plan "
+            f"is for'. This window is public; no waiver may cover it -- "
+            f"write the section."
+        )
+        assert not over_cap, (
+            f"published build-order plans {over_cap} (plan, chars over "
+            f"{roadmap.MAX_SUMMARY_CHARS}) exceed the cap "
+            f"docs/PLAN_DOCUMENT.md sets for this section. "
+            f"Shorten it -- this is public copy."
+        )
+
+    def test_published_archive_window_carries_public_summary(self):
+        from scripts import build_public_roadmap as roadmap
+
+        missing = []
+        for row in rows(ARCHIVE_TABLE)[: roadmap.MAX_ITEMS]:
+            for number in archive_plan_numbers(row["Plan"]):
+                path = _plan_document_path(number)
+                if path is None:
+                    continue  # no document -- the record working, not a gap
+                if not _has_section(path, "Public summary"):
+                    missing.append(number)
+        assert not missing, (
+            f"published archive plans {missing} lack '## Public summary'. "
+            f"This window is public; no waiver may cover it -- write the "
+            f"section."
+        )
+
+    def test_no_waiver_covers_a_published_plan(self):
+        """The published-window tests above hold no waiver list at all; this
+        confirms neither waiver list has quietly grown one anyway."""
+        from scripts import build_public_roadmap as roadmap
+
+        published = {
+            index_plan_number(BUILD_ORDER, row["Plan"])
+            for row in rows(BUILD_ORDER)[: roadmap.MAX_ITEMS]
+        }
+        waived = {w.plan for w in WHAT_THIS_PLAN_IS_FOR_WAIVERS}
+        overlap = sorted(published & waived)
+        assert not overlap, (
+            f"{overlap} are both published and waived -- Plan 172 Stage D's "
+            f"exit condition 4. Write the section and drop the waiver."
+        )
+
+    def test_live_plans_carry_what_this_plan_is_for_or_a_waiver(self):
+        missing = {
+            number for number in _live_plan_numbers()
+            if (path := _plan_document_path(number)) is not None
+            and not _has_section(path, "What this plan is for")
+        }
+        waived = {w.plan for w in WHAT_THIS_PLAN_IS_FOR_WAIVERS}
+        unwaived = sorted(missing - waived)
+        assert not unwaived, (
+            f"{unwaived} lack '## What this plan is for' and are not "
+            f"waived. Add the section, or a SectionWaiver naming the plan."
+        )
+        stale = sorted(waived - missing)
+        assert not stale, (
+            f"{stale} are waived but already carry '## What this plan is "
+            f"for' -- drop the waiver, the list only shrinks."
+        )
+
+    def test_closeout_plans_carry_the_checks_or_a_waiver(self):
+        missing = {
+            number for number in plan_numbers(CLOSEOUT)
+            if (path := _plan_document_path(number)) is not None
+            and not _has_section(path, "The checks")
+        }
+        waived = {w.plan for w in THE_CHECKS_WAIVERS}
+        unwaived = sorted(missing - waived)
+        assert not unwaived, (
+            f"{unwaived} lack '## The checks' and are not waived. Add the "
+            f"section, or a SectionWaiver naming the plan."
+        )
+        stale = sorted(waived - missing)
+        assert not stale, (
+            f"{stale} are waived but already carry '## The checks' -- drop "
+            f"the waiver, the list only shrinks."
+        )
+
+    def test_no_waiver_outlives_the_plan_it_names(self):
+        """A waiver for a plan no longer in any live table is stale -- the
+        plan archived, superseded, or was renumbered, and the entry should
+        have been dropped with it."""
+        live = _live_plan_numbers()
+        for waivers, label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, "WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, "THE_CHECKS_WAIVERS"),
+        ):
+            dead = sorted(w.plan for w in waivers if w.plan not in live)
+            assert not dead, (
+                f"{label} names {dead}, no longer in any live table. Drop "
+                f"the entry -- its plan is not waiting on this any more."
+            )
+
+    def test_no_waiver_names_a_plan_that_postdates_the_contract(self):
+        """The half of 'the list only shrinks' that presence/staleness alone
+        cannot enforce: nothing stops a *new* violation from being waived
+        instead of fixed, because a freshly-waived plan that genuinely lacks
+        the section passes both directions of the check above cleanly. A
+        plan numbered ``_CONTRACT_PLAN`` or higher was drafted under the
+        contract -- 'plan-draft' already writes this section -- so it may
+        never be grandfathered here, unlike the 38 that predate it.
+        """
+        for waivers, label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, "WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, "THE_CHECKS_WAIVERS"),
+        ):
+            postdate = sorted(w.plan for w in waivers if w.plan >= _CONTRACT_PLAN)
+            assert not postdate, (
+                f"{label} names {postdate}, which postdates Plan "
+                f"{_CONTRACT_PLAN} itself. A plan drafted under the contract "
+                f"is missing the section because it was never written, not "
+                f"because it predates the rule -- fix the document, don't "
+                f"waive it."
+            )
+
+    def test_neither_waiver_list_has_grown(self):
+        """Plan 172 Stage G: the half of "the list only shrinks" that no
+        per-entry check can see.
+
+        The three tests above ask whether a given entry is *legitimate*. A
+        waiver naming a live, pre-contract plan that genuinely lacks the
+        section is legitimate by all three, so the escape valve can be widened
+        one honest-looking entry at a time without any of them objecting. The
+        count is the only place that shows up.
+
+        This is deliberately a ratchet and not a measurement. The alternative
+        Stage G considered was reading the two counts again after thirty days
+        and recording whether they moved -- which passes trivially in the case
+        where nothing happened at all, and notices a bypass a month after the
+        commit that made it. A ceiling fails in CI on the commit itself.
+
+        Lower ``MAX_*`` as plans are fixed. Raising one to make this pass is
+        the exact move it exists to refuse.
+        """
+        for waivers, ceiling, label, ceiling_label in (
+            (WHAT_THIS_PLAN_IS_FOR_WAIVERS, MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS,
+             "WHAT_THIS_PLAN_IS_FOR_WAIVERS", "MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS"),
+            (THE_CHECKS_WAIVERS, MAX_THE_CHECKS_WAIVERS,
+             "THE_CHECKS_WAIVERS", "MAX_THE_CHECKS_WAIVERS"),
+        ):
+            assert len(waivers) <= ceiling, (
+                f"{label} holds {len(waivers)} entries, over its ceiling of "
+                f"{ceiling}. docs/PLAN_DOCUMENT.md says the waiver list only "
+                f"shrinks. Write the section the new entry is waiving; do not "
+                f"raise {ceiling_label}."
+            )
+
+    def test_every_live_plan_without_a_document_is_named(self):
+        """A live plan with no document at all -- a bare bold number, like
+        Plan 88's backlog row -- cannot carry either section, so it belongs
+        in neither the compliant set nor a waiver. Left unnamed, it simply
+        disappears from both counts; named here, its absence is a decision
+        this repository can see and audit.
+        """
+        undocumented = {
+            number for number in _live_plan_numbers()
+            if _plan_document_path(number) is None
+        }
+        unnamed = sorted(undocumented - NO_DOCUMENT_LIVE_PLANS)
+        assert not unnamed, (
+            f"{unnamed} are live with no document and are not named in "
+            f"NO_DOCUMENT_LIVE_PLANS. If a document exists under a name the "
+            f"parser cannot read, fix the filename; otherwise add the plan "
+            f"here."
+        )
+        stale = sorted(NO_DOCUMENT_LIVE_PLANS - undocumented)
+        assert not stale, (
+            f"{stale} are named in NO_DOCUMENT_LIVE_PLANS but now have a "
+            f"document -- drop the entry, and give it '## What this plan is "
+            f"for' or a waiver like everything else."
         )
 
 
@@ -943,6 +1313,38 @@ def _headings(text: str) -> set[str]:
     }
 
 
+# The week ending Sunday N is owed a recap by end of N+3, so the assertion
+# below turns red on the Thursday. Named rather than inlined because the
+# failure message quotes the same number it asserts on.
+RECAP_GRACE_DAYS = 3
+
+
+def _oldest_acceptable_recap(today: date) -> date:
+    """The oldest window-end a recap set may stop at and still be current.
+
+    Pure and parameterised on ``today`` so the deadline itself can be asserted
+    rather than only documented -- the boundary is the whole design decision,
+    and a rule this shape is easy to get right in prose and wrong by a day in
+    code.
+    """
+    # The most recent Sunday strictly before today. A week ending today is not
+    # complete until today is over, so today never ends its own window.
+    last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
+    # Inside the grace window the newest recap may still be the *previous*
+    # Sunday's; past it, the week that just closed is owed one.
+    within_grace = (today - last_complete).days <= RECAP_GRACE_DAYS
+    return last_complete - timedelta(days=7 if within_grace else 0)
+
+
+def _recap_sundays() -> list[date]:
+    """Every recap's window-end date, sorted. Filenames are the source."""
+    return sorted(
+        date(*(int(part) for part in match.groups()))
+        for path in recap_files()
+        if (match := _RECAP_NAME.match(path.name))
+    )
+
+
 class TestWeeklyRecaps:
     """Plan 146 Stage 6's output, held to its shape rather than its content.
 
@@ -1039,6 +1441,89 @@ class TestWeeklyRecaps:
             "them as generic hedging makes 25 backfilled rows look like "
             "hedging too. Mark uncertainty in the recap's own words."
         )
+
+    def test_the_recap_series_has_no_interior_gap(self):
+        """A skipped week that was never noticed is a week with no record.
+
+        Every other assertion here checks a recap that *exists*. This one
+        checks the set: Sundays run every seven days, so a missing one is
+        arithmetic, not judgement. It is the half of "did the ritual run" that
+        can be mechanised, and it is stable over time -- a gap that opens in
+        2026 is still a gap in 2027.
+        """
+        days = _recap_sundays()
+        assert days, "no recaps at all; the assertions below prove nothing"
+        present = set(days)
+        missing = []
+        cursor = days[0]
+        while cursor <= days[-1]:
+            if cursor not in present:
+                missing.append(cursor.isoformat())
+            cursor += timedelta(days=7)
+        assert not missing, (
+            "no recap exists for these Sundays, which sit between recaps that "
+            "do exist: " + ", ".join(missing) + ". A week with no recap is a "
+            "week whose work has no durable why. Write it with the plan-week "
+            "skill; the window is that Monday through that Sunday."
+        )
+
+    def test_the_recap_series_is_not_stale(self):
+        """The forcing function: this goes red if the weekly ritual stops.
+
+        **This test depends on the clock, deliberately**, which every other
+        assertion in this file avoids. ``docs/TESTING.md`` requires that a test
+        depending on something environmental declare it rather than let it
+        decide quietly, so: the dependency is today's date, the behaviour under
+        test is whether a habit is still being kept, and there is no way to
+        observe that without a clock. It is the one assertion here that cannot
+        be made time-independent without ceasing to test anything.
+
+        **The deadline is the Wednesday after the window closes.** The week
+        ending Sunday N is owed a recap by end of N+3; the failure arrives on
+        the Thursday. That keeps an ordinary Monday and Tuesday green -- the
+        recap is written at the close, not the instant the week ends -- while
+        never letting a recap go more than half a week stale. A zero grace
+        would put CI red every Monday until the recap landed; a full week let
+        the record drift further than is useful.
+        """
+        days = _recap_sundays()
+        assert days, "no recaps at all; the assertions below prove nothing"
+
+        today = date.today()
+        last_complete = today - timedelta(days=((today.weekday() + 1) % 7) or 7)
+
+        assert days[-1] >= _oldest_acceptable_recap(today), (
+            f"the newest recap is {days[-1].isoformat()}, and the week ending "
+            f"{last_complete.isoformat()} was owed one by "
+            f"{(last_complete + timedelta(days=RECAP_GRACE_DAYS)).isoformat()}. "
+            f"Run the plan-week skill. If a week is genuinely being skipped on "
+            f"purpose, that is a decision to write down in docs/recaps/, not a "
+            f"threshold to raise."
+        )
+
+    @pytest.mark.parametrize(
+        ("today", "stale_if_newest_is"),
+        [
+            # The week ending Sunday 2026-09-06 is owed a recap by Wednesday
+            # 2026-09-09. Each row is a day of the following week and the
+            # oldest recap that is still acceptable on it.
+            (date(2026, 9, 7), date(2026, 8, 30)),  # Monday   -- grace
+            (date(2026, 9, 8), date(2026, 8, 30)),  # Tuesday  -- grace
+            (date(2026, 9, 9), date(2026, 8, 30)),  # Wednesday -- last day of grace
+            (date(2026, 9, 10), date(2026, 9, 6)),  # Thursday -- the deadline has passed
+            (date(2026, 9, 11), date(2026, 9, 6)),  # Friday
+            (date(2026, 9, 13), date(2026, 9, 6)),  # Sunday, its own week not yet complete
+        ],
+    )
+    def test_the_deadline_lands_on_the_wednesday(self, today, stale_if_newest_is):
+        """The boundary asserted, not just described.
+
+        A grace expressed in prose is easy to state correctly and implement a
+        day out. These six rows pin it: Monday through Wednesday accept the
+        previous Sunday's recap, and from Thursday the week that just closed is
+        owed one.
+        """
+        assert _oldest_acceptable_recap(today) == stale_if_newest_is
 
     def test_the_recap_scan_actually_reads_recaps(self):
         """A scan that matches nothing passes forever.
