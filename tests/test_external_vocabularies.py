@@ -163,6 +163,75 @@ def test_no_test_fabricates_a_cars_com_status_production_has_never_seen():
     )
 
 
+def test_every_observed_cars_com_status_is_handled():
+    """Every status production has returned classifies to a decided outcome.
+
+    **The rule above is the negative direction and this is the positive one.**
+    That one says a test may not invent a status; this says the *code* may not
+    ignore one. They are different failures: the suite fabricated 200 and 403
+    and nothing else, while cars.com was also returning 302, 500, 502, 503 and
+    504 — 3,103 times in 91 days — and every one of them fell through an
+    ``else`` into the arm meant for success.
+
+    ``UNKNOWN`` is the catchall and it is deliberately **not** an acceptable
+    answer for a status the corpus contains. A status nobody has reasoned
+    about should be handled conservatively when it turns up in production;
+    once it has turned up often enough to be in a recording, somebody owes it
+    a decision. That is what this assertion collects.
+    """
+    from scraper.fetch_outcomes import FetchOutcome, classify
+
+    observed = _corpus()["statuses_observed"]
+    undecided = sorted(
+        status for status in observed if classify(status) is FetchOutcome.UNKNOWN
+    )
+    assert not undecided, (
+        f"cars.com has returned {undecided} in production and "
+        "scraper/fetch_outcomes.py has no opinion about them, so they take the "
+        "UNKNOWN catchall.\n\n"
+        "The catchall is for statuses nobody has seen yet. A status in the "
+        "recorded corpus has been seen, so decide it: add it to _HANDLING with "
+        "the outcome that says what the scraper should do — back off or not, "
+        "and enqueue for parsing or not. Getting this wrong is not loud: "
+        "processing's listing_state default is 'active'."
+    )
+
+
+def test_the_unknown_catchall_is_reachable():
+    """And the catchall still exists, for the statuses that are not in it yet.
+
+    The rule above would also pass if ``classify`` returned ``OK`` for
+    everything, which is the cheapest possible way to satisfy it and the worst
+    possible behaviour. This is the other half: a status cars.com has never
+    sent must still land somewhere conservative.
+    """
+    from scraper.fetch_outcomes import (
+        FetchOutcome,
+        classify,
+        handled_statuses,
+        should_back_off,
+        should_enqueue_for_parsing,
+    )
+
+    unseen = 418
+    assert unseen not in handled_statuses(), (
+        "418 was chosen as a status nothing decides about and something now "
+        "decides about it. Pick another."
+    )
+    assert classify(unseen) is FetchOutcome.UNKNOWN
+    assert classify(None) is FetchOutcome.UNKNOWN, (
+        "a fetch that raised has no status and must classify UNKNOWN, not "
+        "fall through to the success arm"
+    )
+    assert should_back_off(FetchOutcome.UNKNOWN), (
+        "an unrecognised status must slow the scraper down, not speed it up"
+    )
+    assert not should_enqueue_for_parsing(FetchOutcome.UNKNOWN), (
+        "an unrecognised body must not reach a parser whose listing_state "
+        "default is 'active'"
+    )
+
+
 def test_the_cars_com_corpus_is_not_empty():
     """The corpus cannot pass the rule above by holding nothing.
 

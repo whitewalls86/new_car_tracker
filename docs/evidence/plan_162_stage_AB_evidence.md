@@ -4,8 +4,9 @@
 
 Everything bulky about Stage AB: the census as measured rather than inherited,
 the four numbers this stage's own scoping got wrong, the production recording
-and what it cost to take, the twelve mutations watched failing, and the two
-findings that are not vocabularies at all.
+and what it cost to take, **the three live defects the recording exposed once
+it was read against the code**, the fourteen mutations watched failing, and
+the two findings that are not vocabularies at all.
 
 ---
 
@@ -161,16 +162,90 @@ the runner and the verifying runs on it. Same split — one corpus, two
 consumers, neither importing the other — with the recorder moved because the
 runner cannot see the subject.
 
-**The five statuses nothing exercises.** 302, 500, 502, 503 and 504 are answers
-cars.com demonstrably gives — 3,103 of them across the window — and no test
-produces any of them. The rule this stage lands enforces the *positive*
-direction only: a fabricated status must be one production has observed. The
-negative direction is a coverage obligation rather than a vocabulary one, and
-it is named here rather than quietly satisfied. The 302s are the ones worth a
-second look: with `allow_redirects=True`, a 302 reaching the caller means the
-redirect was not followed, and `scrape_detail_fetch` writes `error = "HTTP
-302"` with no `blocked_cooldown` row.
+**The five statuses nothing exercised, and what they turned out to cost.**
+302, 500, 502, 503 and 504 are answers cars.com demonstrably gives — 3,103 of
+them across the window — and when this stage opened, no test produced any of
+them and no branch decided about any of them. §3b is what that was doing.
 
+
+---
+
+## 3b. What the unhandled statuses were actually doing
+
+The corpus was recorded to check fabrications. Reading it against the code
+found three live defects, each of which had been running for as long as the
+window.
+
+**Every non-403 recovered the adaptive delay.** `_update_detail_delay` took a
+bare `is_403` boolean, so 500/502/503/504 took the `else` arm — the *recovery*
+arm — and multiplied the delay by 0.85. 1,911 measured 5xx in 91 days, **1,600
+of them in a single outage on 2026-08-20**, each one making the scraper press
+harder on an origin that was failing. `scrape_results._update_srp_penalty` had
+the identical defect, and one of its call sites is worse: it recovered the
+penalty on the line immediately after logging that the fetch had *raised
+twice*.
+
+**Every non-200 body was enqueued for parsing.** `scrape_detail_fetch` writes
+the artifact and enqueues it before it looks at the status, and
+`ops.artifacts_queue` **has no status column** — the status is known at fetch
+time and thrown away. So `processing.parse_detail_page` classifies blind, and
+its decision is `listing_state = (unlisted or {}).get("listing_state") or
+"active"`. A cars.com 502 page has no unlisted marker, so it published as an
+active listing; and because that observation carries `source='detail'`,
+`mart_vehicle_snapshot` trusts it over every other signal.
+
+**The 302s are the sharpest case and their provenance was measured, not
+guessed.** Exact equality over 91 days: 1,172 detail fetches reported 302 and
+1,172 *bootstraps* reported 302. Every one came through the FlareSolverr
+bootstrap, which runs whenever the 25-minute credential cache expires, against
+whichever listing triggered the miss. When cars.com redirects a listing that
+has been removed, `get_cf_credentials` hands back **the redirect target's
+body**, `_fetch_url` returns it as that listing's artifact with `final_url`
+still reported as the URL that was asked for, and the parser publishes a
+removed listing as active. Not a burst: 36–52 a day, every day, about 6% of
+bootstraps. The 503s by contrast were one incident — 1,600 on 2026-08-20 and 4
+on 2026-06-22.
+
+### What now happens instead
+
+[`scraper/fetch_outcomes.py`](../../scraper/fetch_outcomes.py) is one
+classification read by the metric, the adaptive delay and the enqueue, where
+there used to be three opinions and one omission.
+
+| Outcome | Statuses | Backs off | Reaches the parser |
+|---|---|---|---|
+| `OK` | 200 | no | yes |
+| `BLOCKED` | 403 | yes | **yes** |
+| `TRANSIENT` | 500, 502, 503, 504 | yes | no |
+| `REDIRECTED` | 302 | no | no |
+| `UNKNOWN` | anything else, and a raised fetch | yes | no |
+
+`BLOCKED` still enqueues, deliberately: a challenge page is a fact about
+availability that `_detect_challenge` records as `listing_state='blocked'`, and
+Plan 128 exists because those pages were once counted as successful scrapes.
+`REDIRECTED` does not back off, because a redirect is a prompt and correct
+answer about somewhere else. Non-enqueued bodies **are still written to
+MinIO** — that is the only copy of what the site said — they just do not become
+observations.
+
+`UNKNOWN` is the catchall the rule requires, and it is the conservative one.
+`classify(None)` — a fetch that raised — lands there too, which used to read as
+"not 403" and *speed the scraper up* after a total failure.
+
+**The metric's label set widened and the two alert selectors did not move.**
+`cartracker_detail_fetch_total`'s catch-all `error` split into `transient`,
+`redirected` and a residual `error`. `ct-detail-fetch-failing` keys on
+`outcome="ok"` and the block-rate rule on `outcome="403"`; both are unchanged
+and pinned by `test_the_labels_the_alerts_key_on_are_unchanged`. That alert's
+own description told an operator *"mixed `error` points at the fetch path or
+the site"* and gave them no way to tell which — it now names all four.
+
+**Demonstrated by reverting.** Putting `should_back_off` back to `outcome is
+BLOCKED` and `should_enqueue_for_parsing` back to `True` fails **17 tests**
+across three modules. The two pre-existing guards in
+`tests/scraper/test_metrics.py` that pinned the old label set also fired when
+the set widened, which is them working; both were updated with the reasoning
+rather than relaxed.
 ---
 
 ## 4. The markdown-it exclusion: right verdict, wrong reason
@@ -251,10 +326,10 @@ the reason.
 
 ---
 
-## 6. The twelve mutations, watched failing
+## 6. The fourteen mutations, watched failing
 
 `python scripts/verify_testing_contract_mutations.py`, 2026-09-09 — exit 0,
-**all 104 entries `CAUGHT`** (12 of them this stage's), baseline and
+**all 106 entries `CAUGHT`** (14 of them this stage's), baseline and
 restored tree both `90 passed`.
 
 | Mutation | Rule that noticed |
@@ -271,6 +346,8 @@ restored tree both `90 passed`.
 | the scraper's target list drifts from the census | `test_the_declared_curl_cffi_targets_are_the_ones_the_scraper_holds` |
 | curl_cffi offers a target the scraper never added | `test_no_chrome_target_curl_cffi_offers_is_missing_from_the_scraper` |
 | a DAG compares against a word the census does not declare | `test_every_airflow_state_the_dags_compare_against_is_declared` |
+| a status the corpus observed loses its handling | `test_every_observed_cars_com_status_is_handled` |
+| the catchall stops refusing the parser | `test_the_unknown_catchall_is_reachable` |
 
 **The exit clause's demonstration, in full.** Removing `403` from
 `statuses_observed` failed the rule and named all nine 403 sites by file and

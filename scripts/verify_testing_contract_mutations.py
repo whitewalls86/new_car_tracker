@@ -1583,6 +1583,28 @@ MUTATIONS = [
         ["airflow/dags/notifications.py"],
         [],
     ),
+    (
+        "test_every_observed_cars_com_status_is_handled",
+        "a status the corpus has observed loses its handling and takes the catchall",
+        lambda: _edit(
+            "scraper/fetch_outcomes.py",
+            "    503: FetchOutcome.TRANSIENT,\n",
+            "",
+        ),
+        ["scraper/fetch_outcomes.py"],
+        [],
+    ),
+    (
+        "test_the_unknown_catchall_is_reachable",
+        "the catchall stops being conservative and lets an unknown body reach the parser",
+        lambda: _edit(
+            "scraper/fetch_outcomes.py",
+            "    return outcome in (FetchOutcome.OK, FetchOutcome.BLOCKED)",
+            "    return outcome is not FetchOutcome.REDIRECTED",
+        ),
+        ["scraper/fetch_outcomes.py"],
+        [],
+    ),
 ]
 
 
