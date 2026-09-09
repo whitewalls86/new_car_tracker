@@ -386,7 +386,7 @@ moved it to the end without making it a different stage.
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
 | 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `next` | CAR-104 |
-| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `—` | unassigned |
+| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `—` | CAR-114 |
 | 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
@@ -2455,7 +2455,7 @@ archives and take the reason with it.
 
 ### Stage AF: the harness that proves the rules is proved by nothing
 
-**Issue:** unassigned · **State:** `—` · **Gap:** G29
+**Issue:** CAR-114 · **State:** `—` · **Gap:** G29
 
 **Every "demonstrated by X failing" exit in this plan rests on
 `scripts/verify_testing_contract_mutations.py`, and nothing guards it.** Its own
