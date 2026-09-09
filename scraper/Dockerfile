@@ -3,9 +3,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy requirements first
-COPY scraper/requirements.txt .
+COPY scraper/requirements.txt constraints.txt ./
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 
 # Copy the whole project (so processors/, etc. are included)
 COPY . .

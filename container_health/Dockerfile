@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY container_health/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY container_health/requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 
 # Only this package, unlike the other services' `COPY . .`. It imports nothing
 # from shared/ and reads no repo file at runtime, and keeping the image that

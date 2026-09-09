@@ -35,6 +35,19 @@ env:
   # and `schema-contracts` twice, so one filename would leave each job
   # reporting its last suite as its whole record.
   SQL_EXECUTION_RECORD: sql-execution
+  # Plan 162 Stage Z, and workflow level for the same reason as the two above.
+  # `constraints.txt` holds the four versions that decide what `app.openapi()`
+  # emits, and the committed contract artifacts are only diffable against a
+  # service if CI resolves the same versions production does.
+  #
+  # `pip` reads this for the same reason a flag would work and better: a job
+  # nobody has written yet inherits it, where `-c constraints.txt` spelled out
+  # at each install site is thirteen places to remember and one to forget. That
+  # is the failure this whole plan is named after.
+  #
+  # Opting out is possible and must be visible: set `PIP_CONSTRAINT: ''` on the
+  # step, which is what the Airflow venv below does and the only place that does.
+  PIP_CONSTRAINT: ${{ github.workspace }}/constraints.txt
 
 jobs:
 
@@ -1132,6 +1145,15 @@ jobs:
         # starlette/fastapi constraints conflict with the FastAPI services', so
         # it gets its own venv here, pinned to match airflow/Dockerfile's base
         # image tag, mirroring how Airflow is its own container in prod.
+        #
+        # Plan 162 Stage Z: the one step that opts out of the workflow-level
+        # `PIP_CONSTRAINT`. Its whole reason for existing is that Airflow cannot
+        # resolve the starlette the FastAPI services run, so applying that pin
+        # here would make this step impossible rather than isolated. Empty
+        # rather than absent, so the exemption is visible at the step that takes
+        # it instead of being inferred from a flag nobody added.
+        env:
+          PIP_CONSTRAINT: ""
         run: |
           python -m venv /tmp/airflow-venv
           /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest pytest-mock psycopg2-binary requests

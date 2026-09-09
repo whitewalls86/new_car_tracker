@@ -6,8 +6,8 @@ FROM python:3.13-slim
 RUN pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1" uvicorn --no-cache-dir
 
 # Install additional dependencies
-COPY dbt_runner/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY dbt_runner/requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 
 WORKDIR /usr/app
 ENV DBT_PROFILES_DIR=/usr/app
