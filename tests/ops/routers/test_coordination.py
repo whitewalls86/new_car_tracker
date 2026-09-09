@@ -207,6 +207,56 @@ def test_safe_lifecycle_endpoints_map_failures(
     assert mock_client.post(path).status_code == status_code
 
 
+@pytest.mark.parametrize(
+    "path",
+    ["/coordination/status", "/coordination/drain-status", "/coordination/release-status"],
+)
+def test_status_routes_answer_503_when_the_database_is_gone(
+    mock_client, mock_db_connection_error, path,
+):
+    """Plan 162 Stage Y, G28. Each of these declares 503 and produces it.
+
+    `_status` raises it directly, and the two aggregating routes reach it
+    through the same call -- so all three answer the code the schema now names,
+    and until this test nothing asserted any of them.
+    """
+    assert mock_client.get(path).status_code == 503
+
+
+def test_complete_endpoint_answers_503_when_it_cannot_complete(mock_client, mocker):
+    """The fall-through arm of `complete_coordination`, declared and untested."""
+    mocker.patch(
+        "ops.routers.coordination._complete", return_value=("error", None),
+    )
+
+    response = mock_client.post(
+        "/coordination/complete", json={"confirm_complete": False},
+    )
+
+    assert response.status_code == 503
+
+
+@pytest.mark.parametrize(
+    ("result", "status_code"), [("conflict", 409), ("stale", 409), ("error", 503)],
+)
+def test_host_evidence_maps_its_failures(mock_client, mocker, result, status_code):
+    """`stale` and `conflict` are both 409, and anything else is 503.
+
+    The 422 arm has a test; these did not, which is how a route came to declare
+    three refusals and exercise one.
+    """
+    mocker.patch(
+        "ops.routers.coordination._submit_host_evidence",
+        return_value=(result, {"reason": result}),
+    )
+
+    response = mock_client.post(
+        "/coordination/host-evidence", json=_host_evidence_payload(),
+    )
+
+    assert response.status_code == status_code
+
+
 def test_drain_status_aggregates_authoritative_state_without_transition(mock_client, mocker):
     state = {"phase": "draining", "scope": ["processing"]}
     mocker.patch("ops.routers.coordination._status", return_value=state)

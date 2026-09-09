@@ -4846,36 +4846,14 @@ AMBIGUOUS_ROUTE_WAIVERS: tuple[Waiver, ...] = (
     Waiver("ops/routers/deploy.py:complete_deployment", "G28", 162, date(2026, 9, 8)),
 )
 
-#: Seeded at 11 on 2026-09-08 and drained by Stage Y's fourth step. Every entry
-#: is a code the route can answer with and no test asserts for it -- not a code
-#: that cannot happen, and not a route nothing reaches. `recap_index`'s 404 is
-#: the whole of what `/recaps` does when nothing is published; the snapshot
-#: download's four are its entire refusal surface.
-UNEXERCISED_CODE_WAIVERS: tuple[Waiver, ...] = (
-    Waiver("archiver/app.py:trigger_pack_bronze_html [400]", "G28", 162, date(2026, 9, 8)),
-    Waiver("archiver/app.py:trigger_prune_packed_source_html [400]", "G28", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/coordination.py:complete_coordination [503]", "G28", 162, date(2026, 9, 8)),
-    Waiver(
-        "ops/routers/coordination.py:coordination_drain_status [503]",
-        "G28", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/coordination.py:coordination_release_status [503]",
-        "G28", 162, date(2026, 9, 8),
-    ),
-    Waiver("ops/routers/coordination.py:coordination_status [503]", "G28", 162, date(2026, 9, 8)),
-    Waiver(
-        "ops/routers/coordination.py:submit_host_evidence [409, 503]",
-        "G28", 162, date(2026, 9, 8),
-    ),
-    Waiver("ops/routers/public.py:recap_index [404]", "G28", 162, date(2026, 9, 8)),
-    Waiver(
-        "ops/routers/snapshots.py:download_snapshot_archive [400, 401, 403, 503]",
-        "G28", 162, date(2026, 9, 8),
-    ),
-    Waiver("ops/routers/users.py:approve_access_request [503]", "G28", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/users.py:deny_access_request [503]", "G28", 162, date(2026, 9, 8)),
-)
+#: Seeded at 11 on 2026-09-08 and drained to nothing the same day. The eleven
+#: were real: `recap_index`'s 404 is the whole of what `/recaps` does before the
+#: first generator run, the snapshot download's four were its entire refusal
+#: surface, and two were introduced by this stage's own repairs a few hours
+#: earlier -- the 503 that `approve_access_request` and `deny_access_request`
+#: gained when their swallowed database errors were fixed, and which nothing
+#: asserted until this rule said so.
+UNEXERCISED_CODE_WAIVERS: tuple[Waiver, ...] = ()
 
 
 def test_every_status_code_a_route_can_produce_is_asserted():
