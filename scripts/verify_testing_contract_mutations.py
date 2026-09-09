@@ -707,10 +707,14 @@ MUTATIONS = [
     (
         "test_every_pytest_step_runs_under_the_declared_skip_gate",
         "the plugin registration is dropped, leaving the gate set and unread",
+        # Anchored on this one registration rather than on the whole `addopts`
+        # line, which Plan 162 Stage AA broke by appending a third plugin to it.
+        # Deleting the registration alone is also the more faithful mutation:
+        # it leaves the other plugins loaded and the file valid, so what goes
+        # red is the gate being unread rather than pytest failing to start.
         lambda: _edit(
             "pyproject.toml",
-            'addopts = "-p tests.plugins.declared_skips'
-            ' -p tests.plugins.sql_execution_recorder"\n',
+            "-p tests.plugins.declared_skips ",
             "",
         ),
         ["pyproject.toml"],

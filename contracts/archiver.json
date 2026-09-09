@@ -1,6 +1,521 @@
 {
   "components": {
     "schemas": {
+      "CleanupOutcome": {
+        "description": "One artifacts_queue row's fate. ``reason`` is set only on a refusal.",
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "deleted"
+        ],
+        "title": "CleanupOutcome",
+        "type": "object"
+      },
+      "CleanupResponse": {
+        "description": "``POST /cleanup/queue`` and ``POST /cleanup/queue/run``.\n\nThe batch endpoint takes a caller-supplied id list and the run endpoint\nsweeps every eligible row; both answer the same four counters, and only the\nsweep can carry an ``error``.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CleanupOutcome"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "deleted",
+          "failed",
+          "results"
+        ],
+        "title": "CleanupResponse",
+        "type": "object"
+      },
+      "CompactSilverResponse": {
+        "description": "``POST /compact/silver/run`` -- enforced, so a failing run is a 500.",
+        "properties": {
+          "compacted": {
+            "title": "Compacted",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "incremental": {
+            "title": "Incremental",
+            "type": "integer"
+          },
+          "partitions": {
+            "items": {
+              "$ref": "#/components/schemas/CompactedPartition"
+            },
+            "title": "Partitions",
+            "type": "array"
+          },
+          "scanned": {
+            "title": "Scanned",
+            "type": "integer"
+          },
+          "size_after_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size After Mb"
+          },
+          "size_before_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Before Mb"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scanned",
+          "compacted",
+          "skipped",
+          "failed",
+          "incremental",
+          "partitions"
+        ],
+        "title": "CompactSilverResponse",
+        "type": "object"
+      },
+      "CompactedPartition": {
+        "description": "One partition's compaction, as ``_compact_one`` reports it.",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "files_merged": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files Merged"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "size_after_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size After Bytes"
+          },
+          "size_before_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Before Bytes"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "date",
+          "state",
+          "ok"
+        ],
+        "title": "CompactedPartition",
+        "type": "object"
+      },
+      "DiskReading": {
+        "description": "One watchlist target's measurement.\n\n``carried_forward`` marks a reading reused from the previous run because\nthis one did not schedule it -- which is why ``error`` can be the literal\n``\"not scheduled this run\"`` and mean nothing is wrong.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "carried_forward": {
+            "title": "Carried Forward",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "measured_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured At"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "target",
+          "carried_forward"
+        ],
+        "title": "DiskReading",
+        "type": "object"
+      },
+      "DiskUsageResponse": {
+        "description": "``POST /disk-usage/run`` -- measures the watchlist, publishes via node-exporter.\n\n``unpublished`` is the *names* of the targets whose measurement was lost,\nnot a count of them. Worth stating: every other field here is a counter,\nand this stage typed it as one on the first pass until the suite said\notherwise.",
+        "properties": {
+          "carried_forward": {
+            "title": "Carried Forward",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "include_slow": {
+            "title": "Include Slow",
+            "type": "boolean"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DiskReading"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "textfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Textfile"
+          },
+          "unpublished": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unpublished",
+            "type": "array"
+          }
+        },
+        "required": [
+          "measured",
+          "failed",
+          "unpublished",
+          "carried_forward",
+          "include_slow",
+          "results"
+        ],
+        "title": "DiskUsageResponse",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "FastAPI's uniform error body: ``{\"detail\": \"<message>\"}``.\n\nDeclared once and shared by every route whose refusals carry a string. The\nhandful whose ``detail`` is a *structured* dict a caller indexes into\ndeclare their own model instead -- those are the ones where the shape is\nload-bearing.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "FlushSilverResponse": {
+        "description": "``POST /flush/silver/run`` -- still warning-only, so a bad run is a 200.\n\nPlan 134 Stage C deploy 3 of 3 turns that warning into a 500 carrying a\n``failure_reason``. When that lands this model gains the field; declaring\nit today would be declaring a key nothing emits.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "flushed": {
+            "title": "Flushed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "flushed"
+        ],
+        "title": "FlushSilverResponse",
+        "type": "object"
+      },
+      "FlushStagingResponse": {
+        "description": "``POST /flush/staging/run``.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/FlushedTable"
+            },
+            "title": "Tables",
+            "type": "array"
+          },
+          "total_flushed": {
+            "title": "Total Flushed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tables",
+          "total_flushed"
+        ],
+        "title": "FlushStagingResponse",
+        "type": "object"
+      },
+      "FlushedTable": {
+        "description": "One staging table's flush outcome.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "flushed": {
+            "title": "Flushed",
+            "type": "integer"
+          },
+          "table": {
+            "title": "Table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "table",
+          "flushed"
+        ],
+        "title": "FlushedTable",
+        "type": "object"
+      },
+      "FreeSpace": {
+        "description": "``free_space_status()`` -- the floor check every long job runs first.\n\n``free_inodes`` is ``None`` on platforms without ``statvfs``, which is not\nhypothetical: this repository is developed on Windows and runs on Linux.\n``message`` is set only when the floor is breached.",
+        "properties": {
+          "free_bytes": {
+            "title": "Free Bytes",
+            "type": "integer"
+          },
+          "free_inodes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Inodes"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "min_free_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Free Bytes"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "free_bytes",
+          "total_bytes"
+        ],
+        "title": "FreeSpace",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -12,6 +527,779 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "``GET /health`` everywhere: process liveness, never dependency health.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "NotReadyDetail": {
+        "description": "The body inside a ``/ready`` 503, which is evidence rather than an error.\n\n``ops/coordination_drain.py:_service_jobs`` reads ``active_jobs`` out of\nthis and counts a 503 as *known positive* evidence -- a draining service\nreporting two jobs in flight is answering the question, not failing. The\nreason a 503 carries a full body here rather than a message is that the\ndrain aggregator is fail-closed: an unreadable body becomes ``unknown``,\nwhich blocks a deploy.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs",
+          "reason"
+        ],
+        "title": "NotReadyDetail",
+        "type": "object"
+      },
+      "NotReadyResponse": {
+        "description": "``/ready``'s 503 as it reaches the wire.\n\n``HTTPException(detail=...)`` nests the payload under ``detail``, which is\nwhy the aggregator unwraps one level before reading the counts. Declared so\nthe contract says so.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotReadyDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotReadyResponse",
+        "type": "object"
+      },
+      "PackBronzeResponse": {
+        "description": "``POST /pack/bronze/run`` -- the 16 keys its opening literal declares.\n\n``mode`` is ``\"apply\"`` or ``\"dry_run\"``; this endpoint never deletes a\nsource object in either.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/PackedBucket"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "buckets_eligible": {
+            "title": "Buckets Eligible",
+            "type": "integer"
+          },
+          "buckets_processed": {
+            "title": "Buckets Processed",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "free_space": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FreeSpace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "members_packed": {
+            "title": "Members Packed",
+            "type": "integer"
+          },
+          "members_verified": {
+            "title": "Members Verified",
+            "type": "integer"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "objects_pending": {
+            "title": "Objects Pending",
+            "type": "integer"
+          },
+          "pack_bytes": {
+            "title": "Pack Bytes",
+            "type": "integer"
+          },
+          "packs_written": {
+            "title": "Packs Written",
+            "type": "integer"
+          },
+          "read_failures": {
+            "title": "Read Failures",
+            "type": "integer"
+          },
+          "repacking": {
+            "title": "Repacking",
+            "type": "boolean"
+          },
+          "source_bytes": {
+            "title": "Source Bytes",
+            "type": "integer"
+          },
+          "stopped_for_deploy": {
+            "title": "Stopped For Deploy",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "repacking",
+          "buckets_eligible",
+          "buckets_processed",
+          "objects_pending",
+          "packs_written",
+          "members_packed",
+          "members_verified",
+          "read_failures",
+          "pack_bytes",
+          "source_bytes",
+          "stopped_for_deploy",
+          "buckets"
+        ],
+        "title": "PackBronzeResponse",
+        "type": "object"
+      },
+      "PackedBucket": {
+        "description": "One month bucket's packing run.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "packs": {
+            "items": {
+              "$ref": "#/components/schemas/WrittenPack"
+            },
+            "title": "Packs",
+            "type": "array"
+          },
+          "read_failures": {
+            "title": "Read Failures",
+            "type": "integer"
+          },
+          "stopped_at_max_packs": {
+            "title": "Stopped At Max Packs",
+            "type": "boolean"
+          },
+          "stopped_for_deploy": {
+            "title": "Stopped For Deploy",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "packs",
+          "read_failures",
+          "stopped_at_max_packs",
+          "stopped_for_deploy"
+        ],
+        "title": "PackedBucket",
+        "type": "object"
+      },
+      "Percentiles": {
+        "description": "A latency distribution: ``n`` samples, p50/p95/max in milliseconds.",
+        "properties": {
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50"
+          },
+          "p95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95"
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "title": "Percentiles",
+        "type": "object"
+      },
+      "PrunePackedResponse": {
+        "description": "``POST /pack/bronze/prune`` -- the 26 keys ``_finalize`` guarantees.\n\nThe only endpoint on this service that removes bronze data. The bucket is\nun-versioned, so a delete is immediate and there is no undo, which is why\nthe summary reports what survived as well as what went.\n\nInodes are reported twice on purpose: ``inodes_freed_estimated`` is what\n*this run* freed (deleted objects x ~2.24, measured in Plan 131 Stage 0a)\nand ``inodes_freed_measured`` is the filesystem delta, which moves with\neverything else on the host. A reading, not a proof.",
+        "properties": {
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "bytes_freed": {
+            "title": "Bytes Freed",
+            "type": "integer"
+          },
+          "capped": {
+            "title": "Capped",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "failures": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "free_space_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FreeSpace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "free_space_before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FreeSpace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grace_days": {
+            "title": "Grace Days",
+            "type": "integer"
+          },
+          "inodes_freed_estimated": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inodes Freed Estimated"
+          },
+          "inodes_freed_measured": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inodes Freed Measured"
+          },
+          "max_objects": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Objects"
+          },
+          "max_packs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Packs"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "objects_already_gone": {
+            "title": "Objects Already Gone",
+            "type": "integer"
+          },
+          "objects_deleted": {
+            "title": "Objects Deleted",
+            "type": "integer"
+          },
+          "objects_refused": {
+            "title": "Objects Refused",
+            "type": "integer"
+          },
+          "objects_surviving_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objects Surviving Before"
+          },
+          "objects_verified": {
+            "title": "Objects Verified",
+            "type": "integer"
+          },
+          "orphan_packs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Orphan Packs",
+            "type": "array"
+          },
+          "packs_considered": {
+            "title": "Packs Considered",
+            "type": "integer"
+          },
+          "packs_drained": {
+            "title": "Packs Drained",
+            "type": "integer"
+          },
+          "packs_skipped_grace": {
+            "title": "Packs Skipped Grace",
+            "type": "integer"
+          },
+          "stopped_for_deploy": {
+            "title": "Stopped For Deploy",
+            "type": "boolean"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode",
+          "year",
+          "month",
+          "grace_days",
+          "packs_considered",
+          "packs_drained",
+          "packs_skipped_grace",
+          "orphan_packs",
+          "objects_deleted",
+          "objects_verified",
+          "objects_already_gone",
+          "objects_refused",
+          "bytes_freed",
+          "by_status",
+          "failures",
+          "capped",
+          "stopped_for_deploy"
+        ],
+        "title": "PrunePackedResponse",
+        "type": "object"
+      },
+      "ReadyResponse": {
+        "description": "``GET /ready`` for the services whose evidence is ``job_snapshot()``.\n\n``archiver``, ``processing`` and ``dbt_runner`` return exactly this.\n``scraper`` returns it with two extra per-surface fields and declares its\nown model for that reason.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs"
+        ],
+        "title": "ReadyResponse",
+        "type": "object"
+      },
+      "SnapshotExportResponse": {
+        "description": "``POST /snapshots/adaptive-refresh/run`` -- ``SnapshotResult.to_dict()``.\n\n**Transcribed from the dataclass, after transcribing it by eye got it\nwrong.** The first version of this model listed 19 fields, read off a\ntruncated grep of ``to_dict``. The dataclass declares 28. The nine missing\nones were the whole caching layer -- ``export_cache_hit``,\n``archive_sha256``, ``materialized_snapshot_path`` and the rest -- and\nFastAPI would have deleted every one of them from this endpoint's response\nin production, silently, with the generated contract agreeing because the\ncontract is generated from this file.\n\n``tests/plugins/response_model_fidelity.py`` caught it on its first run.\nThat is the argument for the plugin, written where the next person\ntempted to hand-maintain one of these will read it.\n\nThe diagnostics and audit fields stay free-form objects on purpose: their\nshape belongs to the selector and cohort modules, and a model that guessed\nat it here would filter keys out of somebody else's report.",
+        "properties": {
+          "archive_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Bytes"
+          },
+          "archive_cache_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Cache Action"
+          },
+          "archive_cache_hit": {
+            "default": false,
+            "title": "Archive Cache Hit",
+            "type": "boolean"
+          },
+          "archive_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Key"
+          },
+          "archive_manifest_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Manifest Key"
+          },
+          "archive_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Sha256"
+          },
+          "artifact_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Count"
+          },
+          "closed_vin_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Vin Count"
+          },
+          "cohort_diagnostics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cohort Diagnostics"
+          },
+          "coverage_failures": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Coverage Failures",
+            "type": "array"
+          },
+          "export_cache_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Cache Action"
+          },
+          "export_cache_hit": {
+            "default": false,
+            "title": "Export Cache Hit",
+            "type": "boolean"
+          },
+          "export_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint"
+          },
+          "listing_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Count"
+          },
+          "manifest_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Key"
+          },
+          "materialized_snapshot_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialized Snapshot Path"
+          },
+          "planning_cache_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Cache Action"
+          },
+          "planning_cache_hit": {
+            "default": false,
+            "title": "Planning Cache Hit",
+            "type": "boolean"
+          },
+          "planning_cache_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Cache Key"
+          },
+          "planning_cache_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Cache Path"
+          },
+          "seed_vin_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Vin Count"
+          },
+          "selector_diagnostics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selector Diagnostics"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "source_audit": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Audit"
+          },
+          "source_window_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Window End"
+          },
+          "source_window_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Window Start"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "tier",
+          "status"
+        ],
+        "title": "SnapshotExportResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -53,6 +1341,111 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "VerifyPackResponse": {
+        "description": "``POST /pack/bronze/verify`` -- a read-only canary over a packed month.\n\nDeliberately outside the pack and prune single-flight slots: a canary must\nstay available while either mutation is running, which is when it is most\nuseful.",
+        "properties": {
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "failures": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "latency_ms": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Percentiles"
+            },
+            "title": "Latency Ms",
+            "type": "object"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "sampled": {
+            "title": "Sampled",
+            "type": "integer"
+          },
+          "sidecars": {
+            "title": "Sidecars",
+            "type": "integer"
+          },
+          "sources_already_deleted": {
+            "title": "Sources Already Deleted",
+            "type": "integer"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket",
+          "prefix",
+          "sampled",
+          "verified",
+          "failed",
+          "sidecars",
+          "sources_already_deleted",
+          "latency_ms",
+          "failures"
+        ],
+        "title": "VerifyPackResponse",
+        "type": "object"
+      },
+      "WrittenPack": {
+        "description": "One pack file, as ``_write_one_pack`` reports it.",
+        "properties": {
+          "frames": {
+            "title": "Frames",
+            "type": "integer"
+          },
+          "index_key": {
+            "title": "Index Key",
+            "type": "string"
+          },
+          "members": {
+            "title": "Members",
+            "type": "integer"
+          },
+          "pack_bytes": {
+            "title": "Pack Bytes",
+            "type": "integer"
+          },
+          "pack_key": {
+            "title": "Pack Key",
+            "type": "string"
+          },
+          "raw_bytes": {
+            "title": "Raw Bytes",
+            "type": "integer"
+          },
+          "verified_members": {
+            "title": "Verified Members",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pack_key",
+          "index_key",
+          "members",
+          "verified_members",
+          "frames",
+          "pack_bytes",
+          "raw_bytes"
+        ],
+        "title": "WrittenPack",
+        "type": "object"
       }
     }
   },
@@ -83,9 +1476,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Run Cleanup Queue Batch Cleanup Queue Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CleanupResponse"
                 }
               }
             },
@@ -114,9 +1505,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Cleanup Queue Cleanup Queue Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CleanupResponse"
                 }
               }
             },
@@ -135,15 +1524,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Compact Silver Compact Silver Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CompactSilverResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The run aborted; the summary is the detail."
           }
         },
@@ -171,15 +1565,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Disk Usage Disk Usage Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DiskUsageResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "Another run of this job is already in flight."
           },
           "422": {
@@ -193,6 +1592,13 @@
             "description": "Validation Error"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The run aborted; the summary is the detail."
           }
         },
@@ -208,9 +1614,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Flush Silver Flush Silver Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FlushSilverResponse"
                 }
               }
             },
@@ -229,9 +1633,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Flush Staging Flush Staging Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FlushStagingResponse"
                 }
               }
             },
@@ -248,7 +1650,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -278,18 +1682,30 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Prune Packed Source Html Pack Bronze Prune Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PrunePackedResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The request arguments are not usable."
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "Another run of this job is already in flight."
           },
           "422": {
@@ -303,6 +1719,13 @@
             "description": "Validation Error"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The run aborted; the summary is the detail."
           }
         },
@@ -330,18 +1753,30 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Pack Bronze Html Pack Bronze Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PackBronzeResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The request arguments are not usable."
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "Another run of this job is already in flight."
           },
           "422": {
@@ -355,6 +1790,13 @@
             "description": "Validation Error"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The run aborted; the summary is the detail."
           }
         },
@@ -382,15 +1824,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Verify Pack Read Path Pack Bronze Verify Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/VerifyPackResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The request arguments are not usable."
           },
           "422": {
@@ -404,6 +1851,13 @@
             "description": "Validation Error"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The run aborted; the summary is the detail."
           }
         },
@@ -417,12 +1871,21 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
               }
             },
             "description": "Successful Response"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotReadyResponse"
+                }
+              }
+            },
             "description": "A dependency this service needs is not reachable."
           }
         },
@@ -450,18 +1913,30 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Snapshot Export Snapshots Adaptive Refresh Run Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SnapshotExportResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The requested tier is not one this service exports."
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "Another run of this job is already in flight."
           },
           "422": {

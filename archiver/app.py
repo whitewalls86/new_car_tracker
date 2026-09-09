@@ -6,6 +6,17 @@ from typing import Any, Dict, Optional
 
 from fastapi import Body, FastAPI, HTTPException
 
+from archiver.api_models import (
+    CleanupResponse,
+    CompactSilverResponse,
+    DiskUsageResponse,
+    FlushSilverResponse,
+    FlushStagingResponse,
+    PackBronzeResponse,
+    PrunePackedResponse,
+    SnapshotExportResponse,
+    VerifyPackResponse,
+)
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from archiver.processors.compact_silver import compact_silver as _compact_silver
@@ -28,6 +39,12 @@ from archiver.processors.flush_staging_events import flush_staging_events as _fl
 from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronze_html
 from archiver.processors.verify_pack_read_path import (
     verify_pack_read_path as _verify_pack_read_path,
+)
+from shared.api_models import (
+    ErrorResponse,
+    HealthResponse,
+    NotReadyResponse,
+    ReadyResponse,
 )
 from shared.job_counter import JobInFlight, active_job, job_snapshot, single_flight
 from shared.logging_setup import configure_logging
@@ -200,7 +217,7 @@ def _compact_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-@app.post("/cleanup/queue")
+@app.post("/cleanup/queue", response_model=CleanupResponse)
 def run_cleanup_queue_batch(payload: dict = Body(...)) -> Dict[str, Any]:
     """Delete a caller-supplied list of artifacts_queue rows (status complete/skip)."""
     with active_job():
@@ -211,14 +228,14 @@ def run_cleanup_queue_batch(payload: dict = Body(...)) -> Dict[str, Any]:
                 "failed": len(results) - deleted_count, "results": results}
 
 
-@app.post("/cleanup/queue/run")
+@app.post("/cleanup/queue/run", response_model=CleanupResponse)
 def trigger_cleanup_queue() -> Dict[str, Any]:
     """Sweep all complete/skip rows from artifacts_queue (Airflow DAG trigger)."""
     with active_job():
         return _run_cleanup_queue()
 
 
-@app.post("/flush/silver/run")
+@app.post("/flush/silver/run", response_model=FlushSilverResponse)
 def trigger_flush_silver() -> Dict[str, Any]:
     """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).
 
@@ -236,8 +253,12 @@ def trigger_flush_silver() -> Dict[str, Any]:
 
 @app.post(
     "/compact/silver/run",
+    response_model=CompactSilverResponse,
     responses={
-        500: {"description": "The run aborted; the summary is the detail."},
+        500: {
+            "description": "The run aborted; the summary is the detail.",
+            "model": ErrorResponse,
+        },
     },
 )
 def trigger_compact_silver() -> Dict[str, Any]:
@@ -395,10 +416,20 @@ def _require_pack_worker() -> None:
 
 @app.post(
     "/pack/bronze/run",
+    response_model=PackBronzeResponse,
     responses={
-        400: {"description": "The request arguments are not usable."},
-        409: {"description": "Another run of this job is already in flight."},
-        500: {"description": "The run aborted; the summary is the detail."},
+        400: {
+            "description": "The request arguments are not usable.",
+            "model": ErrorResponse,
+        },
+        409: {
+            "description": "Another run of this job is already in flight.",
+            "model": ErrorResponse,
+        },
+        500: {
+            "description": "The run aborted; the summary is the detail.",
+            "model": ErrorResponse,
+        },
     },
 )
 def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
@@ -451,10 +482,20 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
 
 @app.post(
     "/pack/bronze/prune",
+    response_model=PrunePackedResponse,
     responses={
-        400: {"description": "The request arguments are not usable."},
-        409: {"description": "Another run of this job is already in flight."},
-        500: {"description": "The run aborted; the summary is the detail."},
+        400: {
+            "description": "The request arguments are not usable.",
+            "model": ErrorResponse,
+        },
+        409: {
+            "description": "Another run of this job is already in flight.",
+            "model": ErrorResponse,
+        },
+        500: {
+            "description": "The run aborted; the summary is the detail.",
+            "model": ErrorResponse,
+        },
     },
 )
 def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[str, Any]:
@@ -508,9 +549,16 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
 
 @app.post(
     "/pack/bronze/verify",
+    response_model=VerifyPackResponse,
     responses={
-        400: {"description": "The request arguments are not usable."},
-        500: {"description": "The run aborted; the summary is the detail."},
+        400: {
+            "description": "The request arguments are not usable.",
+            "model": ErrorResponse,
+        },
+        500: {
+            "description": "The run aborted; the summary is the detail.",
+            "model": ErrorResponse,
+        },
     },
 )
 def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str, Any]:
@@ -550,7 +598,7 @@ def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str,
         return result
 
 
-@app.post("/flush/staging/run")
+@app.post("/flush/staging/run", response_model=FlushStagingResponse)
 def trigger_flush_staging() -> Dict[str, Any]:
     """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).
 
@@ -589,9 +637,16 @@ def _require_disk_usage_host_mounts() -> None:
 
 @app.post(
     "/disk-usage/run",
+    response_model=DiskUsageResponse,
     responses={
-        409: {"description": "Another run of this job is already in flight."},
-        500: {"description": "The run aborted; the summary is the detail."},
+        409: {
+            "description": "Another run of this job is already in flight.",
+            "model": ErrorResponse,
+        },
+        500: {
+            "description": "The run aborted; the summary is the detail.",
+            "model": ErrorResponse,
+        },
     },
 )
 def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
@@ -620,9 +675,16 @@ def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
 
 @app.post(
     "/snapshots/adaptive-refresh/run",
+    response_model=SnapshotExportResponse,
     responses={
-        400: {"description": "The requested tier is not one this service exports."},
-        409: {"description": "Another run of this job is already in flight."},
+        400: {
+            "description": "The requested tier is not one this service exports.",
+            "model": ErrorResponse,
+        },
+        409: {
+            "description": "Another run of this job is already in flight.",
+            "model": ErrorResponse,
+        },
     },
 )
 def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
@@ -696,15 +758,19 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
         return result.to_dict()
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}
 
 
 @app.get(
     "/ready",
+    response_model=ReadyResponse,
     responses={
-        503: {"description": "A dependency this service needs is not reachable."},
+        503: {
+            "description": "A dependency this service needs is not reachable.",
+            "model": NotReadyResponse,
+        },
     },
 )
 def ready():
