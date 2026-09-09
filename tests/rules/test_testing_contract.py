@@ -3953,6 +3953,177 @@ def test_every_asserted_rule_is_proved_by_a_mutation():
 
 
 # ---------------------------------------------------------------------------
+# The rules directory -- membership read off the filesystem.
+# ---------------------------------------------------------------------------
+# Plan 162 Stage AG, and the closing of G30. The two rules above read the
+# `Asserted by` column forwards: every rule it names exists, and every rule it
+# names has been watched fail. Neither asks the reverse question, and
+# `test_every_asserted_rule_names_a_real_test` says plainly why it declined to:
+# the waiver-hygiene checks had no row, and enumerating the exceptions "would
+# need exactly the curated list this file refuses to keep."
+#
+# **Stage Q is what made that refusal untenable.** It wrote four rules, ran the
+# suite, and reported 3,899 passed with all four unregistered, unmutated, and
+# one of them defective -- `test_every_heavy_job_starts_the_compose_services`
+# joined a job's every `run:` step into one string, so the Flyway step's own
+# mention of the override file satisfied it with the `up` step deleted. A rule
+# that was named, implemented and green did not work, and nothing in this file
+# was in a position to say so, because a rule in no row owes nothing.
+#
+# **Shape cannot supply the missing definition, and that was measured rather
+# than assumed.** If a rule were "a test that asserts about the repository
+# rather than exercising its code", the scope would be 411 of the 421
+# definitions then at the top level of `tests/` -- sweeping in 132
+# observability-config tests and 39 deploy-script tests. Something has to be
+# declared.
+#
+# **So the declaration moved from per test to per module, and became a
+# directory.** This repository already reasons that way: Layer is assigned by
+# directory, and Stage G is titled for the argument. A new file's author chooses
+# where it lives, once, and the mechanism reads the filesystem instead of a
+# table.
+RULES_DIR = TESTS_DIR / "rules"
+
+#: The one exemption, and it is **derived rather than listed**. A rule whose
+#: assertion cannot be reached without an engine does not belong at Layer 0, so
+#: it cannot live here -- `test_every_test_statement_plans_against_the_migrated_schema`
+#: `PREPARE`s against the live catalogue, which is a condition no static read
+#: can express. The test for that is the layer the contract already assigns its
+#: directory, which `test_every_test_directory_is_assigned_a_layer` already
+#: holds, so this is one fact read twice rather than a second registry. The
+#: alternative was a tuple of node ids, which is the curated list this file
+#: refuses to keep, arriving in the rule written to replace it.
+_ENGINE_BOUND_LAYER = 2
+
+
+def rules_directory_tests() -> dict[str, str]:
+    """Every test defined under ``tests/rules/``, mapped to its module path.
+
+    ``ast.walk`` and not ``tree.body``: most suites here organise their tests
+    inside classes, and reading only module-level functions is the blindness
+    Stage Q found in ``test_every_asserted_rule_names_a_real_test`` -- on the
+    first rule anybody tried to name inside a class.
+    """
+    found: dict[str, str] = {}
+    for path in sorted(RULES_DIR.rglob("test_*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("test_")
+            ):
+                found[node.name] = _relative(path)
+    return found
+
+
+def test_the_rules_directory_is_not_empty():
+    """The floor under both directions, for the reason every floor here has one.
+
+    Each rule below is a set difference, and a set difference over an empty
+    corpus is empty. A renamed directory, a glob that stops matching, or a
+    package that loses its modules would retire both of them silently -- which
+    is G30 one level up from itself, and the exact shape the mutation-harness
+    floor and the SQL-corpus floor exist to prevent.
+    """
+    found = rules_directory_tests()
+    assert len(found) >= 100, (
+        f"only {len(found)} tests found under {_relative(RULES_DIR)}; the two "
+        f"rules below are comparing against almost nothing. It held 161 when "
+        f"Plan 162 Stage AG wrote this."
+    )
+
+
+def test_every_test_in_the_rules_directory_is_named_in_the_contract():
+    """The reverse direction, which this file declined until Stage AG.
+
+    A test in this directory is a claim about the whole repository, and an
+    unregistered one owes no mutation -- so it can be written, be wrong, and be
+    green, which is what Stage Q demonstrated. Registration is what turns the
+    obligation on, and the directory is what makes registration checkable
+    without a list.
+
+    **There is no exception ledger**, for the reason
+    ``test_every_asserted_rule_is_proved_by_a_mutation`` gives: an empty ledger
+    and no ledger differ in exactly one way, which is what the next violation
+    costs to repair. Seeded at 89 on 2026-09-09 and drained to 0 in the same
+    stage.
+
+    What this cannot see is a rule written somewhere else entirely and never
+    registered -- the directory can only speak for what joined it. The rule
+    below closes the half of that which is visible: a rule that *is* registered
+    and lives elsewhere. A rule that is neither registered nor here is
+    unreachable by any mechanism that does not read shape, and shape was
+    measured and rejected.
+    """
+    named = set(_asserted_rule_names())
+    unregistered = sorted(
+        f"{module}::{name}"
+        for name, module in rules_directory_tests().items()
+        if name not in named
+    )
+    assert not unregistered, (
+        f"these tests live under {_relative(RULES_DIR)} and are named in no "
+        f"row of {CONTRACT}'s 'Asserted by' column, so nothing obliges them to "
+        f"have been watched fail:\n  " + "\n  ".join(unregistered) +
+        f"\n\nAdd each to a rule's row -- one row may name several tests -- "
+        f"then add its mutation. If it is not a repository-wide rule, it "
+        f"belongs outside {_relative(RULES_DIR)}; the Layer 0 section of "
+        f"{CONTRACT} says where. Seeded at 89 on 2026-09-09."
+    )
+
+
+def test_every_asserted_rule_lives_in_the_rules_directory():
+    """A rule module that never joins the directory.
+
+    The other half of the membership claim, and without it the directory is a
+    convention rather than a mechanism: a rule registered in the column and
+    written anywhere else is outside everything the rule above can see, and the
+    next Stage Q would land in a module nothing asks about.
+
+    **The engine-bound exemption is derived, not enumerated.** A rule whose
+    assertion needs a live database cannot sit at Layer 0, so it legitimately
+    lives in a Layer 2 suite -- and the layer comes from the contract's own
+    table via ``_layer_of``, which is already asserted in both directions. Two
+    rules qualify today, both in ``tests/integration/sql/test_fixture_statements.py``,
+    and neither is named here.
+    """
+    here = rules_directory_tests()
+    defined: dict[str, list[Path]] = {}
+    for path in all_test_modules():
+        for node in ast.walk(
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        ):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defined.setdefault(node.name, []).append(path)
+
+    misplaced = []
+    for name in _asserted_rule_names():
+        if name in here:
+            continue
+        homes = defined.get(name)
+        if homes is None:
+            continue  # a phantom, which is the rule above this one's failure
+        layers = {_layer_of(path.parent) or 0 for path in homes}
+        if min(layers) >= _ENGINE_BOUND_LAYER:
+            continue
+        misplaced.append(
+            f"{name} ({', '.join(sorted(_relative(p) for p in homes))})"
+        )
+
+    assert not misplaced, (
+        f"{CONTRACT} names these as asserting a rule, and they do not live "
+        f"under {_relative(RULES_DIR)}:\n  " + "\n  ".join(sorted(misplaced)) +
+        f"\n\nA repository-wide rule belongs in that directory, where "
+        f"membership obliges a row and a mutation. The only exemption is a "
+        f"rule whose assertion needs an engine, which is Layer "
+        f"{_ENGINE_BOUND_LAYER} or deeper by the contract's own table -- and "
+        f"that is read from the table rather than listed here."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule 10 -- a handler observes the mutation it performs.
 # ---------------------------------------------------------------------------
 # Plan 162 Stage Y found this by writing the stage above it. `toggle_search`

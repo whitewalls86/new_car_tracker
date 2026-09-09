@@ -2887,10 +2887,12 @@ whose subject is one artifact's configuration rather than a convention. That
 distinction is where the boundary will be argued next, and it is written here
 so the argument starts from a stated line.
 
-**The migration is small and self-verifying.** Three modules move (79
-definitions), carrying 34 path references in the mutation harness and one real
-import in `scripts/check_sql_execution_coverage.py`. A botched move is loud
-rather than silent, because Stage AF's `test_every_mutation_anchor_still_matches_its_file`
+**The migration is small and self-verifying.** Three of the modules carry 34
+path references in the mutation harness and one real import in
+`scripts/check_sql_execution_coverage.py`; those 79 definitions are where the
+migration's risk is, not its size — **eight modules move**, which is what the
+155-against-266 boundary above already said. A botched move is loud rather than
+silent, because Stage AF's `test_every_mutation_anchor_still_matches_its_file`
 fails on any anchor that stops matching exactly once.
 
 **Exit.** Rules live in their own directory; every test there is named in the

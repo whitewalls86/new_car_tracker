@@ -2036,6 +2036,52 @@ MUTATIONS = [
         ["docs/runbooks/runbook_storage_maintenance.md"],
         [],
     ),
+    # The three rules Stage AG added, proved by the instrument they are part
+    # of -- the same self-measurement Stage AF recorded when three of its own
+    # twenty-two entries proved the rules it had just written.
+    (
+        "test_the_rules_directory_is_not_empty",
+        "the rules directory's glob stops matching, which retires both "
+        "membership directions in silence -- G30 one level up from itself",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            'for path in sorted(RULES_DIR.rglob("test_*.py")):',
+            'for path in sorted(RULES_DIR.rglob("rule_*.py")):',
+        ),
+        ["tests/rules/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_every_test_in_the_rules_directory_is_named_in_the_contract",
+        "a rule joins the directory with no row, so nothing obliges it to have "
+        "been watched fail -- which is Stage Q's four rules and 3,899 passed",
+        # The stage's own exit reads *demonstrated by an unregistered rule
+        # failing, not asserted*, and this is that demonstration made durable:
+        # the payload is a real new rule module, not an edit to an existing one.
+        lambda: _write(
+            "tests/rules/test_an_unregistered_rule.py",
+            '"""Layer 0. A rule nobody registered, written to be caught."""\n'
+            "\n\ndef test_a_rule_that_joined_no_row():\n"
+            "    assert True\n",
+        ),
+        [],
+        ["tests/rules/test_an_unregistered_rule.py"],
+    ),
+    (
+        "test_every_asserted_rule_lives_in_the_rules_directory",
+        "a rule is registered and written outside the directory, where the "
+        "membership rule above cannot see it and the next Stage Q would land",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| The rules table may not claim a check the suite does not "
+            "implement | `test_every_asserted_rule_names_a_real_test` |",
+            "| The rules table may not claim a check the suite does not "
+            "implement | `test_every_asserted_rule_names_a_real_test`, "
+            "`test_the_first_entry_line_is_service_then_reason` |",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
     # -----------------------------------------------------------------------
     # `tests/rules/test_planning_docs.py` -- 43 rules, the largest single
     # block Stage AG registered. The subject is the planning system itself:
