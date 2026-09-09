@@ -108,6 +108,20 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_every_mutation_observes_whether_it_changed_anything",
+        "a route stops reading the rowcount of the UPDATE it performs",
+        lambda: _edit(
+            "ops/routers/admin.py",
+            'error_context="Toggle-Search") as cur:\n'
+            "            cur.execute(sql, params)\n"
+            "            matched = cur.rowcount",
+            'error_context="Toggle-Search") as cur:\n'
+            "            cur.execute(sql, params)",
+        ),
+        ["ops/routers/admin.py"],
+        [],
+    ),
+    (
         "test_every_integration_suite_is_invoked_by_a_ci_step",
         "a CI step stops invoking tests/integration/archiver/",
         lambda: _edit(

@@ -3690,6 +3690,340 @@ def test_every_asserted_rule_names_a_real_test():
 
 
 # ---------------------------------------------------------------------------
+# Rule 10 -- a handler observes the mutation it performs.
+# ---------------------------------------------------------------------------
+# Plan 162 Stage Y found this by writing the stage above it. `toggle_search`
+# executed `UPDATE search_configs ... WHERE search_key = %s`, never read
+# `rowcount`, and returned 303 unconditionally: one code declared, one code
+# produced, declared equals produced -- and it reported success whether the key
+# existed or not. The route rule passes it. The response rule passes it. What
+# nothing asked was whether the work happened.
+#
+# **The scope is a WHERE-bearing UPDATE or DELETE**, because that is the shape
+# where "no rows matched" is a different outcome from "one row matched" and only
+# the caller can say which one the client should hear about. An INSERT that
+# raises on conflict needs no rowcount, and a statement with no WHERE addresses a
+# set rather than a row.
+#
+# **There is no waiver ledger, and that is deliberate.** One landed with
+# `scripts/check_sql_execution_coverage.py` shaped like the `*_WAIVERS` tuples
+# and was deleted rather than kept empty, with the argument recorded in
+# `docs/TESTING.md`: an empty ledger and no ledger differ in exactly one way --
+# what the next violation costs to repair. With a ledger that is a tuple append;
+# without one it is a repair, and restoring the escape hatch is a diff that has
+# to argue for itself. Thirteen sites were measured and all thirteen resolved,
+# so there is nothing to grandfather.
+_MUTATING_VERB = re.compile(r"\b(?:UPDATE|DELETE\s+FROM)\b", re.I)
+_SQL_WHERE = re.compile(r"\bWHERE\b", re.I)
+_SQL_RETURNING = re.compile(r"\bRETURNING\b", re.I)
+_SQL_LINE_COMMENT = re.compile(r"--.*")
+_CURSOR_READS = frozenset({"fetchone", "fetchall", "fetchmany"})
+_SQL_EXECUTING_CALLS = frozenset({"execute", "executemany", "execute_values"})
+
+
+@lru_cache(maxsize=None)
+def mutating_statements() -> dict[str, bool]:
+    """Each mutating ``.sql`` path -> whether it carries ``RETURNING``.
+
+    Derived from :func:`production_sql_files`, so it inherits that corpus's
+    exemptions rather than deciding its own. Comments are stripped first:
+    several of these files explain their own ``WHERE`` at length, and one of
+    them says the word ``RETURNING`` in prose.
+    """
+    found: dict[str, bool] = {}
+    for relative in production_sql_files():
+        body = _SQL_LINE_COMMENT.sub("", _read(relative))
+        if _MUTATING_VERB.search(body) and _SQL_WHERE.search(body):
+            found[relative] = bool(_SQL_RETURNING.search(body))
+    return found
+
+
+@lru_cache(maxsize=None)
+def query_constants() -> dict[str, str]:
+    """``CONSTANT`` -> the ``.sql`` path it loads, as ``load_query`` resolves it.
+
+    Parsed rather than pattern-matched, because the re-exports wrap: three of
+    them are ``NAME = (\\n    shared_queries.NAME\\n)`` and a line-oriented read
+    sees an assignment with no value. ``shared/queries.py`` is resolved first so
+    the services that re-export from it resolve too.
+    """
+    modules = [
+        path for path in REPO_ROOT.rglob("queries.py")
+        if "__pycache__" not in path.parts
+        and not path.relative_to(REPO_ROOT).as_posix().startswith("tests/")
+    ]
+    modules.sort(key=lambda p: p.parent.name != "shared")
+
+    constants: dict[str, str] = {}
+    for module in modules:
+        sql_dir = (module.parent / "sql").relative_to(REPO_ROOT).as_posix()
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if not targets:
+                continue
+            value = node.value
+            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                    and value.func.id == "_q" and value.args
+                    and isinstance(value.args[0], ast.Constant)):
+                path = f"{sql_dir}/{value.args[0].value}.sql"
+            elif (isinstance(value, ast.Attribute)
+                  and isinstance(value.value, ast.Name)
+                  and value.value.id == "shared_queries"
+                  and value.attr in constants):
+                path = constants[value.attr]
+            else:
+                continue
+            for name in targets:
+                constants[name] = path
+    return constants
+
+
+def _names_bound_from(function: ast.AST, attribute: str) -> set[str]:
+    """``x`` for every ``x = <anything>.attribute`` in *function*."""
+    bound = set()
+    for node in ast.walk(function):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute)
+                and node.value.attr == attribute):
+            bound |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+    return bound
+
+
+def _names_bound_from_a_read(function: ast.AST) -> dict[str, int]:
+    """``x`` -> line, for every ``x = cur.fetchone()`` and its kin."""
+    bound: dict[str, int] = {}
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign):
+            continue
+        call = node.value
+        if isinstance(call, ast.ListComp):
+            call = call.generators[0].iter if call.generators else None
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr in _CURSOR_READS):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bound[target.id] = node.lineno
+    return bound
+
+
+def _outcome_subtrees(function: ast.AST):
+    """Every expression a function's behaviour actually turns on.
+
+    An ``If`` contributes its **test** only. A name appearing inside a branch it
+    did not choose is not the branch being taken on it, and crediting that is
+    how a rule starts passing things it should not.
+    """
+    for node in ast.walk(function):
+        if isinstance(node, ast.If):
+            yield node.test
+        elif isinstance(node, (ast.Return, ast.Raise)):
+            yield node
+        elif isinstance(node, ast.Dict):
+            yield from node.values
+
+
+def _observes_rowcount(function: ast.AST) -> bool:
+    """Does ``rowcount`` reach a branch, a raise, or something returned?
+
+    Both spellings, because both are in the tree: `revoke_user` binds it
+    (``matched = cur.rowcount``) and `_set_status` reads it in place
+    (``if not cur.rowcount:``). Reading only the binding form reported six
+    compliant functions as violations the first time this rule ran.
+    """
+    bound = _names_bound_from(function, "rowcount")
+    for subtree in _outcome_subtrees(function):
+        for child in ast.walk(subtree):
+            if isinstance(child, ast.Attribute) and child.attr == "rowcount":
+                return True
+            if isinstance(child, ast.Name) and child.id in bound:
+                return True
+    return False
+
+
+def _reaches_an_outcome(function: ast.AST, names: set[str]) -> bool:
+    """Does one of *names* reach a branch, a raise, or something returned?
+
+    **This is the clause that stops the rule being satisfiable by a dead
+    assignment.** ``matched = cur.rowcount`` followed by nothing reads the
+    rowcount and changes no behaviour, which is `assert True` wearing a
+    different hat -- and this stage exists because of an assertion that could
+    not fail. An ``If`` is searched by its **test** only, so a name that merely
+    appears inside a branch it did not choose does not count.
+    """
+    if not names:
+        return False
+    for node in ast.walk(function):
+        if isinstance(node, ast.If):
+            subtrees = [node.test]
+        elif isinstance(node, (ast.Return, ast.Raise)):
+            subtrees = [node]
+        elif isinstance(node, ast.Dict):
+            subtrees = list(node.values)
+        else:
+            continue
+        for subtree in subtrees:
+            for child in ast.walk(subtree):
+                if isinstance(child, ast.Name) and child.id in names:
+                    return True
+    return False
+
+
+def _is_gated_by_an_earlier_read(function: ast.AST, before: int) -> bool:
+    """Did a read *before* line ``before`` establish the row and gate on it?
+
+    The third way a mutation can be observed, and the reason `advance_rotation`
+    and `_reap_stuck_processing` needed no repair: the row's existence is
+    settled by a ``SELECT`` whose result the function then branches on or
+    iterates, so a mutation keyed on that row cannot match nothing.
+
+    **Scoped to one function on purpose.** `_record_last_used` was correct by a
+    gate three early-returns up in its caller, which no reading of this function
+    could have seen -- so Stage Y moved the write next to the gate rather than
+    teaching this rule to walk the call graph. A checker that follows callers is
+    a checker that can be silently wrong, which is the thing being repaired.
+    """
+    reads = {name: line for name, line in _names_bound_from_a_read(function).items()
+             if line < before}
+    if not reads:
+        return False
+    for node in ast.walk(function):
+        if isinstance(node, ast.If):
+            gate_returns = any(
+                isinstance(child, (ast.Return, ast.Raise))
+                for child in ast.walk(node)
+            )
+            names_in_test = {
+                child.id for child in ast.walk(node.test)
+                if isinstance(child, ast.Name)
+            }
+            if gate_returns and names_in_test & set(reads):
+                return True
+        if isinstance(node, ast.For):
+            for child in ast.walk(node.iter):
+                if isinstance(child, ast.Name) and child.id in reads:
+                    return True
+    return False
+
+
+def _unobserved_mutations(path: Path) -> list[str]:
+    """``file:function`` for every mutation this module performs and ignores."""
+    statements = mutating_statements()
+    constants = query_constants()
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        # Keyed on the statement being *named*, never on where it is executed.
+        # `ops/routers/admin.py` binds it first -- `sql = TOGGLE_SEARCH_CONFIG_
+        # ENABLED` then `cur.execute(sql, params)` -- so a rule reading the
+        # execute call's arguments does not see those three handlers at all.
+        # The first draft of this rule did exactly that and reported them
+        # compliant; the mutation below caught it. It is G5's finding again: a
+        # rule keyed on the call site is escapable by not using the call site.
+        executed = [
+            (node.lineno, statements[constants[node.id]])
+            for node in ast.walk(function)
+            if isinstance(node, ast.Name) and constants.get(node.id) in statements
+        ]
+        if not executed:
+            continue
+
+        # A function that names a statement but executes nothing has handed it
+        # to somebody else -- `expire_orphan_detail_claims` is
+        # `return _run_maintenance_query(EXPIRE_ORPHAN_DETAIL_CLAIMS, ())`, and
+        # the helper reads the RETURNING rows and counts them. Delegation is
+        # observed when the delegate's answer is what this function returns; a
+        # result thrown away is not, and still fails.
+        executes = any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _SQL_EXECUTING_CALLS
+            for node in ast.walk(function)
+        )
+        if not executes:
+            delegated = any(
+                isinstance(child, ast.Name) and constants.get(child.id) in statements
+                for node in ast.walk(function)
+                if isinstance(node, ast.Return)
+                for child in ast.walk(node)
+            )
+            if delegated:
+                continue
+        observes_rowcount = _observes_rowcount(function)
+        reads_a_result = any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _CURSOR_READS
+            for node in ast.walk(function)
+        )
+        for line, has_returning in executed:
+            if observes_rowcount:
+                continue
+            if has_returning and reads_a_result:
+                continue
+            if _is_gated_by_an_earlier_read(function, line):
+                continue
+            found.append(f"{relative}:{function.name}")
+    return sorted(set(found))
+
+
+def test_every_mutation_observes_whether_it_changed_anything():
+    """A route that reports success for work it did not do is the whole of G27.
+
+    Three ways to satisfy it, and all three were found in the repository rather
+    than invented for it: read ``rowcount`` and let it reach an outcome, take
+    ``RETURNING`` and read the result, or settle the row with a read this
+    function already branches on. Eight sites were repaired, five already
+    complied, and one was restructured so its gate and its write share a frame.
+
+    What this cannot see is a mutation whose guard lives in another function.
+    That is stated rather than papered over: `_record_last_used` was moved for
+    exactly this reason, and a rule that chased it into its caller would be a
+    dataflow analysis that fails quietly, which is worse than one that fails.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_unobserved_mutations(path))
+
+    assert not found, (
+        "these functions execute a WHERE-bearing UPDATE or DELETE and never "
+        "learn whether it matched anything, so they answer the same way when "
+        "it did not:\n  " + "\n  ".join(sorted(found)) +
+        "\n\nRead cur.rowcount and branch on it, take RETURNING and read the "
+        "result, or gate the write on a read in the same function. There is no "
+        "waiver list for this rule and adding one is a decision, not a fix."
+    )
+
+
+def test_the_mutation_corpus_is_not_empty():
+    """A set difference over an empty corpus is empty, and reads as compliance.
+
+    The same floor `test_the_production_sql_corpus_is_not_empty` puts under the
+    coverage numbers. A glob that stops matching, or a `queries.py` that stops
+    being parsed, would silently retire the rule above.
+    """
+    statements = mutating_statements()
+    assert len(statements) >= 30, (
+        f"only {len(statements)} mutating statements found; the rule above is "
+        f"measuring almost nothing. Check production_sql_files() and the "
+        f"UPDATE/DELETE pattern before trusting a green run."
+    )
+    constants = query_constants()
+    resolved = {name for name, path in constants.items() if path in statements}
+    assert len(resolved) >= 20, (
+        f"only {len(resolved)} constants resolve to a mutating statement, out "
+        f"of {len(constants)} parsed. query_constants() has stopped following "
+        f"how load_query resolves a name."
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
