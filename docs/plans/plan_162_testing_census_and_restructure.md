@@ -4218,3 +4218,54 @@ Public surfaces: `README.md`'s local quick start listed five things to edit
 before `docker compose up -d`, and the Airflow and Grafana secrets this stage
 added to the template were not among them. The line was corrected with this
 stage.
+### Stage Y — step 1 in production: the mutations observed, and a number that did not move
+
+Measurements and recipes: [`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md),
+which accumulates across the stage's three steps. This entry is step 1.
+
+**The census that opened the stage, re-measured against `d6e3a6d`: 100 routes
+across the six importable services, 46 of which produce a code they never
+declare, and not one route declaring a single code today.** The 2026-09-07
+figure of 85 and 42 differs by grain rather than drift -- six `ops` handlers
+serve two routes each through `api_route(methods=["GET", "HEAD"])`. Two findings
+made the stage cheaper than its own estimate: there is no `Depends()` and no
+`@app.exception_handler` anywhere in the six services, so a handler body is the
+whole of what a route can produce; and the 500s the census called judgement
+calls argue for themselves in docstrings their callers already branch on.
+
+**G27 measured at 13 blind mutations, and only eight were repairs.** Three were
+already gated by a preceding read in the same function, two already observed
+`RETURNING`, and one -- `_record_last_used` -- was restructured rather than
+repaired, because its guard lived one frame up in `_resolve_machine_token` with
+nothing connecting the two. **That the other five needed nothing is what stops
+the rule's third clause being an escape hatch invented for the awkward case.**
+
+**Deployed 2026-09-08 and verified inside the containers rather than inferred
+from the checkout** -- `processing` recreated at 22:37:50Z, `ops` at 00:27:34Z,
+both through `scripts/redeploy.sh` with drain confirmed at 0s and intent
+released.
+
+**Eleven consecutive `results_processing` runs moved 1,200 detail artifacts and
+reported `status_write_failures: 0` on every one**, with no ERROR line and no
+traceback across the window. So the stale-claim case `StatusWriteFailed` was
+built for does not occur under normal operation at this cadence. **The honest
+counterpart is that its handling path has therefore only ever run in tests** --
+the `continue`, the counter and the log line are unproven in production, and a
+zero is what records that rather than hides it.
+
+**All six guards answered correctly against production `ops`**, and every one of
+them answered 303 before this stage: five 404s for an identity matching no row,
+and 400 for a role the service does not have. Non-mutating by construction.
+
+**Plan 147's loop guard came back clean on its first run under the new code**
+-- 400 released, 400 claims deleted, 400 fetches recorded, the three agreeing.
+That is not proof the guard never under-records; it is one run in which the
+failure did not occur, and the thing actually established is that the counts are
+now *capable* of disagreeing, where `len(fetched_ids)` would have read 400
+whatever the database did. The same log line carries `status=None`, which is
+Stage AA's second instance observed in production rather than inferred.
+
+**Against the exit:** this bears on the second clause alone -- no route executes
+a mutation whose effect it does not observe. It is evidence that the repair is
+live and quiet, not that the clause is met: what would meet it is the rule that
+makes the next blind mutation fail, and that rule is not written yet.
