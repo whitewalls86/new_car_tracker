@@ -2305,6 +2305,47 @@ def test_every_test_statement_that_holds_a_template_is_waived():
     )
 
 
+def checkable_test_statements() -> list[Path]:
+    """The statements a Flyway-migrated Postgres is asked to plan.
+
+    Lives here rather than beside the rule that plans them, because the floor
+    under that rule lives here too -- see
+    :func:`test_there_is_something_to_check`. One definition, read from both
+    layers, so the floor and the planner cannot disagree about what the corpus
+    is.
+    """
+    waived = {waiver.subject for waiver in TEST_SQL_TEMPLATE_WAIVERS}
+    return [
+        path for path in postgres_test_statements()
+        if _relative(path) not in waived
+    ]
+
+
+def test_there_is_something_to_check():
+    """A glob that silently matches nothing is a green test that checks nothing.
+
+    The floor under ``test_every_test_statement_plans_against_the_migrated_schema``,
+    which is Layer 2 and lives in ``tests/integration/sql/test_fixture_statements.py``
+    because ``PREPARE`` needs an engine. **This does not**, and Plan 162 Stage
+    AG moved it here for that reason: the rule it floors is the one registered
+    rule exempt from living in this directory, and the exemption is read per
+    node from the harness's ``ENGINE_BOUND`` rather than from the layer of the
+    file the node happens to sit in. A test that needs no database was claiming
+    that exemption by sharing a module with one that does -- which is the
+    *"which layer this lives at is not a property of the file"* argument Stage
+    AF already made, applied to the rule that had ignored it.
+
+    The same guard ``test_every_production_sql_file_is_touched_by_a_layer_2_test``
+    puts on its own corpus, and for the same reason: every assertion in that
+    module is a loop, and a loop over an empty list passes.
+    """
+    found = checkable_test_statements()
+    assert len(found) > 250, (
+        f"only {len(found)} test statements found under tests/sql/ -- the tree "
+        f"moved, or the engine filter is eating the corpus"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule 5i -- a test may not invent the shape of a relation production defines.
 #
@@ -3796,6 +3837,43 @@ def _harness_string(node: ast.expr) -> str | None:
     return None
 
 
+@lru_cache(maxsize=None)
+def harness_engine_bound() -> frozenset[str]:
+    """``ENGINE_BOUND`` read out of the harness: the nodes that need a database.
+
+    The one registry of *"this rule cannot be reached without an engine"* this
+    repository has, and Stage AF wrote it because the harness had to provision
+    Postgres for exactly one entry -- which is what makes it trustworthy here. A
+    wrong entry is not a silent wrong entry: a name added to it stops being
+    proved and reports ``UNPROVEN HERE``, and a name removed from it is run
+    against an unmigrated database and fails every ``PREPARE``.
+
+    **Per node, because the layer is the wrong key** -- that tuple's own comment
+    says so: *"which layer this lives at is not a property of the file"*. Plan
+    162 Stage AG first keyed its exemption on the directory's layer, which
+    admitted **614 definitions across 12 directories** for a need of one, and
+    let any static repo-wide rule dropped into ``tests/integration/`` escape the
+    directory requirement entirely. Reading this instead admits exactly what
+    needs an engine, and adds no list, because the list already exists.
+
+    An unreadable or empty tuple yields an empty set, which fails **closed**:
+    the engine-bound rule is then reported misplaced rather than every rule
+    being silently exempt.
+    """
+    tuples = [
+        node.value for node in _harness_tree().body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id == "ENGINE_BOUND"
+    ]
+    if len(tuples) != 1 or not isinstance(tuples[0], (ast.Tuple, ast.List)):
+        return frozenset()
+    return frozenset(
+        value for value in (_harness_string(e) for e in tuples[0].elts)
+        if value is not None
+    )
+
+
 def _harness_mutations() -> list[tuple[str, str, list[ast.Call]]]:
     """``MUTATIONS`` read as (node, description, the payload calls it makes).
 
@@ -3984,18 +4062,6 @@ def test_every_asserted_rule_is_proved_by_a_mutation():
 # table.
 RULES_DIR = TESTS_DIR / "rules"
 
-#: The one exemption, and it is **derived rather than listed**. A rule whose
-#: assertion cannot be reached without an engine does not belong at Layer 0, so
-#: it cannot live here -- `test_every_test_statement_plans_against_the_migrated_schema`
-#: `PREPARE`s against the live catalogue, which is a condition no static read
-#: can express. The test for that is the layer the contract already assigns its
-#: directory, which `test_every_test_directory_is_assigned_a_layer` already
-#: holds, so this is one fact read twice rather than a second registry. The
-#: alternative was a tuple of node ids, which is the curated list this file
-#: refuses to keep, arriving in the rule written to replace it.
-_ENGINE_BOUND_LAYER = 2
-
-
 def rules_directory_tests() -> dict[str, str]:
     """Every test defined under ``tests/rules/``, mapped to its module path.
 
@@ -4082,14 +4148,31 @@ def test_every_asserted_rule_lives_in_the_rules_directory():
     written anywhere else is outside everything the rule above can see, and the
     next Stage Q would land in a module nothing asks about.
 
-    **The engine-bound exemption is derived, not enumerated.** A rule whose
-    assertion needs a live database cannot sit at Layer 0, so it legitimately
-    lives in a Layer 2 suite -- and the layer comes from the contract's own
-    table via ``_layer_of``, which is already asserted in both directions. Two
-    rules qualify today, both in ``tests/integration/sql/test_fixture_statements.py``,
-    and neither is named here.
+    **The engine-bound exemption is read per node from the harness's**
+    ``ENGINE_BOUND``, and the first draft of this rule got that wrong in a way
+    worth recording. It keyed the exemption on the *layer of the directory* --
+    Layer 2 or deeper -- on the reasoning that a rule needing a database cannot
+    sit at Layer 0. That reasoning is sound and the predicate is not its
+    consequence: every directory under ``tests/integration/`` is Layer 2 or
+    deeper, so it admitted **614 definitions across 12 directories** to exempt
+    **one**, and any static repo-wide rule dropped into
+    ``tests/integration/ops/`` would have escaped this rule entirely -- the next
+    Stage Q landing inside the escape hatch built to prevent it. Worse, the
+    argument against it was already written, in ``ENGINE_BOUND``'s own comment:
+    *"which layer this lives at is not a property of the file."*
+
+    So the exemption reads that tuple. It adds no registry, because the registry
+    exists and is load-bearing for another reason -- the harness provisions a
+    throwaway Postgres for its entries -- and it is keyed per node, which is the
+    grain the question actually has. One node qualifies today. The floor that
+    used to share its module moved here, which is what the old predicate had
+    been hiding.
     """
     here = rules_directory_tests()
+    exempt = {
+        (node.split("::")[0], node.split("::")[-1])
+        for node in harness_engine_bound()
+    }
     defined: dict[str, list[Path]] = {}
     for path in all_test_modules():
         for node in ast.walk(
@@ -4105,8 +4188,7 @@ def test_every_asserted_rule_lives_in_the_rules_directory():
         homes = defined.get(name)
         if homes is None:
             continue  # a phantom, which is the rule above this one's failure
-        layers = {_layer_of(path.parent) or 0 for path in homes}
-        if min(layers) >= _ENGINE_BOUND_LAYER:
+        if all((_relative(path), name) in exempt for path in homes):
             continue
         misplaced.append(
             f"{name} ({', '.join(sorted(_relative(p) for p in homes))})"
@@ -4116,10 +4198,11 @@ def test_every_asserted_rule_lives_in_the_rules_directory():
         f"{CONTRACT} names these as asserting a rule, and they do not live "
         f"under {_relative(RULES_DIR)}:\n  " + "\n  ".join(sorted(misplaced)) +
         f"\n\nA repository-wide rule belongs in that directory, where "
-        f"membership obliges a row and a mutation. The only exemption is a "
-        f"rule whose assertion needs an engine, which is Layer "
-        f"{_ENGINE_BOUND_LAYER} or deeper by the contract's own table -- and "
-        f"that is read from the table rather than listed here."
+        f"membership obliges a row and a mutation. The only exemption is a rule "
+        f"whose assertion cannot be reached without a database, and that is "
+        f"read per node from ENGINE_BOUND in {MUTATION_HARNESS} -- the tuple "
+        f"the harness already provisions Postgres for -- rather than inferred "
+        f"from the layer of the file it sits in."
     )
 
 

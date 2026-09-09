@@ -56,24 +56,14 @@ TEST = "tests/rules/test_testing_contract.py"
 #: a mutation measured against a suite that never collected its assertion
 #: reports CAUGHT for the wrong reason.
 #:
-#: The second entry is a **node, not a module**, and that is the whole of why it
-#: can be here. ``tests/integration/sql/test_fixture_statements.py`` is Layer 2
-#: and its other test takes a ``cur`` fixture, so naming the module would put a
-#: live Postgres between this harness and its own baseline. The one test in it
-#: that reads the corpus rather than planning against it takes no fixture and
-#: runs anywhere, so the baseline names exactly that test. Joined 2026-09-09 by
-#: Stage AF.
-#: Plan 162 Stage AG replaced the list with the directory. Every rule lives
-#: under ``tests/rules/`` now, so the baseline is that directory plus the one
-#: node that legitimately sits outside it -- which is the same derivation
-#: ``test_every_asserted_rule_lives_in_the_rules_directory`` makes, arrived at
-#: from the other side. Enumerating the modules here was a second list of the
-#: rule set, and this plan is named for what happens to those.
-TESTS = (
-    "tests/rules/",
-    "tests/integration/sql/test_fixture_statements.py"
-    "::test_there_is_something_to_check",
-)
+#: **One directory, and nothing else.** Stage AF kept a list of modules here
+#: plus one node picked out of a Layer 2 suite -- the corpus floor, which takes
+#: no fixture and so could be run without a database while its sibling could
+#: not. Plan 162 Stage AG moved that floor into ``tests/rules/`` where it
+#: belongs and the list collapsed to the directory: enumerating the rule set
+#: here was a second copy of it, and this plan is named for what happens to
+#: those. Everything this harness mutates now runs from one path.
+TESTS = ("tests/rules/",)
 
 #: The nodes whose assertion cannot be reached without a live, Flyway-migrated
 #: Postgres. **Per node and not per module**, because the module holding this
@@ -251,6 +241,32 @@ def _pytest(node: str | None = None, dsn: str | None = None) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def _drop_rewritten_bytecode(relative: str) -> None:
+    """Delete pytest's rewritten bytecode for one source file.
+
+    **Without this the harness reports the wrong verdict, silently.** pytest
+    rewrites assertions and caches the result in ``__pycache__`` under a key of
+    *(mtime, size)*. A mutation that changes a file's content without changing
+    its length -- ``rglob("test_*.py")`` to ``rglob("rule_*.py")`` is exactly
+    that -- and is restored in the same second leaves that key identical, so the
+    *next* child run imports the **mutated** bytecode from a tree that is back to
+    normal. Found 2026-09-09 by Plan 162 Stage AG: the entry after that one
+    reported MISSED, and the final restore check reported two failures, against
+    a working tree that was byte-for-byte correct.
+
+    It is the same class as the false CAUGHT this file already records -- a
+    verdict about something other than what the description claims -- and it
+    cannot be left to the conventions, because a same-length mutation is a
+    perfectly reasonable thing to write.
+    """
+    cache = (REPO_ROOT / relative).parent / "__pycache__"
+    if not cache.is_dir():
+        return
+    stem = Path(relative).stem
+    for compiled in cache.glob(f"{stem}.*.pyc"):
+        compiled.unlink(missing_ok=True)
+
+
 def _edit(relative: str, old: str, new: str) -> None:
     path = REPO_ROOT / relative
     text = path.read_text(encoding="utf-8")
@@ -260,12 +276,14 @@ def _edit(relative: str, old: str, new: str) -> None:
             f"stale, which means it has stopped testing anything."
         )
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    _drop_rewritten_bytecode(relative)
 
 
 def _write(relative: str, text: str) -> None:
     path = REPO_ROOT / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    _drop_rewritten_bytecode(relative)
 
 
 def _delete(relative: str) -> None:
@@ -284,6 +302,7 @@ def _delete(relative: str) -> None:
             f"gone stale, which means it has stopped testing anything."
         )
     path.unlink()
+    _drop_rewritten_bytecode(relative)
 
 
 # (assertion that should notice, what changed, how to change it, files to
@@ -1275,8 +1294,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/integration/sql/test_fixture_statements.py"
-        "::test_there_is_something_to_check",
+        "test_there_is_something_to_check",
         "the tests/sql tree moves and the statement corpus empties under the rule",
         lambda: _edit(
             TEST,
@@ -2069,6 +2087,27 @@ MUTATIONS = [
     ),
     (
         "test_every_asserted_rule_lives_in_the_rules_directory",
+        "the engine-bound exemption empties, so the one rule that legitimately "
+        "lives outside the directory is reported misplaced -- the fail-closed "
+        "direction, which is what stops an unreadable ENGINE_BOUND exempting "
+        "everything instead of nothing",
+        # Anchored on the line *above* the tuple rather than on
+        # ``ENGINE_BOUND = (``, which the replacement would reintroduce -- the
+        # anchor rule caught that on the first run, matching three times
+        # instead of once. Commenting the binding out empties the set the
+        # exemption reads, because the parse finds no such assignment.
+        lambda: _edit(
+            "scripts/verify_testing_contract_mutations.py",
+            "#: throwaway database this script provisions and destroys; "
+            "see :func:`_engine`.\nENGINE_BOUND",
+            "#: throwaway database this script provisions and destroys; "
+            "see :func:`_engine`.\n_NO_LONGER_ENGINE_BOUND",
+        ),
+        ["scripts/verify_testing_contract_mutations.py"],
+        [],
+    ),
+    (
+        "test_every_asserted_rule_lives_in_the_rules_directory",
         "a rule is registered and written outside the directory, where the "
         "membership rule above cannot see it and the next Stage Q would land",
         lambda: _edit(
@@ -2703,9 +2742,11 @@ def _run(dsn: str | None) -> int:
         finally:
             for rel, text in saved.items():
                 (REPO_ROOT / rel).write_text(text, encoding="utf-8")
+                _drop_rewritten_bytecode(rel)
             for rel in created:
                 path = REPO_ROOT / rel
                 path.unlink(missing_ok=True)
+                _drop_rewritten_bytecode(rel)
                 if path.parent != REPO_ROOT and path.parent.exists():
                     if not any(path.parent.iterdir()):
                         path.parent.rmdir()

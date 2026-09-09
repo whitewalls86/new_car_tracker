@@ -45,15 +45,12 @@ import psycopg2
 import pytest
 
 from tests.rules.test_testing_contract import (
-    TEST_SQL_TEMPLATE_WAIVERS,
     _relative,
-    postgres_test_statements,
+    checkable_test_statements,
 )
 from tests.sql_bindings import holds_a_placeholder, renderings
 
 pytestmark = pytest.mark.integration
-
-_WAIVED = {waiver.subject for waiver in TEST_SQL_TEMPLATE_WAIVERS}
 
 
 def _to_dollar_placeholders(sql: str) -> str:
@@ -71,26 +68,6 @@ def _to_dollar_placeholders(sql: str) -> str:
         return f"${count}"
 
     return re.sub(r"%s", replace, sql)
-
-
-def _checkable():
-    return [
-        path for path in postgres_test_statements()
-        if _relative(path) not in _WAIVED
-    ]
-
-
-def test_there_is_something_to_check():
-    """A glob that silently matches nothing is a green test that checks nothing.
-
-    This is the same guard `test_every_production_sql_file_is_touched_by_a_
-    layer_2_test` puts on its own corpus, and for the same reason: every other
-    assertion in this module is a loop, and a loop over an empty list passes.
-    """
-    assert len(_checkable()) > 250, (
-        f"only {len(_checkable())} test statements found under tests/sql/ — "
-        "the tree moved, or the engine filter is eating the corpus"
-    )
 
 
 def _plannable(path):
@@ -131,7 +108,7 @@ def test_every_test_statement_plans_against_the_migrated_schema(cur):
     the useful output is the list, not whichever file sorts first.
     """
     refused = []
-    for path in _checkable():
+    for path in checkable_test_statements():
         for statement in _plannable(path):
             try:
                 cur.execute(
