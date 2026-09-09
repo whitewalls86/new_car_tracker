@@ -360,6 +360,48 @@ OUT_OF_SCOPE,` matched 5 times, `mock_resp.status_code = 403` matched 6, and
 `"instrument": "loki",` matched 9. Each now rides a neighbouring line that is
 unique today and fails loudly when it stops being.
 
+
+---
+
+## 6b. The two replays CI runs and this machine had not
+
+Both integration modules were written and committed before either had executed
+anywhere. Both were then run against the real thing rather than left for CI to
+discover.
+
+**MinIO**, started the way CI starts it — `docker compose -f docker-compose.yml
+-f docker-compose.ci.yml --env-file .env.ci up -d --wait minio`, so production's
+definition rather than a `services:` block. 3 passed. Not vacuous: a missing
+object and a missing bucket both come back `'404'`, read off a real
+`ClientError`. Worth recording *why* it is `404` and not `NoSuchKey` — both
+calls are `HEAD`, which has no response body for botocore to parse an S3 error
+code out of, so it falls back to the HTTP status. That is the same call shape
+`shared/minio.py`'s `object_exists` and `object_size` use, which is what makes
+the assertion the right one.
+
+**Airflow**, inside the pinned `apache/airflow:3.2.0` image with the repository
+mounted. 3 passed, and the real member set came back non-empty:
+`TaskInstanceState` has 12 members and `failed` is one of them; `TriggerRule`
+has `one_failed` and `all_done`.
+
+**Demonstrated failing, both halves.** Renaming the declared member to
+`"failure"` — Airflow's rename, simulated — failed
+`test_every_restated_airflow_task_state_is_a_real_member` *and*
+`test_every_airflow_state_the_dags_compare_against_is_declared`. That is the
+"neither rule works alone" property observed rather than asserted: the first
+catches Airflow moving, the second catches the DAG and the register moving
+apart.
+
+**And running it found a defect in this stage's own code.**
+`airflow.utils.trigger_rule.TriggerRule` still resolves in 3.2.0 and emits
+`DeprecatedImportWarning: Please use 'airflow.task.trigger_rule.TriggerRule'`.
+The test had imported the deprecated path, which would have made the rule
+guarding against an Airflow upgrade the thing that broke on one. Both the
+import and the census's `what` moved to `airflow.task.trigger_rule`.
+
+**Still unverified, and named rather than implied:** the `flaresolverr-contract`
+job has run on this Windows Docker host and not on a Linux runner. `_host_ip()`
+and the published port are the parts that could differ.
 ---
 
 ## 7. What the `Asserted by` column deliberately does not name

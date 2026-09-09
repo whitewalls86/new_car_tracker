@@ -132,7 +132,7 @@ CENSUS = (
     {
         "owner": "Airflow (apache-airflow==3.2.0)",
         "bucket": INFRA,
-        "what": "airflow.utils.trigger_rule.TriggerRule",
+        "what": "airflow.task.trigger_rule.TriggerRule",
         "members": ("one_failed", "all_done"),
         "sites": (
             "airflow/dags/dbt_build.py",

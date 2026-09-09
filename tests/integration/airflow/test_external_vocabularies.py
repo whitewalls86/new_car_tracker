@@ -97,10 +97,16 @@ def test_every_restated_airflow_trigger_rule_is_a_real_member():
     a claim about an existing check is worth exactly as much as the check
     being where the claim says it is.
     """
-    from airflow.utils.trigger_rule import TriggerRule
+    # `airflow.task.trigger_rule`, not `airflow.utils.trigger_rule`. The
+    # second still resolves in 3.2.0 and emits a DeprecatedImportWarning
+    # saying so -- observed while verifying this test against the real image
+    # on 2026-09-09. Importing the deprecated path here would make this rule
+    # the thing that breaks on an Airflow upgrade, which is the opposite of
+    # what it is for.
+    from airflow.task.trigger_rule import TriggerRule
 
     real = {rule.value for rule in TriggerRule}
-    declared = _declared("airflow.utils.trigger_rule.TriggerRule")
+    declared = _declared("airflow.task.trigger_rule.TriggerRule")
 
     unreal = sorted(set(declared) - real)
     assert not unreal, (
