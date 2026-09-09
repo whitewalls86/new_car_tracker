@@ -22,7 +22,7 @@ runs four validation jobs for every pull request to `master`:
 That is the right contract when code, configuration, migrations, tests, or CI
 itself changes. It adds no useful evidence when every changed path is under
 `docs/`. The documentation tree already has a focused executable contract in
-[`tests/test_planning_docs.py`](../../tests/test_planning_docs.py): plan-state
+[`tests/test_planning_docs.py`](../../tests/rules/test_planning_docs.py): plan-state
 uniqueness, archive counts, required table structure, dangling links, recap
 shape, and the planning system's other invariants.
 

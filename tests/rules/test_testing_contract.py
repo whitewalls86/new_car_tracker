@@ -4,7 +4,7 @@
 accurate in April 2026 and quietly false by August. Nothing could tell the
 difference, so nothing did. This file is the mechanism that can.
 
-It follows ``tests/test_planning_docs.py`` and
+It follows ``tests/rules/test_planning_docs.py`` and
 ``tests/airflow/test_coordination_admission.py``: **coverage is asserted, not
 enumerated.** Every subject below is derived from the repository -- the
 services from the packages on disk, the routes from each app's real routing
@@ -86,7 +86,7 @@ from tests.plugins.declared_skips import (
 )
 from tests.sql_bindings import holds_a_placeholder, renderings
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = "docs/TESTING.md"
 WORKFLOW = ".github/workflows/ci.yml"
 ARCHIVE = "docs/planning/completed_plans.md"
@@ -3011,7 +3011,7 @@ def test_every_pytest_invocation_in_ci_sets_pythonpath():
     decide the outcome" -- Stage 6b added the other, below. The rest of that
     rule is judgement, and the contract says so.
 
-    ``tests/test_planning_docs.py`` passed or failed on one machine, one OS and
+    ``tests/rules/test_planning_docs.py`` passed or failed on one machine, one OS and
     one commit purely on whether the checkout directory name was a valid Python
     identifier: 35 passed as ``cartracker-scraper``, 2 failed as
     ``new_car_tracker``, which is what CI uses. The repo root carries an

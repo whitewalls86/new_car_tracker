@@ -34,7 +34,7 @@ Three things it is not asked to plan, each derived rather than listed:
   ``{placeholder}`` is no longer skipped for holding one: ``tests/sql_bindings``
   reads the bindings out of the module that owns it and this plans every text
   the statement is actually executed as. What is still waived against G19 in
-  ``tests/test_testing_contract.py`` is the one statement whose placeholder is
+  ``tests/rules/test_testing_contract.py`` is the one statement whose placeholder is
   filled by ``", ".join(...)`` over a per-case list, which exists only at run
   time. That ledger is asserted in both directions at Layer 0 — this module
   cannot, since a job with no Postgres never reaches it.
@@ -44,12 +44,12 @@ import re
 import psycopg2
 import pytest
 
-from tests.sql_bindings import holds_a_placeholder, renderings
-from tests.test_testing_contract import (
+from tests.rules.test_testing_contract import (
     TEST_SQL_TEMPLATE_WAIVERS,
     _relative,
     postgres_test_statements,
 )
+from tests.sql_bindings import holds_a_placeholder, renderings
 
 pytestmark = pytest.mark.integration
 

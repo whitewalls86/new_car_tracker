@@ -1,4 +1,4 @@
-"""Plan 161 / CAR-34: prove ``tests/test_testing_contract.py`` can fail.
+"""Plan 161 / CAR-34: prove ``tests/rules/test_testing_contract.py`` can fail.
 
 A contract test that nobody has watched fail is a contract test nobody knows
 anything about. This applies one mutation per rule, runs the single assertion
@@ -16,7 +16,7 @@ mutates are exactly the ones a change in progress is editing.
 exactly once, and every ``_delete`` path must still be on disk — a string search
 per entry, no mutation applied and no subprocess started, so it costs a fraction
 of a second. ``test_every_mutation_anchor_still_matches_its_file`` in
-``tests/test_testing_contract.py`` is that check, and it is there because an
+``tests/rules/test_testing_contract.py`` is that check, and it is there because an
 anchor is a literal in somebody else's file: it stops matching silently, and the
 only thing that ever noticed was a human choosing to run this script. Plan 162
 Stage Y broke five waivers keyed on ``admin.py:135:_fetch_dbt_context`` by adding
@@ -50,12 +50,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TEST = "tests/test_testing_contract.py"
+TEST = "tests/rules/test_testing_contract.py"
 
 #: Every module holding contract rules this harness proves can fail. A rule in
 #: its own module is still a contract rule, and the baseline has to run it --
 #: a mutation measured against a suite that never collected its assertion
-#: reports CAUGHT for the wrong reason. ``tests/test_env_example_wiring.py`` is
+#: reports CAUGHT for the wrong reason. ``tests/rules/test_env_example_wiring.py`` is
 #: Plan 162 Stage V's and joined on 2026-09-08.
 #:
 #: The third entry is a **node, not a module**, and that is the whole of why it
@@ -67,7 +67,7 @@ TEST = "tests/test_testing_contract.py"
 #: Stage AF.
 TESTS = (
     TEST,
-    "tests/test_env_example_wiring.py",
+    "tests/rules/test_env_example_wiring.py",
     "tests/integration/sql/test_fixture_statements.py"
     "::test_there_is_something_to_check",
 )
@@ -341,12 +341,12 @@ MUTATIONS = [
         "test_the_route_code_corpus_is_not_empty",
         "the path matcher stops matching, and the coverage rule goes quiet",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             "    return all(a.startswith(\"{\") or a == b "
             "for a, b in zip(decorator, tail))",
             "    return False",
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
@@ -825,22 +825,22 @@ MUTATIONS = [
         "test_every_sql_corpus_exemption_is_declared",
         "an exemption quietly shrinks the coverage denominator",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")',
             '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/", "dashboard/")',
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
         "test_the_production_sql_corpus_is_not_empty",
         "the corpus glob stops matching and every coverage number reads 0 of 0",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             "            for path in REPO_ROOT.rglob(\"*.sql\")",
             "            for path in REPO_ROOT.rglob(\"*.sqlx\")",
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
@@ -911,7 +911,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
+        "tests/rules/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
         "a key is documented in .env.example that no Compose service delivers",
         lambda: _edit(
             ".env.example",
@@ -922,7 +922,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
+        "tests/rules/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
         "the same key, named only in a docker-compose.yml comment",
         lambda: (
             _edit(
@@ -941,7 +941,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_no_undelivered_key_is_quietly_wired",
+        "tests/rules/test_env_example_wiring.py::test_no_undelivered_key_is_quietly_wired",
         "a key declared undelivered is wired into Compose after all",
         lambda: _edit(
             "docker-compose.yml",
@@ -953,19 +953,19 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_every_undelivered_declaration_names_a_consumer_that_reads_it",
         "an Undelivered entry names a real file that does not read its key",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             'consumer="scraper/processors/scrape_results.py"',
             'consumer="scraper/app.py"',
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
+        "tests/rules/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
         "a Compose service interpolates a variable .env.example never documents",
         lambda: _edit(
             "docker-compose.yml",
@@ -977,32 +977,32 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
+        "tests/rules/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
         "the $$ escape strip is removed, so $${HOSTNAME} reads as interpolated",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             '_REFERENCE.findall(_ESCAPED.sub("", node))',
             "_REFERENCE.findall(node)",
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
         "test_the_fixture_relation_corpus_is_not_empty",
         "the shadowing _CREATE_TABLE comes back and empties the corpus",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             "_CREATE_TABLE_BODY = re.compile(",
             "_CREATE_TABLE = re.compile(",
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     # -----------------------------------------------------------------------
     # Plan 162 Stage AF. The twenty rules the `Asserted by` column named and
     # nobody had watched fail. Each description says what defect the rule is
     # meant to catch, because that sentence is the artifact -- see the stage's
-    # note in `tests/test_testing_contract.py` on why no generator writes it.
+    # note in `tests/rules/test_testing_contract.py` on why no generator writes it.
     # -----------------------------------------------------------------------
     (
         "tests/integration/sql/test_fixture_statements.py"
@@ -1192,7 +1192,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_no_undocumented_declaration_is_quietly_documented",
         "a variable declared absent from .env.example is documented there anyway",
         lambda: _edit(
@@ -1205,23 +1205,23 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_every_undocumented_declaration_names_a_file_that_interpolates_it",
         "an Undocumented entry outlives the Compose file it was written for",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             'compose_file="docker-compose.mlflow.yml"',
             'compose_file="docker-compose.lakehouse.yml"',
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_neither_ledger_grows_without_the_ceiling_moving",
         "a fifth undocumented variable is declared and the ceiling stays at four",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             # Anchored on the tuple's last entry and its close, so the append
             # lands *inside* UNDOCUMENTED. Anchoring on the comment below it
             # put the new entry after the closing paren, and the module then
@@ -1238,18 +1238,18 @@ MUTATIONS = [
             "    ),\n"
             ")\n\n#: Ceilings, not counts",
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_both_corpora_are_not_empty",
+        "tests/rules/test_env_example_wiring.py::test_both_corpora_are_not_empty",
         "the docker-compose glob stops matching and every rule there goes quiet",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
             'return sorted(_REPO_ROOT.glob("docker-compose*.yaml"))',
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
@@ -1396,11 +1396,11 @@ MUTATIONS = [
         "test_the_gap_claim_corpus_is_not_empty",
         "the gap-claim pattern stops matching and the rule reads an empty set",
         lambda: _edit(
-            "tests/test_planning_docs.py",
+            "tests/rules/test_planning_docs.py",
             r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
             r'_GAP_CLAIM = re.compile(r"\*\*Gaps:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
         ),
-        ["tests/test_planning_docs.py"],
+        ["tests/rules/test_planning_docs.py"],
         [],
     ),
     # Plan 162 Stage Z. The gate is `generate_service_contracts.py --check`;

@@ -1,6 +1,6 @@
 """What text executed against which client, recorded at the client.
 
-Plan 162 Stage X, second half. Every rule in ``tests/test_testing_contract.py``
+Plan 162 Stage X, second half. Every rule in ``tests/rules/test_testing_contract.py``
 reads the repository *statically*: a ``.sql`` file counts as covered when a
 Layer 2 module names its stem as a whole word. This plugin is what replaces
 that reading with the strongest available one -- **this file's text executed in

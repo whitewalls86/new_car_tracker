@@ -107,14 +107,14 @@ its Redis.
 
 **Check an image against this list before deleting it by hand.** It is derived
 from `docker-compose*.yml` and `maintenance-running-set.txt` and asserted by
-`tests/test_image_keep_set.py`, so it cannot go stale without CI going red. An
+`tests/rules/test_image_keep_set.py`, so it cannot go stale without CI going red. An
 image is listed when *no* service that a plain `docker compose up -d` starts
 holds it; one running service protects the whole image, which is why
 `cartracker-archiver` is absent despite `snapshot-worker` being `on-demand`.
 
 ```
 # Derived from docker-compose*.yml and maintenance-running-set.txt
-# by tests/test_image_keep_set.py, which asserts this block. Do not edit.
+# by tests/rules/test_image_keep_set.py, which asserts this block. Do not edit.
 on-demand       cartracker-dbt:latest
 on-demand       cartracker-dbt_test:latest
 on-demand       cartracker-lakehouse:latest

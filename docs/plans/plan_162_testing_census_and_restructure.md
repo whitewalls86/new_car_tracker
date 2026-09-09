@@ -8,7 +8,7 @@ it finds and restructures CI around what the census showed actually mattered.
 
 ## The case
 
-[`tests/test_testing_contract.py`](../../tests/test_testing_contract.py)
+[`tests/test_testing_contract.py`](../../tests/rules/test_testing_contract.py)
 implemented seven mechanical rules when the census ran, and eight since Stage C
 added the coverage rule. It passes, and **a pass means only that those rules
 hold** — every violation standing on 2026-08-31 is grandfathered in a waiver
@@ -1812,7 +1812,7 @@ correctness hole in a rule whose whole subject is silent departure. No
 `--update` flag: a manifest that regenerates itself is a rubber stamp, and the
 diff someone reads is the entire mechanism. `SQL_ABSORBED_BY_DBT` stays out of
 `ALL_WAIVERS` — it is permanent record rather than a draining queue, and
-[`test_no_waiver_outlives_the_plan_that_owns_it`](../../tests/test_testing_contract.py)
+[`test_no_waiver_outlives_the_plan_that_owns_it`](../../tests/rules/test_testing_contract.py)
 would turn the whole ledger red the day this plan archives.
 
 **6. The column contract is derived from a build, and its Spark half leaves.**

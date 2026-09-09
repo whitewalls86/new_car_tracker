@@ -10,7 +10,7 @@
 #
 # So the jobs now start production's own definitions, and this file holds the
 # entire difference between what production runs and what CI runs. That is the
-# point of it being small: `tests/test_ci_compose_parity.py` resolves both
+# point of it being small: `tests/rules/test_ci_compose_parity.py` resolves both
 # chains through `docker compose config` and requires the difference between
 # the two documents to equal the allowlist declared there. A drift that nobody
 # thought to assert cannot hide, because the diff is computed rather than

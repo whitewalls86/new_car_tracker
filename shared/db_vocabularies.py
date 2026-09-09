@@ -9,7 +9,7 @@ here because a service cannot ask a migration file at runtime, and it is a copy
 in exactly one place instead of one per call site.
 
 **The pair of rules that makes a copy safe**, both in
-``tests/test_testing_contract.py`` and both derived from ``db/migrations/``
+``tests/rules/test_testing_contract.py`` and both derived from ``db/migrations/``
 rather than from a list:
 
 * ``test_every_check_constrained_column_has_one_declared_vocabulary`` compares

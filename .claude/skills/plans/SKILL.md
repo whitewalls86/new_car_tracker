@@ -65,7 +65,7 @@ applying a provenance label to it devalues every genuine one.
 | `docs/planning/completed_plans.md` | the archive. Newest first, **prepend-only**, one row per plan. **Public: its top four rows are published** |
 | `docs/plans/plan_NNN_*.md` | the plan's own document, and the authority when it and the index disagree |
 | `docs/PLAN_DOCUMENT.md` | the plan-document contract. This skill points there for document shape and does not restate it |
-| `tests/test_planning_docs.py` | what "correct" means. 43 assertions, ~0.2s |
+| `tests/rules/test_planning_docs.py` | what "correct" means. 43 assertions, ~0.2s |
 | `docs/planning/plans_decision_log.md` | narrative. You do not write here; the user may |
 
 ## Splice, never reflow
@@ -135,7 +135,7 @@ Operation 6 begins from one intentional coverage failure and has its own
 preflight below.
 
 ```bash
-LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
+LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/rules/test_planning_docs.py -q
 ```
 
 Use the repository interpreter available in the current environment. On
@@ -204,7 +204,7 @@ Two files, and the second is the one that gets forgotten.
 
 3. **Update the count in the index.** `docs/PLANS.md` says
    `— NNN rows, newest first` and that number is maintained by hand. Increment
-   it. `tests/test_planning_docs.py` now checks it, so forgetting fails
+   it. `tests/rules/test_planning_docs.py` now checks it, so forgetting fails
    loudly rather than leaving the index quietly disagreeing with the record it
    points at.
 
@@ -280,13 +280,13 @@ not draft the document, decide where the plan belongs, or invent any cell.
    superseded, and `docs/planning/completed_plans.md`; do not use a text search
    that can match prose in another cell. **If any row already owns the number,
    refuse the operation.** Opening never becomes a move or a duplicate.
-2. Run `tests/test_planning_docs.py`. The expected preflight is one failure
+2. Run `tests/rules/test_planning_docs.py`. The expected preflight is one failure
    naming this document as present in no table. If the plan is not that failure,
    or any unrelated failure appears, stop before editing. This is the one
    operation whose valid input is deliberately inconsistent with the index.
 3. Apply the two document-shape gates this operation owns, with
    [`docs/PLAN_DOCUMENT.md`](../../../docs/PLAN_DOCUMENT.md) as their authority.
-   Full contract enforcement belongs to `tests/test_planning_docs.py`, not to a
+   Full contract enforcement belongs to `tests/rules/test_planning_docs.py`, not to a
    growing checklist in this skill:
    - **Backlog refusal:** if the document has a `## Stages` section or any
      `### Stage X` heading, refuse. A drafted plan with stages has crossed the
@@ -354,7 +354,7 @@ Three hard limits:
 ## After every operation
 
 ```bash
-LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
+LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/rules/test_planning_docs.py -q
 python scripts/build_public_roadmap.py --check
 git diff
 ```
@@ -402,7 +402,7 @@ every edit moves the artifact — but do not try to reason about which do.
 therefore always in the top four; a build-order insert renumbers and can carry
 a plan across the boundary in either direction. Run the check and believe it.
 
-This is how it goes wrong: `tests/test_planning_docs.py` passes on a stale
+This is how it goes wrong: `tests/rules/test_planning_docs.py` passes on a stale
 artifact, so a green run there is not evidence. The assertion that catches it
 lives in `tests/scripts/test_build_public_roadmap.py`, which the unit job runs
 and this operation does not.
@@ -436,7 +436,7 @@ is prose. Do not add it.
   you do not have is a stop, never a draft.
 - **edit plan document content** beyond the status marker above.
 - **grow a list of special cases.** If a plan seems to need an exception, the
-  structure is wrong. That is the argument `tests/test_planning_docs.py` is
+  structure is wrong. That is the argument `tests/rules/test_planning_docs.py` is
   built on and it applies here.
 - **run a transition and a summary in one operation.** Stage 6 is separate on
   purpose.

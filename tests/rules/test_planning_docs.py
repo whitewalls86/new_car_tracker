@@ -49,7 +49,7 @@ import pytest
 # ``scripts/audit_plan_state_history.py``. Stage 3 moved 98 files; whatever
 # Stage 6 moves next should have exactly one place to edit.
 # ---------------------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCS_DIR = "docs"
 INDEX = "docs/PLANS.md"
 PLANS_DIR = "docs/plans"

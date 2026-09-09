@@ -71,7 +71,7 @@ every few days. So a plan document's ``## What this plan is for`` is preferred f
 a planned row, and the slice cell is the fallback -- which is why a slice edit
 alone no longer moves this artifact. Unlike the archive cell it is taken whole
 rather than cut: ``docs/PLAN_DOCUMENT.md`` caps that section at
-``MAX_SUMMARY_CHARS`` and ``tests/test_planning_docs.py`` holds the published
+``MAX_SUMMARY_CHARS`` and ``tests/rules/test_planning_docs.py`` holds the published
 window to it, so there is nothing to cut.
 
 **The fallback guards a row, not a tree.** Every row in the published window
@@ -102,7 +102,7 @@ import re
 import sys
 from pathlib import Path
 
-# One repo-root-relative constant block, matching tests/test_planning_docs.py
+# One repo-root-relative constant block, matching tests/rules/test_planning_docs.py
 # and scripts/audit_plan_state_history.py.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INDEX = "docs/PLANS.md"
@@ -406,7 +406,7 @@ def purpose_summary(path: Path) -> str | None:
     summary only and has no bolded lead to split off.
 
     It is taken whole rather than cut at a sentence. ``docs/PLAN_DOCUMENT.md``
-    caps it at ``MAX_SUMMARY_CHARS`` and ``tests/test_planning_docs.py`` holds
+    caps it at ``MAX_SUMMARY_CHARS`` and ``tests/rules/test_planning_docs.py`` holds
     the published window to that cap, so this is copy already written to fit and
     truncating it would be the mistake ``authored_summary`` avoids on the other
     side.
