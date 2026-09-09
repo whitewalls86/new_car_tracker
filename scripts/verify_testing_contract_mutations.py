@@ -1316,6 +1316,91 @@ MUTATIONS = [
         [TEST],
         [],
     ),
+    # ---- Plan 162 Stage Q: CI's services are production's ----------------
+    #
+    # The first two shell out to `docker compose config`, so on a machine with
+    # no Docker CLI their rules skip and this harness reports them as failing
+    # to fail. That is a false negative to know about rather than a defect:
+    # the rules are required in CI precisely because `ubuntu-latest` has the
+    # CLI, and an undeclared skip there fails the run.
+    (
+        "test_the_ci_override_is_the_whole_difference",
+        "CI's services gain a difference from production's that nobody declared",
+        lambda: _edit(
+            "docker-compose.ci.yml",
+            '      MINIO_BROWSER_REDIRECT_URL: ""',
+            '      MINIO_BROWSER_REDIRECT_URL: ""\n'
+            '      MINIO_PROMETHEUS_AUTH_TYPE: ""',
+        ),
+        ["docker-compose.ci.yml"],
+        [],
+    ),
+    (
+        "test_ci_runs_productions_flyway_command",
+        "production's Flyway stops baselining and CI stops noticing",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      -baselineOnMigrate=true\n",
+            "",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "test_no_heavy_job_declares_its_own_services",
+        "a job goes back to hand-declaring the database it tests against",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "  service-integration:\n"
+            "    name: Service integration tests (Postgres)\n",
+            "  service-integration:\n"
+            "    name: Service integration tests (Postgres)\n"
+            "    services:\n"
+            "      postgres:\n"
+            "        image: postgres:16\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_heavy_job_starts_the_compose_services",
+        "a job stops starting its services and only the Flyway step still names them",
+        # Anchored on the one `up` line that does not start MinIO, so it
+        # matches exactly once across the five jobs.
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "--env-file .env.ci up -d --wait postgres\n",
+            "--env-file .env.ci version\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_gap_a_stage_claims_exists",
+        "a gap entry is renamed and the stage claiming it points at nothing",
+        # G29 is Stage AF's, and its header claims it. Renaming the row is a
+        # truer mutation than deleting it: the gap list is allowed to lose a
+        # row when the gap is repaired, and what must not survive that is a
+        # stage still claiming the number.
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| G29 | ",
+            "| G299 | ",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    (
+        "test_the_gap_claim_corpus_is_not_empty",
+        "the gap-claim pattern stops matching and the rule reads an empty set",
+        lambda: _edit(
+            "tests/test_planning_docs.py",
+            r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
+            r'_GAP_CLAIM = re.compile(r"\*\*Gaps:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
+        ),
+        ["tests/test_planning_docs.py"],
+        [],
+    ),
 ]
 
 
