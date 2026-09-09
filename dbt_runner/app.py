@@ -17,7 +17,21 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from dbt_runner.analytics_snapshot import AnalyticsSnapshotManager
+from dbt_runner.api_models import (
+    BuildFailure,
+    BuildInProgressResponse,
+    BuildResult,
+    DocsGenerateError,
+    DocsGenerateResult,
+    DocsStatusResponse,
+)
 from dbt_runner.metrics import REGISTRY, publish_snapshot
+from shared.api_models import (
+    ErrorResponse,
+    HealthResponse,
+    NotReadyResponse,
+    ReadyResponse,
+)
 from shared.job_counter import active_job, is_idle, job_snapshot
 from shared.logging_setup import configure_logging
 
@@ -80,15 +94,19 @@ def _cap(s: str, limit: int = 20000) -> str:
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health() -> Dict[str, Any]:
     return {"ok": True}
 
 
 @app.get(
     "/ready",
+    response_model=ReadyResponse,
     responses={
-        503: {"description": "A dependency this service needs is not reachable."},
+        503: {
+            "description": "A dependency this service needs is not reachable.",
+            "model": NotReadyResponse,
+        },
     },
 )
 def ready() -> Dict[str, Any]:
@@ -99,12 +117,12 @@ def ready() -> Dict[str, Any]:
     raise HTTPException(status_code=503, detail={**result, "reason": "jobs in flight"})
 
 
-@app.get("/metrics")
+@app.get("/metrics", response_class=Response)
 def metrics() -> Response:
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/dbt/docs/status")
+@app.get("/dbt/docs/status", response_model=DocsStatusResponse)
 def get_docs_status() -> Dict[str, Any]:
     """Check whether dbt docs have been generated (target/index.html exists)."""
     available = os.path.exists(os.path.join(os.getcwd(), "target", "index.html"))
@@ -113,8 +131,12 @@ def get_docs_status() -> Dict[str, Any]:
 
 @app.post(
     "/dbt/docs/generate",
+    response_model=DocsGenerateResult,
     responses={
-        500: {"description": "dbt exited non-zero; the summary is the detail."},
+        500: {
+            "description": "dbt exited non-zero; the summary is the detail.",
+            "model": DocsGenerateError,
+        },
     },
 )
 def dbt_docs_generate() -> Dict[str, Any]:
@@ -153,10 +175,20 @@ def dbt_docs_generate() -> Dict[str, Any]:
 
 @app.post(
     "/dbt/build",
+    response_model=BuildResult,
     responses={
-        400: {"description": "The requested selection is not usable."},
-        409: {"description": "A dbt build is already in progress."},
-        500: {"description": "dbt exited non-zero; the summary is the detail."},
+        400: {
+            "description": "The requested selection is not usable.",
+            "model": ErrorResponse,
+        },
+        409: {
+            "description": "A dbt build is already in progress.",
+            "model": BuildInProgressResponse,
+        },
+        500: {
+            "description": "dbt exited non-zero; the summary is the detail.",
+            "model": BuildFailure,
+        },
     },
 )
 def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:

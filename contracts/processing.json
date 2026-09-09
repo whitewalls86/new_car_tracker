@@ -1,6 +1,277 @@
 {
   "components": {
     "schemas": {
+      "ArtifactResult": {
+        "description": "``POST /process/artifact/{artifact_id}`` -- the union described above.\n\n``artifact_id`` and ``status`` are the two every exit sets. Everything\nbelow them belongs to some paths and not others, and which is which is\nrecorded here rather than left to be inferred from a sample response.",
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "integer"
+          },
+          "artifact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type"
+          },
+          "carousel_filtered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carousel Filtered"
+          },
+          "carousel_upserted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carousel Upserted"
+          },
+          "claims_released": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claims Released"
+          },
+          "deleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Ids"
+          },
+          "listing_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing State"
+          },
+          "listings_parsed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listings Parsed"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "silver_written": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Silver Written"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "unlisted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unlisted"
+          },
+          "upserted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upserted"
+          },
+          "vin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vin"
+          },
+          "vin_collision_deleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vin Collision Deleted"
+          },
+          "vin_mapped": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vin Mapped"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "status"
+        ],
+        "title": "ArtifactResult",
+        "type": "object"
+      },
+      "BatchResponse": {
+        "description": "``POST /process/batch``.\n\nThe six counters are the shape ``airflow/dags/results_processing.py``\nreads, and the route's own docstring already claimed they were the\nresponse -- this is that claim moved somewhere a caller can check.",
+        "properties": {
+          "detail_count": {
+            "title": "Detail Count",
+            "type": "integer"
+          },
+          "retry_count": {
+            "title": "Retry Count",
+            "type": "integer"
+          },
+          "silver_write_failures": {
+            "title": "Silver Write Failures",
+            "type": "integer"
+          },
+          "skip_count": {
+            "title": "Skip Count",
+            "type": "integer"
+          },
+          "srp_count": {
+            "title": "Srp Count",
+            "type": "integer"
+          },
+          "status_write_failures": {
+            "title": "Status Write Failures",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "srp_count",
+          "detail_count",
+          "retry_count",
+          "skip_count",
+          "silver_write_failures",
+          "status_write_failures"
+        ],
+        "title": "BatchResponse",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "FastAPI's uniform error body: ``{\"detail\": \"<message>\"}``.\n\nDeclared once and shared by every route whose refusals carry a string. The\nhandful whose ``detail`` is a *structured* dict a caller indexes into\ndeclare their own model instead -- those are the ones where the shape is\nload-bearing.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -12,6 +283,98 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "``GET /health`` everywhere: process liveness, never dependency health.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "NotReadyDetail": {
+        "description": "The body inside a ``/ready`` 503, which is evidence rather than an error.\n\n``ops/coordination_drain.py:_service_jobs`` reads ``active_jobs`` out of\nthis and counts a 503 as *known positive* evidence -- a draining service\nreporting two jobs in flight is answering the question, not failing. The\nreason a 503 carries a full body here rather than a message is that the\ndrain aggregator is fail-closed: an unreadable body becomes ``unknown``,\nwhich blocks a deploy.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs",
+          "reason"
+        ],
+        "title": "NotReadyDetail",
+        "type": "object"
+      },
+      "NotReadyResponse": {
+        "description": "``/ready``'s 503 as it reaches the wire.\n\n``HTTPException(detail=...)`` nests the payload under ``detail``, which is\nwhy the aggregator unwraps one level before reading the counts. Declared so\nthe contract says so.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotReadyDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotReadyResponse",
+        "type": "object"
+      },
+      "ReadyResponse": {
+        "description": "``GET /ready`` for the services whose evidence is ``job_snapshot()``.\n\n``archiver``, ``processing`` and ``dbt_runner`` return exactly this.\n``scraper`` returns it with two extra per-surface fields and declares its\nown model for that reason.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs"
+        ],
+        "title": "ReadyResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -69,7 +432,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -115,15 +480,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Process Single Artifact Process Artifact  Artifact Id  Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ArtifactResult"
                 }
               }
             },
             "description": "Successful Response"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "No artifact with that id is queued."
           },
           "422": {
@@ -179,9 +549,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Process Batch Process Batch Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BatchResponse"
                 }
               }
             },
@@ -198,6 +566,13 @@
             "description": "Validation Error"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The queue could not be read; no artifacts were claimed."
           }
         },
@@ -212,12 +587,21 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
               }
             },
             "description": "Successful Response"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotReadyResponse"
+                }
+              }
+            },
             "description": "A dependency this service needs is not reachable."
           }
         },

@@ -9,6 +9,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from processing.routers.artifact import router as artifact_router
 from processing.routers.batch import router as batch_router
+from shared.api_models import HealthResponse, NotReadyResponse, ReadyResponse
 from shared.job_counter import job_snapshot
 from shared.logging_setup import configure_logging
 
@@ -21,15 +22,19 @@ app.include_router(batch_router)
 app.include_router(artifact_router)
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}
 
 
 @app.get(
     "/ready",
+    response_model=ReadyResponse,
     responses={
-        503: {"description": "A dependency this service needs is not reachable."},
+        503: {
+            "description": "A dependency this service needs is not reachable.",
+            "model": NotReadyResponse,
+        },
     },
 )
 def ready():
