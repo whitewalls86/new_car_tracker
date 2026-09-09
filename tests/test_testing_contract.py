@@ -4272,9 +4272,7 @@ def _discarded_outcomes(path: Path) -> list[str]:
                 continue
             callee = node.value.func.id
             if callee in producers:
-                found.append(
-                    f"{relative}:{node.lineno}:{function.name} -> {callee}()"
-                )
+                found.append(f"{relative}:{function.name} -> {callee}()")
     return sorted(found)
 
 
@@ -4286,9 +4284,9 @@ DISCARDED_OUTCOME_WAIVERS: tuple[Waiver, ...] = (
     # `dbt_intent_*` handlers beside them, and Stage AA owns what replaces them
     # -- so they are waived here rather than repaired into a shape nobody wants
     # to keep.
-    Waiver("ops/routers/admin.py:307:deploy_start -> _set_intent()",
+    Waiver("ops/routers/admin.py:deploy_start -> _set_intent()",
            "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:313:deploy_complete -> _intent_release()",
+    Waiver("ops/routers/admin.py:deploy_complete -> _intent_release()",
            "G27", 162, date(2026, 9, 8)),
 )
 
@@ -4385,7 +4383,7 @@ def _uninspected_responses(path: Path) -> list[str]:
         for node in ast.walk(function):
             # The response is never even captured: nothing can read it later.
             if isinstance(node, ast.Expr) and _is_outbound_call(node.value):
-                found.append(f"{relative}:{node.lineno}:{function.name}")
+                found.append(f"{relative}:{function.name}")
                 continue
             if not (isinstance(node, ast.Assign) and _is_outbound_call(node.value)):
                 continue
@@ -4400,7 +4398,7 @@ def _uninspected_responses(path: Path) -> list[str]:
                     for child in ast.walk(function)
                 )
                 if not inspected:
-                    found.append(f"{relative}:{node.lineno}:{function.name}")
+                    found.append(f"{relative}:{function.name}")
     return sorted(set(found))
 
 
@@ -4410,12 +4408,9 @@ UNINSPECTED_RESPONSE_WAIVERS: tuple[Waiver, ...] = (
     # no status worth reading and no repair that is not first a decision about
     # whether the admin dbt panel and log viewer survive at all. Stage AA owns
     # that decision, and these leave with whichever answer it takes.
-    Waiver("ops/routers/admin.py:135:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:141:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:147:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:266:view_logs", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:272:view_logs", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:224:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:view_logs", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
 )
 
 
@@ -4971,46 +4966,6 @@ DECLARED_CODE_WAIVERS: tuple[Waiver, ...] = (
         "G21", 162, date(2026, 9, 8),
     ),
     Waiver(
-        "ops/routers/admin.py:create_search produces undeclared [303, 422, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:dbt_intent_delete produces undeclared [303]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:dbt_intent_upsert produces undeclared [303]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:delete_search produces undeclared [303, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:deploy_complete produces undeclared [303]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:deploy_start produces undeclared [303]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:edit_search_form produces undeclared [303, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:list_searches produces undeclared [503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:toggle_search produces undeclared [303, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/admin.py:update_search produces undeclared [303, 404, 422, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
         "ops/routers/auth.py:auth_check produces undeclared [403, 503]",
         "G21", 162, date(2026, 9, 8),
     ),
@@ -5086,30 +5041,6 @@ DECLARED_CODE_WAIVERS: tuple[Waiver, ...] = (
     Waiver(
         "ops/routers/snapshots.py:get_snapshot_manifest"
         " produces undeclared [400, 401, 403, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/users.py:approve_access_request produces undeclared [303, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/users.py:change_user_role produces undeclared [303, 400, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/users.py:deny_access_request produces undeclared [303, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/users.py:request_access_form produces undeclared [303]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/users.py:revoke_user produces undeclared [303, 404, 503]",
-        "G21", 162, date(2026, 9, 8),
-    ),
-    Waiver(
-        "ops/routers/users.py:submit_access_request produces undeclared [303, 400, 503]",
         "G21", 162, date(2026, 9, 8),
     ),
     Waiver(

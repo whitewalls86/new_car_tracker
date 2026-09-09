@@ -86,7 +86,13 @@ def _not_found_response(request: Request, message: str):
 # Search config list
 # ---------------------------------------------------------------------------
 
-@router.get("/searches/", response_class=HTMLResponse)
+@router.get(
+    "/searches/",
+    response_class=HTMLResponse,
+    responses={
+        503: {"description": "Database unavailable."},
+    },
+)
 def list_searches(request: Request):
     sql = SELECT_SEARCH_CONFIGS
     
@@ -198,7 +204,13 @@ def dbt_trigger(
     })
 
 
-@router.post("/dbt/intents", response_class=HTMLResponse)
+@router.post(
+    "/dbt/intents",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Intent submitted; redirect to the dbt panel."},
+    },
+)
 def dbt_intent_upsert(
     request: Request,
     intent_name: str = Form(...),
@@ -218,7 +230,13 @@ def dbt_intent_upsert(
     return RedirectResponse(url="/admin/dbt", status_code=303)
 
 
-@router.post("/dbt/intents/{intent_name}/delete", response_class=HTMLResponse)
+@router.post(
+    "/dbt/intents/{intent_name}/delete",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Delete submitted; redirect to the dbt panel."},
+    },
+)
 def dbt_intent_delete(request: Request, intent_name: str):
     try:
         http_requests.delete(f"{DBT_RUNNER_URL}/dbt/intents/{intent_name}", timeout=5)
@@ -302,13 +320,25 @@ def deploy_panel(request: Request):
     })
 
 
-@router.post("/deploy/start", response_class=HTMLResponse)
+@router.post(
+    "/deploy/start",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Intent requested; redirect to the deploy panel."},
+    },
+)
 def deploy_start(request: Request):
     _set_intent("Admin UI")
     return RedirectResponse(url="/admin/deploy", status_code=303)
 
 
-@router.post("/deploy/complete", response_class=HTMLResponse)
+@router.post(
+    "/deploy/complete",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Release requested; redirect to the deploy panel."},
+    },
+)
 def deploy_complete(request: Request):
     _intent_release()
     return RedirectResponse(url="/admin/deploy", status_code=303)
@@ -318,7 +348,14 @@ def deploy_complete(request: Request):
 # Edit config form
 # ---------------------------------------------------------------------------
 
-@router.get("/searches/{search_key}/edit", response_class=HTMLResponse)
+@router.get(
+    "/searches/{search_key}/edit",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "No such search config; redirect to the list."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def edit_search_form(request: Request, search_key: str):
 
     sql = SELECT_SEARCH_CONFIG_BY_KEY
@@ -349,7 +386,15 @@ def edit_search_form(request: Request, search_key: str):
 # Create config (form POST)
 # ---------------------------------------------------------------------------
 
-@router.post("/searches/", response_class=HTMLResponse)
+@router.post(
+    "/searches/",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Created; redirect to the search list."},
+        422: {"description": "The submitted form is not a valid search config."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def create_search(
     request: Request,
     search_key: str = Form(...),
@@ -437,7 +482,16 @@ def create_search(
 # Update config (form POST)
 # ---------------------------------------------------------------------------
 
-@router.post("/searches/{search_key}", response_class=HTMLResponse)
+@router.post(
+    "/searches/{search_key}",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Change applied; redirect to the search list."},
+        404: {"description": "No search config with that key; nothing was changed."},
+        422: {"description": "The submitted form is not a valid search config."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def update_search(
     request: Request,
     search_key: str,
@@ -516,7 +570,14 @@ def update_search(
 # Toggle enable/disable
 # ---------------------------------------------------------------------------
 
-@router.post("/searches/{search_key}/toggle")
+@router.post(
+    "/searches/{search_key}/toggle",
+    responses={
+        303: {"description": "Change applied; redirect to the search list."},
+        404: {"description": "No search config with that key; nothing was changed."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def toggle_search(request: Request, search_key: str):
 
     sql = TOGGLE_SEARCH_CONFIG_ENABLED
@@ -539,7 +600,14 @@ def toggle_search(request: Request, search_key: str):
 # Delete (soft — disable + rename to prevent key reuse conflicts)
 # ---------------------------------------------------------------------------
 
-@router.post("/searches/{search_key}/delete")
+@router.post(
+    "/searches/{search_key}/delete",
+    responses={
+        303: {"description": "Change applied; redirect to the search list."},
+        404: {"description": "No search config with that key; nothing was changed."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def delete_search(request: Request, search_key: str):
     deleted_key = f"_deleted_{search_key}_{int(datetime.now(UTC).timestamp())}"
 
