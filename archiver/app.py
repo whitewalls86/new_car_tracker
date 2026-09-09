@@ -234,7 +234,12 @@ def trigger_flush_silver() -> Dict[str, Any]:
         return result
 
 
-@app.post("/compact/silver/run")
+@app.post(
+    "/compact/silver/run",
+    responses={
+        500: {"description": "The run aborted; the summary is the detail."},
+    },
+)
 def trigger_compact_silver() -> Dict[str, Any]:
     """Compact silver_normalized/observations partitions (Airflow DAG trigger).
 
@@ -388,7 +393,14 @@ def _require_pack_worker() -> None:
     )
 
 
-@app.post("/pack/bronze/run")
+@app.post(
+    "/pack/bronze/run",
+    responses={
+        400: {"description": "The request arguments are not usable."},
+        409: {"description": "Another run of this job is already in flight."},
+        500: {"description": "The run aborted; the summary is the detail."},
+    },
+)
 def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).
 
@@ -437,7 +449,14 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
         return result
 
 
-@app.post("/pack/bronze/prune")
+@app.post(
+    "/pack/bronze/prune",
+    responses={
+        400: {"description": "The request arguments are not usable."},
+        409: {"description": "Another run of this job is already in flight."},
+        500: {"description": "The run aborted; the summary is the detail."},
+    },
+)
 def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Delete bronze HTML objects that are inside a verified pack (Plan 131 Stage 4).
 
@@ -487,7 +506,13 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
         return result
 
 
-@app.post("/pack/bronze/verify")
+@app.post(
+    "/pack/bronze/verify",
+    responses={
+        400: {"description": "The request arguments are not usable."},
+        500: {"description": "The run aborted; the summary is the detail."},
+    },
+)
 def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Sample a packed month through the production read path (read-only).
 
@@ -562,7 +587,13 @@ def _require_disk_usage_host_mounts() -> None:
     )
 
 
-@app.post("/disk-usage/run")
+@app.post(
+    "/disk-usage/run",
+    responses={
+        409: {"description": "Another run of this job is already in flight."},
+        500: {"description": "The run aborted; the summary is the detail."},
+    },
+)
 def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Measure the disk watchlist and publish it via node-exporter (Plan 135 Stage 4).
 
@@ -587,7 +618,13 @@ def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
         return result
 
 
-@app.post("/snapshots/adaptive-refresh/run")
+@app.post(
+    "/snapshots/adaptive-refresh/run",
+    responses={
+        400: {"description": "The requested tier is not one this service exports."},
+        409: {"description": "Another run of this job is already in flight."},
+    },
+)
 def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Generate (or dry-run plan) a CI lake snapshot (Plan 120)."""
     with active_job():
@@ -664,7 +701,12 @@ def health():
     return {"ok": True}
 
 
-@app.get("/ready")
+@app.get(
+    "/ready",
+    responses={
+        503: {"description": "A dependency this service needs is not reachable."},
+    },
+)
 def ready():
     evidence = job_snapshot()
     result = {"ready": evidence["active_jobs"] == 0, **evidence}

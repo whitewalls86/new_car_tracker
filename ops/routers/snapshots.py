@@ -385,7 +385,16 @@ def _manifest_for_alias(
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/latest", dependencies=[Depends(require_snapshot_token("read"))])
+@router.get(
+    "/latest",
+    dependencies=[Depends(require_snapshot_token("read"))],
+    responses={
+        401: {"description": "No usable machine credential was presented."},
+        403: {"description": "The credential does not grant the scope this route needs."},
+        404: {"description": "No snapshot with that id."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def get_latest_snapshot() -> Dict[str, Any]:
     pointer = _read_json_safe(LATEST_KEY)
     if not pointer:
@@ -393,7 +402,17 @@ def get_latest_snapshot() -> Dict[str, Any]:
     return pointer
 
 
-@router.get("/{snapshot_id}", dependencies=[Depends(require_snapshot_token("read"))])
+@router.get(
+    "/{snapshot_id}",
+    dependencies=[Depends(require_snapshot_token("read"))],
+    responses={
+        400: {"description": "The snapshot id is not a well-formed identifier."},
+        401: {"description": "No usable machine credential was presented."},
+        403: {"description": "The credential does not grant the scope this route needs."},
+        404: {"description": "No snapshot with that id."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
     snapshot_id = _validate_snapshot_id(snapshot_id)
     alias = _resolve_alias(snapshot_id)
@@ -409,7 +428,17 @@ def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
     return _manifest_for_alias(snapshot_id, alias, manifest)
 
 
-@router.get("/{snapshot_id}/download", dependencies=[Depends(require_snapshot_token("read"))])
+@router.get(
+    "/{snapshot_id}/download",
+    dependencies=[Depends(require_snapshot_token("read"))],
+    responses={
+        400: {"description": "The snapshot id is not a well-formed identifier."},
+        401: {"description": "No usable machine credential was presented."},
+        403: {"description": "The credential does not grant the scope this route needs."},
+        404: {"description": "No snapshot with that id."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def download_snapshot_archive(snapshot_id: str) -> StreamingResponse:
     snapshot_id = _validate_snapshot_id(snapshot_id)
     alias = _resolve_alias(snapshot_id)

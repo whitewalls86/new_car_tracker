@@ -45,7 +45,13 @@ templates.env.globals["asset_url"] = asset_url
 _PUBLIC_METHODS = ["GET", "HEAD"]
 
 
-@router.api_route("/info", methods=_PUBLIC_METHODS)
+@router.api_route(
+    "/info",
+    methods=_PUBLIC_METHODS,
+    responses={
+        308: {"description": "Permanent redirect to the landing page at /."},
+    },
+)
 def info_redirect() -> RedirectResponse:
     """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
 

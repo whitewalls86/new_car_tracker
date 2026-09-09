@@ -231,7 +231,15 @@ def get_current_intent() -> Dict[str, Any]:
     return _intent_status()
 
 
-@router.post("/deploy/start")
+@router.post(
+    "/deploy/start",
+    responses={
+        409: {"description": "Deploy intent is already held."},
+        422: {"description": "The request is not a valid coordination request."},
+        500: {"description": "Postgres refused the write; the detail names why."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def start_deploy_intent(payload: dict = Body(default={})) -> bool:
     """Signals deploy intent to the system.
 
@@ -263,7 +271,14 @@ def start_deploy_intent(payload: dict = Body(default={})) -> bool:
         )
 
 
-@router.post("/deploy/complete")
+@router.post(
+    "/deploy/complete",
+    responses={
+        409: {"description": "Deploy intent is already held."},
+        500: {"description": "Postgres refused the write; the detail names why."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def complete_deployment() -> bool:
     """Releases the intent lock on the DB.
 

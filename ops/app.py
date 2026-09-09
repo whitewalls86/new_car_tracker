@@ -92,7 +92,12 @@ async def observer_readonly(request: Request, call_next) -> Response:
 # public landing page (``ops.routers.info``). Caddy never routed ``/`` here
 # before that stage -- the catch-all sent it to Streamlit -- so nothing external
 # was relying on the old behaviour. ``/admin`` keeps it.
-@app.get("/admin")
+@app.get(
+    "/admin",
+    responses={
+        307: {"description": "Redirect to the admin landing page."},
+    },
+)
 def root():
     return RedirectResponse(url="/admin/searches/")
 

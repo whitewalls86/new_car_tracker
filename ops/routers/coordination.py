@@ -540,7 +540,12 @@ def _authorize() -> tuple[str, dict[str, Any] | None]:
         return "error", None
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    responses={
+        503: {"description": "Database unavailable."},
+    },
+)
 def coordination_status() -> dict[str, Any]:
     return _status()
 
@@ -552,7 +557,15 @@ def local_drain_status() -> dict[str, Any]:
     return {"source": "ops_jobs", "known": True, **evidence}
 
 
-@router.post("/request")
+@router.post(
+    "/request",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        422: {"description": "The request is not a valid coordination request."},
+        500: {"description": "Postgres refused the write; the detail names why."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def request_coordination(payload: CoordinationRequest) -> dict[str, Any]:
     result, requested = _request(payload)
     if result == "ok" and isinstance(requested, dict):
@@ -568,7 +581,13 @@ def request_coordination(payload: CoordinationRequest) -> dict[str, Any]:
     )
 
 
-@router.post("/begin-drain")
+@router.post(
+    "/begin-drain",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def begin_coordination_drain() -> dict[str, str]:
     result = _transition("begin-drain")
     if result == "ok":
@@ -578,18 +597,35 @@ def begin_coordination_drain() -> dict[str, str]:
     raise HTTPException(status_code=503, detail="Database unavailable.")
 
 
-@router.get("/drain-status")
+@router.get(
+    "/drain-status",
+    responses={
+        503: {"description": "Database unavailable."},
+    },
+)
 def coordination_drain_status() -> dict[str, Any]:
     return collect_drain_status(_status())
 
 
-@router.get("/release-status")
+@router.get(
+    "/release-status",
+    responses={
+        503: {"description": "Database unavailable."},
+    },
+)
 def coordination_release_status() -> dict[str, Any]:
     """Expose the complete stack-release gate set without transitioning state."""
     return collect_release_status(_status())
 
 
-@router.post("/host-evidence")
+@router.post(
+    "/host-evidence",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        422: {"description": "The request is not a valid coordination request."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def submit_host_evidence(payload: HostEvidenceRequest) -> dict[str, Any]:
     """Store host validation proof without changing coordination state."""
     result, evidence = _submit_host_evidence(payload)
@@ -602,7 +638,13 @@ def submit_host_evidence(payload: HostEvidenceRequest) -> dict[str, Any]:
     raise HTTPException(status_code=503, detail="Host evidence could not be recorded.")
 
 
-@router.post("/complete")
+@router.post(
+    "/complete",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def complete_coordination(payload: CompletionRequest) -> dict[str, Any]:
     """End host maintenance only when both validation evidence halves pass."""
     result, completed = _complete(payload)
@@ -613,7 +655,13 @@ def complete_coordination(payload: CompletionRequest) -> dict[str, Any]:
     raise HTTPException(status_code=503, detail="Coordination could not be completed.")
 
 
-@router.post("/authorize")
+@router.post(
+    "/authorize",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def authorize_coordination() -> dict[str, Any]:
     result, evidence = _authorize()
     if result == "ok":
@@ -625,7 +673,13 @@ def authorize_coordination() -> dict[str, Any]:
     raise HTTPException(status_code=503, detail="Authorization evidence unavailable.")
 
 
-@router.post("/cancel")
+@router.post(
+    "/cancel",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def cancel_coordination() -> dict[str, str]:
     result = _cancel()
     if result == "ok":
@@ -635,7 +689,13 @@ def cancel_coordination() -> dict[str, str]:
     raise HTTPException(status_code=503, detail="Database unavailable.")
 
 
-@router.post("/begin-validation")
+@router.post(
+    "/begin-validation",
+    responses={
+        409: {"description": "The coordination row is not in the phase this operation requires."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def begin_coordination_validation() -> dict[str, str]:
     result = _transition("begin-validation")
     if result == "ok":
