@@ -23,27 +23,35 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     },
     {
-      "plan": "151",
-      "title": "Distributed tracing and runtime topology audit",
-      "order": 3,
-      "priority": 72,
-      "effort": "M",
-      "state": "planned",
-      "summary": "Runs a bounded experiment in watching requests move between services, to answer two questions with evidence: whether seeing the live dependency graph reveals anything the hand-written one misses, and whether it costs less than it is worth. The experiment is allowed to conclude no.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md"
-    },
-    {
       "plan": "125",
       "title": "DuckDB-to-Iceberg analytics migration",
-      "order": 4,
+      "order": 3,
       "priority": 81,
       "effort": "XL",
       "state": "planned",
       "summary": "The project's analytics tables live in one embedded database file that is also the only way to read them, so every dashboard and backtest is tied to a single engine and a single copy. Makes an open, versioned table format the canonical layer and reduces that file to a local cache.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_125_duckdb_to_iceberg_migration.md"
+    },
+    {
+      "plan": "177",
+      "title": "Service log emission",
+      "order": 4,
+      "priority": 80,
+      "effort": "M",
+      "state": "planned",
+      "summary": "Fixes what four services write to their logs, so the record answers the questions asked of it. The edge records no user-facing errors, the database no slow queries or lock waits, the health producer only its own web traffic — while a fourth floods 45 MB a day of routine proxy noise.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_177_service_log_emission.md"
     }
   ],
   "completed": [
+    {
+      "plan": "151",
+      "title": "Distributed tracing",
+      "date": "2026-09-08",
+      "state": "completed",
+      "summary": "Costed a system for watching requests move between services, then decided against building it: a much cheaper check that reads the project's own configuration files answers the same question, and found 62 undocumented connections between services on its first run.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md"
+    },
     {
       "plan": "173",
       "title": "Machine credential lifecycle",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "Rewrote the public site and its README from one checked contract, made the landing page the site's front door, and built generators that publish the roadmap and weekly recaps straight from source control, so the page follows the work instead of being updated by hand.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
-    },
-    {
-      "plan": "172",
-      "title": "The plan document contract",
-      "date": "2026-09-03",
-      "state": "completed",
-      "summary": "Plans had grown into documents answering four questions at once, with no rule for what belonged where or when evidence was written down. They now follow a contract: a plan gains one section as it advances, and automated checks refuse to publish work that skipped one.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_172_plan_authoring_skill.md"
     }
   ]
 }
