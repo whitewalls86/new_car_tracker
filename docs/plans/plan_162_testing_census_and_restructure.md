@@ -385,8 +385,8 @@ moved it to the end without making it a different stage.
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
-| 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `next` | CAR-104 |
-| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `—` | CAR-114 |
+| 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `done` | CAR-104 |
+| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `next` | CAR-114 |
 | 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
@@ -4380,6 +4380,16 @@ live waiver across the four G27 clauses and the phantom-422 ledger is a call int
 the dead `dbt_runner` admin panel -- five endpoints deleted in April and May with
 every caller left standing. Stage AA owns whether that panel is removed or the
 endpoints return, and all fourteen entries drain on that answer.
+
+**Deployed 2026-09-09**, in two commands: the five services sharing an image
+with a changed file at 13:44:23Z -- `pack-worker` among them because it shares
+`archiver`'s digest rather than because it changed -- and `ops` alone at
+13:49:19Z. All six healthy, and the loaded code read back from inside each
+container rather than inferred from the checkout.
+
+**Cost: estimated 2, actual 2.** The stage tripled its gap count while it ran and
+still landed on its estimate, which is worth recording precisely because a delta
+of zero is the evidence that the scale works.
 
 Measurements, recipes and the full table of rule bugs:
 [`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md).

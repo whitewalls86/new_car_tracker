@@ -340,6 +340,46 @@ admin routes and are waived to Stage AA. Two are permanent and carry no owner:
 moving that into `Path(pattern=...)` would turn a public page's *no such recap*
 into a validation error.
 
+## The rest of the stage in production
+
+**Deployed 2026-09-09** (timestamps UTC), through `scripts/redeploy.sh` in two
+commands, every pollable service healthy and deploy intent released each time.
+
+| Services | Recreated | Healthy after |
+|---|---|---|
+| `archiver` `pack-worker` `processing` `scraper` `dbt_runner` | 13:44:23Z | 9s |
+| `ops` | 13:49:19Z | 5s |
+
+**`pack-worker` is in the set because it shares the archiver image**, not because
+it changed: `docker inspect` reports digest `296f05fa…` for both containers, so
+leaving it out would have left it running the old code behind a service that had
+moved. `dashboard` is unchanged and correctly absent. `ops` goes last and alone
+because `redeploy.sh` drives coordination through the *currently running* ops.
+
+**The Airflow DAG changes needed no rebuild.** `airflow/dags` is a directory bind
+mount, so the two `raise_for_status()` calls on `mark_job_fetched` went live with
+the `git pull` that preceded the deploy.
+
+**Loaded code verified inside each container**, which a `git pull` does not
+establish:
+
+| Container | Read back from inside it |
+|---|---|
+| `ops` | 4 + 2 `raise_for_status` in `coordination_release.py` / `coordination_drain.py`; 10 `responses=` in `routers/coordination.py` |
+| `archiver` | 7 declared routes |
+| `dbt_runner` | 3 declared routes |
+| `scraper` | 3 declared routes |
+| `processing` | 1 declared route |
+| `pack-worker` | same image digest as `archiver` |
+
+**What is not yet observed.** The deploy is an hour old at the time of writing,
+and `scrape_detail_pages` has not been watched across a run under the new code.
+Its DAG now reads the status of `mark_job_fetched`, which answers 404 when the
+job is already gone — so a refusal that was silently swallowed will begin
+appearing as a logged warning. If it fires it is a finding rather than a
+regression, and it is the one claim in this stage with no production evidence
+behind it.
+
 ## What the stage could not close
 
 Every live waiver across all four G27 clauses and the phantom-422 ledger is a
