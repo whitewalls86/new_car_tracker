@@ -241,7 +241,12 @@ def _process_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
     return {"status": "skip", "reason": f"unknown artifact_type: {artifact_type}"}
 
 
-@router.post("/process/batch")
+@router.post(
+    "/process/batch",
+    responses={
+        503: {"description": "The queue could not be read; no artifacts were claimed."},
+    },
+)
 def process_batch(
     batch_size: int = Query(default=50, ge=1, le=2500),
     artifact_type: Optional[str] = Query(default=None),

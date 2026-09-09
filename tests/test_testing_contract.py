@@ -3690,6 +3690,1573 @@ def test_every_asserted_rule_names_a_real_test():
 
 
 # ---------------------------------------------------------------------------
+# Rule 10 -- a handler observes the mutation it performs.
+# ---------------------------------------------------------------------------
+# Plan 162 Stage Y found this by writing the stage above it. `toggle_search`
+# executed `UPDATE search_configs ... WHERE search_key = %s`, never read
+# `rowcount`, and returned 303 unconditionally: one code declared, one code
+# produced, declared equals produced -- and it reported success whether the key
+# existed or not. The route rule passes it. The response rule passes it. What
+# nothing asked was whether the work happened.
+#
+# **The scope is a WHERE-bearing UPDATE or DELETE**, because that is the shape
+# where "no rows matched" is a different outcome from "one row matched" and only
+# the caller can say which one the client should hear about. An INSERT that
+# raises on conflict needs no rowcount, and a statement with no WHERE addresses a
+# set rather than a row.
+#
+# **There is no waiver ledger, and that is deliberate.** One landed with
+# `scripts/check_sql_execution_coverage.py` shaped like the `*_WAIVERS` tuples
+# and was deleted rather than kept empty, with the argument recorded in
+# `docs/TESTING.md`: an empty ledger and no ledger differ in exactly one way --
+# what the next violation costs to repair. With a ledger that is a tuple append;
+# without one it is a repair, and restoring the escape hatch is a diff that has
+# to argue for itself. Thirteen sites were measured and all thirteen resolved,
+# so there is nothing to grandfather.
+_MUTATING_VERB = re.compile(r"\b(?:UPDATE|DELETE\s+FROM)\b", re.I)
+_SQL_WHERE = re.compile(r"\bWHERE\b", re.I)
+_SQL_RETURNING = re.compile(r"\bRETURNING\b", re.I)
+_SQL_LINE_COMMENT = re.compile(r"--.*")
+_CURSOR_READS = frozenset({"fetchone", "fetchall", "fetchmany"})
+_SQL_EXECUTING_CALLS = frozenset({"execute", "executemany", "execute_values"})
+
+
+@lru_cache(maxsize=None)
+def mutating_statements() -> dict[str, bool]:
+    """Each mutating ``.sql`` path -> whether it carries ``RETURNING``.
+
+    Derived from :func:`production_sql_files`, so it inherits that corpus's
+    exemptions rather than deciding its own. Comments are stripped first:
+    several of these files explain their own ``WHERE`` at length, and one of
+    them says the word ``RETURNING`` in prose.
+    """
+    found: dict[str, bool] = {}
+    for relative in production_sql_files():
+        body = _SQL_LINE_COMMENT.sub("", _read(relative))
+        if _MUTATING_VERB.search(body) and _SQL_WHERE.search(body):
+            found[relative] = bool(_SQL_RETURNING.search(body))
+    return found
+
+
+@lru_cache(maxsize=None)
+def query_constants() -> dict[str, str]:
+    """``CONSTANT`` -> the ``.sql`` path it loads, as ``load_query`` resolves it.
+
+    Parsed rather than pattern-matched, because the re-exports wrap: three of
+    them are ``NAME = (\\n    shared_queries.NAME\\n)`` and a line-oriented read
+    sees an assignment with no value. ``shared/queries.py`` is resolved first so
+    the services that re-export from it resolve too.
+    """
+    modules = [
+        path for path in REPO_ROOT.rglob("queries.py")
+        if "__pycache__" not in path.parts
+        and not path.relative_to(REPO_ROOT).as_posix().startswith("tests/")
+    ]
+    modules.sort(key=lambda p: p.parent.name != "shared")
+
+    constants: dict[str, str] = {}
+    for module in modules:
+        sql_dir = (module.parent / "sql").relative_to(REPO_ROOT).as_posix()
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if not targets:
+                continue
+            value = node.value
+            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                    and value.func.id == "_q" and value.args
+                    and isinstance(value.args[0], ast.Constant)):
+                path = f"{sql_dir}/{value.args[0].value}.sql"
+            elif (isinstance(value, ast.Attribute)
+                  and isinstance(value.value, ast.Name)
+                  and value.value.id == "shared_queries"
+                  and value.attr in constants):
+                path = constants[value.attr]
+            else:
+                continue
+            for name in targets:
+                constants[name] = path
+    return constants
+
+
+def _names_bound_from(function: ast.AST, attribute: str) -> set[str]:
+    """``x`` for every ``x = <anything>.attribute`` in *function*."""
+    bound = set()
+    for node in ast.walk(function):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute)
+                and node.value.attr == attribute):
+            bound |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+    return bound
+
+
+def _names_bound_from_a_read(function: ast.AST) -> dict[str, int]:
+    """``x`` -> line, for every ``x = cur.fetchone()`` and its kin."""
+    bound: dict[str, int] = {}
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign):
+            continue
+        call = node.value
+        if isinstance(call, ast.ListComp):
+            call = call.generators[0].iter if call.generators else None
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr in _CURSOR_READS):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bound[target.id] = node.lineno
+    return bound
+
+
+def _outcome_subtrees(function: ast.AST):
+    """Every expression a function's behaviour actually turns on.
+
+    An ``If`` contributes its **test** only. A name appearing inside a branch it
+    did not choose is not the branch being taken on it, and crediting that is
+    how a rule starts passing things it should not.
+    """
+    for node in ast.walk(function):
+        if isinstance(node, ast.If):
+            yield node.test
+        elif isinstance(node, (ast.Return, ast.Raise)):
+            yield node
+        elif isinstance(node, ast.Dict):
+            yield from node.values
+
+
+def _observes_rowcount(function: ast.AST) -> bool:
+    """Does ``rowcount`` reach a branch, a raise, or something returned?
+
+    Both spellings, because both are in the tree: `revoke_user` binds it
+    (``matched = cur.rowcount``) and `_set_status` reads it in place
+    (``if not cur.rowcount:``). Reading only the binding form reported six
+    compliant functions as violations the first time this rule ran.
+    """
+    bound = _names_bound_from(function, "rowcount")
+    for subtree in _outcome_subtrees(function):
+        for child in ast.walk(subtree):
+            if isinstance(child, ast.Attribute) and child.attr == "rowcount":
+                return True
+            if isinstance(child, ast.Name) and child.id in bound:
+                return True
+    return False
+
+
+def _reaches_an_outcome(function: ast.AST, names: set[str]) -> bool:
+    """Does one of *names* reach a branch, a raise, or something returned?
+
+    **This is the clause that stops the rule being satisfiable by a dead
+    assignment.** ``matched = cur.rowcount`` followed by nothing reads the
+    rowcount and changes no behaviour, which is `assert True` wearing a
+    different hat -- and this stage exists because of an assertion that could
+    not fail. An ``If`` is searched by its **test** only, so a name that merely
+    appears inside a branch it did not choose does not count.
+    """
+    if not names:
+        return False
+    for node in ast.walk(function):
+        if isinstance(node, ast.If):
+            subtrees = [node.test]
+        elif isinstance(node, (ast.Return, ast.Raise)):
+            subtrees = [node]
+        elif isinstance(node, ast.Dict):
+            subtrees = list(node.values)
+        else:
+            continue
+        for subtree in subtrees:
+            for child in ast.walk(subtree):
+                if isinstance(child, ast.Name) and child.id in names:
+                    return True
+    return False
+
+
+def _is_gated_by_an_earlier_read(function: ast.AST, before: int) -> bool:
+    """Did a read *before* line ``before`` establish the row and gate on it?
+
+    The third way a mutation can be observed, and the reason `advance_rotation`
+    and `_reap_stuck_processing` needed no repair: the row's existence is
+    settled by a ``SELECT`` whose result the function then branches on or
+    iterates, so a mutation keyed on that row cannot match nothing.
+
+    **Scoped to one function on purpose.** `_record_last_used` was correct by a
+    gate three early-returns up in its caller, which no reading of this function
+    could have seen -- so Stage Y moved the write next to the gate rather than
+    teaching this rule to walk the call graph. A checker that follows callers is
+    a checker that can be silently wrong, which is the thing being repaired.
+    """
+    reads = {name: line for name, line in _names_bound_from_a_read(function).items()
+             if line < before}
+    if not reads:
+        return False
+    for node in ast.walk(function):
+        if isinstance(node, ast.If):
+            gate_returns = any(
+                isinstance(child, (ast.Return, ast.Raise))
+                for child in ast.walk(node)
+            )
+            names_in_test = {
+                child.id for child in ast.walk(node.test)
+                if isinstance(child, ast.Name)
+            }
+            if gate_returns and names_in_test & set(reads):
+                return True
+        if isinstance(node, ast.For):
+            for child in ast.walk(node.iter):
+                if isinstance(child, ast.Name) and child.id in reads:
+                    return True
+    return False
+
+
+def _unobserved_mutations(path: Path) -> list[str]:
+    """``file:function`` for every mutation this module performs and ignores."""
+    statements = mutating_statements()
+    constants = query_constants()
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        # Keyed on the statement being *named*, never on where it is executed.
+        # `ops/routers/admin.py` binds it first -- `sql = TOGGLE_SEARCH_CONFIG_
+        # ENABLED` then `cur.execute(sql, params)` -- so a rule reading the
+        # execute call's arguments does not see those three handlers at all.
+        # The first draft of this rule did exactly that and reported them
+        # compliant; the mutation below caught it. It is G5's finding again: a
+        # rule keyed on the call site is escapable by not using the call site.
+        executed = [
+            (node.lineno, statements[constants[node.id]])
+            for node in ast.walk(function)
+            if isinstance(node, ast.Name) and constants.get(node.id) in statements
+        ]
+        if not executed:
+            continue
+
+        # A function that names a statement but executes nothing has handed it
+        # to somebody else -- `expire_orphan_detail_claims` is
+        # `return _run_maintenance_query(EXPIRE_ORPHAN_DETAIL_CLAIMS, ())`, and
+        # the helper reads the RETURNING rows and counts them. Delegation is
+        # observed when the delegate's answer is what this function returns; a
+        # result thrown away is not, and still fails.
+        executes = any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _SQL_EXECUTING_CALLS
+            for node in ast.walk(function)
+        )
+        if not executes:
+            delegated = any(
+                isinstance(child, ast.Name) and constants.get(child.id) in statements
+                for node in ast.walk(function)
+                if isinstance(node, ast.Return)
+                for child in ast.walk(node)
+            )
+            if delegated:
+                continue
+        observes_rowcount = _observes_rowcount(function)
+        reads_a_result = any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _CURSOR_READS
+            for node in ast.walk(function)
+        )
+        for line, has_returning in executed:
+            if observes_rowcount:
+                continue
+            if has_returning and reads_a_result:
+                continue
+            if _is_gated_by_an_earlier_read(function, line):
+                continue
+            found.append(f"{relative}:{function.name}")
+    return sorted(set(found))
+
+
+def test_every_mutation_observes_whether_it_changed_anything():
+    """A route that reports success for work it did not do is the whole of G27.
+
+    Three ways to satisfy it, and all three were found in the repository rather
+    than invented for it: read ``rowcount`` and let it reach an outcome, take
+    ``RETURNING`` and read the result, or settle the row with a read this
+    function already branches on. Eight sites were repaired, five already
+    complied, and one was restructured so its gate and its write share a frame.
+
+    What this cannot see is a mutation whose guard lives in another function.
+    That is stated rather than papered over: `_record_last_used` was moved for
+    exactly this reason, and a rule that chased it into its caller would be a
+    dataflow analysis that fails quietly, which is worse than one that fails.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_unobserved_mutations(path))
+
+    assert not found, (
+        "these functions execute a WHERE-bearing UPDATE or DELETE and never "
+        "learn whether it matched anything, so they answer the same way when "
+        "it did not:\n  " + "\n  ".join(sorted(found)) +
+        "\n\nRead cur.rowcount and branch on it, take RETURNING and read the "
+        "result, or gate the write on a read in the same function. There is no "
+        "waiver list for this rule and adding one is a decision, not a fix."
+    )
+
+
+def test_the_mutation_corpus_is_not_empty():
+    """A set difference over an empty corpus is empty, and reads as compliance.
+
+    The same floor `test_the_production_sql_corpus_is_not_empty` puts under the
+    coverage numbers. A glob that stops matching, or a `queries.py` that stops
+    being parsed, would silently retire the rule above.
+    """
+    statements = mutating_statements()
+    assert len(statements) >= 30, (
+        f"only {len(statements)} mutating statements found; the rule above is "
+        f"measuring almost nothing. Check production_sql_files() and the "
+        f"UPDATE/DELETE pattern before trusting a green run."
+    )
+    constants = query_constants()
+    resolved = {name for name, path in constants.items() if path in statements}
+    assert len(resolved) >= 20, (
+        f"only {len(resolved)} constants resolve to a mutating statement, out "
+        f"of {len(constants)} parsed. query_constants() has stopped following "
+        f"how load_query resolves a name."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 10b -- a swallowed write changes what the caller is told.
+# ---------------------------------------------------------------------------
+# The other half of G27, and the same defect arriving a second way. A mutation
+# can go unobserved because nobody read its rowcount, or because an exception
+# ate it and the handler carried on to the success path it would have reached
+# anyway. `revoke_user` had both: no row matched *and* a raising DELETE were
+# each reported to the admin as a successful revocation.
+#
+# **A swallowed read is not this.** It gives the caller less data, and an empty
+# page or a missing field is visible. A swallowed *write* gives the caller a
+# success message for work that did not happen, and
+# `scraper/processors/scrape_detail.py:196` is the control case for the
+# difference: it swallows a MinIO write and binds `minio_write_error` into the
+# artifact it returns, so the caller can tell. That is the shape this rule asks
+# for, and it was already in the tree.
+#
+# **Scoped to route handlers**, because the rule is about what a route tells its
+# client. A helper that swallows and returns nothing tells nobody anything --
+# `ops/routers/snapshots.py` swallows its `last_used_at` write deliberately, and
+# Plan 173 argues it in prose: a credential that has already authenticated must
+# not be refused because its bookkeeping failed. Distinguishing *the operation*
+# from *bookkeeping incidental to it* is a judgement no AST can make, so the
+# rule asks the question only where a response exists to be wrong.
+SWALLOWED_WRITE_WAIVERS: tuple[Waiver, ...] = (
+    # Both call `dbt_runner` endpoints that were deleted in April and May
+    # (9f08336, d88a41e), swallow the failure with a bare `except Exception:
+    # pass`, and return the same 303 they would on success -- which is why the
+    # admin dbt panel has done nothing since April without reporting it.
+    #
+    # **Waived rather than repaired, and unlike the rowcount clause above this
+    # one needs a ledger.** There the thirteen sites all resolved and an empty
+    # list was deleted; here two violations are genuinely outstanding and their
+    # repair is not this stage's to make: whether the intent UI is deleted or
+    # `dbt_runner` regains the endpoints is the same decision as what the
+    # repaired test asserts, and Stage AA owns it. A waiver with a named owner
+    # is exactly the object for that, and it dies when Plan 162 archives.
+    Waiver("ops/routers/admin.py:dbt_intent_upsert", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
+)
+
+_HTTP_WRITE_VERBS = frozenset({"post", "put", "patch", "delete"})
+
+
+def _route_decorated(function: ast.AST) -> bool:
+    """Is this function registered as a route?
+
+    Reads the decorator rather than the app's routing table on purpose: this
+    rule is about the shape of the source, and importing six FastAPI apps to
+    answer a question the decorator already answers is the harness deciding
+    another test's outcome.
+    """
+    return any(
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr in _HTTP_VERBS | {"api_route"}
+        for decorator in getattr(function, "decorator_list", [])
+    )
+
+
+def _performs_a_write(block: list[ast.stmt]) -> bool:
+    """Does this ``try`` body mutate anything -- our database or someone else's?"""
+    module = ast.Module(body=block, type_ignores=[])
+    constants = query_constants()
+    statements = mutating_statements()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name):
+            path = constants.get(node.id)
+            if path in statements:
+                return True
+    for node in ast.walk(module):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _HTTP_WRITE_VERBS):
+            return True
+    return False
+
+
+def _handler_exits(block: list[ast.stmt]) -> bool:
+    module = ast.Module(body=block, type_ignores=[])
+    return any(
+        isinstance(node, (ast.Return, ast.Raise)) for node in ast.walk(module)
+    )
+
+
+def _silently_swallowed_writes(path: Path) -> list[str]:
+    """``file:handler`` for each route handler that eats a failed write."""
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _route_decorated(function):
+            continue
+
+        returned = {
+            child.id
+            for node in ast.walk(function) if isinstance(node, ast.Return)
+            for child in ast.walk(node) if isinstance(child, ast.Name)
+        }
+        for attempt in [n for n in ast.walk(function) if isinstance(n, ast.Try)]:
+            if not _performs_a_write(attempt.body):
+                continue
+            for handler in attempt.handlers:
+                if _handler_exits(handler.body):
+                    continue
+                bound = {
+                    target.id
+                    for node in ast.walk(ast.Module(body=handler.body,
+                                                    type_ignores=[]))
+                    if isinstance(node, ast.Assign)
+                    for target in node.targets if isinstance(target, ast.Name)
+                }
+                if bound & returned:
+                    continue
+                found.append(f"{relative}:{function.name}")
+    return sorted(set(found))
+
+
+def test_no_route_swallows_a_failed_write_and_reports_success():
+    """The second half of the same defect: the write failed and nobody said so.
+
+    Satisfied three ways, and the first two are already how most of the tree
+    behaves: return or raise from the handler, or bind something in the
+    ``except`` that the response carries. Only falling through to the success
+    path with nothing recorded fails.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_silently_swallowed_writes(path))
+
+    _assert_exactly(
+        found,
+        SWALLOWED_WRITE_WAIVERS,
+        "A route handler swallowed a failed write and answered exactly as it "
+        "would have on success.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 10c -- an outcome that came back is not thrown away.
+# ---------------------------------------------------------------------------
+# G27's third clause. The first two ask whether a handler noticed what its own
+# statement did; this asks whether it noticed what something else told it.
+#
+# `_set_intent` returns five statuses -- ok, locked, invalid, unavailable
+# (Postgres unreachable) and error (Postgres refused the write, with a reason) --
+# and `ops/routers/admin.py`'s deploy buttons call it as a bare statement and
+# redirect 303. Clicking **Start deploy** in the admin panel gives the same page
+# whether intent was taken, was already held by somebody else, or the database
+# was down. `_intent_release`'s own docstring records the near miss: it returned
+# a bare `bool` until Plan 162 Stage K "collapsing five outcomes into False" --
+# Stage K widened the signal and the caller never started reading it.
+#
+# **What counts as an outcome type is derived from its shape, not its name**,
+# and the difference is load-bearing here. `MaterializationResult` ends in
+# `Result` and carries no outcome -- it is a data carrier, and discarding one
+# would be legitimate. `CandidateSet` and `PresentationSnapshot` do not end in
+# `Result` and both carry `status` and `error`. A rule keyed on the suffix
+# would have both of those backwards.
+#
+# **Scope is why this is narrow enough to be worth having.** 452 functions here
+# carry a non-None return annotation and 17 call sites discard one -- but almost
+# all of those are correct: `flush()` returning a bool, `write_json()` returning
+# the path it wrote, a cache `refresh()`. Requiring every annotated return to be
+# consumed would fail fifteen sound call sites to catch two. Requiring it only
+# of a value whose whole purpose is to report an outcome fails none of them.
+_OUTCOME_FIELDS = frozenset({"status", "ok", "error", "detail", "failure_reason"})
+
+
+@lru_cache(maxsize=None)
+def outcome_types() -> frozenset[str]:
+    """Classes defined here that exist to report how something went.
+
+    A class with a ``status``, ``ok``, ``error``, ``detail`` or
+    ``failure_reason`` field is answering "what happened", and dropping one on
+    the floor drops the answer. Derived by walking annotated class bodies, so a
+    new result type is covered the day it is written rather than when somebody
+    remembers to add it to a list.
+    """
+    found = set()
+    for path in production_python_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            fields = {
+                statement.target.id
+                for statement in node.body
+                if isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+            }
+            if fields & _OUTCOME_FIELDS:
+                found.add(node.name)
+    return frozenset(found)
+
+
+@lru_cache(maxsize=None)
+def outcome_returning_functions() -> frozenset[str]:
+    """Functions annotated as returning one of :func:`outcome_types`."""
+    outcomes = outcome_types()
+    found = set()
+    for path in production_python_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.returns is not None and ast.unparse(node.returns) in outcomes:
+                found.add(node.name)
+    return frozenset(found)
+
+
+def _discarded_outcomes(path: Path) -> list[str]:
+    """``file:line:caller -> callee()`` for each outcome dropped on the floor."""
+    producers = outcome_returning_functions()
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(function):
+            # A call in statement position -- its value goes nowhere at all.
+            if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+                continue
+            # A **free function** only, never a method. A free function's
+            # return value is its only channel; a method has a receiver to
+            # record in, and `public_stats_cache.refresh()` does exactly that --
+            # it stores the snapshot on `self` and logs its own failure, so the
+            # caller discarding it discards nothing. Flagging it would be the
+            # rule failing on correct code.
+            if not isinstance(node.value.func, ast.Name):
+                continue
+            callee = node.value.func.id
+            if callee in producers:
+                found.append(f"{relative}:{function.name} -> {callee}()")
+    return sorted(found)
+
+
+DISCARDED_OUTCOME_WAIVERS: tuple[Waiver, ...] = (
+    # Both are the legacy deploy buttons, and both predate the redeploy work
+    # that made them redundant: `scripts/redeploy.sh` drives drain,
+    # authorization and release through the coordination API, and these two
+    # never moved with it. They are the same neglected-surface class as the
+    # `dbt_intent_*` handlers beside them, and Stage AA owns what replaces them
+    # -- so they are waived here rather than repaired into a shape nobody wants
+    # to keep.
+    Waiver("ops/routers/admin.py:deploy_start -> _set_intent()",
+           "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:deploy_complete -> _intent_release()",
+           "G27", 162, date(2026, 9, 8)),
+)
+
+
+def test_no_caller_discards_an_outcome_it_asked_for():
+    """A five-valued answer thrown away answers nothing.
+
+    The rule that would have caught `deploy_start` -- and the reason it is worth
+    having with its violations already known is that both were found by
+    accident, one chasing a phantom 422 and one chasing a path-matching tie.
+    Neither was found by looking, and the next one should not have to be.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_discarded_outcomes(path))
+
+    _assert_exactly(
+        found,
+        DISCARDED_OUTCOME_WAIVERS,
+        "These calls returned a value describing how the work went, and the "
+        "caller discarded it.",
+    )
+
+
+def test_the_outcome_type_corpus_is_not_empty():
+    """A rule over an empty set of types is a rule about nothing."""
+    types_found = outcome_types()
+    assert len(types_found) >= 4, (
+        f"only {sorted(types_found)} look like outcome types; the rule above "
+        f"is measuring almost nothing. Check that production_python_files() "
+        f"still resolves and that annotated class bodies are being read."
+    )
+    producers = outcome_returning_functions()
+    assert producers, (
+        f"no function is annotated as returning one of {sorted(types_found)}, "
+        f"so nothing can be discarded and the rule above cannot fail."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 10d -- a response we asked for has its status read.
+# ---------------------------------------------------------------------------
+# G27's fourth clause, and the one that reaches across a service boundary. The
+# first three ask whether a handler noticed what happened locally; this asks
+# whether it noticed what the other end said.
+#
+# **This rule was nearly written with an escape clause, and the escape clause
+# was the bug.** Six helpers in `ops/coordination_drain.py` and
+# `ops/coordination_release.py` never read the status and were nonetheless
+# correct: each subscripts the parsed payload immediately, so an error body
+# raises `KeyError` into a handler that returns an `unknown` verdict. The first
+# draft of this rule credited that pattern -- "the shape check subsumes the
+# status check" -- which is an inference, and one inference away from crediting
+# a 200 that happens to parse. **The conforming code was changed instead**, and
+# the change was free: `HTTPError` subclasses `RequestException`, which those
+# gates already catch and already turn into `unknown`, so behaviour is identical
+# and the rule has no clause that can be wrong.
+#
+# That is the trade this rule records: six explicit checks in working code, in
+# exchange for a rule that states one thing and cannot be argued around.
+_RESPONSE_INSPECTIONS = frozenset({"status_code", "raise_for_status", "ok"})
+_OUTBOUND_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head"})
+
+
+def _is_outbound_call(node: ast.AST) -> bool:
+    """A call through a ``requests``-shaped client, rather than a local method.
+
+    Keyed on the receiver's name containing ``request``, which covers
+    ``requests.get`` and this repository's ``http_requests`` alias, and excludes
+    the ``cur.get``/``client.get`` shapes that are not HTTP at all.
+    """
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    if node.func.attr not in _OUTBOUND_VERBS:
+        return False
+    receiver = node.func.value
+    name = getattr(receiver, "id", None) or getattr(receiver, "attr", "")
+    return "request" in str(name).lower()
+
+
+def _uninspected_responses(path: Path) -> list[str]:
+    """``file:line:function`` for each outbound call whose answer is not read."""
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        for node in ast.walk(function):
+            # The response is never even captured: nothing can read it later.
+            if isinstance(node, ast.Expr) and _is_outbound_call(node.value):
+                found.append(f"{relative}:{function.name}")
+                continue
+            if not (isinstance(node, ast.Assign) and _is_outbound_call(node.value)):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                inspected = any(
+                    isinstance(child, ast.Attribute)
+                    and child.attr in _RESPONSE_INSPECTIONS
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == target.id
+                    for child in ast.walk(function)
+                )
+                if not inspected:
+                    found.append(f"{relative}:{function.name}")
+    return sorted(set(found))
+
+
+UNINSPECTED_RESPONSE_WAIVERS: tuple[Waiver, ...] = (
+    # All five call `dbt_runner` endpoints that no longer exist -- `/dbt/lock`,
+    # `/dbt/intents` and `/logs`, deleted by 9f08336 and d88a41e -- so there is
+    # no status worth reading and no repair that is not first a decision about
+    # whether the admin dbt panel and log viewer survive at all. Stage AA owns
+    # that decision, and these leave with whichever answer it takes.
+    Waiver("ops/routers/admin.py:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:view_logs", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
+)
+
+
+def test_every_response_we_ask_for_has_its_status_read():
+    """Asking and not listening is not asking.
+
+    The waived six are all calls to endpoints that were deleted from
+    `dbt_runner` in April and May and never removed from their caller, which is
+    the defect this whole clause exists to make loud: they were found by
+    accident four and a half months later, and nothing in the suite had an
+    opinion about them the entire time.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_uninspected_responses(path))
+
+    _assert_exactly(
+        found,
+        UNINSPECTED_RESPONSE_WAIVERS,
+        "These calls went out to another service and the answer was never read.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 11 -- every status code a route can produce is asserted by a test.
+# ---------------------------------------------------------------------------
+# G28, and it is *Endpoint coverage* strengthened rather than a new rule. That
+# section says every route is reached "and the test asserts the status code" --
+# singular, and every vacuous 303 test in this repository satisfied it. What was
+# missing is a denominator: until Stage Y read the codes out of each handler,
+# "every code" could not be said.
+#
+# **Keyed on what a handler can produce, not on what it declares.** Declared and
+# produced are made equal by the rule above, so after the declarations land the
+# two readings are the same -- but produced is available now, and a rule keyed
+# on declarations would pass vacuously until every route is annotated.
+#
+# **The route is matched by the tail of its decorator path**, which is what lets
+# this run with no prefix reconstruction, no walk of `app.routes` and no
+# `operationId` parsing -- each of which has a way of being quietly wrong that
+# this does not. `@router.post("/searches/{key}/toggle")` is a suffix of the
+# `/admin/searches/x/toggle` a test requests, and the router prefix never has to
+# be recovered. Three things make it precise rather than approximate:
+#
+#   * a decorator path of only template segments is never matched, because
+#     `/{snapshot_id}` is a suffix of everything. Measured: without this, 99 of
+#     100 requested paths matched more than one handler; with it, 8.
+#   * the method must agree, which took 8 to 4.
+#   * where two handlers still match, the more literal one wins, as a router
+#     resolves -- and if they tie, the request counts for **neither**. An
+#     undetermined owner fails rather than being skipped, which is the rule Stage
+#     W established and Stage AA restates.
+_STATUS_ASSERTION = re.compile(r"status_code\s*(?:==|,)\s*(\d{3})")
+_RESPONSE_CLASSES = frozenset({
+    "Response", "JSONResponse", "PlainTextResponse", "HTMLResponse",
+    "FileResponse", "StreamingResponse", "RedirectResponse", "ORJSONResponse",
+})
+_REDIRECT_DEFAULT = 307
+
+
+def _parametrized_ints(function: ast.FunctionDef) -> set[int]:
+    """Every integer ``parametrize`` injects into *function*.
+
+    The int twin of :func:`_parametrized_strings`, and it exists because of a
+    concrete miss: `tests/ops/routers/test_coordination.py:156` asserts
+    ``status_code == status_code`` with the code injected, which a literal scan
+    reads as no assertion at all. Counting only literals put that suite's 409s
+    and 503s in the uncovered column when they are covered twice over.
+    """
+    found: set[int] = set()
+    for decorator in function.decorator_list:
+        if not (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "parametrize"
+            and len(decorator.args) >= 2
+        ):
+            continue
+        values_node = decorator.args[1]
+        if not isinstance(values_node, (ast.List, ast.Tuple)):
+            continue
+        for row in values_node.elts:
+            cells = row.elts if isinstance(row, (ast.Tuple, ast.List)) else [row]
+            for cell in cells:
+                if isinstance(cell, ast.Constant) and isinstance(cell.value, int) \
+                        and 100 <= cell.value <= 599:
+                    found.add(cell.value)
+    return found
+
+
+def _status_constant(node: ast.AST, constants: dict[str, int]) -> int | None:
+    """A status code written as a literal, a ``status.HTTP_*`` name, or a name."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Attribute):
+        match = re.match(r"HTTP_(\d{3})_", node.attr)
+        if match:
+            return int(match.group(1))
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    return None
+
+
+def _codes_at_call_sites(function: ast.AST, constants: dict[str, int]) -> set[int]:
+    """Codes named directly in *function*.
+
+    **Keyed on the ``status_code=`` keyword rather than on a list of response
+    classes.** The first draft enumerated `Response`, `JSONResponse` and their
+    kin and missed every code that reaches a client through
+    `templates.TemplateResponse(..., status_code=404)` -- which is how both of
+    this repository's admin routers answer -- so `toggle_search` read as
+    producing 303 and nothing else. An inventory of class names is escapable by
+    using a class the inventory has not heard of, which is the same failure G5
+    records for call-site names.
+    """
+    codes: set[int] = set()
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", getattr(node.func, "attr", None))
+        for keyword in node.keywords:
+            if keyword.arg == "status_code":
+                code = _status_constant(keyword.value, constants)
+                if code is not None:
+                    codes.add(code)
+        if name == "HTTPException" and node.args:
+            code = _status_constant(node.args[0], constants)
+            if code is not None:
+                codes.add(code)
+        if name == "RedirectResponse" and not any(
+            keyword.arg == "status_code" for keyword in node.keywords
+        ):
+            codes.add(_REDIRECT_DEFAULT)
+    return codes
+
+
+def _returns_a_bare_value(function: ast.AST) -> bool:
+    """Does any ``return`` hand back something FastAPI will serialise itself?
+
+    That is the only way the implicit success code is reachable. A handler whose
+    every return is a constructed response -- every admin form post, which
+    redirects 303 or renders an error page -- can never answer 200, and adding
+    it to the produced set demanded a test for a code the route cannot emit.
+    Sixteen findings on the first run, ten of them this.
+    """
+    for node in ast.walk(function):
+        if isinstance(node, ast.Return) and node.value is not None:
+            if not isinstance(node.value, ast.Call):
+                return True
+            name = getattr(node.value.func, "id",
+                           getattr(node.value.func, "attr", None))
+            if name and not (
+                name in _RESPONSE_CLASSES
+                or name.endswith("Response")
+                or name.endswith("_response")
+            ):
+                return True
+    return False
+
+
+@lru_cache(maxsize=None)
+def _module_functions(relative: str) -> dict[str, ast.AST]:
+    """Top-level functions of one module here, by name."""
+    path = REPO_ROOT / relative
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+    return {
+        node.name: node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _imported_helpers(module: ast.Module, path: Path) -> dict[str, ast.AST]:
+    """Functions this module imported from elsewhere in the repository.
+
+    **The trap this closes was latent, not live.** The four response helpers
+    that carry every admin route's 404 and 503 are duplicated inside
+    `admin.py` and `users.py`, so same-module resolution saw them. Deduplicating
+    them into one shared module is the obvious next refactor, and it would have
+    made a *new* handler's 503 invisible here -- the declaration would go
+    unwritten and nothing would say so. An existing one moving is safe by
+    accident, because the rule's other direction fires on the code it can no
+    longer see produced; it is new code that would slip.
+    """
+    here = path.relative_to(REPO_ROOT).parent
+    found: dict[str, ast.AST] = {}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if node.level:                      # `from .x import y`, `from ..x import y`
+            base = here
+            for _ in range(node.level - 1):
+                base = base.parent
+            target = base.joinpath(*node.module.split("."))
+        else:                               # `from ops.routers.x import y`
+            target = Path(*node.module.split("."))
+        for candidate in (f"{target.as_posix()}.py", f"{target.as_posix()}/__init__.py"):
+            functions = _module_functions(candidate)
+            if not functions:
+                continue
+            for alias in node.names:
+                if alias.name in functions:
+                    found[alias.asname or alias.name] = functions[alias.name]
+            break
+    return found
+
+
+def _produced_codes(
+    function: ast.AST, constants: dict[str, int], module: ast.Module, path: Path
+) -> set[int]:
+    """Every status code *function* can answer with, helpers included.
+
+    Resolved one level into same-module helpers, because that is where this
+    repository puts its error pages: `_not_found_response` and
+    `_db_error_response` carry the 404 and the 503 for every admin route that
+    has one. One level and no further -- a fixed point over the call graph is
+    the dataflow analysis G27 declined to build, and for the same reason.
+    """
+    helpers = {
+        node.name: node for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    helpers.update(_imported_helpers(module, path))
+    codes = _codes_at_call_sites(function, constants)
+    for node in ast.walk(function):
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, "id", None)
+            if name in helpers and helpers[name] is not function:
+                codes |= _codes_at_call_sites(helpers[name], constants)
+    return codes
+
+
+@lru_cache(maxsize=None)
+def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], ...]:
+    """``(service, file, function, decorator path, methods, produced codes)``."""
+    found = []
+    for service in sorted(service_packages()):
+        root = REPO_ROOT / service
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            constants = {
+                target.id: node.value.value
+                for node in tree.body if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, int)
+            }
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for decorator in function.decorator_list:
+                    if not (isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Attribute)):
+                        continue
+                    verb = decorator.func.attr
+                    if verb not in _HTTP_VERBS | {"api_route"}:
+                        continue
+                    if not (decorator.args and isinstance(decorator.args[0], ast.Constant)):
+                        continue
+                    methods = {verb.upper()} if verb in _HTTP_VERBS else set()
+                    declared_success = 200
+                    for keyword in decorator.keywords:
+                        if keyword.arg == "methods":
+                            if isinstance(keyword.value, ast.List):
+                                methods |= {
+                                    element.value.upper()
+                                    for element in keyword.value.elts
+                                    if isinstance(element, ast.Constant)
+                                }
+                            elif isinstance(keyword.value, ast.Name):
+                                # ``_PUBLIC_METHODS`` -- the one such constant here
+                                methods |= {"GET", "HEAD"}
+                        if keyword.arg == "status_code":
+                            resolved = _status_constant(keyword.value, constants)
+                            if resolved is not None:
+                                declared_success = resolved
+                    declared = set()
+                    for keyword in decorator.keywords:
+                        if keyword.arg == "status_code":
+                            resolved = _status_constant(keyword.value, constants)
+                            if resolved is not None:
+                                declared.add(resolved)
+                        if keyword.arg == "responses" and isinstance(
+                                keyword.value, ast.Dict):
+                            for key in keyword.value.keys:
+                                resolved = _status_constant(key, constants)
+                                if resolved is not None:
+                                    declared.add(resolved)
+                    codes = _produced_codes(function, constants, tree, path)
+                    if _returns_a_bare_value(function) or not codes:
+                        codes |= {declared_success}
+                    found.append((
+                        service, path.relative_to(REPO_ROOT).as_posix(),
+                        function.name, decorator.args[0].value,
+                        frozenset(methods), frozenset(codes),
+                        frozenset(declared), declared_success,
+                    ))
+    return tuple(found)
+
+
+def _literal_segments(path: str) -> list[str]:
+    return [s for s in path.strip("/").split("/") if s and not s.startswith("{")]
+
+
+def _matches_tail(decorator_path: str, requested: str) -> bool:
+    decorator = [s for s in decorator_path.strip("/").split("/") if s]
+    request = [s for s in requested.strip("/").split("/") if s]
+    if not decorator or len(decorator) > len(request):
+        return False
+    tail = request[len(request) - len(decorator):]
+    # A `*` stands for a segment a fixture supplied, so it matches a **template**
+    # segment through the first clause and nothing else. Letting it match a
+    # literal too was measured at 38 of 89 handlers going ambiguous -- 43% of the
+    # surface skipped while the rule reported four gaps and looked healthy.
+    return all(a.startswith("{") or a == b for a, b in zip(decorator, tail))
+
+
+def _resolve_request_path(
+    node: ast.AST, constants: dict[str, str], injected: dict[str, set[str]]
+) -> set[str]:
+    """Like :func:`_resolve_path`, but an unresolvable segment is a wildcard.
+
+    **Deliberately more permissive than the route-coverage rule, and only here.**
+    That rule fails closed because "named somewhere in tests/" is the weak
+    reading it exists to reject. This one is asking a different question -- which
+    handler a request reached -- and a segment built from a fixture is precisely
+    a path *parameter*: `api_client.post(f"/admin/searches/{key}/toggle")` with
+    `key` from a fixture is a request to `/searches/{search_key}/toggle` and
+    nothing else. Failing closed here silently uncounted three Layer 4 tests
+    written the same afternoon, which is the false negative that matters most:
+    a coverage rule that cannot see a test demands a second one.
+    """
+    if isinstance(node, ast.JoinedStr):
+        combined = {""}
+        for part in node.values:
+            if isinstance(part, ast.FormattedValue):
+                pieces = _resolve_request_path(part.value, constants, injected) or {"*"}
+            else:
+                pieces = _resolve_request_path(part, constants, injected)
+            if not pieces:
+                return set()
+            combined = {prefix + piece for prefix in combined for piece in pieces}
+        return combined
+    return _resolve_path(node, constants, injected)
+
+
+@lru_cache(maxsize=None)
+def asserted_status_codes() -> tuple[tuple[str | None, str, str, frozenset, bool], ...]:
+    """``(service hint, METHOD, path, codes, is real-engine)`` per request.
+
+    The last element is what lets the layer clause below ask a second question of
+    the same scan: a test under `tests/integration/` runs against a real Postgres,
+    and a code whose trigger is the database matching nothing cannot be produced
+    anywhere else.
+    """
+    found = []
+    for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
+        hint = next((s for s in service_packages() if s in path.parts), None)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        constants = _module_constants(tree)
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            source = ast.get_source_segment(
+                path.read_text(encoding="utf-8"), function) or ""
+            codes = {int(c) for c in _STATUS_ASSERTION.findall(source)}
+            codes |= _parametrized_ints(function)
+            if not codes:
+                continue
+            injected = _parametrized_strings(function)
+            for node in ast.walk(function):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in _HTTP_VERBS and node.args):
+                    continue
+                for requested in _resolve_request_path(
+                        node.args[0], constants, injected):
+                    if requested.startswith("/"):
+                        found.append((hint, node.func.attr.upper(),
+                                      requested.split("?")[0], frozenset(codes),
+                                      "integration" in path.parts))
+    return tuple(found)
+
+
+def _coverage(real_engine_only: bool = False) -> tuple[dict[str, set[int]], set[str]]:
+    """Per handler, the codes some test asserts for it -- and the ambiguous ones.
+
+    With *real_engine_only*, only tests under `tests/integration/` count, which
+    is what the layer clause asks.
+    """
+    covered: dict[str, set[int]] = {}
+    ambiguous: set[str] = set()
+    handlers = [h for h in route_handlers() if _literal_segments(h[3])]
+    for hint, method, requested, codes, integration in asserted_status_codes():
+        if real_engine_only and not integration:
+            continue
+        candidates = [
+            h for h in handlers
+            if method in h[4]
+            and (hint is None or hint == h[0])
+            and _matches_tail(h[3], requested)
+        ]
+        if not candidates:
+            continue
+        best = max(len(_literal_segments(h[3])) for h in candidates)
+        winners = [h for h in candidates if len(_literal_segments(h[3])) == best]
+        keys = {f"{h[1]}:{h[2]}" for h in winners}
+        if len(keys) > 1:
+            ambiguous |= keys
+            continue
+        covered.setdefault(next(iter(keys)), set()).update(codes)
+    return covered, ambiguous
+
+
+AMBIGUOUS_ROUTE_WAIVERS: tuple[Waiver, ...] = (
+    # `ops` serves both `/deploy/start` and `/admin/deploy/start` from two
+    # handlers whose decorator strings are **identical** -- one mounted bare, one
+    # under `include_router(admin_router, prefix="/admin")` -- so a tail match
+    # cannot separate them and neither can be credited. Declared rather than
+    # skipped: a handler quietly dropped from a coverage rule is the vacuity this
+    # plan is about, and 38 of 89 were being dropped before the wildcard clause
+    # was tightened, with the rule reporting four gaps and looking healthy.
+    #
+    # The admin pair are legacy buttons from before `scripts/redeploy.sh` drove
+    # drain, authorization and release through the coordination API, and they
+    # never moved with it. Stage AA owns what replaces them, and removing them
+    # removes the ambiguity for the two API handlers as well -- one decision
+    # drains all four.
+    Waiver("ops/routers/admin.py:deploy_start", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:deploy_complete", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/deploy.py:start_deploy_intent", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/deploy.py:complete_deployment", "G28", 162, date(2026, 9, 8)),
+)
+
+#: Seeded at 11 on 2026-09-08 and drained to nothing the same day. The eleven
+#: were real: `recap_index`'s 404 is the whole of what `/recaps` does before the
+#: first generator run, the snapshot download's four were its entire refusal
+#: surface, and two were introduced by this stage's own repairs a few hours
+#: earlier -- the 503 that `approve_access_request` and `deny_access_request`
+#: gained when their swallowed database errors were fixed, and which nothing
+#: asserted until this rule said so.
+UNEXERCISED_CODE_WAIVERS: tuple[Waiver, ...] = ()
+
+
+def test_every_status_code_a_route_can_produce_is_asserted():
+    """A code nothing exercises is a claim, not a contract.
+
+    The rule Stage Y's declarations make expressible, and the one that answers
+    whether a test could have failed -- not by grading an assertion, but by
+    requiring the produced set to be covered. `toggle_search` declaring 303 and
+    404 means somebody must write the 404, and the 404 cannot be written against
+    a handler that returns 303 either way.
+    """
+    covered, ambiguous = _coverage()
+    _assert_exactly(
+        ambiguous, AMBIGUOUS_ROUTE_WAIVERS,
+        "These handlers share a decorator path with another, so no request can "
+        "be attributed to one of them and neither can be credited.",
+    )
+    gaps = set()
+    for handler in route_handlers():
+        _service, file, name, decorator_path, _methods, codes = handler[:6]
+        key = f"{file}:{name}"
+        if not _literal_segments(decorator_path) or key in ambiguous:
+            continue
+        missing = sorted(codes - covered.get(key, set()))
+        if missing:
+            gaps.add(f"{key} {missing}")
+
+    _assert_exactly(
+        gaps, UNEXERCISED_CODE_WAIVERS,
+        "These routes can answer with a status code no test asserts for them.",
+    )
+
+
+def test_the_route_code_corpus_is_not_empty():
+    """The floor under the rule above, and it is not a formality here.
+
+    Every bug this rule had while it was being written moved the same number in
+    the same direction -- fewer routes examined, more codes credited, a healthier
+    looking result. A decorator path of only templates matched everything and
+    took 99 of 100 requests ambiguous; a wildcard that matched a literal took 38
+    of 89 **handlers** out of scope while the failure list still read four. None
+    of those made a test go red. A rule whose failure mode is silence needs a
+    floor that is loud.
+    """
+    handlers = [h for h in route_handlers() if _literal_segments(h[3])]
+    assert len(handlers) >= 80, (
+        f"only {len(handlers)} route handlers found with an anchorable path; "
+        f"the rule above is measuring almost nothing."
+    )
+    pairs = sum(len(h[5]) for h in handlers)
+    assert pairs >= 150, (
+        f"only {pairs} (handler, code) pairs derived. The produced-code reader "
+        f"has stopped seeing something -- check _codes_at_call_sites and the "
+        f"one-level helper resolution before trusting a green run."
+    )
+    covered, ambiguous = _coverage()
+    assert len(covered) >= 75, (
+        f"only {len(covered)} handlers have any code credited to them, out of "
+        f"{len(handlers)}. The path matcher has stopped matching."
+    )
+    assert len(ambiguous) <= 8, (
+        f"{len(ambiguous)} handlers cannot be told apart by their decorator "
+        f"path, up from the four this rule was written against. Each one is a "
+        f"handler no request can be attributed to, so the rule silently stops "
+        f"asking about it."
+    )
+    requests = asserted_status_codes()
+    assert len(requests) >= 100, (
+        f"only {len(requests)} status assertions resolved to a path; "
+        f"_resolve_request_path has stopped resolving."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 12 -- a route declares the statuses it can return.
+# ---------------------------------------------------------------------------
+# G21, and the stage's own name. Every service's OpenAPI schema declares exactly
+# `200` and `422` -- FastAPI's defaults -- while the suite asserts eleven
+# distinct codes across 137 assertions. Every real code is raised inside a
+# handler body and surfaces nowhere a machine can read, so the schema is not a
+# weak contract but a false one, and Stage Z's committed artifact would inherit
+# the falsehood.
+#
+# **Both directions.** An undeclared code is the obvious failure. A declared code
+# nothing produces is the one that matters over time: without it the
+# declarations rot into a second description of whatever the routes used to do,
+# which is `ARCHITECTURE.md:179` again in a different file.
+#
+# **The success code is excluded from the comparison.** A handler returning a
+# dict answers 200 by FastAPI's own default, and demanding `responses={200: ...}`
+# on all 89 routes would be noise rather than contract. What must be declared is
+# every *other* code the body can produce.
+#: Seeded at 52 on 2026-09-08 from this rule's own first run, and drained by
+#: declaring each route's codes. **The list is the work**: nothing else tracks
+#: which of the 89 routes have been done, and an entry that stops describing a
+#: mismatch fails until it is deleted, so the ledger cannot lag the repair.
+DECLARED_CODE_WAIVERS: tuple[Waiver, ...] = (
+)
+
+
+def test_every_route_declares_the_statuses_it_can_return():
+    """The rule this stage is named for.
+
+    It is written before the declarations exist on purpose: its failure list is
+    the work, and it shrinks as the work lands. Nothing tracks which of the
+    routes are done except this.
+    """
+    mismatches = set()
+    for handler in route_handlers():
+        _service, file, name, _path, _methods, produced, declared, success = handler
+        undeclared = sorted(produced - declared - {success})
+        overdeclared = sorted(declared - produced)
+        if undeclared or overdeclared:
+            detail = []
+            if undeclared:
+                detail.append(f"produces undeclared {undeclared}")
+            if overdeclared:
+                detail.append(f"declares unproduced {overdeclared}")
+            mismatches.add(f"{file}:{name} {'; '.join(detail)}")
+
+    _assert_exactly(
+        mismatches, DECLARED_CODE_WAIVERS,
+        "A route's declared status codes must equal the codes its handler can "
+        "produce.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 13 -- a declared 422 is one a request can actually trigger.
+# ---------------------------------------------------------------------------
+# The one code the rule above cannot see. FastAPI injects `422` into a route's
+# schema on the **presence** of a parameter, never its fallibility -- read from
+# `fastapi/openapi/utils.py`, and byte-identical in 0.128.0 and 0.141.1, so no
+# upgrade removes it:
+#
+#     http422 = "422"
+#     if (all_route_params or route.body_field) and not any(
+#         status in operation["responses"] for status in [http422, "4XX", "default"]
+#     ):
+#
+# The declaration rule reads the **decorator**, where 422 never appears, so this
+# is the half it is structurally blind to -- and Stage Z commits the schema, not
+# the decorator, so a phantom 422 would be committed as contract.
+#
+# Measured: 41 routes declare it, 33 can produce it, 8 cannot. The eight take an
+# unconstrained string and nothing else, so there is no request that fails
+# validation. Six are the dead admin routes Stage AA resolves. **Two are
+# permanent and carry no owner**: `GET` and `HEAD /recaps/{slug}` guard the slug
+# in the handler and answer 404, and moving that into `Path(pattern=...)` would
+# turn a public page's "no such recap" into a validation error. That is a
+# decision with no expiry, so it is shaped like `DORMANT_SUITES` rather than a
+# waiver -- a waiver dies when its owner plan archives and would take the reason
+# with it.
+_PARAM_PROBE = """
+import importlib, json, os, sys, tempfile
+VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
+CONSTRAINED = {
+    "pattern", "minLength", "maxLength", "enum", "format",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+}
+repo, service = sys.argv[1], sys.argv[2]
+os.environ.setdefault("LOG_PATH", os.path.join(tempfile.gettempdir(), "contract.log"))
+if len(sys.argv) > 3:
+    sys.path.insert(0, os.path.join(repo, service))
+sys.path.insert(0, repo)
+app = importlib.import_module(service + ".app").app
+
+
+def fallible(schema):
+    if not isinstance(schema, dict):
+        return True
+    if "$ref" in schema or CONSTRAINED & set(schema):
+        return True
+    if {"anyOf", "allOf", "oneOf"} & set(schema):
+        return True
+    return schema.get("type") != "string"
+
+
+out = []
+for path, operations in app.openapi()["paths"].items():
+    for method, operation in operations.items():
+        if method.lower() not in VERBS:
+            continue
+        declares = "422" in operation.get("responses", {})
+        can = "requestBody" in operation or any(
+            fallible(parameter.get("schema", {}))
+            for parameter in operation.get("parameters", [])
+        )
+        out.append([method.upper(), path, declares, can])
+print(json.dumps(sorted(out)))
+"""
+
+
+@lru_cache(maxsize=None)
+def route_validation_surface(service: str) -> tuple[tuple[str, str, bool, bool], ...]:
+    """``(METHOD, path, declares 422, can produce one)`` for one service.
+
+    Same two import recipes and the same loud failure as :func:`app_routes`: a
+    service whose app will not import is a failure, never a skip.
+    """
+    failures = []
+    for extra in ([], ["--service-dir"]):
+        result = subprocess.run(
+            [sys.executable, "-c", _PARAM_PROBE, str(REPO_ROOT), service] + extra,
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        if result.returncode == 0:
+            found = tuple(
+                (method, path, declares, can)
+                for method, path, declares, can in json.loads(result.stdout)
+            )
+            assert found, (
+                f"{service}'s app imported but exposed no routes, so nothing "
+                f"can be proved about its validation surface."
+            )
+            return found
+        failures.append(result.stderr.strip()[-600:])
+    raise AssertionError(
+        f"{service}'s routing table could not be loaded, so its declared 422s "
+        f"cannot be checked. This is a failure, not a skip.\n\n"
+        + "\n\n---\n\n".join(failures)
+    )
+
+
+#: Routes whose declared 422 no request can trigger, and which stay that way.
+#: **No owner and no expiry**, deliberately: nobody is going to "fix" these, and
+#: a waiver would fail the day Plan 162 archives and have to be quieted by
+#: deleting the reason. `_SLUG_RE` in `ops/routers/public.py` already refuses a
+#: malformed slug and answers 404; moving it into `Path(pattern=...)` would make
+#: FastAPI answer 422 instead, which is the wrong answer for "no such page" on a
+#: route crawlers hit.
+PERMANENT_PHANTOM_422 = (
+    ("GET", "/recaps/{slug}"),
+    ("HEAD", "/recaps/{slug}"),
+)
+
+PHANTOM_422_WAIVERS: tuple[Waiver, ...] = (
+    # All six take an unconstrained string and nothing else. Four are the dead
+    # admin routes Stage AA resolves; the other two guard their parameter in the
+    # handler the way `/recaps/{slug}` does, and follow whatever that stage
+    # decides for the panel around them.
+    Waiver("POST /admin/dbt/intents/{intent_name}/delete", "G21", 162, date(2026, 9, 8)),
+    Waiver("GET /admin/searches/{search_key}/edit", "G21", 162, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/toggle", "G21", 162, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/delete", "G21", 162, date(2026, 9, 8)),
+    Waiver("POST /scrape_results/jobs/{job_id}/fetched", "G21", 162, date(2026, 9, 8)),
+    Waiver("GET /project-status/{project}", "G21", 162, date(2026, 9, 8)),
+)
+
+
+def test_no_route_declares_a_422_no_request_can_trigger():
+    """The half the declaration rule is blind to, because FastAPI writes it.
+
+    Stage Z commits the schema rather than the decorator, so a 422 nothing can
+    trigger is a false claim that would be committed as contract -- which is the
+    exact failure this plan opened against.
+    """
+    phantom = set()
+    for service in sorted(service_packages()):
+        entrypoint = REPO_ROOT / service / "app.py"
+        # The same test the route rule applies: `dashboard` has an `app.py` and
+        # no routing table, because Streamlit owns its URLs. Asking it for a
+        # schema is asking a question it has no way to answer.
+        if not entrypoint.is_file() or "FastAPI(" not in entrypoint.read_text(
+            encoding="utf-8"
+        ):
+            continue
+        for method, path, declares, can in route_validation_surface(service):
+            if declares and not can and (method, path) not in PERMANENT_PHANTOM_422:
+                phantom.add(f"{method} {path}")
+
+    _assert_exactly(
+        phantom, PHANTOM_422_WAIVERS,
+        "These routes declare a 422 that no request can produce: their only "
+        "parameters are unconstrained strings, so nothing fails validation.",
+    )
+
+
+def test_the_permanent_phantom_ledger_still_describes_a_phantom():
+    """The other direction, for the entries no waiver hygiene will ever check.
+
+    An ownerless entry is exempt from the archived-owner rule, so nothing else
+    would notice it going stale. If `/recaps/{slug}` ever constrains its slug in
+    the signature, its 422 becomes real and this entry has to go.
+    """
+    surface = {
+        (method, path): (declares, can)
+        for method, path, declares, can in route_validation_surface("ops")
+    }
+    stale = sorted(
+        f"{method} {path}"
+        for method, path in PERMANENT_PHANTOM_422
+        if surface.get((method, path), (False, True))[1]
+        or not surface.get((method, path), (False, False))[0]
+    )
+    assert not stale, (
+        "PERMANENT_PHANTOM_422 names routes whose 422 is no longer phantom, or "
+        "which no longer declare one at all: " + ", ".join(stale) + ". Delete "
+        "the entry -- an exemption that has stopped being true is worse than "
+        "none, because it reads as a decision somebody still stands behind."
+    )
+
+
+def _database_triggered_codes(path: Path) -> dict[str, set[int]]:
+    """``file:handler`` -> codes answered only because the database matched nothing.
+
+    Derived from the shape rather than listed: a name bound from ``.rowcount``,
+    a branch whose test reads it, and the codes produced inside that branch --
+    resolved through the response helpers the way the declaration rule does,
+    since that is where every one of these 404s actually lives.
+    """
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+    constants = {
+        target.id: node.value.value
+        for node in tree.body if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, int)
+    }
+
+    found: dict[str, set[int]] = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        bound = _names_bound_from(function, "rowcount")
+        if not bound:
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.If):
+                continue
+            if not {child.id for child in ast.walk(node.test)
+                    if isinstance(child, ast.Name)} & bound:
+                continue
+            codes = _produced_codes(node, constants, tree, path)
+            if codes:
+                found.setdefault(f"{relative}:{function.name}", set()).update(codes)
+    return found
+
+
+REAL_ENGINE_COVERAGE_WAIVERS: tuple[Waiver, ...] = ()
+
+
+def test_a_database_triggered_code_is_asserted_against_a_real_engine():
+    """A mocked `rowcount = 0` is a belief about psycopg2, not an observation.
+
+    These codes exist only because the database matched no rows, and that is a
+    condition a unit test cannot produce -- it can only assert the number it
+    seeded. `mock_cursor_context` hands back a `MagicMock` whose `rowcount` is
+    truthy and never zero, which is why every one of these routes answered 303
+    for years with a green suite: the environment could not express the failing
+    case at all.
+
+    So the assertion has to happen where the condition is real. This is the one
+    place in the stage where *which layer* a test lives at is part of the rule
+    rather than a matter of taste.
+    """
+    real_engine, ambiguous = _coverage(real_engine_only=True)
+    gaps = set()
+    for path in production_python_files():
+        for key, codes in _database_triggered_codes(path).items():
+            if key in ambiguous:
+                continue
+            missing = sorted(codes - real_engine.get(key, set()))
+            if missing:
+                gaps.add(f"{key} {missing}")
+
+    _assert_exactly(
+        gaps, REAL_ENGINE_COVERAGE_WAIVERS,
+        "These codes are answered only when the database matches nothing, and "
+        "no test under tests/integration/ asserts them.",
+    )
+
+
+def test_the_database_triggered_corpus_is_not_empty():
+    """The floor. A rule over an empty set of codes is a rule about nothing."""
+    found = {}
+    for path in production_python_files():
+        found.update(_database_triggered_codes(path))
+    assert len(found) >= 4, (
+        f"only {sorted(found)} handlers answer a code on a rowcount branch. "
+        f"Either the repairs were reverted or _names_bound_from has stopped "
+        f"seeing how rowcount is read."
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
@@ -3698,6 +5265,14 @@ ALL_WAIVERS = (
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
     + DUPLICATE_SQL_WAIVERS
+    + SWALLOWED_WRITE_WAIVERS
+    + DISCARDED_OUTCOME_WAIVERS
+    + UNINSPECTED_RESPONSE_WAIVERS
+    + UNEXERCISED_CODE_WAIVERS
+    + AMBIGUOUS_ROUTE_WAIVERS
+    + DECLARED_CODE_WAIVERS
+    + PHANTOM_422_WAIVERS
+    + REAL_ENGINE_COVERAGE_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS

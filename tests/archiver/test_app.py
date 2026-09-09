@@ -199,6 +199,34 @@ class TestCompactSilverRunEndpoint:
 # POST /pack/bronze/run  (Plan 131)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize(
+    ("path", "processor", "payload"),
+    [
+        ("/pack/bronze/run", "_pack_bronze_html", {"month": 13}),
+        # Prune refuses a payload missing `year` before it reaches the
+        # processor at all -- it deletes data -- so this one has to get past
+        # that guard to exercise the arm under test.
+        ("/pack/bronze/prune", "_delete_packed_source_html",
+         {"year": 2026, "month": 13}),
+    ],
+)
+def test_an_unusable_payload_is_400_not_a_crash(
+    mock_archiver_client, mocker, path, processor, payload,
+):
+    """Plan 162 Stage Y, G28.
+
+    Both routes wrap their processor in `except (ValueError, TypeError)` and
+    answer 400. Both declared it and neither exercised it, so the arm that turns
+    a bad argument into a refusal rather than a 500 was never run.
+    """
+    mocker.patch(f"archiver.app.{processor}", side_effect=ValueError("month=13"))
+
+    resp = mock_archiver_client.post(path, json=payload)
+
+    assert resp.status_code == 400
+    assert "month=13" in resp.json()["detail"]
+
+
 class TestPackBronzeRunEndpoint:
     def test_defaults_to_a_dry_run(self, mock_archiver_client, mocker):
         fake = {"mode": "dry_run", "packs_written": 0, "error": None, "buckets": []}

@@ -98,11 +98,16 @@ def _notify_access_request(email_hash: str, requested_role: str) -> None:
             f"Email hash: {email_hash[:12]}…\n"
             f"Approve at: https://cartracker.info/admin/access-requests"
         )
-        http_requests.post(
+        response = http_requests.post(
             f"https://api.telegram.org/bot{_TELEGRAM_API}/sendMessage",
             json={"chat_id": _TELEGRAM_CHAT_ID, "text": msg},
             timeout=5,
         )
+        # The status, before assuming it sent. Plan 162 Stage Y, G27. Telegram
+        # answers 200 for a delivered message and 4xx for a bad chat id or a
+        # revoked token, and without this an access request nobody was told
+        # about was indistinguishable from one that reached the phone.
+        response.raise_for_status()
     except Exception:
         logger.warning("Failed to send Telegram notification for access request")
 
@@ -117,7 +122,13 @@ def _redirect_for_role(role: str) -> RedirectResponse:
     return RedirectResponse(url="/dashboard", status_code=303)
 
 
-@public_router.get("/request-access", response_class=HTMLResponse)
+@public_router.get(
+    "/request-access",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Already authorised; redirect to the role's landing page."},
+    },
+)
 def request_access_form(request: Request):
     email = request.headers.get("x-auth-request-email", "")
     if email:
@@ -145,7 +156,15 @@ def request_access_form(request: Request):
     })
 
 
-@public_router.post("/request-access", response_class=HTMLResponse)
+@public_router.post(
+    "/request-access",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Already authorised, or a request is already pending."},
+        400: {"description": "No email could be determined, or the role is not requestable."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def submit_access_request(
     request: Request,
     display_name: str = Form(...),
@@ -243,7 +262,16 @@ def list_users(request: Request):
     })
 
 
-@router.post("/users/{user_id}/role", response_class=HTMLResponse)
+@router.post(
+    "/users/{user_id}/role",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Role changed; redirect to the user list."},
+        400: {"description": "Not a role this service defines."},
+        404: {"description": "No user with that id; nothing was changed."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def change_user_role(
     request: Request,
     user_id: int,
@@ -267,7 +295,15 @@ def change_user_role(
     return RedirectResponse(url="/admin/users", status_code=303)
 
 
-@router.post("/users/{user_id}/revoke", response_class=HTMLResponse)
+@router.post(
+    "/users/{user_id}/revoke",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "User revoked; redirect to the user list."},
+        404: {"description": "No user with that id; nobody was revoked."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def revoke_user(request: Request, user_id: int):
     try:
         with db_cursor(error_context="Revoke-User") as cur:
@@ -301,7 +337,15 @@ def list_access_requests(request: Request):
     })
 
 
-@router.post("/access-requests/{req_id}/approve", response_class=HTMLResponse)
+@router.post(
+    "/access-requests/{req_id}/approve",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Request approved; redirect to the request list."},
+        404: {"description": "No pending request with that id."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def approve_access_request(
     request: Request,
     req_id: int,
@@ -331,7 +375,15 @@ def approve_access_request(
     return RedirectResponse(url="/admin/access-requests", status_code=303)
 
 
-@router.post("/access-requests/{req_id}/deny", response_class=HTMLResponse)
+@router.post(
+    "/access-requests/{req_id}/deny",
+    response_class=HTMLResponse,
+    responses={
+        303: {"description": "Request denied; redirect to the request list."},
+        404: {"description": "No pending request with that id."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def deny_access_request(request: Request, req_id: int):
     admin_email = request.headers.get("x-auth-request-email", "")
     admin_hash = _hash_email(admin_email) if admin_email else None

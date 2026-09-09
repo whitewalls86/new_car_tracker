@@ -2432,14 +2432,25 @@ archives and take the reason with it.
   directions — an undeclared code fails, and a declared code nothing raises
   fails too.
 - No route executes a mutation whose effect it does not observe, and no handler
-  swallows an effect's exception without changing what the caller observes.
-  Neither carries a ledger.
+  swallows an effect's exception without changing what the caller observes. The
+  first carries no ledger. The second carries only calls into the dead
+  `dbt_runner` panel, waived to Stage AA, and drains when that stage resolves
+  it.
 - Every declared code is asserted by a test, and a database-triggered code is
   asserted at a real-engine layer.
 - The phantom-422 ledger holds exactly the two `/recaps/{slug}` routes, with no
   owner and no expiry.
-- Demonstrated, not asserted: deleting the body of `toggle_search` and leaving
-  its redirect fails three separate clauses; it passes the suite today.
+- Demonstrated, not asserted, by mutation rather than by argument: keeping
+  `toggle_search`'s `UPDATE` and dropping its `rowcount` check fails the
+  observation rule; gutting its body to the redirect fails the declaration rule,
+  because it then declares a 404 and a 503 it can no longer answer. **The
+  original wording of this clause predicted one mutation failing three rules and
+  was wrong**, which is worth keeping rather than quietly correcting: gutting
+  the body removes the `UPDATE` as well, so the observation rule has nothing
+  left to object to and the coverage rule sees a route producing only 303. The
+  two halves need two mutations, and the second is the better demonstration
+  because it exercises the over-declaration direction -- the half that stops
+  declarations rotting into a description of what the routes used to do.
 
 ### Stage Z: the contract is generated, committed and gated
 
@@ -4218,3 +4229,93 @@ Public surfaces: `README.md`'s local quick start listed five things to edit
 before `docker compose up -d`, and the Airflow and Grafana secrets this stage
 added to the template were not among them. The line was corrected with this
 stage.
+### Stage Y — step 1 in production: the mutations observed, and a number that did not move
+
+Measurements and recipes: [`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md),
+which accumulates across the stage's three steps. This entry is step 1.
+
+**The census that opened the stage, re-measured against `d6e3a6d`: 100 routes
+across the six importable services, 46 of which produce a code they never
+declare, and not one route declaring a single code today.** The 2026-09-07
+figure of 85 and 42 differs by grain rather than drift -- six `ops` handlers
+serve two routes each through `api_route(methods=["GET", "HEAD"])`. Two findings
+made the stage cheaper than its own estimate: there is no `Depends()` and no
+`@app.exception_handler` anywhere in the six services, so a handler body is the
+whole of what a route can produce; and the 500s the census called judgement
+calls argue for themselves in docstrings their callers already branch on.
+
+**G27 measured at 13 blind mutations, and only eight were repairs.** Three were
+already gated by a preceding read in the same function, two already observed
+`RETURNING`, and one -- `_record_last_used` -- was restructured rather than
+repaired, because its guard lived one frame up in `_resolve_machine_token` with
+nothing connecting the two. **That the other five needed nothing is what stops
+the rule's third clause being an escape hatch invented for the awkward case.**
+
+**Deployed 2026-09-08 and verified inside the containers rather than inferred
+from the checkout** -- `processing` recreated at 22:37:50Z, `ops` at 00:27:34Z,
+both through `scripts/redeploy.sh` with drain confirmed at 0s and intent
+released.
+
+**Eleven consecutive `results_processing` runs moved 1,200 detail artifacts and
+reported `status_write_failures: 0` on every one**, with no ERROR line and no
+traceback across the window. So the stale-claim case `StatusWriteFailed` was
+built for does not occur under normal operation at this cadence. **The honest
+counterpart is that its handling path has therefore only ever run in tests** --
+the `continue`, the counter and the log line are unproven in production, and a
+zero is what records that rather than hides it.
+
+**All six guards answered correctly against production `ops`**, and every one of
+them answered 303 before this stage: five 404s for an identity matching no row,
+and 400 for a role the service does not have. Non-mutating by construction.
+
+**Plan 147's loop guard came back clean on its first run under the new code**
+-- 400 released, 400 claims deleted, 400 fetches recorded, the three agreeing.
+That is not proof the guard never under-records; it is one run in which the
+failure did not occur, and the thing actually established is that the counts are
+now *capable* of disagreeing, where `len(fetched_ids)` would have read 400
+whatever the database did. The same log line carries `status=None`, which is
+Stage AA's second instance observed in production rather than inferred.
+
+**Against the exit:** this bears on the second clause alone -- no route executes
+a mutation whose effect it does not observe. It is evidence that the repair is
+live and quiet, not that the clause is met: what would meet it is the rule that
+makes the next blind mutation fail, and that rule is not written yet.
+
+**The rules, written after the repairs and against them.** Six across the three
+gaps, each proved by a mutation. **Every one shipped with a bug that made the
+repository look healthier than it was, and not one of those bugs failed a test**
+-- the observation rule keyed on the `execute` call's arguments and so passed on
+a tree with a rowcount check deleted; the coverage rule let a wildcard match a
+literal segment and took 38 of 89 handlers out of scope while its failure list
+still read four. That is the argument for the mutations and the floors as a
+measurement rather than a principle, and it is the reason the floors assert
+population counts rather than merely non-emptiness.
+
+**One rule was nearly written with an escape clause, and the escape clause was
+the bug.** Six coordination helpers never read a response status and were
+correct anyway, because each subscripts the parsed payload and an error body
+raises into a handler returning `unknown`. Crediting that shape is an inference
+one step from crediting a 200 that happens to parse, so **the conforming code was
+changed instead** -- six explicit `raise_for_status()` calls, free because
+`HTTPError` subclasses the `RequestException` those gates already catch, in
+exchange for a rule that states one thing and cannot be argued around.
+
+**G21 drained 52 to 0.** The rule was written before any declaration existed so
+that its failure list was the work; the census had estimated 46 and the reader
+found 52, the difference being that every admin route's 404 and 503 arrive
+through a response helper. The schema now carries eleven codes where every
+service claimed two.
+
+**G28 drained 11 to 0, and two of the eleven were this stage's own.**
+`approve_access_request` and `deny_access_request` gained a 503 when their
+swallowed database errors were repaired that morning, and neither got a test
+until the rule written after them said so.
+
+**What the stage could not close is one decision, not fourteen repairs.** Every
+live waiver across the four G27 clauses and the phantom-422 ledger is a call into
+the dead `dbt_runner` admin panel -- five endpoints deleted in April and May with
+every caller left standing. Stage AA owns whether that panel is removed or the
+endpoints return, and all fourteen entries drain on that answer.
+
+Measurements, recipes and the full table of rule bugs:
+[`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md).

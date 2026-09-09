@@ -73,7 +73,14 @@ def published_slugs() -> list[str]:
     return sorted(slugs, reverse=True)
 
 
-@router.api_route("/recaps", methods=_PUBLIC_METHODS, response_class=FileResponse)
+@router.api_route(
+    "/recaps",
+    methods=_PUBLIC_METHODS,
+    response_class=FileResponse,
+    responses={
+        404: {"description": "No recaps have been published."},
+    },
+)
 def recap_index() -> FileResponse:
     index = os.path.join(RECAPS_DIR, "index.html")
     if not os.path.isfile(index):
@@ -82,7 +89,12 @@ def recap_index() -> FileResponse:
 
 
 @router.api_route(
-    "/recaps/{slug}", methods=_PUBLIC_METHODS, response_class=FileResponse
+    "/recaps/{slug}",
+    methods=_PUBLIC_METHODS,
+    response_class=FileResponse,
+    responses={
+        404: {"description": "No recap has been published under that name."},
+    },
 )
 def recap_page(slug: str) -> FileResponse:
     if not _SLUG_RE.match(slug):

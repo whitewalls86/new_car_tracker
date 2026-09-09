@@ -23,7 +23,13 @@ def _hash_email(email: str) -> str:
     return hashlib.sha256((_SALT + email.lower()).encode()).hexdigest()
 
 
-@router.get("/auth/check")
+@router.get(
+    "/auth/check",
+    responses={
+        403: {"description": "The caller is not an authorised user."},
+        503: {"description": "Database unavailable."},
+    },
+)
 def auth_check(
     x_auth_request_email: str | None = Header(default=None),
     require: str | None = Query(default=None),

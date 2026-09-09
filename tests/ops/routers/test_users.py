@@ -3,6 +3,8 @@
 # =============================================================================
 from datetime import datetime, timezone
 
+import pytest
+
 from ops.queries import (
     DELETE_AUTHORIZED_USER,
     INSERT_ACCESS_REQUEST,
@@ -327,6 +329,27 @@ def test_deny_access_request_ok(mock_client, mock_cursor_context, mocker):
 
     sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
     assert any("status = 'denied'" in sql for sql in sql_calls)
+
+
+@pytest.mark.parametrize(
+    "path", ["/admin/access-requests/1/approve", "/admin/access-requests/1/deny"],
+)
+def test_access_request_routes_answer_503_when_the_database_is_gone(
+    mock_client, mock_db_connection_error, path,
+):
+    """Plan 162 Stage Y, G28.
+
+    Both declared 503 and neither exercised it. The 503 arrived with Stage Y --
+    before it, a database error during an approval was logged and then reported
+    to the admin as a completed approval.
+    """
+    response = mock_client.post(
+        path,
+        headers={"X-Auth-Request-Email": "admin@gmail.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
 
 
 def test_deny_access_request_not_found(mock_client, mock_cursor_context, mocker):

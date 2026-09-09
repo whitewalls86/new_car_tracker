@@ -26,7 +26,12 @@ def health():
     return {"ok": True}
 
 
-@app.get("/ready")
+@app.get(
+    "/ready",
+    responses={
+        503: {"description": "A dependency this service needs is not reachable."},
+    },
+)
 def ready():
     """
     Drain signal for Plan 92 / Airflow.

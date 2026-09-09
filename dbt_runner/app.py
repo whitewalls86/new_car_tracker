@@ -85,7 +85,12 @@ def health() -> Dict[str, Any]:
     return {"ok": True}
 
 
-@app.get("/ready")
+@app.get(
+    "/ready",
+    responses={
+        503: {"description": "A dependency this service needs is not reachable."},
+    },
+)
 def ready() -> Dict[str, Any]:
     evidence = job_snapshot()
     result = {"ready": evidence["active_jobs"] == 0, **evidence}
@@ -106,7 +111,12 @@ def get_docs_status() -> Dict[str, Any]:
     return {"available": available}
 
 
-@app.post("/dbt/docs/generate")
+@app.post(
+    "/dbt/docs/generate",
+    responses={
+        500: {"description": "dbt exited non-zero; the summary is the detail."},
+    },
+)
 def dbt_docs_generate() -> Dict[str, Any]:
     """Run dbt deps + dbt docs generate and return ok/stdout/stderr."""
     with active_job():
@@ -141,7 +151,14 @@ def dbt_docs_generate() -> Dict[str, Any]:
         }
 
 
-@app.post("/dbt/build")
+@app.post(
+    "/dbt/build",
+    responses={
+        400: {"description": "The requested selection is not usable."},
+        409: {"description": "A dbt build is already in progress."},
+        500: {"description": "dbt exited non-zero; the summary is the detail."},
+    },
+)
 def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
     """
     Trigger a dbt build against the DuckDB analytics target.

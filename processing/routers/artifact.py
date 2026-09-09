@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/process/artifact/{artifact_id}")
+@router.post(
+    "/process/artifact/{artifact_id}",
+    responses={
+        404: {"description": "No artifact with that id is queued."},
+    },
+)
 def process_single_artifact(artifact_id: int) -> Dict[str, Any]:
     """
     Reprocess a single artifact by ID.

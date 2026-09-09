@@ -108,6 +108,104 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_no_route_declares_a_422_no_request_can_trigger",
+        "a route's only parameter loosens, and its declared 422 becomes a phantom",
+        lambda: _edit(
+            "ops/routers/users.py",
+            "def revoke_user(request: Request, user_id: int):",
+            "def revoke_user(request: Request, user_id: str):",
+        ),
+        ["ops/routers/users.py"],
+        [],
+    ),
+    (
+        "test_every_route_declares_the_statuses_it_can_return",
+        "a route stops declaring a code it still answers with",
+        lambda: _edit(
+            "ops/routers/users.py",
+            '        404: {"description": '
+            '"No user with that id; nobody was revoked."},\n',
+            "",
+        ),
+        ["ops/routers/users.py"],
+        [],
+    ),
+    (
+        "test_every_status_code_a_route_can_produce_is_asserted",
+        "a route starts answering with a code no test asserts",
+        lambda: _edit(
+            "ops/routers/admin.py",
+            '        "message": message,\n    }, status_code=404)',
+            '        "message": message,\n    }, status_code=418)',
+        ),
+        ["ops/routers/admin.py"],
+        [],
+    ),
+    (
+        "test_the_route_code_corpus_is_not_empty",
+        "the path matcher stops matching, and the coverage rule goes quiet",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            "    return all(a.startswith(\"{\") or a == b "
+            "for a, b in zip(decorator, tail))",
+            "    return False",
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_no_caller_discards_an_outcome_it_asked_for",
+        "the deploy API stops reading the five-valued result it asked for",
+        lambda: _edit(
+            "ops/routers/deploy.py",
+            '    result = _set_intent("Deploy Declared", pause_long_jobs, targets)',
+            '    _set_intent("Deploy Declared", pause_long_jobs, targets)',
+        ),
+        ["ops/routers/deploy.py"],
+        [],
+    ),
+    (
+        "test_every_response_we_ask_for_has_its_status_read",
+        "the release gate stops reading the status of a service it polls",
+        lambda: _edit(
+            "ops/coordination_release.py",
+            "            # The status, before the body. Plan 162 Stage Y, G27.\n"
+            "            response.raise_for_status()\n"
+            "            payload = response.json()\n"
+            '            if payload.get("known") is not True',
+            "            payload = response.json()\n"
+            '            if payload.get("known") is not True',
+        ),
+        ["ops/coordination_release.py"],
+        [],
+    ),
+    (
+        "test_no_route_swallows_a_failed_write_and_reports_success",
+        "a route's failed write is logged and then answered as a success",
+        lambda: _edit(
+            "ops/routers/users.py",
+            'logger.exception("Failed to revoke user")\n'
+            "        return _db_error_response(request=request)",
+            'logger.exception("Failed to revoke user")',
+        ),
+        ["ops/routers/users.py"],
+        [],
+    ),
+    (
+        "test_every_mutation_observes_whether_it_changed_anything",
+        "a route stops reading the rowcount of the UPDATE it performs",
+        lambda: _edit(
+            "ops/routers/admin.py",
+            'error_context="Toggle-Search") as cur:\n'
+            "            cur.execute(sql, params)\n"
+            "            matched = cur.rowcount",
+            'error_context="Toggle-Search") as cur:\n'
+            "            cur.execute(sql, params)",
+        ),
+        ["ops/routers/admin.py"],
+        [],
+    ),
+    (
         "test_every_integration_suite_is_invoked_by_a_ci_step",
         "a CI step stops invoking tests/integration/archiver/",
         lambda: _edit(

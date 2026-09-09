@@ -70,6 +70,49 @@ def _token(mocker):
 # Auth
 # ---------------------------------------------------------------------------
 
+class TestArchiveDownloadRefusals:
+    """Plan 162 Stage Y, G28.
+
+    The download route declares four refusals and every one of them was
+    asserted for `/latest` and for none of them here -- so the route with the
+    largest refusal surface in the service was the one exercising least of it.
+    Each is reached through the same dependency and the same validator, which is
+    the argument for testing them per route rather than trusting the shared
+    helper's own coverage: the dependency is attached per route, and a route
+    that loses it fails nothing.
+    """
+
+    def test_missing_authorization_header_is_401(self, mock_client):
+        assert mock_client.get(f"{BASE}/2026-09-08/download").status_code == 401
+
+    def test_wrong_token_is_403(self, mock_client):
+        resp = mock_client.get(
+            f"{BASE}/2026-09-08/download", headers={"Authorization": "Bearer nope"},
+        )
+        assert resp.status_code == 403
+
+    def test_unconfigured_tokens_are_503(self, mock_client, mocker):
+        mocker.patch.object(snapshots, "_machine_tokens_exist", return_value=False)
+        resp = mock_client.get(f"{BASE}/2026-09-08/download", headers=AUTH)
+        assert resp.status_code == 503
+
+    def test_a_snapshot_id_that_is_not_an_identifier_is_400(self, mock_client, mocker):
+        """Refused by `_validate_snapshot_id` before anything is looked up.
+
+        `_SNAPSHOT_ID_RE` requires the first character to be alphanumeric, so a
+        leading dot is rejected without reaching MinIO -- which is the point of
+        validating rather than letting the key builder decide.
+        """
+        mocker.patch.object(
+            snapshots, "_resolve_machine_token",
+            return_value=snapshots.SnapshotToken("ci", "read"),
+        )
+
+        resp = mock_client.get(f"{BASE}/.hidden/download", headers=AUTH)
+
+        assert resp.status_code == 400
+
+
 class TestAuth:
     def test_missing_authorization_header_is_401(self, mock_client):
         resp = mock_client.get(f"{BASE}/latest")

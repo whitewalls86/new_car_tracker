@@ -82,6 +82,23 @@ def test_revoke_user_removes_row(
 
 
 @pytest.mark.integration
+def test_change_role_of_a_nonexistent_user_is_not_a_change(api_client):
+    """Plan 162 Stage Y. Only assertable here, and that is the rule.
+
+    The 404 exists because the UPDATE matched no row, and a unit test cannot
+    produce that condition -- `mock_cursor_context` hands back a MagicMock whose
+    `rowcount` is truthy and never zero, so the failing case is not expressible
+    at all. It is expressible against a real Postgres, which is why the layer is
+    part of the rule here rather than a matter of taste.
+    """
+    response = api_client.post(
+        "/admin/users/99999/role", data={"role": "observer"}, follow_redirects=False,
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.integration
 def test_revoke_nonexistent_user_is_not_a_revocation(api_client):
     """Renamed with the behaviour: "no error" was the defect, not the contract.
 

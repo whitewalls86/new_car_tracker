@@ -171,7 +171,12 @@ def get_completed_jobs() -> List[Dict[str, Any]]:
         ]
 
 
-@app.post("/scrape_results/jobs/{job_id}/fetched")
+@app.post(
+    "/scrape_results/jobs/{job_id}/fetched",
+    responses={
+        404: {"description": "No such job, or it was already fetched."},
+    },
+)
 def mark_job_fetched(job_id: str) -> Dict[str, Any]:
     """Marks a job as fetched and removes it from memory."""
     with _jobs_lock:
@@ -209,7 +214,12 @@ def scrape_detail(run_id: str, payload: dict = Body(...)) -> Dict[str, Any]:
         }
 
 
-@app.post("/scrape_detail/batch")
+@app.post(
+    "/scrape_detail/batch",
+    responses={
+        400: {"description": "The batch request names no usable listings."},
+    },
+)
 def scrape_detail_batch_endpoint(
     run_id: str,
     payload: dict = Body(...),
@@ -269,7 +279,12 @@ def health():
     return {"ok": True}
 
 
-@app.get("/ready")
+@app.get(
+    "/ready",
+    responses={
+        503: {"description": "A dependency this service needs is not reachable."},
+    },
+)
 def ready():
     """
     Drain endpoint. Returns 503 while jobs are running or queued so that

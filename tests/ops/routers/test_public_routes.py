@@ -152,6 +152,19 @@ class TestFirstPartyLinks:
 # ---------------------------------------------------------------------------
 
 class TestRecapRoutes:
+    def test_the_index_is_404_when_nothing_has_been_published(
+        self, mock_client, mocker,
+    ):
+        """Plan 162 Stage Y, G28. `/recaps` before the first generator run.
+
+        The route declares 404 and produced it from the day it was written; what
+        it never had was a test, so the difference between "no recaps yet" and
+        "the directory moved" was never asserted either way.
+        """
+        mocker.patch("ops.routers.public.os.path.isfile", return_value=False)
+
+        assert mock_client.get("/recaps").status_code == 404
+
     def test_the_index_is_served_at_the_canonical_route(self, mock_client):
         response = mock_client.get("/recaps")
 
