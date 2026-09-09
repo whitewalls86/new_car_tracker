@@ -444,6 +444,12 @@ class TestLatest:
             "archive_manifest_key": "snapshot_archives/fingerprints/abc123/archive_manifest.json",
             "archive_bytes": 1024,
             "archive_sha256": "deadbeef",
+            # Plan 162 Stage AA: `archiver` writes seven keys into
+            # `latest.json` and this fixture carried six. The seventh is not
+            # decoration -- `SnapshotPointer` declares it, so a fixture short of
+            # what the writer writes is a fixture asserting a body that does
+            # not occur.
+            "created_at": "2026-07-07T17:45:00+00:00",
         }
         mocker.patch.object(snapshots, "read_json", return_value=pointer)
         resp = mock_client.get(f"{BASE}/latest", headers=AUTH)
@@ -474,14 +480,32 @@ ALIAS = {
     "archive_sha256": "deadbeef",
 }
 MANIFEST = {
+    # Plan 162 Stage AA: both schema versions, because the served document is
+    # two formats layered and `ops` now refuses one it cannot vouch for. A
+    # fixture without them is not a smaller manifest, it is one `archiver` has
+    # never written.
+    "export_cache_schema_version": snapshots.READABLE_EXPORT_CACHE_SCHEMA,
+    "archive_cache_schema_version": snapshots.READABLE_ARCHIVE_CACHE_SCHEMA,
+    "export_fingerprint": ALIAS["export_fingerprint"],
+    "planning_fingerprint": "plan-abc123",
+    "export_fingerprint_payload": {},
     "snapshot_id": ALIAS["snapshot_id"],
     "tier": "edge",
+    "source_window": {"start": None, "end": None},
+    "counts": {},
+    "coverage": {},
+    "tables": [],
+    "postgres_tables": [],
+    "data_path": "ci_snapshots/adaptive_refresh/data",
+    "generation_id": "gen-1",
+    "created_at": "2026-07-07T17:45:00+00:00",
     "archive": {
         "path": ALIAS["archive_key"],
         "bytes": 1024,
         "sha256": "deadbeef",
         "file_count": 3,
     },
+    "archived_at": "2026-07-07T17:46:00+00:00",
 }
 
 
@@ -542,6 +566,55 @@ class TestSnapshotManifest:
         )
         resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
         assert resp.status_code == 404
+
+    @pytest.mark.parametrize(
+        "field",
+        ["export_cache_schema_version", "archive_cache_schema_version"],
+    )
+    def test_a_manifest_schema_this_service_does_not_serve_is_409(
+        self, mock_client, mocker, field,
+    ):
+        """Plan 162 Stage AA, G31.
+
+        This route hands back a document read out of MinIO, so its response
+        model is a claim about data at rest rather than about code here. Both
+        versions are checked because the served document is two formats
+        layered and either can move on its own.
+
+        409 rather than 404: the snapshot exists and the alias resolved. What
+        failed is this service's ability to vouch for the bytes, and answering
+        "not found" would send a downloader looking for a different id.
+        """
+        bad_manifest = {**MANIFEST, field: 99}
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: ALIAS if "aliases/" in key else bad_manifest,
+        )
+
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+
+        assert resp.status_code == 409
+        assert field in resp.json()["detail"]
+
+    def test_missing_manifest_is_409_not_a_silent_truncation(self, mock_client, mocker):
+        """A manifest carrying neither version is refused, not served short.
+
+        The failure this guards is not a malformed document -- it is a future
+        one. Without the guard a bumped schema carrying new keys would be
+        filtered to whatever `ArchiveManifest` declares today and handed over
+        looking complete, and the divergence would sit in object storage where
+        no fixture reaches.
+        """
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: ALIAS if "aliases/" in key else {
+                "snapshot_id": ALIAS["snapshot_id"], "archive": MANIFEST["archive"],
+            },
+        )
+
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+
+        assert resp.status_code == 409
 
     def test_missing_manifest_is_404(self, mock_client, mocker):
         mocker.patch.object(
@@ -683,3 +756,53 @@ class TestDownload:
         # The bad key must never reach object_size or open_stream.
         object_size_mock.assert_not_called()
         open_stream_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The two services agree on the document format, without importing each other
+# ---------------------------------------------------------------------------
+
+class TestManifestSchemaAgreement:
+    """Plan 162 Stage AA, G31.
+
+    `ops` refuses a manifest whose schema version it does not recognise, and
+    the versions it recognises are two integers restated in
+    `ops/routers/snapshots.py` rather than imported from `archiver`, which
+    writes them. Nothing in `ops` imports `archiver` and nothing in `archiver`
+    imports `ops`; the two share an artifact, not a module, and coupling them
+    at the source to avoid restating two integers would trade a checkable
+    disagreement for a shared deploy.
+
+    So the restatement has to be checked, and this is where. A test may import
+    both -- that is the *"one corpus, two consumers, neither importing the
+    other"* shape this repository already uses for the Promtail and Docker
+    contracts, with the corpus being a constant instead of a recording.
+
+    Without this, bumping `ARCHIVE_CACHE_SCHEMA_VERSION` in `archiver` would
+    make `ops` answer 409 to every snapshot download the moment the first
+    manifest under the new version was written -- a total outage of the CI
+    snapshot path, produced by a change that looked local to one service.
+    """
+
+    def test_ops_serves_the_manifest_versions_archiver_writes(self):
+        from archiver.processors.lake_snapshot_archive import (
+            ARCHIVE_CACHE_SCHEMA_VERSION,
+        )
+        from archiver.processors.lake_snapshot_export_cache import (
+            EXPORT_CACHE_SCHEMA_VERSION,
+        )
+
+        assert snapshots.READABLE_ARCHIVE_CACHE_SCHEMA == ARCHIVE_CACHE_SCHEMA_VERSION, (
+            "archiver writes archive_cache_schema_version="
+            f"{ARCHIVE_CACHE_SCHEMA_VERSION} and ops serves "
+            f"{snapshots.READABLE_ARCHIVE_CACHE_SCHEMA}. Every snapshot manifest "
+            "written under the new version would be refused with 409 until ops "
+            "is taught the version and its response model is checked against "
+            "whatever fields the bump added."
+        )
+        assert snapshots.READABLE_EXPORT_CACHE_SCHEMA == EXPORT_CACHE_SCHEMA_VERSION, (
+            "archiver writes export_cache_schema_version="
+            f"{EXPORT_CACHE_SCHEMA_VERSION} and ops serves "
+            f"{snapshots.READABLE_EXPORT_CACHE_SCHEMA}. Same failure as above: "
+            "the export half of the manifest moved and the reader did not."
+        )

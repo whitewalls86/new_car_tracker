@@ -6,6 +6,8 @@ import json
 import httpx
 import pytest
 
+from archiver.processors.lake_snapshot_archive import ARCHIVE_CACHE_SCHEMA_VERSION
+from archiver.processors.lake_snapshot_export_cache import EXPORT_CACHE_SCHEMA_VERSION
 from scripts.download_lake_snapshot import download_api, download_local, main
 from scripts.lake_snapshot_common import ChecksumMismatchError, LakeSnapshotError, sha256_file
 from tests.scripts.conftest import make_tar_zst
@@ -17,7 +19,15 @@ def _build_snapshot(tmp_path, snapshot_id="adaptive-refresh-2026-07-07-000000"):
     archive = make_tar_zst(
         build_dir / "snapshot.tar.zst", files={"expected/feature_audit_summary.json": b"{}"},
     )
+    # Plan 162 Stage AA: the schema versions come from `archiver`, which writes
+    # this document, rather than from `ops`, which reads it. This helper feeds
+    # `TestDownloadApiAgainstOpsRouter`, whose whole value is that it runs the
+    # real client against the real router -- so a fixture matching the reader's
+    # expectations rather than the writer's output would let the two drift and
+    # still pass, which is the shape of defect this stage exists for.
     manifest = {
+        "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
+        "archive_cache_schema_version": ARCHIVE_CACHE_SCHEMA_VERSION,
         "snapshot_id": snapshot_id,
         "archive": {
             "sha256": sha256_file(archive),

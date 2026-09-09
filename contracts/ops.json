@@ -15,6 +15,238 @@
         "title": "AffectedResponse",
         "type": "object"
       },
+      "ArchiveBlock": {
+        "description": "The archive's own identity, added when the export was packaged.\n\nThe in-archive ``manifest.json`` deliberately omits this: an archive cannot\ncarry its own checksum, because the checksum is not known until after it\nhas been packaged.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Count"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "title": "ArchiveBlock",
+        "type": "object"
+      },
+      "ArchiveManifest": {
+        "description": "``GET /admin/snapshots/adaptive-refresh/{snapshot_id}``.\n\nThe Gate D export manifest plus archive metadata -- the document CI and\nlocal downloaders read. ``snapshot_id`` is overlaid by the route rather\nthan taken from the stored object: a Gate E archive is keyed by\n``export_fingerprint`` and can be reused by several snapshot ids, so the\npersisted copy legitimately carries whichever id packaged it first.\n\nEvery field is optional because this describes a stored document rather\nthan a value this service composes, and the version guard -- not this\nmodel -- is what establishes which keys are present.",
+        "properties": {
+          "archive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArchiveBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "archive_cache_schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Cache Schema Version"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "counts": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counts"
+          },
+          "coverage": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "data_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Path"
+          },
+          "export_cache_schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Cache Schema Version"
+          },
+          "export_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint"
+          },
+          "export_fingerprint_payload": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint Payload"
+          },
+          "generation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Id"
+          },
+          "planning_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Fingerprint"
+          },
+          "postgres_tables": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postgres Tables"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "source_window": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Window"
+          },
+          "tables": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tables"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "title": "ArchiveManifest",
+        "type": "object"
+      },
       "AuthorizeResponse": {
         "description": "``POST /coordination/authorize`` -- the phase, and the drain that justified it.",
         "properties": {
@@ -1177,6 +1409,86 @@
         "title": "RotationResponse",
         "type": "object"
       },
+      "SnapshotPointer": {
+        "description": "``GET /admin/snapshots/adaptive-refresh/latest`` -- ``latest.json``.\n\nWritten in exactly one place,\n``archiver/processors/lake_snapshot_archive.py``, and carries no schema\nversion of its own -- it is a flat pointer whose fields are the identity\nand integrity of one archive, not a document format.",
+        "properties": {
+          "archive_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Bytes"
+          },
+          "archive_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Key"
+          },
+          "archive_manifest_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Manifest Key"
+          },
+          "archive_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Sha256"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "export_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id"
+        ],
+        "title": "SnapshotPointer",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1933,9 +2245,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Latest Snapshot Admin Snapshots Adaptive Refresh Latest Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SnapshotPointer"
                 }
               }
             },
@@ -2005,9 +2315,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Snapshot Manifest Admin Snapshots Adaptive Refresh  Snapshot Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ArchiveManifest"
                 }
               }
             },
@@ -2024,6 +2332,9 @@
           },
           "404": {
             "description": "No snapshot with that id."
+          },
+          "409": {
+            "description": "The stored manifest declares a schema version this service does not serve."
           },
           "422": {
             "content": {

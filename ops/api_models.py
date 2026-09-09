@@ -250,3 +250,85 @@ class ReleaseClaimsResponse(BaseModel):
     errors: int
     claims_released: int
     fetches_recorded: int
+
+
+# ---------------------------------------------------------------------------
+# Snapshot distribution
+#
+# These two are the only responses in this service whose shape comes from data
+# at rest rather than from code here: both hand back a JSON object read out of
+# MinIO that `archiver` wrote. For every other route the fidelity plugin
+# compares a model against the handler's own return, which is a comparison of
+# two things in this repository. Here a test fixture proves nothing about what
+# production's bucket holds.
+#
+# That is why `get_snapshot_manifest` refuses a document whose schema version
+# it does not recognise. The refusal is what makes the model below truthful:
+# without it, a future `archive_cache_schema_version` carrying new keys would be
+# silently truncated on the way out, and the divergence would live in object
+# storage where no test can see it.
+# ---------------------------------------------------------------------------
+
+class SnapshotPointer(BaseModel):
+    """``GET /admin/snapshots/adaptive-refresh/latest`` -- ``latest.json``.
+
+    Written in exactly one place,
+    ``archiver/processors/lake_snapshot_archive.py``, and carries no schema
+    version of its own -- it is a flat pointer whose fields are the identity
+    and integrity of one archive, not a document format.
+    """
+
+    snapshot_id: str
+    export_fingerprint: str | None = None
+    archive_key: str | None = None
+    archive_manifest_key: str | None = None
+    archive_bytes: int | None = None
+    archive_sha256: str | None = None
+    created_at: str | None = None
+
+
+class ArchiveBlock(BaseModel):
+    """The archive's own identity, added when the export was packaged.
+
+    The in-archive ``manifest.json`` deliberately omits this: an archive cannot
+    carry its own checksum, because the checksum is not known until after it
+    has been packaged.
+    """
+
+    path: str | None = None
+    bytes: int | None = None
+    sha256: str | None = None
+    file_count: int | None = None
+
+
+class ArchiveManifest(BaseModel):
+    """``GET /admin/snapshots/adaptive-refresh/{snapshot_id}``.
+
+    The Gate D export manifest plus archive metadata -- the document CI and
+    local downloaders read. ``snapshot_id`` is overlaid by the route rather
+    than taken from the stored object: a Gate E archive is keyed by
+    ``export_fingerprint`` and can be reused by several snapshot ids, so the
+    persisted copy legitimately carries whichever id packaged it first.
+
+    Every field is optional because this describes a stored document rather
+    than a value this service composes, and the version guard -- not this
+    model -- is what establishes which keys are present.
+    """
+
+    export_cache_schema_version: int | None = None
+    archive_cache_schema_version: int | None = None
+    export_fingerprint: str | None = None
+    planning_fingerprint: str | None = None
+    export_fingerprint_payload: Any | None = None
+    snapshot_id: str | None = None
+    tier: str | None = None
+    source_window: Any | None = None
+    counts: Any | None = None
+    coverage: Any | None = None
+    tables: Any | None = None
+    postgres_tables: Any | None = None
+    data_path: str | None = None
+    generation_id: str | None = None
+    created_at: str | None = None
+    archive: ArchiveBlock | None = None
+    archived_at: str | None = None
