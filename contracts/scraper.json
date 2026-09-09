@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "ErrorResponse": {
+        "description": "FastAPI's uniform error body: ``{\"detail\": \"<message>\"}``.\n\nDeclared once and shared by every route whose refusals carry a string. The\nhandful whose ``detail`` is a *structured* dict a caller indexes into\ndeclare their own model instead -- those are the ones where the shape is\nload-bearing.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -12,6 +26,457 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "``GET /health`` everywhere: process liveness, never dependency health.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "Job": {
+        "description": "A job with its artifacts, as ``/scrape_results/jobs/completed`` returns.\n\n``artifacts`` holds whatever the processors produced and is deliberately\nfree-form: its element shape belongs to the parsers, and a model that\nguessed at it here would filter keys out of a parsed listing.",
+        "properties": {
+          "artifact_count": {
+            "title": "Artifact Count",
+            "type": "integer"
+          },
+          "artifacts": {
+            "items": {},
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_type": {
+            "title": "Job Type",
+            "type": "string"
+          },
+          "listing_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Count"
+          },
+          "page_1_blocked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page 1 Blocked"
+          },
+          "queued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued At"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "search_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Key"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "run_id",
+          "job_type",
+          "status",
+          "artifact_count",
+          "artifacts"
+        ],
+        "title": "Job",
+        "type": "object"
+      },
+      "JobSummary": {
+        "description": "One in-memory scrape job, either kind, without its artifacts.\n\n``GET /scrape_results/jobs`` returns these: a debugging view that strips\n``artifacts`` on purpose. That is why this is a separate model rather than\n:class:`Job` with an optional field -- an optional field is still\n*serialised*, as ``\"artifacts\": null``, so one model for both endpoints\nwould have put the key back into the response the endpoint exists to keep\nit out of. The suite said so immediately, which is the only reason this is\ntwo models and not one.",
+        "properties": {
+          "artifact_count": {
+            "title": "Artifact Count",
+            "type": "integer"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_type": {
+            "title": "Job Type",
+            "type": "string"
+          },
+          "listing_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Count"
+          },
+          "page_1_blocked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page 1 Blocked"
+          },
+          "queued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued At"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "search_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Key"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "run_id",
+          "job_type",
+          "status",
+          "artifact_count"
+        ],
+        "title": "JobSummary",
+        "type": "object"
+      },
+      "MarkFetchedResponse": {
+        "description": "``POST /scrape_results/jobs/{job_id}/fetched``.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "MarkFetchedResponse",
+        "type": "object"
+      },
+      "QueuedBatchResponse": {
+        "description": "``POST /scrape_detail/batch`` -- as above, plus what was accepted.",
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "listing_count": {
+            "title": "Listing Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "batch_id",
+          "status",
+          "listing_count"
+        ],
+        "title": "QueuedBatchResponse",
+        "type": "object"
+      },
+      "QueuedJobResponse": {
+        "description": "``POST /scrape_results`` -- the job is queued, poll for the result.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "QueuedJobResponse",
+        "type": "object"
+      },
+      "ScrapeDetailResponse": {
+        "description": "``POST /scrape_detail`` -- the synchronous path.\n\nAll seven return paths across ``scrape_detail_fetch``,\n``scrape_detail_dummy`` and the unsupported-mode branch answer these same\nthree keys, which is why none of them is optional. ``artifacts`` and\n``meta`` stay free-form for the reason ``Job.artifacts`` does.",
+        "properties": {
+          "artifacts": {
+            "items": {},
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "artifacts",
+          "meta"
+        ],
+        "title": "ScrapeDetailResponse",
+        "type": "object"
+      },
+      "ScraperNotReadyResponse": {
+        "description": "``/ready``'s 503: the same evidence, nested under ``detail``.\n\n``ops/coordination_drain.py:_service_jobs`` unwraps one level and reads\n``active_by_surface`` out of it, counting a 503 as *known* evidence -- a\ndraining scraper reporting three detail fetches in flight is answering the\nquestion, not failing to.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/ScraperReadyResponse"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ScraperNotReadyResponse",
+        "type": "object"
+      },
+      "ScraperReadyResponse": {
+        "description": "``GET /ready`` -- drain evidence, partitioned by surface.\n\n``active_jobs`` and ``oldest_started_at`` are the totals the shared shape\nwould carry; the two ``*_by_surface`` maps are what makes this endpoint\nanswerable for two surfaces at once.",
+        "properties": {
+          "active_by_surface": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Active By Surface",
+            "type": "object"
+          },
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_by_surface": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Oldest By Surface",
+            "type": "object"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs",
+          "active_by_surface",
+          "oldest_by_surface"
+        ],
+        "title": "ScraperReadyResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -69,7 +534,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -84,11 +551,6 @@
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -103,12 +565,21 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ScraperReadyResponse"
+                }
               }
             },
             "description": "Successful Response"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScraperNotReadyResponse"
+                }
+              }
+            },
             "description": "A dependency this service needs is not reachable."
           }
         },
@@ -146,9 +617,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Scrape Detail Scrape Detail Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ScrapeDetailResponse"
                 }
               }
             },
@@ -200,15 +669,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Scrape Detail Batch Endpoint Scrape Detail Batch Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/QueuedBatchResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The batch request names no usable listings."
           },
           "422": {
@@ -275,9 +749,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Run Scrape Results Scrape Results Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/QueuedJobResponse"
                 }
               }
             },
@@ -307,8 +779,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/JobSummary"
                   },
                   "title": "Response List All Jobs Scrape Results Jobs Get",
                   "type": "array"
@@ -331,8 +802,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/Job"
                   },
                   "title": "Response Get Completed Jobs Scrape Results Jobs Completed Get",
                   "type": "array"
@@ -365,15 +835,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Mark Job Fetched Scrape Results Jobs  Job Id  Fetched Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MarkFetchedResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "No such job, or it was already fetched."
           },
           "422": {
