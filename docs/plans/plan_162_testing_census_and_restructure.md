@@ -387,9 +387,9 @@ moved it to the end without making it a different stage.
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
 | 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `done` | CAR-104 |
 | 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `done` | CAR-114 |
-| 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `next` | CAR-78 |
+| 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `done` | CAR-78 |
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
-| 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
+| 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `next` | CAR-106 |
 | 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
 | 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
 | 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
@@ -4581,3 +4581,105 @@ changed by this work. `README.md:317` and `info.html:855` both say *"More than
 **Cost: no estimate carried, actual 1.** The issue was created without one, so
 there is no delta to learn from here -- which is itself the finding, since an
 unestimated closed issue undercounts its cycle silently.
+
+### Stage Q — CI's services are production's, in definition and in contents
+
+**Issue:** CAR-78 · **Closed:** 2026-09-09
+
+**Five jobs, five hand-declared `services:` blocks, six transcriptions of
+Flyway's argument list, and nothing asserting any of it matched production.**
+They now bring up [`docker-compose.yml`](../../docker-compose.yml) plus
+[`docker-compose.ci.yml`](../../docker-compose.ci.yml) and run production's
+literal Flyway command, `-baselineOnMigrate=true` included. `ci.yml` lost 228
+lines. `services.postgres` resolves byte-identical to production's: CI runs
+`shared_buffers=2GB` and `shm_size: 1gb` on a 7GB runner, and overriding them
+was considered and declined, because an override adopted defensively is exactly
+the untested divergence the file exists to delete.
+
+**The guard is a resolved-config diff.** `docker compose config` resolves the
+whole merge chain and the two documents are diffed whole, so a divergence
+cannot be missed for not having been anticipated -- the limitation
+[`tests/test_lakehouse_compose_config.py`](../../tests/test_lakehouse_compose_config.py)
+has, since it `yaml.safe_load`s single files and asserts only what it names.
+Nine divergences are declared, each with its argument, failing in three
+directions: undeclared, stale, and misdescribed.
+
+**Two things the work found by being run rather than reviewed.** `!reset` is
+the correct Compose tag for deleting MinIO's inherited OIDC keys and is the
+wrong trade: `yaml.safe_load` cannot construct it and five existing rules load
+every `docker-compose*.yml`, so the keys are blanked instead -- after checking
+that MinIO starts healthy with an empty provider URL rather than assuming it.
+And the base file pins `name: cartracker_pgdata`, which is not project-scoped,
+so dropping `external` alone had Compose create and destroy a volume under that
+exact global name: harmless on a runner, but a `down -v` against this chain on
+a developer machine would have deleted their database. It is
+`cartracker_pgdata_ci` now.
+
+**The sqlite question, answered by measurement.** No test in
+`tests/integration/airflow/` imports the Airflow ORM, `Session` or
+`create_session` -- the only API the suite uses is `DagBag(dag_folder=...)` --
+and no DAG in `airflow/dags/` calls `Variable.get`, `Connection.get` or
+`BaseHook`, so parsing them cannot reach a metadata database either. The two
+consumers are separate: `tests/integration/sql/` needs the migrated `airflow.*`
+tables and has them. So the connection string points nowhere on purpose, which
+turns "these suites never touch the metadata database" from a comment into an
+assertion, and `schema-contracts` is green with it.
+
+**The census, and the seed that was not written.** [The
+evidence](../evidence/plan_162_stage_Q_greenfield_census_2026-09-09.md). An
+authored seed was rejected before it ran by [Stage
+W](#stage-w-a-test-may-not-supply-both-halves-of-a-contract)'s own rule -- a
+seed written here decides what "populated" means, so the failure set would have
+been a function of the invention. Production can seed two Postgres tables;
+three of the four snapshot source tables are already cohort-closed staging
+events, so backfilling `staging.*` is a second sink rather than a reverse
+loader. 94 emptiness-shaped assertions across eight suites are the candidate
+population, with the instrument's limit stated: it cannot separate a scoped
+emptiness assertion from an unscoped one, and running against a populated
+database separates them for free, which is Plan 121's.
+
+**Two riders, both this plan's own class.** A stage header may not claim a gap
+`docs/TESTING.md` does not define -- this stage's own documents claimed G30 and
+G31 before either entry existed and the suite stayed green. And
+`test_every_asserted_rule_names_a_real_test` read `ast.parse(...).body`, so it
+saw only module-level functions: it reported a phantom for a rule defined
+inside a class, and no class-based module could ever have registered one. Both
+opened by writing this stage's own rules and tripping over them.
+
+**What this stage did not earn, recorded here because it happened during its
+closeout.** A flaky red master turned out to be [Stage
+S](#stage-s-answers-a-question-plan-161-did-not-ask)'s instrument reading unit
+test *fixtures* as models: `compiled_model_paths` globbed every compiled
+`*.sql` and matched on stem, and because `branch_list_both_phases` keys on
+`path.name`, **for 10 of the 23 models the fixture replaced the model
+outright**. Measured 68 paths / 23 names / 10 fixtures / **118 branch points**,
+against 23 / 23 / 0 / **295** after the repair. The gate was blind to 60% of
+the branches it claimed to cover and green throughout. Stage S's recorded
+figure of 216 matches neither number and should be read as measured through the
+broken reader rather than corrected to either. Repaired in `9fb7678`, and
+`692e07c` gives that gate the corpus floor it never had, seeded at 250 and
+demonstrated by all nine checks failing with the old reader restored.
+
+**Verified** by [#405](https://github.com/whitewalls86/new_car_tracker/pull/405),
+every check green, and locally by running the CI chain end to end: both
+services healthy from the CI definitions, 51 migrations applied under
+production's own Flyway command. Unit suite 3,901; mutation harness 88 CAUGHT,
+0 MISSED, including the six added here.
+
+**The wall-clock cost of `compose up` is not established, and one run per side
+cannot establish it.** Against `864b3c7`: `service-integration` 96s->83s,
+`lake-integration` 106s->73s, `schema-contracts` 118s->130s, `dbt-models`
+165s->213s. Two faster, two slower, +-40s in both directions -- runner variance
+swamps the effect. Repeated runs would separate them and are more than this
+stage warrants.
+
+**`tests/integration/dbt/` cannot run on Windows at all**, which is why the
+Stage S defect above was only ever exercised in CI. The compiled tree embeds
+`unit_tests.yml` as a directory twice and `copytree` dies on `MAX_PATH`; the
+reproduction ran in a Linux container against a seeded Postgres and MinIO.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. `README.md`'s repository-layout block lists two Compose
+files and already omitted six others, so the two added here falsify nothing.
+
+**Cost: estimate 2, actual 2 (0).**
