@@ -4651,6 +4651,18 @@ def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], .
                             resolved = _status_constant(keyword.value, constants)
                             if resolved is not None:
                                 declared_success = resolved
+                    declared = set()
+                    for keyword in decorator.keywords:
+                        if keyword.arg == "status_code":
+                            resolved = _status_constant(keyword.value, constants)
+                            if resolved is not None:
+                                declared.add(resolved)
+                        if keyword.arg == "responses" and isinstance(
+                                keyword.value, ast.Dict):
+                            for key in keyword.value.keys:
+                                resolved = _status_constant(key, constants)
+                                if resolved is not None:
+                                    declared.add(resolved)
                     codes = _produced_codes(function, constants, tree)
                     if _returns_a_bare_value(function) or not codes:
                         codes |= {declared_success}
@@ -4658,6 +4670,7 @@ def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], .
                         service, path.relative_to(REPO_ROOT).as_posix(),
                         function.name, decorator.args[0].value,
                         frozenset(methods), frozenset(codes),
+                        frozenset(declared), declared_success,
                     ))
     return tuple(found)
 
@@ -4834,7 +4847,8 @@ def test_every_status_code_a_route_can_produce_is_asserted():
         "be attributed to one of them and neither can be credited.",
     )
     gaps = set()
-    for service, file, name, decorator_path, methods, codes in route_handlers():
+    for handler in route_handlers():
+        _service, file, name, decorator_path, _methods, codes = handler[:6]
         key = f"{file}:{name}"
         if not _literal_segments(decorator_path) or key in ambiguous:
             continue
@@ -4889,6 +4903,270 @@ def test_the_route_code_corpus_is_not_empty():
 
 
 # ---------------------------------------------------------------------------
+# Rule 12 -- a route declares the statuses it can return.
+# ---------------------------------------------------------------------------
+# G21, and the stage's own name. Every service's OpenAPI schema declares exactly
+# `200` and `422` -- FastAPI's defaults -- while the suite asserts eleven
+# distinct codes across 137 assertions. Every real code is raised inside a
+# handler body and surfaces nowhere a machine can read, so the schema is not a
+# weak contract but a false one, and Stage Z's committed artifact would inherit
+# the falsehood.
+#
+# **Both directions.** An undeclared code is the obvious failure. A declared code
+# nothing produces is the one that matters over time: without it the
+# declarations rot into a second description of whatever the routes used to do,
+# which is `ARCHITECTURE.md:179` again in a different file.
+#
+# **The success code is excluded from the comparison.** A handler returning a
+# dict answers 200 by FastAPI's own default, and demanding `responses={200: ...}`
+# on all 89 routes would be noise rather than contract. What must be declared is
+# every *other* code the body can produce.
+#: Seeded at 52 on 2026-09-08 from this rule's own first run, and drained by
+#: declaring each route's codes. **The list is the work**: nothing else tracks
+#: which of the 89 routes have been done, and an entry that stops describing a
+#: mismatch fails until it is deleted, so the ledger cannot lag the repair.
+DECLARED_CODE_WAIVERS: tuple[Waiver, ...] = (
+    Waiver(
+        "archiver/app.py:ready produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "archiver/app.py:trigger_compact_silver produces undeclared [500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "archiver/app.py:trigger_disk_usage produces undeclared [409, 500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "archiver/app.py:trigger_pack_bronze_html produces undeclared [400, 409, 500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "archiver/app.py:trigger_prune_packed_source_html produces undeclared [400, 409, 500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "archiver/app.py:trigger_snapshot_export produces undeclared [400, 409]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "archiver/app.py:trigger_verify_pack_read_path produces undeclared [400, 500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "dbt_runner/app.py:dbt_build produces undeclared [400, 409, 500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "dbt_runner/app.py:dbt_docs_generate produces undeclared [500]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "dbt_runner/app.py:ready produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/app.py:root produces undeclared [307]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:create_search produces undeclared [303, 422, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:dbt_intent_delete produces undeclared [303]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:dbt_intent_upsert produces undeclared [303]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:delete_search produces undeclared [303, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:deploy_complete produces undeclared [303]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:deploy_start produces undeclared [303]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:edit_search_form produces undeclared [303, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:list_searches produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:toggle_search produces undeclared [303, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/admin.py:update_search produces undeclared [303, 404, 422, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/auth.py:auth_check produces undeclared [403, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:authorize_coordination produces undeclared [409, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:begin_coordination_drain produces undeclared [409, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:begin_coordination_validation produces undeclared [409, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:cancel_coordination produces undeclared [409, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:complete_coordination produces undeclared [409, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:coordination_drain_status produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:coordination_release_status produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:coordination_status produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:request_coordination produces undeclared [409, 422, 500, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:submit_host_evidence produces undeclared [409, 422, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/deploy.py:complete_deployment produces undeclared [409, 500, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/deploy.py:start_deploy_intent produces undeclared [409, 422, 500, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/info.py:info_redirect produces undeclared [308]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/public.py:recap_index produces undeclared [404]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/public.py:recap_page produces undeclared [404]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/snapshots.py:download_snapshot_archive"
+        " produces undeclared [400, 401, 403, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/snapshots.py:get_latest_snapshot produces undeclared [401, 403, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/snapshots.py:get_snapshot_manifest"
+        " produces undeclared [400, 401, 403, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/users.py:approve_access_request produces undeclared [303, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/users.py:change_user_role produces undeclared [303, 400, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/users.py:deny_access_request produces undeclared [303, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/users.py:request_access_form produces undeclared [303]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/users.py:revoke_user produces undeclared [303, 404, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/users.py:submit_access_request produces undeclared [303, 400, 503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "processing/app.py:ready produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "processing/routers/artifact.py:process_single_artifact produces undeclared [404]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "processing/routers/batch.py:process_batch produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "scraper/app.py:mark_job_fetched produces undeclared [404]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "scraper/app.py:ready produces undeclared [503]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "scraper/app.py:scrape_detail_batch_endpoint produces undeclared [400]",
+        "G21", 162, date(2026, 9, 8),
+    ),
+)
+
+
+def test_every_route_declares_the_statuses_it_can_return():
+    """The rule this stage is named for.
+
+    It is written before the declarations exist on purpose: its failure list is
+    the work, and it shrinks as the work lands. Nothing tracks which of the
+    routes are done except this.
+    """
+    mismatches = set()
+    for handler in route_handlers():
+        _service, file, name, _path, _methods, produced, declared, success = handler
+        undeclared = sorted(produced - declared - {success})
+        overdeclared = sorted(declared - produced)
+        if undeclared or overdeclared:
+            detail = []
+            if undeclared:
+                detail.append(f"produces undeclared {undeclared}")
+            if overdeclared:
+                detail.append(f"declares unproduced {overdeclared}")
+            mismatches.add(f"{file}:{name} {'; '.join(detail)}")
+
+    _assert_exactly(
+        mismatches, DECLARED_CODE_WAIVERS,
+        "A route's declared status codes must equal the codes its handler can "
+        "produce.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
@@ -4902,6 +5180,7 @@ ALL_WAIVERS = (
     + UNINSPECTED_RESPONSE_WAIVERS
     + UNEXERCISED_CODE_WAIVERS
     + AMBIGUOUS_ROUTE_WAIVERS
+    + DECLARED_CODE_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS
