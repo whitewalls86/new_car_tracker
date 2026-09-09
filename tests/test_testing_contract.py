@@ -4167,6 +4167,279 @@ def test_no_route_swallows_a_failed_write_and_reports_success():
 
 
 # ---------------------------------------------------------------------------
+# Rule 10c -- an outcome that came back is not thrown away.
+# ---------------------------------------------------------------------------
+# G27's third clause. The first two ask whether a handler noticed what its own
+# statement did; this asks whether it noticed what something else told it.
+#
+# `_set_intent` returns five statuses -- ok, locked, invalid, unavailable
+# (Postgres unreachable) and error (Postgres refused the write, with a reason) --
+# and `ops/routers/admin.py`'s deploy buttons call it as a bare statement and
+# redirect 303. Clicking **Start deploy** in the admin panel gives the same page
+# whether intent was taken, was already held by somebody else, or the database
+# was down. `_intent_release`'s own docstring records the near miss: it returned
+# a bare `bool` until Plan 162 Stage K "collapsing five outcomes into False" --
+# Stage K widened the signal and the caller never started reading it.
+#
+# **What counts as an outcome type is derived from its shape, not its name**,
+# and the difference is load-bearing here. `MaterializationResult` ends in
+# `Result` and carries no outcome -- it is a data carrier, and discarding one
+# would be legitimate. `CandidateSet` and `PresentationSnapshot` do not end in
+# `Result` and both carry `status` and `error`. A rule keyed on the suffix
+# would have both of those backwards.
+#
+# **Scope is why this is narrow enough to be worth having.** 452 functions here
+# carry a non-None return annotation and 17 call sites discard one -- but almost
+# all of those are correct: `flush()` returning a bool, `write_json()` returning
+# the path it wrote, a cache `refresh()`. Requiring every annotated return to be
+# consumed would fail fifteen sound call sites to catch two. Requiring it only
+# of a value whose whole purpose is to report an outcome fails none of them.
+_OUTCOME_FIELDS = frozenset({"status", "ok", "error", "detail", "failure_reason"})
+
+
+@lru_cache(maxsize=None)
+def outcome_types() -> frozenset[str]:
+    """Classes defined here that exist to report how something went.
+
+    A class with a ``status``, ``ok``, ``error``, ``detail`` or
+    ``failure_reason`` field is answering "what happened", and dropping one on
+    the floor drops the answer. Derived by walking annotated class bodies, so a
+    new result type is covered the day it is written rather than when somebody
+    remembers to add it to a list.
+    """
+    found = set()
+    for path in production_python_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            fields = {
+                statement.target.id
+                for statement in node.body
+                if isinstance(statement, ast.AnnAssign)
+                and isinstance(statement.target, ast.Name)
+            }
+            if fields & _OUTCOME_FIELDS:
+                found.add(node.name)
+    return frozenset(found)
+
+
+@lru_cache(maxsize=None)
+def outcome_returning_functions() -> frozenset[str]:
+    """Functions annotated as returning one of :func:`outcome_types`."""
+    outcomes = outcome_types()
+    found = set()
+    for path in production_python_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.returns is not None and ast.unparse(node.returns) in outcomes:
+                found.add(node.name)
+    return frozenset(found)
+
+
+def _discarded_outcomes(path: Path) -> list[str]:
+    """``file:line:caller -> callee()`` for each outcome dropped on the floor."""
+    producers = outcome_returning_functions()
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(function):
+            # A call in statement position -- its value goes nowhere at all.
+            if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+                continue
+            # A **free function** only, never a method. A free function's
+            # return value is its only channel; a method has a receiver to
+            # record in, and `public_stats_cache.refresh()` does exactly that --
+            # it stores the snapshot on `self` and logs its own failure, so the
+            # caller discarding it discards nothing. Flagging it would be the
+            # rule failing on correct code.
+            if not isinstance(node.value.func, ast.Name):
+                continue
+            callee = node.value.func.id
+            if callee in producers:
+                found.append(
+                    f"{relative}:{node.lineno}:{function.name} -> {callee}()"
+                )
+    return sorted(found)
+
+
+DISCARDED_OUTCOME_WAIVERS: tuple[Waiver, ...] = (
+    # Both are the legacy deploy buttons, and both predate the redeploy work
+    # that made them redundant: `scripts/redeploy.sh` drives drain,
+    # authorization and release through the coordination API, and these two
+    # never moved with it. They are the same neglected-surface class as the
+    # `dbt_intent_*` handlers beside them, and Stage AA owns what replaces them
+    # -- so they are waived here rather than repaired into a shape nobody wants
+    # to keep.
+    Waiver("ops/routers/admin.py:307:deploy_start -> _set_intent()",
+           "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:313:deploy_complete -> _intent_release()",
+           "G27", 162, date(2026, 9, 8)),
+)
+
+
+def test_no_caller_discards_an_outcome_it_asked_for():
+    """A five-valued answer thrown away answers nothing.
+
+    The rule that would have caught `deploy_start` -- and the reason it is worth
+    having with its violations already known is that both were found by
+    accident, one chasing a phantom 422 and one chasing a path-matching tie.
+    Neither was found by looking, and the next one should not have to be.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_discarded_outcomes(path))
+
+    _assert_exactly(
+        found,
+        DISCARDED_OUTCOME_WAIVERS,
+        "These calls returned a value describing how the work went, and the "
+        "caller discarded it.",
+    )
+
+
+def test_the_outcome_type_corpus_is_not_empty():
+    """A rule over an empty set of types is a rule about nothing."""
+    types_found = outcome_types()
+    assert len(types_found) >= 4, (
+        f"only {sorted(types_found)} look like outcome types; the rule above "
+        f"is measuring almost nothing. Check that production_python_files() "
+        f"still resolves and that annotated class bodies are being read."
+    )
+    producers = outcome_returning_functions()
+    assert producers, (
+        f"no function is annotated as returning one of {sorted(types_found)}, "
+        f"so nothing can be discarded and the rule above cannot fail."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 10d -- a response we asked for has its status read.
+# ---------------------------------------------------------------------------
+# G27's fourth clause, and the one that reaches across a service boundary. The
+# first three ask whether a handler noticed what happened locally; this asks
+# whether it noticed what the other end said.
+#
+# **This rule was nearly written with an escape clause, and the escape clause
+# was the bug.** Six helpers in `ops/coordination_drain.py` and
+# `ops/coordination_release.py` never read the status and were nonetheless
+# correct: each subscripts the parsed payload immediately, so an error body
+# raises `KeyError` into a handler that returns an `unknown` verdict. The first
+# draft of this rule credited that pattern -- "the shape check subsumes the
+# status check" -- which is an inference, and one inference away from crediting
+# a 200 that happens to parse. **The conforming code was changed instead**, and
+# the change was free: `HTTPError` subclasses `RequestException`, which those
+# gates already catch and already turn into `unknown`, so behaviour is identical
+# and the rule has no clause that can be wrong.
+#
+# That is the trade this rule records: six explicit checks in working code, in
+# exchange for a rule that states one thing and cannot be argued around.
+_RESPONSE_INSPECTIONS = frozenset({"status_code", "raise_for_status", "ok"})
+_OUTBOUND_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head"})
+
+
+def _is_outbound_call(node: ast.AST) -> bool:
+    """A call through a ``requests``-shaped client, rather than a local method.
+
+    Keyed on the receiver's name containing ``request``, which covers
+    ``requests.get`` and this repository's ``http_requests`` alias, and excludes
+    the ``cur.get``/``client.get`` shapes that are not HTTP at all.
+    """
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    if node.func.attr not in _OUTBOUND_VERBS:
+        return False
+    receiver = node.func.value
+    name = getattr(receiver, "id", None) or getattr(receiver, "attr", "")
+    return "request" in str(name).lower()
+
+
+def _uninspected_responses(path: Path) -> list[str]:
+    """``file:line:function`` for each outbound call whose answer is not read."""
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        for node in ast.walk(function):
+            # The response is never even captured: nothing can read it later.
+            if isinstance(node, ast.Expr) and _is_outbound_call(node.value):
+                found.append(f"{relative}:{node.lineno}:{function.name}")
+                continue
+            if not (isinstance(node, ast.Assign) and _is_outbound_call(node.value)):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                inspected = any(
+                    isinstance(child, ast.Attribute)
+                    and child.attr in _RESPONSE_INSPECTIONS
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == target.id
+                    for child in ast.walk(function)
+                )
+                if not inspected:
+                    found.append(f"{relative}:{node.lineno}:{function.name}")
+    return sorted(set(found))
+
+
+UNINSPECTED_RESPONSE_WAIVERS: tuple[Waiver, ...] = (
+    # All five call `dbt_runner` endpoints that no longer exist -- `/dbt/lock`,
+    # `/dbt/intents` and `/logs`, deleted by 9f08336 and d88a41e -- so there is
+    # no status worth reading and no repair that is not first a decision about
+    # whether the admin dbt panel and log viewer survive at all. Stage AA owns
+    # that decision, and these leave with whichever answer it takes.
+    Waiver("ops/routers/admin.py:135:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:141:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:147:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:266:view_logs", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:272:view_logs", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:224:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
+)
+
+
+def test_every_response_we_ask_for_has_its_status_read():
+    """Asking and not listening is not asking.
+
+    The waived six are all calls to endpoints that were deleted from
+    `dbt_runner` in April and May and never removed from their caller, which is
+    the defect this whole clause exists to make loud: they were found by
+    accident four and a half months later, and nothing in the suite had an
+    opinion about them the entire time.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_uninspected_responses(path))
+
+    _assert_exactly(
+        found,
+        UNINSPECTED_RESPONSE_WAIVERS,
+        "These calls went out to another service and the answer was never read.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
@@ -4176,6 +4449,8 @@ ALL_WAIVERS = (
     + LAYER_2_WAIVERS
     + DUPLICATE_SQL_WAIVERS
     + SWALLOWED_WRITE_WAIVERS
+    + DISCARDED_OUTCOME_WAIVERS
+    + UNINSPECTED_RESPONSE_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS

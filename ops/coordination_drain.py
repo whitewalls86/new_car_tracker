@@ -164,6 +164,8 @@ def _service_jobs(source: str) -> dict[str, Any]:
             f"{os.environ.get(env_name, default_url).rstrip('/')}/ready",
             timeout=HTTP_TIMEOUT_SECONDS,
         )
+        # The status, before the body. Plan 162 Stage Y, G27.
+        response.raise_for_status()
         payload = response.json()
         if isinstance(payload, dict) and isinstance(payload.get("detail"), dict):
             payload = payload["detail"]
@@ -192,6 +194,8 @@ def _container_processes(scope: frozenset[str]) -> dict[str, Any]:
             f"{CONTAINER_HEALTH_URL.rstrip('/')}/oneoff-processes",
             timeout=HTTP_TIMEOUT_SECONDS,
         )
+        # The status, before the body. Plan 162 Stage Y, G27.
+        response.raise_for_status()
         payload = response.json()
         processes = payload["processes"]
         if payload.get("known") is not True or not isinstance(processes, list):

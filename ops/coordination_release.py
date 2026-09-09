@@ -88,6 +88,8 @@ def _prometheus_scalar(query: str) -> float:
         params={"query": query},
         timeout=HTTP_TIMEOUT_SECONDS,
     )
+    # The status, before the body. Plan 162 Stage Y, G27.
+    response.raise_for_status()
     payload = response.json()
     result = payload["data"]["result"]
     if payload.get("status") != "success" or len(result) != 1:
@@ -105,6 +107,8 @@ def _container_health_values() -> dict[str, int]:
         params={"query": "cartracker_container_health"},
         timeout=HTTP_TIMEOUT_SECONDS,
     )
+    # The status, before the body. Plan 162 Stage Y, G27.
+    response.raise_for_status()
     payload = response.json()
     result = payload["data"]["result"]
     if payload.get("status") != "success" or not isinstance(result, list):
@@ -190,6 +194,8 @@ def _loki_has_recent_ingestion() -> bool:
         params={"query": '{source=~".+"}', "limit": 1, "direction": "BACKWARD"},
         timeout=HTTP_TIMEOUT_SECONDS,
     )
+    # The status, before the body. Plan 162 Stage Y, G27.
+    response.raise_for_status()
     payload = response.json()
     values = payload["data"]["result"]
     if payload.get("status") != "success" or not values:
@@ -241,6 +247,8 @@ def _auxiliary_still_stopped(_: dict[str, Any]) -> dict[str, str]:
                 f"{CONTAINER_HEALTH_URL.rstrip('/')}/project-status/{project}",
                 timeout=HTTP_TIMEOUT_SECONDS,
             )
+            # The status, before the body. Plan 162 Stage Y, G27.
+            response.raise_for_status()
             payload = response.json()
             if payload.get("known") is not True or not isinstance(payload.get("services"), list):
                 raise ValueError("invalid auxiliary project evidence")

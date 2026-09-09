@@ -108,6 +108,32 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_no_caller_discards_an_outcome_it_asked_for",
+        "the deploy API stops reading the five-valued result it asked for",
+        lambda: _edit(
+            "ops/routers/deploy.py",
+            '    result = _set_intent("Deploy Declared", pause_long_jobs, targets)',
+            '    _set_intent("Deploy Declared", pause_long_jobs, targets)',
+        ),
+        ["ops/routers/deploy.py"],
+        [],
+    ),
+    (
+        "test_every_response_we_ask_for_has_its_status_read",
+        "the release gate stops reading the status of a service it polls",
+        lambda: _edit(
+            "ops/coordination_release.py",
+            "            # The status, before the body. Plan 162 Stage Y, G27.\n"
+            "            response.raise_for_status()\n"
+            "            payload = response.json()\n"
+            '            if payload.get("known") is not True',
+            "            payload = response.json()\n"
+            '            if payload.get("known") is not True',
+        ),
+        ["ops/coordination_release.py"],
+        [],
+    ),
+    (
         "test_no_route_swallows_a_failed_write_and_reports_success",
         "a route's failed write is logged and then answered as a success",
         lambda: _edit(

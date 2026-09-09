@@ -98,11 +98,16 @@ def _notify_access_request(email_hash: str, requested_role: str) -> None:
             f"Email hash: {email_hash[:12]}…\n"
             f"Approve at: https://cartracker.info/admin/access-requests"
         )
-        http_requests.post(
+        response = http_requests.post(
             f"https://api.telegram.org/bot{_TELEGRAM_API}/sendMessage",
             json={"chat_id": _TELEGRAM_CHAT_ID, "text": msg},
             timeout=5,
         )
+        # The status, before assuming it sent. Plan 162 Stage Y, G27. Telegram
+        # answers 200 for a delivered message and 4xx for a bad chat id or a
+        # revoked token, and without this an access request nobody was told
+        # about was indistinguishable from one that reached the phone.
+        response.raise_for_status()
     except Exception:
         logger.warning("Failed to send Telegram notification for access request")
 

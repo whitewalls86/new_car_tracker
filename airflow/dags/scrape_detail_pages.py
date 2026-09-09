@@ -96,10 +96,15 @@ def _scrape_detail(**context):
                     job_id, job.get("status"), job.get("artifact_count", 0),
                 )
                 try:
-                    requests.post(
+                    response = requests.post(
                         f"{SCRAPER_URL}/scrape_results/jobs/{job_id}/fetched",
                         timeout=10,
                     )
+                    # mark_job_fetched answers 404 when the job is already gone,
+                    # and a 404 is not a RequestException -- so without this the
+                    # warning below never fired and the job stayed in the
+                    # scraper's memory unreported. Plan 162 Stage Y, G27.
+                    response.raise_for_status()
                 except requests.RequestException as e:
                     logger.warning("failed to mark job %s fetched: %s", job_id, e)
 
