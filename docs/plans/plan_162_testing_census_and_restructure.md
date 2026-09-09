@@ -390,7 +390,7 @@ moved it to the end without making it a different stage.
 | 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `done` | CAR-78 |
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `next` | CAR-106 |
-| 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
+| 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `done` | CAR-107 |
 | 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
 | 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
 | 29 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
@@ -4683,3 +4683,85 @@ changed by this work. `README.md`'s repository-layout block lists two Compose
 files and already omitted six others, so the two added here falsify nothing.
 
 **Cost: estimate 2, actual 2 (0).**
+
+### Stage Z — the contract is generated, committed and gated
+
+**Six artifacts under `contracts/`**, generated from the running apps by
+`scripts/generate_service_contracts.py` and diffed by the `service-contracts`
+CI job. Four rules with four mutations hold the parts a diff cannot hold up on
+its own: that every service *has* an artifact (both directions — a contract for
+a service that no longer exists is the quieter half, because `--check` walks
+only the services that exist and would never mention it), that CI still *runs*
+the gate, that the versions are pinned *exactly*, and that every install
+inherits the pin.
+
+**Two of the stage's own clauses were wrong, and both are corrected here rather
+than quietly satisfied.** "Seven services" is six: six packages construct a
+`FastAPI()`, and `dashboard` — confirmed from production, which carries no
+`fastapi` or `pydantic` at all — is Streamlit and serves no schema, so it owes
+the "enough" table instead, as G7.
+
+**The normalisation clause is retired, not met.** It asked that *"the
+normalisation names what it drops and why"*, and that record would have been a
+maintained document whose drift is invisible by construction — the fields it
+drops are exactly the ones the gate can no longer see. This plan's own defect
+rebuilt inside its remedy. Canonicalisation is `sort_keys` and an indent, and
+nothing is dropped.
+
+**Dropping nothing is affordable only because the versions are pinned.**
+`constraints.txt` holds `fastapi`, `pydantic`, `starlette` and
+`prometheus-fastapi-instrumentator` at production's values, read from the
+running containers on 2026-09-09 rather than chosen here. The fourth belongs
+with the obvious three because `.expose(app)` in `ops`, `processing` and
+`scraper` *adds a `/metrics` route*, so its version moves the route set the same
+way FastAPI's does. Inherited through one workflow-level `PIP_CONSTRAINT`
+rather than thirteen `-c` flags — Stage U's precedent, and a job nobody has
+written yet inherits it — with exactly one declared exemption, the isolated
+Airflow venv whose starlette cannot satisfy the pin.
+
+**The gate failed on its first run, against source nobody had touched, and it
+was right to.** Six `ops` routes were one `api_route(methods=["GET", "HEAD"])`
+each. FastAPI derives an operation ID once per *route* and reuses it for every
+method the route serves, and `generate_unique_id` ends
+`list(route.methods)[0].lower()` over a **set** — so the ID followed the
+process hash seed and alternated between `_get` and `_head` between runs of
+identical source. This is not the version drift `constraints.txt` fixes, and it
+is not fixable by `generate_unique_id_function`, which FastAPI hands the route
+and never the method; an explicit `operation_id=` fails for the same reason.
+The six became `get`/`head` pairs, each half declaring the same codes through a
+shared constant, which also silenced the `Duplicate Operation ID` warning
+FastAPI had been emitting six times on every startup.
+
+**Two instruments caught this stage's own mistakes.** Stage Y's declaration
+rule read `responses` only as an inline `ast.Dict` and went blind behind the
+shared constant the split required — it now resolves module-level constants,
+and its failure direction is safe, which is how it was found rather than
+shipped. And Stage AF's `test_every_mutation_anchor_still_matches_its_file`
+caught a mutation keyed on `methods=_PUBLIC_METHODS,` minutes after that
+constant was deleted — the exact failure class AF was written for, three days
+after it landed.
+
+**Verified:** 3,916 unit tests passing, ruff clean, and `--check` green on
+three consecutive runs, which is the determinism this stage needed rather than
+a formality. The unreflected-route clause was demonstrated deliberately: a
+route added to `processing/app.py` and left out of the artifact made `--check`
+exit 1 naming `/plan162/stage-z-demonstration` in its diff, and the tree was
+restored. CI green on [#406](https://github.com/whitewalls86/new_car_tracker/pull/406),
+including the new job at 35s and both dbt jobs — which answers the one thing
+that had been reasoning rather than evidence, that the inherited pin leaves the
+`dbt-core` installs alone.
+
+`contracts/ops.json` carries 303, 307, 308, 400, 401, 403, 404, 409, 422, 500
+and 503. That is Stage Y's work reaching the artifact, and the reason Y had to
+precede Z: generated a week earlier this file would have recorded, faithfully,
+the false claim that every endpoint returns 200 or 422.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. No route path or method moved — only operation IDs, which
+neither surface states — and `README.md`'s "More than 3,000 tests" holds at
+3,916.
+
+**Cost:** CAR-107's estimate of 2 covers Stage Z and [Stage
+AA](#stage-aa-a-test-may-not-invent-another-services-response) together, so it
+is recorded once, when AA closes. Stage Z was a single day's work: four commits
+and a merge, `7410fd3`..`003f63a`.

@@ -42,16 +42,25 @@ templates.env.globals["asset_url"] = asset_url
 # GET and HEAD, not GET alone: FastAPI does not add HEAD for you, and a monitor
 # or link checker that uses it got a 405 on every public route until Stage 6's
 # route matrix caught it on 2026-09-04.
-_PUBLIC_METHODS = ["GET", "HEAD"]
+#
+# Two decorators rather than one ``api_route(methods=["GET", "HEAD"])``, and the
+# difference is not style. FastAPI derives a route's operation ID once per
+# *route* and reuses it for every method that route serves, so a single
+# registration gave ``GET /info`` and ``HEAD /info`` the same ID. The OpenAPI
+# spec forbids that, FastAPI warned about it on every startup, and the value it
+# picked came from ``list(route.methods)[0]`` over a *set* -- so it changed with
+# the process hash seed. Plan 162 Stage Z found it when the generated contract
+# failed its own diff against code nobody had touched.
+#
+# The responses live in a constant because both halves must declare the same
+# thing, and two copies of a literal is how they stop agreeing.
+_REDIRECT_TO_LANDING = {
+    308: {"description": "Permanent redirect to the landing page at /."},
+}
 
 
-@router.api_route(
-    "/info",
-    methods=_PUBLIC_METHODS,
-    responses={
-        308: {"description": "Permanent redirect to the landing page at /."},
-    },
-)
+@router.get("/info", responses=_REDIRECT_TO_LANDING)
+@router.head("/info", responses=_REDIRECT_TO_LANDING)
 def info_redirect() -> RedirectResponse:
     """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
 
@@ -62,7 +71,8 @@ def info_redirect() -> RedirectResponse:
     return RedirectResponse(url="/", status_code=308)
 
 
-@router.api_route("/", methods=_PUBLIC_METHODS, response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse)
+@router.head("/", response_class=HTMLResponse)
 def info_page(request: Request):
     snapshot = public_stats_cache.get()
 

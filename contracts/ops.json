@@ -1,0 +1,2500 @@
+{
+  "components": {
+    "schemas": {
+      "Body_change_user_role_admin_users__user_id__role_post": {
+        "properties": {
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "Body_change_user_role_admin_users__user_id__role_post",
+        "type": "object"
+      },
+      "Body_create_search_admin_searches__post": {
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "makes": {
+            "title": "Makes",
+            "type": "string"
+          },
+          "max_listings": {
+            "default": 2000,
+            "title": "Max Listings",
+            "type": "integer"
+          },
+          "max_safety_pages": {
+            "default": 500,
+            "title": "Max Safety Pages",
+            "type": "integer"
+          },
+          "models": {
+            "title": "Models",
+            "type": "string"
+          },
+          "radius_miles": {
+            "default": 150,
+            "title": "Radius Miles",
+            "type": "integer"
+          },
+          "rotation_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation Order"
+          },
+          "scope_local": {
+            "default": false,
+            "title": "Scope Local",
+            "type": "boolean"
+          },
+          "scope_national": {
+            "default": false,
+            "title": "Scope National",
+            "type": "boolean"
+          },
+          "search_key": {
+            "title": "Search Key",
+            "type": "string"
+          },
+          "sort_rotation": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Sort Rotation",
+            "type": "array"
+          },
+          "zip": {
+            "title": "Zip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "search_key",
+          "makes",
+          "models",
+          "zip"
+        ],
+        "title": "Body_create_search_admin_searches__post",
+        "type": "object"
+      },
+      "Body_dbt_intent_upsert_admin_dbt_intents_post": {
+        "properties": {
+          "intent_name": {
+            "title": "Intent Name",
+            "type": "string"
+          },
+          "select_args": {
+            "title": "Select Args",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent_name",
+          "select_args"
+        ],
+        "title": "Body_dbt_intent_upsert_admin_dbt_intents_post",
+        "type": "object"
+      },
+      "Body_dbt_trigger_admin_dbt_trigger_post": {
+        "properties": {
+          "fail_fast": {
+            "default": false,
+            "title": "Fail Fast",
+            "type": "boolean"
+          },
+          "full_refresh": {
+            "default": false,
+            "title": "Full Refresh",
+            "type": "boolean"
+          },
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "select_override": {
+            "default": "",
+            "title": "Select Override",
+            "type": "string"
+          }
+        },
+        "title": "Body_dbt_trigger_admin_dbt_trigger_post",
+        "type": "object"
+      },
+      "Body_submit_access_request_request_access_post": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "notify_email": {
+            "title": "Notify Email",
+            "type": "string"
+          },
+          "requested_role": {
+            "title": "Requested Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name",
+          "requested_role"
+        ],
+        "title": "Body_submit_access_request_request_access_post",
+        "type": "object"
+      },
+      "Body_update_search_admin_searches__search_key__post": {
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "makes": {
+            "title": "Makes",
+            "type": "string"
+          },
+          "max_listings": {
+            "default": 2000,
+            "title": "Max Listings",
+            "type": "integer"
+          },
+          "max_safety_pages": {
+            "default": 500,
+            "title": "Max Safety Pages",
+            "type": "integer"
+          },
+          "models": {
+            "title": "Models",
+            "type": "string"
+          },
+          "radius_miles": {
+            "default": 150,
+            "title": "Radius Miles",
+            "type": "integer"
+          },
+          "rotation_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation Order"
+          },
+          "scope_local": {
+            "default": false,
+            "title": "Scope Local",
+            "type": "boolean"
+          },
+          "scope_national": {
+            "default": false,
+            "title": "Scope National",
+            "type": "boolean"
+          },
+          "sort_rotation": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Sort Rotation",
+            "type": "array"
+          },
+          "zip": {
+            "title": "Zip",
+            "type": "string"
+          }
+        },
+        "required": [
+          "makes",
+          "models",
+          "zip"
+        ],
+        "title": "Body_update_search_admin_searches__search_key__post",
+        "type": "object"
+      },
+      "CompletionRequest": {
+        "properties": {
+          "confirm_complete": {
+            "default": false,
+            "title": "Confirm Complete",
+            "type": "boolean"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "manifest_sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Sha256"
+          }
+        },
+        "title": "CompletionRequest",
+        "type": "object"
+      },
+      "CoordinationRequest": {
+        "properties": {
+          "expected_work": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Work",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "manifest_location": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Location"
+          },
+          "operator_notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Notes"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "requested_by": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Requested By",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "targets",
+          "requested_by",
+          "reason"
+        ],
+        "title": "CoordinationRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HostEvidenceRequest": {
+        "properties": {
+          "evidence_digests": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Evidence Digests",
+            "type": "object"
+          },
+          "gates": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Gates",
+            "type": "object"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation",
+          "gates",
+          "evidence_digests"
+        ],
+        "title": "HostEvidenceRequest",
+        "type": "object"
+      },
+      "ReleaseRequest": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "results"
+        ],
+        "title": "ReleaseRequest",
+        "type": "object"
+      },
+      "ReleaseResult": {
+        "properties": {
+          "listing_id": {
+            "title": "Listing Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "listing_id",
+          "status"
+        ],
+        "title": "ReleaseResult",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "info_page__get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Info Page"
+      },
+      "head": {
+        "operationId": "info_page__head",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Info Page"
+      }
+    },
+    "/admin": {
+      "get": {
+        "operationId": "root_admin_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "307": {
+            "description": "Redirect to the admin landing page."
+          }
+        },
+        "summary": "Root"
+      }
+    },
+    "/admin/access-requests": {
+      "get": {
+        "operationId": "list_access_requests_admin_access_requests_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Access Requests"
+      }
+    },
+    "/admin/access-requests/{req_id}/approve": {
+      "post": {
+        "operationId": "approve_access_request_admin_access_requests__req_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "req_id",
+            "required": true,
+            "schema": {
+              "title": "Req Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Request approved; redirect to the request list."
+          },
+          "404": {
+            "description": "No pending request with that id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Approve Access Request"
+      }
+    },
+    "/admin/access-requests/{req_id}/deny": {
+      "post": {
+        "operationId": "deny_access_request_admin_access_requests__req_id__deny_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "req_id",
+            "required": true,
+            "schema": {
+              "title": "Req Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Request denied; redirect to the request list."
+          },
+          "404": {
+            "description": "No pending request with that id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Deny Access Request"
+      }
+    },
+    "/admin/dbt": {
+      "get": {
+        "operationId": "dbt_dashboard_admin_dbt_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dbt Dashboard"
+      }
+    },
+    "/admin/dbt/docs/generate": {
+      "post": {
+        "operationId": "dbt_docs_generate_admin_dbt_docs_generate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dbt Docs Generate"
+      }
+    },
+    "/admin/dbt/intents": {
+      "post": {
+        "description": "Create or update an intent via the admin UI.",
+        "operationId": "dbt_intent_upsert_admin_dbt_intents_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_dbt_intent_upsert_admin_dbt_intents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Intent submitted; redirect to the dbt panel."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dbt Intent Upsert"
+      }
+    },
+    "/admin/dbt/intents/{intent_name}/delete": {
+      "post": {
+        "operationId": "dbt_intent_delete_admin_dbt_intents__intent_name__delete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intent_name",
+            "required": true,
+            "schema": {
+              "title": "Intent Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Delete submitted; redirect to the dbt panel."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dbt Intent Delete"
+      }
+    },
+    "/admin/dbt/trigger": {
+      "post": {
+        "operationId": "dbt_trigger_admin_dbt_trigger_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_dbt_trigger_admin_dbt_trigger_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dbt Trigger"
+      }
+    },
+    "/admin/deploy": {
+      "get": {
+        "operationId": "deploy_panel_admin_deploy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Deploy Panel"
+      }
+    },
+    "/admin/deploy/complete": {
+      "post": {
+        "operationId": "deploy_complete_admin_deploy_complete_post",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Release requested; redirect to the deploy panel."
+          }
+        },
+        "summary": "Deploy Complete"
+      }
+    },
+    "/admin/deploy/start": {
+      "post": {
+        "operationId": "deploy_start_admin_deploy_start_post",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Intent requested; redirect to the deploy panel."
+          }
+        },
+        "summary": "Deploy Start"
+      }
+    },
+    "/admin/logs": {
+      "get": {
+        "operationId": "view_logs_admin_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lines",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Lines",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "View Logs"
+      }
+    },
+    "/admin/searches/": {
+      "get": {
+        "operationId": "list_searches_admin_searches__get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "List Searches"
+      },
+      "post": {
+        "operationId": "create_search_admin_searches__post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_search_admin_searches__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Created; redirect to the search list."
+          },
+          "422": {
+            "description": "The submitted form is not a valid search config."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Create Search"
+      }
+    },
+    "/admin/searches/new": {
+      "get": {
+        "operationId": "new_search_form_admin_searches_new_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "New Search Form"
+      }
+    },
+    "/admin/searches/{search_key}": {
+      "post": {
+        "operationId": "update_search_admin_searches__search_key__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "search_key",
+            "required": true,
+            "schema": {
+              "title": "Search Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_update_search_admin_searches__search_key__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Change applied; redirect to the search list."
+          },
+          "404": {
+            "description": "No search config with that key; nothing was changed."
+          },
+          "422": {
+            "description": "The submitted form is not a valid search config."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Update Search"
+      }
+    },
+    "/admin/searches/{search_key}/delete": {
+      "post": {
+        "operationId": "delete_search_admin_searches__search_key__delete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "search_key",
+            "required": true,
+            "schema": {
+              "title": "Search Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Change applied; redirect to the search list."
+          },
+          "404": {
+            "description": "No search config with that key; nothing was changed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Delete Search"
+      }
+    },
+    "/admin/searches/{search_key}/edit": {
+      "get": {
+        "operationId": "edit_search_form_admin_searches__search_key__edit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "search_key",
+            "required": true,
+            "schema": {
+              "title": "Search Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "No such search config; redirect to the list."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Edit Search Form"
+      }
+    },
+    "/admin/searches/{search_key}/toggle": {
+      "post": {
+        "operationId": "toggle_search_admin_searches__search_key__toggle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "search_key",
+            "required": true,
+            "schema": {
+              "title": "Search Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Change applied; redirect to the search list."
+          },
+          "404": {
+            "description": "No search config with that key; nothing was changed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Toggle Search"
+      }
+    },
+    "/admin/snapshots/adaptive-refresh/latest": {
+      "get": {
+        "operationId": "get_latest_snapshot_admin_snapshots_adaptive_refresh_latest_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Latest Snapshot Admin Snapshots Adaptive Refresh Latest Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "No usable machine credential was presented."
+          },
+          "403": {
+            "description": "The credential does not grant the scope this route needs."
+          },
+          "404": {
+            "description": "No snapshot with that id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Get Latest Snapshot",
+        "tags": [
+          "snapshots"
+        ]
+      }
+    },
+    "/admin/snapshots/adaptive-refresh/{snapshot_id}": {
+      "get": {
+        "operationId": "get_snapshot_manifest_admin_snapshots_adaptive_refresh__snapshot_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "title": "Snapshot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Snapshot Manifest Admin Snapshots Adaptive Refresh  Snapshot Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The snapshot id is not a well-formed identifier."
+          },
+          "401": {
+            "description": "No usable machine credential was presented."
+          },
+          "403": {
+            "description": "The credential does not grant the scope this route needs."
+          },
+          "404": {
+            "description": "No snapshot with that id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Get Snapshot Manifest",
+        "tags": [
+          "snapshots"
+        ]
+      }
+    },
+    "/admin/snapshots/adaptive-refresh/{snapshot_id}/download": {
+      "get": {
+        "operationId": "download_snapshot_archive_admin_snapshots_adaptive_refresh__snapshot_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "title": "Snapshot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The snapshot id is not a well-formed identifier."
+          },
+          "401": {
+            "description": "No usable machine credential was presented."
+          },
+          "403": {
+            "description": "The credential does not grant the scope this route needs."
+          },
+          "404": {
+            "description": "No snapshot with that id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Download Snapshot Archive",
+        "tags": [
+          "snapshots"
+        ]
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "operationId": "list_users_admin_users_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Users"
+      }
+    },
+    "/admin/users/{user_id}/revoke": {
+      "post": {
+        "operationId": "revoke_user_admin_users__user_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "User revoked; redirect to the user list."
+          },
+          "404": {
+            "description": "No user with that id; nobody was revoked."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Revoke User"
+      }
+    },
+    "/admin/users/{user_id}/role": {
+      "post": {
+        "operationId": "change_user_role_admin_users__user_id__role_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_change_user_role_admin_users__user_id__role_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Role changed; redirect to the user list."
+          },
+          "400": {
+            "description": "Not a role this service defines."
+          },
+          "404": {
+            "description": "No user with that id; nothing was changed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Change User Role"
+      }
+    },
+    "/auth/check": {
+      "get": {
+        "description": "Called by Caddy forward_auth on every protected request.\nReturns 200 + X-User-Role header if the email is authorised, 403 otherwise.\n\nOptional `?require=<role>` query param enforces a minimum role tier.\nE.g. ?require=admin means only admins pass; ?require=observer means\nadmin, power_user, and observer all pass.",
+        "operationId": "auth_check_auth_check_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "require",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Require"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-auth-request-email",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Auth-Request-Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "The caller is not an authorised user."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Auth Check"
+      }
+    },
+    "/coordination/authorize": {
+      "post": {
+        "operationId": "authorize_coordination_coordination_authorize_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Authorize Coordination Coordination Authorize Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Authorize Coordination"
+      }
+    },
+    "/coordination/begin-drain": {
+      "post": {
+        "operationId": "begin_coordination_drain_coordination_begin_drain_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Begin Coordination Drain Coordination Begin Drain Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Begin Coordination Drain"
+      }
+    },
+    "/coordination/begin-validation": {
+      "post": {
+        "operationId": "begin_coordination_validation_coordination_begin_validation_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Begin Coordination Validation Coordination Begin Validation Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Begin Coordination Validation"
+      }
+    },
+    "/coordination/cancel": {
+      "post": {
+        "operationId": "cancel_coordination_coordination_cancel_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Cancel Coordination Coordination Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Cancel Coordination"
+      }
+    },
+    "/coordination/complete": {
+      "post": {
+        "description": "End host maintenance only when both validation evidence halves pass.",
+        "operationId": "complete_coordination_coordination_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Complete Coordination Coordination Complete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Complete Coordination"
+      }
+    },
+    "/coordination/drain-status": {
+      "get": {
+        "operationId": "coordination_drain_status_coordination_drain_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Coordination Drain Status Coordination Drain Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Coordination Drain Status"
+      }
+    },
+    "/coordination/host-evidence": {
+      "post": {
+        "description": "Store host validation proof without changing coordination state.",
+        "operationId": "submit_host_evidence_coordination_host_evidence_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostEvidenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Submit Host Evidence Coordination Host Evidence Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "422": {
+            "description": "The request is not a valid coordination request."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Submit Host Evidence"
+      }
+    },
+    "/coordination/local-drain": {
+      "get": {
+        "description": "Expose ops maintenance work as one named drain-evidence source.",
+        "operationId": "local_drain_status_coordination_local_drain_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Local Drain Status Coordination Local Drain Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Drain Status"
+      }
+    },
+    "/coordination/release-status": {
+      "get": {
+        "description": "Expose the complete stack-release gate set without transitioning state.",
+        "operationId": "coordination_release_status_coordination_release_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Coordination Release Status Coordination Release Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Coordination Release Status"
+      }
+    },
+    "/coordination/request": {
+      "post": {
+        "operationId": "request_coordination_coordination_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Request Coordination Coordination Request Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The coordination row is not in the phase this operation requires."
+          },
+          "422": {
+            "description": "The request is not a valid coordination request."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Request Coordination"
+      }
+    },
+    "/coordination/status": {
+      "get": {
+        "operationId": "coordination_status_coordination_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Coordination Status Coordination Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Coordination Status"
+      }
+    },
+    "/deploy/complete": {
+      "post": {
+        "description": "Releases the intent lock on the DB.\n\nA failure here is the quiet one. ``redeploy.sh`` calls this from its exit\ntrap, so a deploy that succeeded and then failed to release still exits 0\nand sends no alert, leaving every gated DAG parked. Whatever this returns is\nthe operator's only account of that, which is why it is no longer one word.",
+        "operationId": "complete_deployment_deploy_complete_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Complete Deployment Deploy Complete Post",
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Deploy intent is already held."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Complete Deployment"
+      }
+    },
+    "/deploy/start": {
+      "post": {
+        "description": "Signals deploy intent to the system.\n\nOptional ``pause_long_jobs`` (default **true**) asks Plan 131's pack and\nprune jobs to stop at their next safe boundary and resume after the deploy.",
+        "operationId": "start_deploy_intent_deploy_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Start Deploy Intent Deploy Start Post",
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Deploy intent is already held."
+          },
+          "422": {
+            "description": "The request is not a valid coordination request."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Start Deploy Intent"
+      }
+    },
+    "/deploy/status": {
+      "get": {
+        "description": "Returns current intent status and count of running executions.",
+        "operationId": "get_current_intent_deploy_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Current Intent Deploy Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Current Intent"
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/info": {
+      "get": {
+        "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
+        "operationId": "info_redirect_info_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "308": {
+            "description": "Permanent redirect to the landing page at /."
+          }
+        },
+        "summary": "Info Redirect"
+      },
+      "head": {
+        "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
+        "operationId": "info_redirect_info_head",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "308": {
+            "description": "Permanent redirect to the landing page at /."
+          }
+        },
+        "summary": "Info Redirect"
+      }
+    },
+    "/maintenance/evict-delisted-cooldowns": {
+      "post": {
+        "operationId": "evict_delisted_cooldowns_maintenance_evict_delisted_cooldowns_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Evict Delisted Cooldowns Maintenance Evict Delisted Cooldowns Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Evict Delisted Cooldowns"
+      }
+    },
+    "/maintenance/expire-orphan-detail-claims": {
+      "post": {
+        "operationId": "expire_orphan_detail_claims_maintenance_expire_orphan_detail_claims_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Expire Orphan Detail Claims Maintenance Expire Orphan Detail Claims Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Expire Orphan Detail Claims"
+      }
+    },
+    "/maintenance/reap-stuck-processing": {
+      "post": {
+        "operationId": "reap_stuck_processing_maintenance_reap_stuck_processing_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reap Stuck Processing Maintenance Reap Stuck Processing Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reap Stuck Processing"
+      }
+    },
+    "/maintenance/reconcile-cooldown-cohorts": {
+      "post": {
+        "operationId": "reconcile_cooldown_cohorts_maintenance_reconcile_cooldown_cohorts_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reconcile Cooldown Cohorts Maintenance Reconcile Cooldown Cohorts Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reconcile Cooldown Cohorts"
+      }
+    },
+    "/metrics": {
+      "get": {
+        "description": "Endpoint that serves Prometheus metrics.",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Metrics"
+      }
+    },
+    "/recaps": {
+      "get": {
+        "operationId": "recap_index_recaps_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No recaps have been published."
+          }
+        },
+        "summary": "Recap Index"
+      },
+      "head": {
+        "operationId": "recap_index_recaps_head",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No recaps have been published."
+          }
+        },
+        "summary": "Recap Index"
+      }
+    },
+    "/recaps/{slug}": {
+      "get": {
+        "operationId": "recap_page_recaps__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No recap has been published under that name."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recap Page"
+      },
+      "head": {
+        "operationId": "recap_page_recaps__slug__head",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No recap has been published under that name."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recap Page"
+      }
+    },
+    "/request-access": {
+      "get": {
+        "operationId": "request_access_form_request_access_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Already authorised; redirect to the role's landing page."
+          }
+        },
+        "summary": "Request Access Form"
+      },
+      "post": {
+        "operationId": "submit_access_request_request_access_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_access_request_request_access_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "303": {
+            "description": "Already authorised, or a request is already pending."
+          },
+          "400": {
+            "description": "No email could be determined, or the role is not requestable."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Database unavailable."
+          }
+        },
+        "summary": "Submit Access Request"
+      }
+    },
+    "/robots.txt": {
+      "get": {
+        "operationId": "robots_robots_txt_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Robots"
+      },
+      "head": {
+        "operationId": "robots_robots_txt_head",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Robots"
+      }
+    },
+    "/scrape/claims/claim-batch": {
+      "post": {
+        "description": "Atomically claims the next batch of listings from the detail scrape queue.\n\nCreates a run row, inserts claims into detail_scrape_claims using\nON CONFLICT DO UPDATE so stale claims are re-claimed cleanly.\n\nReturns {run_id, listings: [{listing_id, vin, canonical_detail_url, ...}]}.\nReturns {run_id, listings: []} if the queue is empty.",
+        "operationId": "claim_batch_scrape_claims_claim_batch_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "batch_size",
+            "required": false,
+            "schema": {
+              "default": 450,
+              "title": "Batch Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Claim Batch Scrape Claims Claim Batch Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Batch",
+        "tags": [
+          "scrape"
+        ]
+      }
+    },
+    "/scrape/claims/release": {
+      "post": {
+        "description": "Releases claims after a scrape batch completes.\n\nDeletes the claim rows for the given run_id and records, on the same\ntransaction, that a detail request was spent on each listing the scraper\nactually attempted.\n\nThat second write is the loop guard (Plan 147). Before it, the only thing\nstopping a listing being re-fetched was a timestamp written by the\n*processing* service two hops downstream, so any break in that chain —\nprocessing paused, crashed, backed up, or a parser gap — left the claims\ndeleted, the guard unwritten, and the same batch re-claimed fifteen minutes\nlater. The component that spends the resource now records having spent it.\n\nlast_detail_fetched_at is set for 'ok' and 'failed' results but not\n'skipped': the column means \"we spent a request\", and a failed fetch spent\none. Blocked and delisted listings keep their existing cooldown paths; this\ndoes not replace them.\n\nNote that the three-way rule is a contract no caller exercises today.\nscrape_detail_pages reports 'ok' for every claimed listing regardless of\noutcome, which is correct for a loop guard — the batch consumed requests\neither way — so in production every released listing is stamped.\n\nThe DELETE is this handler's only other statement. It does not mark any run\nfinished and never has, despite what its docstring claimed until Plan 147:\nthere is no runs-table write here.",
+        "operationId": "release_claims_scrape_claims_release_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Release Claims Scrape Claims Release Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Claims",
+        "tags": [
+          "scrape"
+        ]
+      }
+    },
+    "/scrape/rotation/advance": {
+      "post": {
+        "description": "Atomically claims the next rotation slot due for scraping.\n\nTwo guards:\n1. min_idle_minutes (default 1439 = 23h59m): each slot must wait this long\n   before it can fire again.\n2. min_gap_minutes (default 230 = ~3h50m): blocks if ANY config's\n   last_queued_at falls within this window. Prevents multiple slots from\n   firing in rapid succession even if all have stale timestamps.\n\nReturns {\"slot\": null, \"configs\": [], \"run_id\": null} when nothing is due.\nReturns {\"slot\": ..., \"configs\": [...], \"run_id\": \"<uuid>\"} when work is claimed.\nrun_id is a fresh UUID for the caller to pass to the scraper; no runs row is inserted.",
+        "operationId": "advance_rotation_scrape_rotation_advance_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "min_idle_minutes",
+            "required": false,
+            "schema": {
+              "default": 1439,
+              "title": "Min Idle Minutes",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_gap_minutes",
+            "required": false,
+            "schema": {
+              "default": 230,
+              "title": "Min Gap Minutes",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Advance Rotation Scrape Rotation Advance Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Advance Rotation",
+        "tags": [
+          "scrape"
+        ]
+      }
+    },
+    "/sitemap.xml": {
+      "get": {
+        "operationId": "sitemap_sitemap_xml_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sitemap"
+      },
+      "head": {
+        "operationId": "sitemap_sitemap_xml_head",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sitemap"
+      }
+    }
+  }
+}

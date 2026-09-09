@@ -2,8 +2,8 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-COPY archiver/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY archiver/requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements.txt
 
 COPY . .
 

@@ -1,0 +1,37 @@
+# The versions that decide what `app.openapi()` emits.
+#
+# Plan 162 Stage Z commits a normalised projection of each service's OpenAPI
+# schema and gates a change to any service on the diff of its artifact. That
+# gate means something only if the schema is a pure function of the source
+# tree, and it is not -- unless these are pinned.
+#
+# **This plan has already been burned by exactly that.** Up to FastAPI 0.128
+# `include_router` flattened a router's routes into `app.routes` with the
+# prefix applied; by 0.141 it appends a single wrapper resolved at match time.
+# CI resolved 0.141 while the development machine had 0.128, and the route rule
+# quietly stopped checking 50 of `ops`'s 54 routes without failing anything.
+# The argument is written out at `_ROUTE_PROBE` in tests/test_testing_contract.py.
+#
+# **Each of the four moves the schema, which is why each is here and nothing
+# else is.** `fastapi` decides the routing table; `starlette` decides how
+# routers flatten and match; `pydantic` decides the JSON Schema a response
+# model becomes; and `prometheus-fastapi-instrumentator` is not merely
+# middleware -- `Instrumentator().instrument(app).expose(app)` in ops,
+# processing and scraper *adds a `/metrics` route*, so its version changes the
+# route set the same way the other three do.
+#
+# The values are production's, read from the running containers on 2026-09-09.
+# They are not a preference expressed here. Changing one is a deploy of six
+# images, so change it deliberately and rebuild.
+#
+# **Two install sites deliberately do not get this file.**
+# `airflow/requirements.txt` pins a starlette incompatible with the value below
+# and already installs into its own venv for that reason -- constraining it
+# here would break the one job that needs Airflow. `dashboard/` is Streamlit
+# and serves no OpenAPI schema, so there is nothing of its own for this to
+# hold still, and pinning starlette under it would only constrain Streamlit's
+# own resolution to no end.
+fastapi==0.141.1
+pydantic==2.13.5
+starlette==1.6.0
+prometheus-fastapi-instrumentator==8.1.0

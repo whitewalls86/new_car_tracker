@@ -1,0 +1,482 @@
+{
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/cleanup/queue": {
+      "post": {
+        "description": "Delete a caller-supplied list of artifacts_queue rows (status complete/skip).",
+        "operationId": "run_cleanup_queue_batch_cleanup_queue_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Run Cleanup Queue Batch Cleanup Queue Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Cleanup Queue Batch"
+      }
+    },
+    "/cleanup/queue/run": {
+      "post": {
+        "description": "Sweep all complete/skip rows from artifacts_queue (Airflow DAG trigger).",
+        "operationId": "trigger_cleanup_queue_cleanup_queue_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Cleanup Queue Cleanup Queue Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trigger Cleanup Queue"
+      }
+    },
+    "/compact/silver/run": {
+      "post": {
+        "description": "Compact silver_normalized/observations partitions (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_compact_failure_reason`` returns 500 with\nthe summary and a ``failure_reason`` as ``detail``; ``compact_silver``\ncalls ``raise_for_status()``, so the DAG goes red and pages.\n\nPlan 134 Stage C, deploy 1 of 3. First deliberately: this runs daily and\nnothing downstream depends on it, which makes it both the smallest blast\nradius and the cheapest place for the repaired pager to be wrong. The two\nflushes are still warning-only and leave the observation window on their\nown deploys, 48 hours apart.",
+        "operationId": "trigger_compact_silver_compact_silver_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Compact Silver Compact Silver Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "500": {
+            "description": "The run aborted; the summary is the detail."
+          }
+        },
+        "summary": "Trigger Compact Silver"
+      }
+    },
+    "/disk-usage/run": {
+      "post": {
+        "description": "Measure the disk watchlist and publish it via node-exporter (Plan 135 Stage 4).\n\n``include_slow: true`` adds the high-inode volumes (MinIO bronze, Airflow\ntask logs), which between them take 20+ minutes and belong on the weekly\nrun only. Everything else is walked on every call and the slow-tier values\nare carried forward in between.\n\nReturns **500** when a scheduled measurement failed, so a silently empty\nband on the dashboard cannot pass as a successful run.",
+        "operationId": "trigger_disk_usage_disk_usage_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Disk Usage Disk Usage Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Another run of this job is already in flight."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "The run aborted; the summary is the detail."
+          }
+        },
+        "summary": "Trigger Disk Usage"
+      }
+    },
+    "/flush/silver/run": {
+      "post": {
+        "description": "Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).\n\n**Still warning-only.** A run failing ``_flush_silver_failure_reason``\nlogs a ``would fail`` warning and returns 200. Stage C deploy 3 of 3 turns\nthat into a 500 carrying the summary and a ``failure_reason`` — last of\nthe three, deliberately, because a 500 here skips the dbt build for that\nhour.",
+        "operationId": "trigger_flush_silver_flush_silver_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Flush Silver Flush Silver Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trigger Flush Silver"
+      }
+    },
+    "/flush/staging/run": {
+      "post": {
+        "description": "Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).\n\n**Still warning-only.** A run failing ``_flush_staging_failure_reason``\nlogs a ``would fail`` warning naming the tables and returns 200. Stage C\ndeploy 2 of 3 turns that into a 500 carrying the summary and a\n``failure_reason`` — second of the three, since the dbt build does not\nread staging events.",
+        "operationId": "trigger_flush_staging_flush_staging_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Flush Staging Flush Staging Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trigger Flush Staging"
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/pack/bronze/prune": {
+      "post": {
+        "description": "Delete bronze HTML objects that are inside a verified pack (Plan 131 Stage 4).\n\n**Dry-run unless the caller passes ``apply: true``**, and capped by\n``max_objects`` / ``max_packs`` in either mode. This is the only endpoint on\nthis service that removes bronze data; the bucket is un-versioned, so a\ndelete is immediate and there is no undo.\n\n``year`` and ``month`` are required. Deliberately: the packer can discover\nwhat is eligible because packing is additive, and this cannot, because it\nis not.\n\nReturns **500** with the summary as ``detail`` when the run aborted or\nrefused an object, matching the CLI's exit code — see\n``_prune_failure_reason``.\n\nReturns **409** while another prune run is in flight (D3a). Packing is a\nseparate key, so a pack and a prune may run at once.",
+        "operationId": "trigger_prune_packed_source_html_pack_bronze_prune_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Prune Packed Source Html Pack Bronze Prune Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request arguments are not usable."
+          },
+          "409": {
+            "description": "Another run of this job is already in flight."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "The run aborted; the summary is the detail."
+          }
+        },
+        "summary": "Trigger Prune Packed Source Html"
+      }
+    },
+    "/pack/bronze/run": {
+      "post": {
+        "description": "Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).\n\nDry-run unless the caller passes ``apply: true``. Stage 2 writes packs\nalongside their sources and deletes nothing — deleting packed sources is\nStage 4 and has its own endpoint when it exists.\n\nReturns **500** with the summary as ``detail`` when the run aborted.\n``read_failures`` warn and carry — see ``_pack_failure_reason``.\n\nReturns **409** while another pack run is in flight (D3a), which\n``sensors.post_json`` turns into a graceful skip.",
+        "operationId": "trigger_pack_bronze_html_pack_bronze_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Pack Bronze Html Pack Bronze Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request arguments are not usable."
+          },
+          "409": {
+            "description": "Another run of this job is already in flight."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "The run aborted; the summary is the detail."
+          }
+        },
+        "summary": "Trigger Pack Bronze Html"
+      }
+    },
+    "/pack/bronze/verify": {
+      "post": {
+        "description": "Sample a packed month through the production read path (read-only).\n\nUnlike pack and prune this endpoint is intentionally outside their\nsingle-flight slots and the pack-worker guard. A canary must stay available\nwhile either mutation job is running, which is when it is most useful.",
+        "operationId": "trigger_verify_pack_read_path_pack_bronze_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Verify Pack Read Path Pack Bronze Verify Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request arguments are not usable."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "The run aborted; the summary is the detail."
+          }
+        },
+        "summary": "Trigger Verify Pack Read Path"
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "ready_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "A dependency this service needs is not reachable."
+          }
+        },
+        "summary": "Ready"
+      }
+    },
+    "/snapshots/adaptive-refresh/run": {
+      "post": {
+        "description": "Generate (or dry-run plan) a CI lake snapshot (Plan 120).",
+        "operationId": "trigger_snapshot_export_snapshots_adaptive_refresh_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "default": {},
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Snapshot Export Snapshots Adaptive Refresh Run Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The requested tier is not one this service exports."
+          },
+          "409": {
+            "description": "Another run of this job is already in flight."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Snapshot Export"
+      }
+    }
+  }
+}
