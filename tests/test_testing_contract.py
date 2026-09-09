@@ -4440,6 +4440,455 @@ def test_every_response_we_ask_for_has_its_status_read():
 
 
 # ---------------------------------------------------------------------------
+# Rule 11 -- every status code a route can produce is asserted by a test.
+# ---------------------------------------------------------------------------
+# G28, and it is *Endpoint coverage* strengthened rather than a new rule. That
+# section says every route is reached "and the test asserts the status code" --
+# singular, and every vacuous 303 test in this repository satisfied it. What was
+# missing is a denominator: until Stage Y read the codes out of each handler,
+# "every code" could not be said.
+#
+# **Keyed on what a handler can produce, not on what it declares.** Declared and
+# produced are made equal by the rule above, so after the declarations land the
+# two readings are the same -- but produced is available now, and a rule keyed
+# on declarations would pass vacuously until every route is annotated.
+#
+# **The route is matched by the tail of its decorator path**, which is what lets
+# this run with no prefix reconstruction, no walk of `app.routes` and no
+# `operationId` parsing -- each of which has a way of being quietly wrong that
+# this does not. `@router.post("/searches/{key}/toggle")` is a suffix of the
+# `/admin/searches/x/toggle` a test requests, and the router prefix never has to
+# be recovered. Three things make it precise rather than approximate:
+#
+#   * a decorator path of only template segments is never matched, because
+#     `/{snapshot_id}` is a suffix of everything. Measured: without this, 99 of
+#     100 requested paths matched more than one handler; with it, 8.
+#   * the method must agree, which took 8 to 4.
+#   * where two handlers still match, the more literal one wins, as a router
+#     resolves -- and if they tie, the request counts for **neither**. An
+#     undetermined owner fails rather than being skipped, which is the rule Stage
+#     W established and Stage AA restates.
+_STATUS_ASSERTION = re.compile(r"status_code\s*(?:==|,)\s*(\d{3})")
+_RESPONSE_CLASSES = frozenset({
+    "Response", "JSONResponse", "PlainTextResponse", "HTMLResponse",
+    "FileResponse", "StreamingResponse", "RedirectResponse", "ORJSONResponse",
+})
+_REDIRECT_DEFAULT = 307
+
+
+def _parametrized_ints(function: ast.FunctionDef) -> set[int]:
+    """Every integer ``parametrize`` injects into *function*.
+
+    The int twin of :func:`_parametrized_strings`, and it exists because of a
+    concrete miss: `tests/ops/routers/test_coordination.py:156` asserts
+    ``status_code == status_code`` with the code injected, which a literal scan
+    reads as no assertion at all. Counting only literals put that suite's 409s
+    and 503s in the uncovered column when they are covered twice over.
+    """
+    found: set[int] = set()
+    for decorator in function.decorator_list:
+        if not (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "parametrize"
+            and len(decorator.args) >= 2
+        ):
+            continue
+        values_node = decorator.args[1]
+        if not isinstance(values_node, (ast.List, ast.Tuple)):
+            continue
+        for row in values_node.elts:
+            cells = row.elts if isinstance(row, (ast.Tuple, ast.List)) else [row]
+            for cell in cells:
+                if isinstance(cell, ast.Constant) and isinstance(cell.value, int) \
+                        and 100 <= cell.value <= 599:
+                    found.add(cell.value)
+    return found
+
+
+def _status_constant(node: ast.AST, constants: dict[str, int]) -> int | None:
+    """A status code written as a literal, a ``status.HTTP_*`` name, or a name."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Attribute):
+        match = re.match(r"HTTP_(\d{3})_", node.attr)
+        if match:
+            return int(match.group(1))
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    return None
+
+
+def _codes_at_call_sites(function: ast.AST, constants: dict[str, int]) -> set[int]:
+    """Codes named directly in *function*.
+
+    **Keyed on the ``status_code=`` keyword rather than on a list of response
+    classes.** The first draft enumerated `Response`, `JSONResponse` and their
+    kin and missed every code that reaches a client through
+    `templates.TemplateResponse(..., status_code=404)` -- which is how both of
+    this repository's admin routers answer -- so `toggle_search` read as
+    producing 303 and nothing else. An inventory of class names is escapable by
+    using a class the inventory has not heard of, which is the same failure G5
+    records for call-site names.
+    """
+    codes: set[int] = set()
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "id", getattr(node.func, "attr", None))
+        for keyword in node.keywords:
+            if keyword.arg == "status_code":
+                code = _status_constant(keyword.value, constants)
+                if code is not None:
+                    codes.add(code)
+        if name == "HTTPException" and node.args:
+            code = _status_constant(node.args[0], constants)
+            if code is not None:
+                codes.add(code)
+        if name == "RedirectResponse" and not any(
+            keyword.arg == "status_code" for keyword in node.keywords
+        ):
+            codes.add(_REDIRECT_DEFAULT)
+    return codes
+
+
+def _returns_a_bare_value(function: ast.AST) -> bool:
+    """Does any ``return`` hand back something FastAPI will serialise itself?
+
+    That is the only way the implicit success code is reachable. A handler whose
+    every return is a constructed response -- every admin form post, which
+    redirects 303 or renders an error page -- can never answer 200, and adding
+    it to the produced set demanded a test for a code the route cannot emit.
+    Sixteen findings on the first run, ten of them this.
+    """
+    for node in ast.walk(function):
+        if isinstance(node, ast.Return) and node.value is not None:
+            if not isinstance(node.value, ast.Call):
+                return True
+            name = getattr(node.value.func, "id",
+                           getattr(node.value.func, "attr", None))
+            if name and not (
+                name in _RESPONSE_CLASSES
+                or name.endswith("Response")
+                or name.endswith("_response")
+            ):
+                return True
+    return False
+
+
+def _produced_codes(
+    function: ast.AST, constants: dict[str, int], module: ast.Module
+) -> set[int]:
+    """Every status code *function* can answer with, helpers included.
+
+    Resolved one level into same-module helpers, because that is where this
+    repository puts its error pages: `_not_found_response` and
+    `_db_error_response` carry the 404 and the 503 for every admin route that
+    has one. One level and no further -- a fixed point over the call graph is
+    the dataflow analysis G27 declined to build, and for the same reason.
+    """
+    helpers = {
+        node.name: node for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    codes = _codes_at_call_sites(function, constants)
+    for node in ast.walk(function):
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, "id", None)
+            if name in helpers and helpers[name] is not function:
+                codes |= _codes_at_call_sites(helpers[name], constants)
+    return codes
+
+
+@lru_cache(maxsize=None)
+def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], ...]:
+    """``(service, file, function, decorator path, methods, produced codes)``."""
+    found = []
+    for service in sorted(service_packages()):
+        root = REPO_ROOT / service
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            constants = {
+                target.id: node.value.value
+                for node in tree.body if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, int)
+            }
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for decorator in function.decorator_list:
+                    if not (isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Attribute)):
+                        continue
+                    verb = decorator.func.attr
+                    if verb not in _HTTP_VERBS | {"api_route"}:
+                        continue
+                    if not (decorator.args and isinstance(decorator.args[0], ast.Constant)):
+                        continue
+                    methods = {verb.upper()} if verb in _HTTP_VERBS else set()
+                    declared_success = 200
+                    for keyword in decorator.keywords:
+                        if keyword.arg == "methods":
+                            if isinstance(keyword.value, ast.List):
+                                methods |= {
+                                    element.value.upper()
+                                    for element in keyword.value.elts
+                                    if isinstance(element, ast.Constant)
+                                }
+                            elif isinstance(keyword.value, ast.Name):
+                                # ``_PUBLIC_METHODS`` -- the one such constant here
+                                methods |= {"GET", "HEAD"}
+                        if keyword.arg == "status_code":
+                            resolved = _status_constant(keyword.value, constants)
+                            if resolved is not None:
+                                declared_success = resolved
+                    codes = _produced_codes(function, constants, tree)
+                    if _returns_a_bare_value(function) or not codes:
+                        codes |= {declared_success}
+                    found.append((
+                        service, path.relative_to(REPO_ROOT).as_posix(),
+                        function.name, decorator.args[0].value,
+                        frozenset(methods), frozenset(codes),
+                    ))
+    return tuple(found)
+
+
+def _literal_segments(path: str) -> list[str]:
+    return [s for s in path.strip("/").split("/") if s and not s.startswith("{")]
+
+
+def _matches_tail(decorator_path: str, requested: str) -> bool:
+    decorator = [s for s in decorator_path.strip("/").split("/") if s]
+    request = [s for s in requested.strip("/").split("/") if s]
+    if not decorator or len(decorator) > len(request):
+        return False
+    tail = request[len(request) - len(decorator):]
+    # A `*` stands for a segment a fixture supplied, so it matches a **template**
+    # segment through the first clause and nothing else. Letting it match a
+    # literal too was measured at 38 of 89 handlers going ambiguous -- 43% of the
+    # surface skipped while the rule reported four gaps and looked healthy.
+    return all(a.startswith("{") or a == b for a, b in zip(decorator, tail))
+
+
+def _resolve_request_path(
+    node: ast.AST, constants: dict[str, str], injected: dict[str, set[str]]
+) -> set[str]:
+    """Like :func:`_resolve_path`, but an unresolvable segment is a wildcard.
+
+    **Deliberately more permissive than the route-coverage rule, and only here.**
+    That rule fails closed because "named somewhere in tests/" is the weak
+    reading it exists to reject. This one is asking a different question -- which
+    handler a request reached -- and a segment built from a fixture is precisely
+    a path *parameter*: `api_client.post(f"/admin/searches/{key}/toggle")` with
+    `key` from a fixture is a request to `/searches/{search_key}/toggle` and
+    nothing else. Failing closed here silently uncounted three Layer 4 tests
+    written the same afternoon, which is the false negative that matters most:
+    a coverage rule that cannot see a test demands a second one.
+    """
+    if isinstance(node, ast.JoinedStr):
+        combined = {""}
+        for part in node.values:
+            if isinstance(part, ast.FormattedValue):
+                pieces = _resolve_request_path(part.value, constants, injected) or {"*"}
+            else:
+                pieces = _resolve_request_path(part, constants, injected)
+            if not pieces:
+                return set()
+            combined = {prefix + piece for prefix in combined for piece in pieces}
+        return combined
+    return _resolve_path(node, constants, injected)
+
+
+@lru_cache(maxsize=None)
+def asserted_status_codes() -> tuple[tuple[str | None, str, str, frozenset], ...]:
+    """``(service hint, METHOD, path, codes)`` for every request a test makes."""
+    found = []
+    for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
+        hint = next((s for s in service_packages() if s in path.parts), None)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        constants = _module_constants(tree)
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            source = ast.get_source_segment(
+                path.read_text(encoding="utf-8"), function) or ""
+            codes = {int(c) for c in _STATUS_ASSERTION.findall(source)}
+            codes |= _parametrized_ints(function)
+            if not codes:
+                continue
+            injected = _parametrized_strings(function)
+            for node in ast.walk(function):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in _HTTP_VERBS and node.args):
+                    continue
+                for requested in _resolve_request_path(
+                        node.args[0], constants, injected):
+                    if requested.startswith("/"):
+                        found.append((hint, node.func.attr.upper(),
+                                      requested.split("?")[0], frozenset(codes)))
+    return tuple(found)
+
+
+def _coverage() -> tuple[dict[str, set[int]], set[str]]:
+    """Per handler, the codes some test asserts for it -- and the ambiguous ones."""
+    covered: dict[str, set[int]] = {}
+    ambiguous: set[str] = set()
+    handlers = [h for h in route_handlers() if _literal_segments(h[3])]
+    for hint, method, requested, codes in asserted_status_codes():
+        candidates = [
+            h for h in handlers
+            if method in h[4]
+            and (hint is None or hint == h[0])
+            and _matches_tail(h[3], requested)
+        ]
+        if not candidates:
+            continue
+        best = max(len(_literal_segments(h[3])) for h in candidates)
+        winners = [h for h in candidates if len(_literal_segments(h[3])) == best]
+        keys = {f"{h[1]}:{h[2]}" for h in winners}
+        if len(keys) > 1:
+            ambiguous |= keys
+            continue
+        covered.setdefault(next(iter(keys)), set()).update(codes)
+    return covered, ambiguous
+
+
+AMBIGUOUS_ROUTE_WAIVERS: tuple[Waiver, ...] = (
+    # `ops` serves both `/deploy/start` and `/admin/deploy/start` from two
+    # handlers whose decorator strings are **identical** -- one mounted bare, one
+    # under `include_router(admin_router, prefix="/admin")` -- so a tail match
+    # cannot separate them and neither can be credited. Declared rather than
+    # skipped: a handler quietly dropped from a coverage rule is the vacuity this
+    # plan is about, and 38 of 89 were being dropped before the wildcard clause
+    # was tightened, with the rule reporting four gaps and looking healthy.
+    #
+    # The admin pair are legacy buttons from before `scripts/redeploy.sh` drove
+    # drain, authorization and release through the coordination API, and they
+    # never moved with it. Stage AA owns what replaces them, and removing them
+    # removes the ambiguity for the two API handlers as well -- one decision
+    # drains all four.
+    Waiver("ops/routers/admin.py:deploy_start", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:deploy_complete", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/deploy.py:start_deploy_intent", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/deploy.py:complete_deployment", "G28", 162, date(2026, 9, 8)),
+)
+
+#: Seeded at 11 on 2026-09-08 and drained by Stage Y's fourth step. Every entry
+#: is a code the route can answer with and no test asserts for it -- not a code
+#: that cannot happen, and not a route nothing reaches. `recap_index`'s 404 is
+#: the whole of what `/recaps` does when nothing is published; the snapshot
+#: download's four are its entire refusal surface.
+UNEXERCISED_CODE_WAIVERS: tuple[Waiver, ...] = (
+    Waiver("archiver/app.py:trigger_pack_bronze_html [400]", "G28", 162, date(2026, 9, 8)),
+    Waiver("archiver/app.py:trigger_prune_packed_source_html [400]", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/coordination.py:complete_coordination [503]", "G28", 162, date(2026, 9, 8)),
+    Waiver(
+        "ops/routers/coordination.py:coordination_drain_status [503]",
+        "G28", 162, date(2026, 9, 8),
+    ),
+    Waiver(
+        "ops/routers/coordination.py:coordination_release_status [503]",
+        "G28", 162, date(2026, 9, 8),
+    ),
+    Waiver("ops/routers/coordination.py:coordination_status [503]", "G28", 162, date(2026, 9, 8)),
+    Waiver(
+        "ops/routers/coordination.py:submit_host_evidence [409, 503]",
+        "G28", 162, date(2026, 9, 8),
+    ),
+    Waiver("ops/routers/public.py:recap_index [404]", "G28", 162, date(2026, 9, 8)),
+    Waiver(
+        "ops/routers/snapshots.py:download_snapshot_archive [400, 401, 403, 503]",
+        "G28", 162, date(2026, 9, 8),
+    ),
+    Waiver("ops/routers/users.py:approve_access_request [503]", "G28", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/users.py:deny_access_request [503]", "G28", 162, date(2026, 9, 8)),
+)
+
+
+def test_every_status_code_a_route_can_produce_is_asserted():
+    """A code nothing exercises is a claim, not a contract.
+
+    The rule Stage Y's declarations make expressible, and the one that answers
+    whether a test could have failed -- not by grading an assertion, but by
+    requiring the produced set to be covered. `toggle_search` declaring 303 and
+    404 means somebody must write the 404, and the 404 cannot be written against
+    a handler that returns 303 either way.
+    """
+    covered, ambiguous = _coverage()
+    _assert_exactly(
+        ambiguous, AMBIGUOUS_ROUTE_WAIVERS,
+        "These handlers share a decorator path with another, so no request can "
+        "be attributed to one of them and neither can be credited.",
+    )
+    gaps = set()
+    for service, file, name, decorator_path, methods, codes in route_handlers():
+        key = f"{file}:{name}"
+        if not _literal_segments(decorator_path) or key in ambiguous:
+            continue
+        missing = sorted(codes - covered.get(key, set()))
+        if missing:
+            gaps.add(f"{key} {missing}")
+
+    _assert_exactly(
+        gaps, UNEXERCISED_CODE_WAIVERS,
+        "These routes can answer with a status code no test asserts for them.",
+    )
+
+
+def test_the_route_code_corpus_is_not_empty():
+    """The floor under the rule above, and it is not a formality here.
+
+    Every bug this rule had while it was being written moved the same number in
+    the same direction -- fewer routes examined, more codes credited, a healthier
+    looking result. A decorator path of only templates matched everything and
+    took 99 of 100 requests ambiguous; a wildcard that matched a literal took 38
+    of 89 **handlers** out of scope while the failure list still read four. None
+    of those made a test go red. A rule whose failure mode is silence needs a
+    floor that is loud.
+    """
+    handlers = [h for h in route_handlers() if _literal_segments(h[3])]
+    assert len(handlers) >= 80, (
+        f"only {len(handlers)} route handlers found with an anchorable path; "
+        f"the rule above is measuring almost nothing."
+    )
+    pairs = sum(len(h[5]) for h in handlers)
+    assert pairs >= 150, (
+        f"only {pairs} (handler, code) pairs derived. The produced-code reader "
+        f"has stopped seeing something -- check _codes_at_call_sites and the "
+        f"one-level helper resolution before trusting a green run."
+    )
+    covered, ambiguous = _coverage()
+    assert len(covered) >= 75, (
+        f"only {len(covered)} handlers have any code credited to them, out of "
+        f"{len(handlers)}. The path matcher has stopped matching."
+    )
+    assert len(ambiguous) <= 8, (
+        f"{len(ambiguous)} handlers cannot be told apart by their decorator "
+        f"path, up from the four this rule was written against. Each one is a "
+        f"handler no request can be attributed to, so the rule silently stops "
+        f"asking about it."
+    )
+    requests = asserted_status_codes()
+    assert len(requests) >= 100, (
+        f"only {len(requests)} status assertions resolved to a path; "
+        f"_resolve_request_path has stopped resolving."
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
@@ -4451,6 +4900,8 @@ ALL_WAIVERS = (
     + SWALLOWED_WRITE_WAIVERS
     + DISCARDED_OUTCOME_WAIVERS
     + UNINSPECTED_RESPONSE_WAIVERS
+    + UNEXERCISED_CODE_WAIVERS
+    + AMBIGUOUS_ROUTE_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS

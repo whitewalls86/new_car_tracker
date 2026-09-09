@@ -108,6 +108,29 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_every_status_code_a_route_can_produce_is_asserted",
+        "a route starts answering with a code no test asserts",
+        lambda: _edit(
+            "ops/routers/admin.py",
+            '        "message": message,\n    }, status_code=404)',
+            '        "message": message,\n    }, status_code=418)',
+        ),
+        ["ops/routers/admin.py"],
+        [],
+    ),
+    (
+        "test_the_route_code_corpus_is_not_empty",
+        "the path matcher stops matching, and the coverage rule goes quiet",
+        lambda: _edit(
+            "tests/test_testing_contract.py",
+            "    return all(a.startswith(\"{\") or a == b "
+            "for a, b in zip(decorator, tail))",
+            "    return False",
+        ),
+        ["tests/test_testing_contract.py"],
+        [],
+    ),
+    (
         "test_no_caller_discards_an_outcome_it_asked_for",
         "the deploy API stops reading the five-valued result it asked for",
         lambda: _edit(
