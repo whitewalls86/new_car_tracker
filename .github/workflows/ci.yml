@@ -264,6 +264,41 @@ jobs:
       - name: Verify the recorded Docker API contract against the real proxy
         run: python scripts/verify_container_health_docker_contract.py
 
+  service-contracts:
+    name: Service OpenAPI contracts (generated and diffed)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Its own job rather than a step inside `unit-tests`, for the reason the
+      # job above states about itself: `container_health`'s dependency set is
+      # declared rather than inherited, and `unit-tests` deliberately does not
+      # install it. This gate has to import all six apps, so it is the one place
+      # every service's requirements are installed together -- which is also the
+      # closest thing CI has to asking each image what it actually serves.
+      #
+      # The workflow-level PIP_CONSTRAINT applies here, and that is the point:
+      # a contract generated against a FastAPI other than production's would
+      # record a schema nobody serves.
+      - run: |
+          pip install \
+            -r ops/requirements.txt \
+            -r scraper/requirements.txt \
+            -r archiver/requirements.txt \
+            -r processing/requirements.txt \
+            -r dbt_runner/requirements.txt \
+            -r container_health/requirements.txt
+      # Regenerate from the apps and diff against what is committed. A route
+      # added, a response model changed or a status code declared moves the
+      # artifact; leaving it unmoved fails here rather than reaching production
+      # as a surface change nobody reviewed.
+      - name: Regenerate each service's contract and diff it
+        run: python scripts/generate_service_contracts.py --check
+
   git-ref-hygiene:
     name: Git ref hygiene contract (real remote)
     runs-on: ubuntu-latest
