@@ -305,6 +305,25 @@ def _statement(name: str) -> str:
     return (_TEST_SQL / f"{name}.sql").read_text(encoding="utf-8")
 
 
+def _production_statement(relative: str) -> str:
+    """A production statement, read from the ``.sql`` file that owns it.
+
+    The general form of :func:`_statement`, and it is here for the same reason
+    stated one function up -- except that this time the rule caught the harness
+    rather than the harness anticipating the rule. Plan 162 Stage AG registered
+    ``test_no_production_module_holds_a_sql_statement``, wrote two mutations
+    with their payloads typed out as SQL literals, and the very next baseline
+    run failed on this file: ``scripts/`` is production Python, so a statement
+    typed here is inline SQL like any other. Reading the text out of the file
+    that owns it is both the fix and the better mutation -- what gets filed
+    twice is the *real* statement rather than a plausible-looking stand-in.
+    """
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    return "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    ).strip()
+
+
 MUTATIONS = [
     (
         "test_no_route_declares_a_422_no_request_can_trigger",
@@ -1902,6 +1921,105 @@ MUTATIONS = [
             "on-demand       cartracker-dbt:v2",
         ),
         ["docs/runbooks/runbook_storage_maintenance.md"],
+        [],
+    ),
+    # The five rules that were already in `test_testing_contract.py` and had
+    # never been registered, so the obligation never asked them for anything.
+    (
+        "test_no_sql_comment_contains_a_parameter_placeholder",
+        "a comment written to explain a parameter adds one, and psycopg2 "
+        "counts it -- so the caller passes too few and the route answers 503",
+        lambda: _edit(
+            "ops/sql/select_user_role.sql",
+            "-- Resolve a caller's role from the hash of their email address.",
+            "-- Resolve a caller's role from the hash %s of their email address.",
+        ),
+        ["ops/sql/select_user_role.sql"],
+        [],
+    ),
+    (
+        "test_no_two_production_sql_files_hold_the_same_statement",
+        "a statement is filed twice, which is two things to edit and one to forget",
+        # `_write` rather than `_edit`, because an `_edit` anchor into a `.sql`
+        # file *is* a SQL literal in this module and fails the rule one entry
+        # down. The anchor rule reads only the path and the anchor, so a
+        # computed replacement is fine -- but here there is no anchor to read
+        # that would not itself be a statement.
+        lambda: _write(
+            "ops/sql/select_live_cooldown_listings.sql",
+            _production_statement("ops/sql/select_user_role.sql"),
+        ),
+        ["ops/sql/select_live_cooldown_listings.sql"],
+        [],
+    ),
+    (
+        "test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement",
+        "the detector goes back to reading an f-string's head only, which is "
+        "Rule 5b's hole restored: an f-string leads with a verb and nothing "
+        "after it, so the clause grammar judges it not a statement",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            "    if isinstance(node, ast.JoinedStr):\n"
+            '        return "".join(\n'
+            "            value.value\n"
+            "            if isinstance(value, ast.Constant) "
+            "and isinstance(value.value, str)\n"
+            '            else " ? "\n'
+            "            for value in node.values\n"
+            "        )",
+            "    if isinstance(node, ast.JoinedStr):\n"
+            "        return next(\n"
+            "            (value.value for value in node.values\n"
+            "             if isinstance(value, ast.Constant)\n"
+            "             and isinstance(value.value, str)),\n"
+            "            None,\n"
+            "        )",
+        ),
+        ["tests/rules/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_no_production_module_holds_a_sql_statement",
+        "a production module grows a SQL statement in Python, so it is in no "
+        "`.sql` file and the Layer 2 census cannot count it",
+        lambda: _edit(
+            "shared/db_vocabularies.py",
+            '    ("vin_to_listing_events", "event_type"): VinToListingEvent,\n}',
+            '    ("vin_to_listing_events", "event_type"): VinToListingEvent,\n}\n\n'
+            'ROLE_LOOKUP = """'
+            + _production_statement("ops/sql/select_user_role.sql")
+            + '"""',
+        ),
+        ["shared/db_vocabularies.py"],
+        [],
+    ),
+    (
+        "test_no_waiver_is_listed_twice",
+        "a waiver is listed twice, making the ledger look longer than the debt "
+        "it records -- and every ceiling in this repository is read off a "
+        "ledger's length",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            "    Waiver(\n"
+            '        "ops/sql/cancel_coordination_state.sql == "\n'
+            '        "ops/sql/release_deploy_coordination.sql",\n'
+            '        gap="G17",\n'
+            "        owner=162,\n"
+            "    ),",
+            "    Waiver(\n"
+            '        "ops/sql/cancel_coordination_state.sql == "\n'
+            '        "ops/sql/release_deploy_coordination.sql",\n'
+            '        gap="G17",\n'
+            "        owner=162,\n"
+            "    ),\n"
+            "    Waiver(\n"
+            '        "ops/sql/cancel_coordination_state.sql == "\n'
+            '        "ops/sql/release_deploy_coordination.sql",\n'
+            '        gap="G17",\n'
+            "        owner=162,\n"
+            "    ),",
+        ),
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
