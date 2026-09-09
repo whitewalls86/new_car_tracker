@@ -52,22 +52,25 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST = "tests/rules/test_testing_contract.py"
 
-#: Every module holding contract rules this harness proves can fail. A rule in
-#: its own module is still a contract rule, and the baseline has to run it --
+#: Every rule this harness proves can fail, as the baseline has to run it --
 #: a mutation measured against a suite that never collected its assertion
-#: reports CAUGHT for the wrong reason. ``tests/rules/test_env_example_wiring.py`` is
-#: Plan 162 Stage V's and joined on 2026-09-08.
+#: reports CAUGHT for the wrong reason.
 #:
-#: The third entry is a **node, not a module**, and that is the whole of why it
+#: The second entry is a **node, not a module**, and that is the whole of why it
 #: can be here. ``tests/integration/sql/test_fixture_statements.py`` is Layer 2
 #: and its other test takes a ``cur`` fixture, so naming the module would put a
 #: live Postgres between this harness and its own baseline. The one test in it
 #: that reads the corpus rather than planning against it takes no fixture and
 #: runs anywhere, so the baseline names exactly that test. Joined 2026-09-09 by
 #: Stage AF.
+#: Plan 162 Stage AG replaced the list with the directory. Every rule lives
+#: under ``tests/rules/`` now, so the baseline is that directory plus the one
+#: node that legitimately sits outside it -- which is the same derivation
+#: ``test_every_asserted_rule_lives_in_the_rules_directory`` makes, arrived at
+#: from the other side. Enumerating the modules here was a second list of the
+#: rule set, and this plan is named for what happens to those.
 TESTS = (
-    TEST,
-    "tests/rules/test_env_example_wiring.py",
+    "tests/rules/",
     "tests/integration/sql/test_fixture_statements.py"
     "::test_there_is_something_to_check",
 )
@@ -1326,7 +1329,7 @@ MUTATIONS = [
     # the rules are required in CI precisely because `ubuntu-latest` has the
     # CLI, and an undeclared skip there fails the run.
     (
-        "test_the_ci_override_is_the_whole_difference",
+        "tests/rules/test_ci_compose_parity.py::test_the_ci_override_is_the_whole_difference",
         "CI's services gain a difference from production's that nobody declared",
         lambda: _edit(
             "docker-compose.ci.yml",
@@ -1338,7 +1341,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_ci_runs_productions_flyway_command",
+        "tests/rules/test_ci_compose_parity.py::test_ci_runs_productions_flyway_command",
         "production's Flyway stops baselining and CI stops noticing",
         lambda: _edit(
             "docker-compose.yml",
@@ -1349,7 +1352,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_no_heavy_job_declares_its_own_services",
+        "tests/rules/test_ci_compose_parity.py::test_no_heavy_job_declares_its_own_services",
         "a job goes back to hand-declaring the database it tests against",
         lambda: _edit(
             ".github/workflows/ci.yml",
@@ -1365,7 +1368,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_heavy_job_starts_the_compose_services",
+        "tests/rules/test_ci_compose_parity.py::test_every_heavy_job_starts_the_compose_services",
         "a job stops starting its services and only the Flyway step still names them",
         # Anchored on the one `up` line that does not start MinIO, so it
         # matches exactly once across the five jobs.
@@ -1378,7 +1381,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_gap_a_stage_claims_exists",
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_every_gap_a_stage_claims_exists",
         "a gap entry is renamed and the stage claiming it points at nothing",
         # G29 is Stage AF's, and its header claims it. Renaming the row is a
         # truer mutation than deleting it: the gap list is allowed to lose a
@@ -1393,7 +1397,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_the_gap_claim_corpus_is_not_empty",
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_the_gap_claim_corpus_is_not_empty",
         "the gap-claim pattern stops matching and the rule reads an empty set",
         lambda: _edit(
             "tests/rules/test_planning_docs.py",
@@ -1447,6 +1452,472 @@ MUTATIONS = [
         [".github/workflows/ci.yml"],
         [],
     ),
+    # -----------------------------------------------------------------------
+    # Plan 162 Stage AG. The rules that moved into `tests/rules/` and had no
+    # row, and therefore owed no mutation -- which is G30 exactly: the
+    # obligation reads the `Asserted by` column, so an unregistered rule was
+    # asked for nothing. Registering them is what made these owed.
+    # -----------------------------------------------------------------------
+    # `tests/rules/test_readme_contract.py`. The subject is `README.md`, which
+    # is published on merge with no deploy in between, so every mutation here
+    # is an edit to the file itself rather than to the rule that reads it.
+    (
+        "tests/rules/test_readme_contract.py::test_every_local_readme_link_resolves",
+        "a README link stops resolving, which is a 404 on the front door",
+        lambda: _edit(
+            "README.md",
+            "](docs/TESTING.md)",
+            "](docs/TESTING_STRATEGY.md)",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_the_readme_states_both_halves_of_the_production_split",
+        "a heading is reworded, and the two section rules would pass vacuously",
+        lambda: _edit(
+            "README.md",
+            "**Proven but not production-serving.**",
+            "**Proven, but not yet serving production.**",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_no_experimental_component_is_listed_as_production",
+        "a migration-track name appears in the production list",
+        lambda: _edit(
+            "README.md",
+            "- MinIO holds replayable bronze HTML and permanent Parquet history.",
+            "- MinIO holds replayable bronze HTML and permanent Iceberg history.",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_the_experimental_stack_is_still_disclaimed_by_name",
+        "an experimental name is deleted rather than moved, which the rule above allows",
+        lambda: _edit(
+            "README.md",
+            "- dbt-Spark parity work and MLflow experiment provenance.",
+            "- dbt-Spark parity work and experiment provenance.",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_duckdb_is_named_as_what_actually_serves",
+        "the README stops naming what actually serves the dashboard",
+        lambda: _edit(
+            "README.md",
+            "- dbt and DuckDB build and serve every analytical mart used by the public page,",
+            "- dbt builds and serves every analytical mart used by the public page,",
+        ),
+        ["README.md"],
+        [],
+    ),
+    # `tests/rules/test_declared_skips.py`. The subject is the hook in
+    # `tests/plugins/declared_skips.py`, so each mutation takes out one of the
+    # three directions it enforces. A hook that quietly stopped noticing is the
+    # defect it exists to prevent, which is why these are worth having at all.
+    (
+        "tests/rules/test_declared_skips.py::test_an_undeclared_skip_fails_the_run",
+        "the hook stops noticing a skip nobody declared",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    undeclared = sorted("
+            "nodeid for nodeid in observed if nodeid not in declared)",
+            "    undeclared = []",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py::test_a_declared_skip_is_accepted_and_named",
+        "the hook stops reporting on a green run, so a job where it never "
+        "loaded looks identical to one where it was satisfied",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            '    terminalreporter.section("Declared skips", red=failed)',
+            '    if failed:\n'
+            '        terminalreporter.section("Declared skips", red=failed)',
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_a_declared_skip_that_stops_skipping_fails_the_run",
+        "a declaration whose reason has stopped being true goes unreported",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    silent = sorted(\n"
+            '        f"{nodeid} (declared {entry.since}: {entry.condition})"',
+            "    silent = []\n"
+            "    _unused = (\n"
+            '        f"{nodeid} (declared {entry.since}: {entry.condition})"',
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_a_declared_skip_a_run_never_selected_is_not_a_failure",
+        "the drift direction stops reading the selected set, so every job "
+        "fails for the declarations belonging to the other jobs",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "        if nodeid in _selected and nodeid not in observed",
+            "        if nodeid not in observed",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_a_declared_skip_firing_for_a_different_cause_fails_the_run",
+        "a test skipping for a new cause inherits the old declaration",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    mismatched = sorted(\n"
+            '        f"{nodeid}\\n      declared condition: '
+            '{declared[nodeid].condition!r}"',
+            "    mismatched = []\n"
+            "    _unused = (\n"
+            '        f"{nodeid}\\n      declared condition: '
+            '{declared[nodeid].condition!r}"',
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py::test_the_gate_is_off_by_default",
+        "the gate defaults on, and every local run fails for the recap check "
+        "that correctly does not skip on a full clone",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    if not os.environ.get(GATE):\n        return",
+            "    if os.environ.get(GATE) == \"off\":\n        return",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_an_unfamiliar_report_shape_is_read_rather_than_indexed",
+        "an unfamiliar report shape is indexed instead of stringified, so it "
+        "surfaces as an IndexError in a terminal summary rather than a "
+        "mismatch someone can read",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    if isinstance(longrepr, tuple) and len(longrepr) == 3:",
+            "    if longrepr is not None:",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    # `tests/rules/test_maintenance_running_set.py`. The subject is
+    # `maintenance-running-set.txt`, and the derivation is negative -- anything
+    # not named is expected running -- so most of these delete or reclassify an
+    # entry rather than adding a wrong one.
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_the_file_exists",
+        "the manifest leaves the tree, and a restore can no longer tell a "
+        "deliberately-stopped service from a forgotten one",
+        lambda: _delete("maintenance-running-set.txt"),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_every_entry_declares_a_known_class",
+        "an entry declares a class no restore knows how to act on",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "snapshot-worker on-demand Profile-gated",
+            "snapshot-worker on-demand-oneshot Profile-gated",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_every_entry_carries_a_reason",
+        "an entry loses the written reason somebody has to re-evaluate at 2am",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "dbt_test on-demand Profile-gated (`tools`) tools image, same as `dbt`.",
+            "dbt_test on-demand same as dbt.",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_every_entry_names_a_real_service",
+        "a renamed service leaves an entry behind that then covers whatever "
+        "takes its name next",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "april-processor on-demand Profile-gated",
+            "april-processor-run on-demand Profile-gated",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestDefaultProjectIsFullyClassified::test_profile_gated_services_are_all_classified",
+        "a profile-gated service is unclassified, so a plain `up -d` gets it "
+        "wrong in one direction and nothing says which",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "dbt on-demand Profile-gated (`tools`) tools image, invoked as a one-shot\n"
+            "    `docker compose run`. Never started by `up -d` and never restored.\n"
+            "\n",
+            "",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestDefaultProjectIsFullyClassified::test_services_without_a_restart_policy_are_classified",
+        "a service Docker will not restart after a reboot is named nowhere, "
+        "so the fleet comes back missing it and nobody is looking",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "flyway oneshot Runs the Flyway migrations to completion and exits. Every\n"
+            "    consumer gates on `condition: service_completed_successfully`. A restore\n"
+            '    that waits for it to be "running" waits forever.\n'
+            "\n",
+            "",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestDefaultProjectIsFullyClassified::test_long_running_services_are_not_silently_absent",
+        "the solver is reclassified on-demand, so the expected-running set "
+        "stops containing a service that must be restored",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "trawl profile-running Profile-gated",
+            "trawl on-demand Profile-gated",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestKnownFindingsStayRecorded::test_caddy_restart_gap_is_recorded_while_it_exists",
+        "caddy loses the restart policy Plan 142 gave it and no entry records "
+        "the gap, so :80 and :443 stay down after a reboot with nothing "
+        "reporting it",
+        lambda: _edit(
+            "docker-compose.yml",
+            "    # leave the policy silently unapplied.\n    restart: unless-stopped",
+            "    # leave the policy silently unapplied.\n    restart: \"no\"",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestKnownFindingsStayRecorded::test_the_four_soak_containers_are_all_aux_paused",
+        "one of the four stale unhealthy containers the Plan 140 soak found "
+        "is reclassified, re-arming that finding",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "cartracker-mlflow/mlflow aux-paused Standalone",
+            "cartracker-mlflow/mlflow on-demand Standalone",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestKnownFindingsStayRecorded::test_trawl_and_redis_trawl_are_restored_together",
+        "the solver's Redis stops being restored with it, which is the "
+        "2026-08-14 outage with an extra step",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "redis-trawl profile-running Backs",
+            "redis-trawl on-demand Backs",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    # `tests/rules/test_image_keep_set.py`. Two subjects -- the Compose files
+    # and the manifest the keep-set is derived from, and the runbook block that
+    # carries the answer to the operator holding the prune command.
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_every_compose_file_is_attributed_to_a_project",
+        "a Compose file is attributed to no project, so its images are "
+        "invisible to the keep-set and a prune takes them",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            '    "docker-compose.test.yml": "cartracker-test",\n',
+            "",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_a_shared_image_is_joined_to_every_service_that_builds_it",
+        "a service stops sharing the image two others build, and the join "
+        "that protects it loses a holder",
+        lambda: _edit(
+            "docker-compose.yml",
+            "    image: cartracker-archiver\n"
+            "    container_name: cartracker-pack-worker",
+            "    image: cartracker-pack-worker\n"
+            "    container_name: cartracker-pack-worker",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_one_running_service_protects_a_shared_image",
+        "the holder join goes from any-to-all, which is the label-to-image "
+        "hazard Plan 170 Stage A named: an image two running services need "
+        "enters the keep-set because a third holder is on-demand",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            "        if not keys & held",
+            "        if not keys <= held",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_interpolated_and_digest_references_resolve_to_what_the_host_shows",
+        "an interpolated image reference stops resolving to its default, so "
+        "the rendered block cannot be matched by eye against the host",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            "    interpolated = _INTERPOLATED.match(reference)\n"
+            "    if interpolated:\n"
+            "        reference = interpolated.group(\"default\")",
+            "    interpolated = None",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_every_entry_is_classified_by_the_manifest",
+        "a kept image is held only by services no manifest entry names, so "
+        "the block says it is kept and cannot say why",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "cartracker-mlflow/mlflow aux-paused Standalone Plan 112 Gate B tracking server",
+            "cartracker-mlflow-server/mlflow aux-paused Standalone Plan 112 Gate B server",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_every_entry_carries_a_protected_class",
+        "a kept image's only class is one that does not justify keeping it, "
+        "so the keep-set is over-protecting and nothing says so",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "cartracker-lakehouse/lakekeeper-migrate aux-paused Same project and pause.",
+            "cartracker-lakehouse/lakekeeper-migrate oneshot Same project and pause.",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_the_four_paused_and_on_demand_images_are_all_in_it",
+        "a profile gate is dropped, and one of the four images `docker image "
+        "prune -a` would take silently leaves the keep-set",
+        # **Not a reclassification in the manifest.** The first draft of this
+        # entry dropped `on-demand` from `PROTECTED_CLASSES` and was MISSED:
+        # that tuple is read by `test_every_entry_carries_a_protected_class`
+        # alone, and `keep_set()` asks only whether a container holds the image.
+        # The mutation has to change the *derivation's* answer, and a `profiles:`
+        # key is what decides it.
+        lambda: _edit(
+            "docker-compose.yml",
+            '    profiles: [ "tools" ]',
+            "    # the profile gate that kept this image out of `up -d`",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_the_third_party_catalog_is_carried_by_name",
+        "the third-party catalog loses one of the two services that carry it, "
+        "which is the only reason an unlabelled image is in the block at all",
+        lambda: _edit(
+            "docker-compose.lakehouse.yml",
+            "    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}\n"
+            "    container_name: cartracker-lakekeeper-migrate",
+            "    image: quay.io/lakekeeper/catalog:v0.13.2\n"
+            "    container_name: cartracker-lakekeeper-migrate",
+        ),
+        ["docker-compose.lakehouse.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_the_solver_and_its_redis_are_both_kept",
+        "the solver's Redis loses its profile gate, so it leaves the keep-set "
+        "and a prune in the window before `--profile trawl` takes it",
+        # Same correction as the entry above: the class in the manifest is not
+        # what `keep_set()` reads, so reclassifying `redis-trawl` was MISSED.
+        lambda: _edit(
+            "docker-compose.yml",
+            '    restart: unless-stopped\n    profiles: ["trawl"]\n'
+            "    # Plan 124: bound Redis memory alongside the trawl solver it backs.",
+            "    restart: unless-stopped\n"
+            "    # Plan 124: bound Redis memory alongside the trawl solver it backs.",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheRunbookCarriesTheDerivation::test_the_rendered_block_matches_the_derivation",
+        "the runbook block stops matching the derivation, so the operator "
+        "holding the prune command is told the old answer",
+        lambda: _edit(
+            "docs/runbooks/runbook_storage_maintenance.md",
+            "on-demand       cartracker-dbt:latest",
+            "on-demand       cartracker-dbt:v2",
+        ),
+        ["docs/runbooks/runbook_storage_maintenance.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheRunbookCarriesTheDerivation::test_the_block_appears_exactly_once",
+        "a second block is appended rather than the stale one replaced, which "
+        "satisfies the match rule and leaves the runbook holding two answers",
+        lambda: _edit(
+            "docs/runbooks/runbook_storage_maintenance.md",
+            "# Derived from docker-compose*.yml and maintenance-running-set.txt\n",
+            "# Derived from docker-compose*.yml and maintenance-running-set.txt\n"
+            "# Derived from docker-compose*.yml and maintenance-running-set.txt\n",
+        ),
+        ["docs/runbooks/runbook_storage_maintenance.md"],
+        [],
+    ),
 ]
 
 
@@ -1497,9 +1968,28 @@ def _run(dsn: str | None) -> int:
                 if path.parent != REPO_ROOT and path.parent.exists():
                     if not any(path.parent.iterdir()):
                         path.parent.rmdir()
-        caught = code != 0
-        missed += [] if caught else [description]
-        print(f"{'CAUGHT' if caught else '*** MISSED ***':14} {description}")
+        # **Exit 1 exactly, not merely non-zero.** pytest exits 1 when a test
+        # fails and something else when it could not run one: 4 for a node it
+        # cannot find, 5 for nothing collected, 2 for a module that would not
+        # import. Reading every non-zero code as CAUGHT conflates *the rule
+        # noticed* with *the harness never asked it*, and both halves of that
+        # have already happened here. Stage AF found the import half -- an
+        # `UNDOCUMENTED` append landed outside its tuple, pytest exited on a
+        # `SyntaxError`, and this loop called it a success. Stage AG found the
+        # other half: six entries named a bare node for a rule living in
+        # `test_ci_compose_parity.py` or `test_planning_docs.py`, so the target
+        # resolved to `TEST::<name>`, pytest exited 4 saying *not found*, and
+        # all six had reported CAUGHT since the day they were written while
+        # never running the rule at all. Stage AF caught its case by a human
+        # reading the failure; this is the same catch made mechanical.
+        caught = code == 1
+        if not caught:
+            label = "*** MISSED ***" if code == 0 else f"*** NO RUN ({code}) ***"
+            missed.append(
+                description if code == 0
+                else f"{description} [pytest exited {code}: the rule never ran]"
+            )
+        print(f"{'CAUGHT' if caught else label:14} {description}")
 
     code, output = _pytest()
     print("\nrestored:", output.strip().splitlines()[-1])
