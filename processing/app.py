@@ -4,7 +4,7 @@ Processing service — artifact parsing and observation writes for cartracker.
 Slim entrypoint: health/ready endpoints plus router includes.
 All processing logic lives in routers/ and writers/.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from processing.routers.artifact import router as artifact_router
@@ -16,7 +16,7 @@ from shared.logging_setup import configure_logging
 configure_logging()
 
 app = FastAPI()
-Instrumentator().instrument(app).expose(app)
+Instrumentator().instrument(app).expose(app, response_class=Response)
 
 app.include_router(batch_router)
 app.include_router(artifact_router)

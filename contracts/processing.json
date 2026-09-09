@@ -449,11 +449,6 @@
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },

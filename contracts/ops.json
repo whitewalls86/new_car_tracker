@@ -1,6 +1,44 @@
 {
   "components": {
     "schemas": {
+      "AffectedResponse": {
+        "description": "``POST /maintenance/expire-orphan-detail-claims`` -- rows the statement touched.",
+        "properties": {
+          "affected": {
+            "title": "Affected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "affected"
+        ],
+        "title": "AffectedResponse",
+        "type": "object"
+      },
+      "AuthorizeResponse": {
+        "description": "``POST /coordination/authorize`` -- the phase, and the drain that justified it.",
+        "properties": {
+          "drain": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrainStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "AuthorizeResponse",
+        "type": "object"
+      },
       "Body_change_user_role_admin_users__user_id__role_post": {
         "properties": {
           "role": {
@@ -228,6 +266,54 @@
         "title": "Body_update_search_admin_searches__search_key__post",
         "type": "object"
       },
+      "ClaimBatchResponse": {
+        "description": "``POST /scrape/claims/claim-batch``.\n\n``listings`` is built from the claim statement's own column list, so its\nelement shape belongs to that SQL rather than to this file and stays\nfree-form.",
+        "properties": {
+          "listings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Listings",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "listings"
+        ],
+        "title": "ClaimBatchResponse",
+        "type": "object"
+      },
+      "CompletedResponse": {
+        "description": "``POST /coordination/complete`` -- the phase it landed in, and which generation.",
+        "properties": {
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "CompletedResponse",
+        "type": "object"
+      },
       "CompletionRequest": {
         "properties": {
           "confirm_complete": {
@@ -331,6 +417,250 @@
         "title": "CoordinationRequest",
         "type": "object"
       },
+      "CoordinationState": {
+        "description": "``GET /coordination/status`` -- the authoritative record.\n\nThe operator-facing view, wider than the metrics query beside it: every\nphase timestamp and the request's own narrative. Timestamps are ISO strings\nrather than datetimes because ``_iso`` has already converted them.",
+        "properties": {
+          "active_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "draining_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draining At"
+          },
+          "expected_work": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Work"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "manifest_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Location"
+          },
+          "operator_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Notes"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "scope": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "targets": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "validating_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validating At"
+          }
+        },
+        "title": "CoordinationState",
+        "type": "object"
+      },
+      "DrainStatusResponse": {
+        "description": "``GET /coordination/drain-status`` -- fail-closed drain aggregation.\n\n``sources`` carries one entry per evidence source, each of which reports\n``known`` or ``unknown`` rather than guessing a zero -- an unreadable\nsource blocks the deploy, which is the whole design.",
+        "properties": {
+          "blockers": {
+            "default": [],
+            "items": {},
+            "title": "Blockers",
+            "type": "array"
+          },
+          "drained": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drained"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "scope": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "sources": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          }
+        },
+        "title": "DrainStatusResponse",
+        "type": "object"
+      },
+      "EvictCooldownsResponse": {
+        "description": "``POST /maintenance/evict-delisted-cooldowns``.",
+        "properties": {
+          "evicted": {
+            "title": "Evicted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evicted"
+        ],
+        "title": "EvictCooldownsResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -342,6 +672,20 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "``GET /health`` everywhere: process liveness, never dependency health.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
       "HostEvidenceRequest": {
@@ -373,6 +717,275 @@
           "evidence_digests"
         ],
         "title": "HostEvidenceRequest",
+        "type": "object"
+      },
+      "HostEvidenceResponse": {
+        "description": "``POST /coordination/host-evidence`` -- the receipt for a submission.\n\n``gates`` and ``evidence_digests`` are echoed from the request so the\ncaller can see exactly what was stored under ``evidence_id``.",
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "evidence_digests": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Digests"
+          },
+          "evidence_id": {
+            "title": "Evidence Id"
+          },
+          "gates": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gates"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          }
+        },
+        "required": [
+          "evidence_id"
+        ],
+        "title": "HostEvidenceResponse",
+        "type": "object"
+      },
+      "IntentStatusResponse": {
+        "description": "``GET /deploy/status``.\n\n``number_running`` and ``min_started_at`` come from the joined in-flight\ncount and are absent from the no-row and read-failed shapes, which is why\nthey are optional and the other four are not. ``pause_long_jobs`` is the\ncolumn default when there is no intent -- shape, not a claim about a\ndeploy, as ``_no_intent`` says.",
+        "properties": {
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "min_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Started At"
+          },
+          "number_running": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number Running"
+          },
+          "pause_long_jobs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Long Jobs"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "title": "IntentStatusResponse",
+        "type": "object"
+      },
+      "LocalDrainResponse": {
+        "description": "``GET /coordination/local-drain`` -- this process's own job evidence.\n\n``ops`` cannot ask itself over HTTP for the reason every other service is\nasked that way, so it reports ``job_snapshot()`` directly and labels the\nsource. ``known`` is always ``True`` here: an in-process count cannot be\nunavailable the way a service across the network can.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "known": {
+            "title": "Known",
+            "type": "boolean"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "known",
+          "active_jobs"
+        ],
+        "title": "LocalDrainResponse",
+        "type": "object"
+      },
+      "PhaseResponse": {
+        "description": "The phase transitions that answer with the phase they reached.\n\n``/coordination/begin-drain``, ``/coordination/cancel`` and\n``/coordination/begin-validation``.",
+        "properties": {
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "PhaseResponse",
+        "type": "object"
+      },
+      "ReapStuckResponse": {
+        "description": "``POST /maintenance/reap-stuck-processing``.",
+        "properties": {
+          "retried": {
+            "title": "Retried",
+            "type": "integer"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "stuck": {
+            "title": "Stuck",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stuck",
+          "retried",
+          "skipped"
+        ],
+        "title": "ReapStuckResponse",
+        "type": "object"
+      },
+      "ReconcileCohortsResponse": {
+        "description": "``POST /maintenance/reconcile-cooldown-cohorts``.",
+        "properties": {
+          "cleared": {
+            "title": "Cleared",
+            "type": "integer"
+          },
+          "counted": {
+            "title": "Counted",
+            "type": "integer"
+          },
+          "live": {
+            "title": "Live",
+            "type": "integer"
+          },
+          "pending_cleared": {
+            "title": "Pending Cleared",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "counted",
+          "live",
+          "pending_cleared",
+          "cleared"
+        ],
+        "title": "ReconcileCohortsResponse",
+        "type": "object"
+      },
+      "ReleaseClaimsResponse": {
+        "description": "``POST /scrape/claims/release`` -- and there is no ``status`` key.\n\nStated plainly because a caller has been reading one for months.\n``airflow/dags/scrape_detail_pages.py`` logs ``result.get(\"status\")`` from\nthis endpoint and has logged ``status=None`` every run since the DAG was\nwritten. The repair is not to add the field -- it is this model, which\nmakes the absence checkable instead of leaving it to be discovered.",
+        "properties": {
+          "claims_released": {
+            "title": "Claims Released",
+            "type": "integer"
+          },
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "fetches_recorded": {
+            "title": "Fetches Recorded",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "total",
+          "errors",
+          "claims_released",
+          "fetches_recorded"
+        ],
+        "title": "ReleaseClaimsResponse",
         "type": "object"
       },
       "ReleaseRequest": {
@@ -412,6 +1025,156 @@
           "status"
         ],
         "title": "ReleaseResult",
+        "type": "object"
+      },
+      "ReleaseStatusResponse": {
+        "description": "``GET /coordination/release-status`` -- the post-deploy gates.",
+        "properties": {
+          "blockers": {
+            "default": [],
+            "items": {},
+            "title": "Blockers",
+            "type": "array"
+          },
+          "gates": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gates"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "release_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Ready"
+          }
+        },
+        "title": "ReleaseStatusResponse",
+        "type": "object"
+      },
+      "RequestedResponse": {
+        "description": "``POST /coordination/request`` -- what was recorded, echoed back.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "targets": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          }
+        },
+        "required": [
+          "kind",
+          "phase"
+        ],
+        "title": "RequestedResponse",
+        "type": "object"
+      },
+      "RotationResponse": {
+        "description": "``POST /scrape/rotation/advance`` -- three exits, one shape.\n\nA slot that is due answers ``slot``, ``run_id`` and ``configs``; a request\nthat arrived too soon answers ``reason`` and ``last_run_minutes_ago``\nalongside empty versions of the first three; an empty queue answers the\nfirst three with nothing in them. The two refusal fields are optional\nbecause only one exit sets them, and declaring them here is what makes\n\"why did I get no configs\" answerable from the contract.",
+        "properties": {
+          "configs": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Configs",
+            "type": "array"
+          },
+          "last_run_minutes_ago": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Minutes Ago"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "slot": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          }
+        },
+        "title": "RotationResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -500,14 +1263,6 @@
       "get": {
         "operationId": "root_admin_get",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
           "307": {
             "description": "Redirect to the admin landing page."
           }
@@ -1028,8 +1783,10 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
               }
             },
             "description": "Successful Response"
@@ -1119,8 +1876,10 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
               }
             },
             "description": "Successful Response"
@@ -1318,11 +2077,6 @@
         ],
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           },
           "400": {
@@ -1524,11 +2278,6 @@
         ],
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           },
           "403": {
@@ -1559,9 +2308,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Authorize Coordination Coordination Authorize Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuthorizeResponse"
                 }
               }
             },
@@ -1585,11 +2332,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Begin Coordination Drain Coordination Begin Drain Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PhaseResponse"
                 }
               }
             },
@@ -1613,11 +2356,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Begin Coordination Validation Coordination Begin Validation Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PhaseResponse"
                 }
               }
             },
@@ -1641,11 +2380,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Cancel Coordination Coordination Cancel Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PhaseResponse"
                 }
               }
             },
@@ -1680,9 +2415,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Complete Coordination Coordination Complete Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CompletedResponse"
                 }
               }
             },
@@ -1716,9 +2449,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Coordination Drain Status Coordination Drain Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DrainStatusResponse"
                 }
               }
             },
@@ -1750,9 +2481,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Submit Host Evidence Coordination Host Evidence Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HostEvidenceResponse"
                 }
               }
             },
@@ -1780,9 +2509,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Local Drain Status Coordination Local Drain Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LocalDrainResponse"
                 }
               }
             },
@@ -1801,9 +2528,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Coordination Release Status Coordination Release Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReleaseStatusResponse"
                 }
               }
             },
@@ -1834,9 +2559,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Request Coordination Coordination Request Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RequestedResponse"
                 }
               }
             },
@@ -1866,9 +2589,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Coordination Status Coordination Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CoordinationState"
                 }
               }
             },
@@ -1963,9 +2684,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Current Intent Deploy Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntentStatusResponse"
                 }
               }
             },
@@ -1982,7 +2701,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1996,12 +2717,7 @@
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
         "operationId": "info_redirect_info_get",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
+          "307": {
             "description": "Successful Response"
           },
           "308": {
@@ -2014,12 +2730,7 @@
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
         "operationId": "info_redirect_info_head",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
+          "307": {
             "description": "Successful Response"
           },
           "308": {
@@ -2037,9 +2748,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Evict Delisted Cooldowns Maintenance Evict Delisted Cooldowns Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EvictCooldownsResponse"
                 }
               }
             },
@@ -2057,9 +2766,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Expire Orphan Detail Claims Maintenance Expire Orphan Detail Claims Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AffectedResponse"
                 }
               }
             },
@@ -2077,9 +2784,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reap Stuck Processing Maintenance Reap Stuck Processing Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReapStuckResponse"
                 }
               }
             },
@@ -2097,9 +2802,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reconcile Cooldown Cohorts Maintenance Reconcile Cooldown Cohorts Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReconcileCohortsResponse"
                 }
               }
             },
@@ -2115,11 +2818,6 @@
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -2341,9 +3039,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Claim Batch Scrape Claims Claim Batch Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ClaimBatchResponse"
                 }
               }
             },
@@ -2385,9 +3081,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Release Claims Scrape Claims Release Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReleaseClaimsResponse"
                 }
               }
             },
@@ -2441,9 +3135,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Advance Rotation Scrape Rotation Advance Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RotationResponse"
                 }
               }
             },
@@ -2471,11 +3163,6 @@
         "operationId": "sitemap_sitemap_xml_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -2485,11 +3172,6 @@
         "operationId": "sitemap_sitemap_xml_head",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },

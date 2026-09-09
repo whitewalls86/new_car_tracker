@@ -426,11 +426,19 @@ MUTATIONS = [
     (
         "test_every_route_is_reached_through_the_apps_routing_table",
         "a new route is added to ops with no test requesting it",
+        # Anchored on the *body* of an existing route rather than on a
+        # decorator. Plan 162 Stage AA gave `/health`'s decorator a
+        # `response_model=`, which broke the previous anchor, and every route
+        # here is now liable to grow one -- so anchoring on any decorator text
+        # is anchoring on the thing most likely to move. Appending after a
+        # return statement is also safe in a way that prepending to a `def` is
+        # not: inserting before `def health():` would land between that
+        # function and its decorator and silently rebind it.
         lambda: _edit(
             "ops/app.py",
-            '@app.get("/health")',
-            '@app.get("/widgets")\ndef list_widgets():\n    return []\n\n\n'
-            '@app.get("/health")',
+            '    return RedirectResponse(url="/admin/searches/")',
+            '    return RedirectResponse(url="/admin/searches/")\n\n\n'
+            '@app.get("/widgets")\ndef list_widgets():\n    return []',
         ),
         ["ops/app.py"],
         [],

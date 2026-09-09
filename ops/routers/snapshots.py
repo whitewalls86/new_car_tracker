@@ -430,6 +430,7 @@ def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
 
 @router.get(
     "/{snapshot_id}/download",
+    response_class=StreamingResponse,
     dependencies=[Depends(require_snapshot_token("read"))],
     responses={
         400: {"description": "The snapshot id is not a well-formed identifier."},

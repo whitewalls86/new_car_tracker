@@ -11,6 +11,11 @@ from typing import Any, Dict, List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ops.api_models import (
+    ClaimBatchResponse,
+    ReleaseClaimsResponse,
+    RotationResponse,
+)
 from ops.queries import (
     CLAIM_DETAIL_SCRAPE_BATCH,
     DELETE_DETAIL_SCRAPE_CLAIMS,
@@ -33,7 +38,7 @@ router = APIRouter(prefix="/scrape", tags=["scrape"])
 # Rotation
 # ---------------------------------------------------------------------------
 
-@router.post("/rotation/advance")
+@router.post("/rotation/advance", response_model=RotationResponse)
 def advance_rotation(
     min_idle_minutes: int = 1439,
     min_gap_minutes: int = 230,
@@ -128,7 +133,7 @@ class ReleaseRequest(BaseModel):
     results: List[ReleaseResult]
 
 
-@router.post("/claims/claim-batch")
+@router.post("/claims/claim-batch", response_model=ClaimBatchResponse)
 def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
     """
     Atomically claims the next batch of listings from the detail scrape queue.
@@ -159,7 +164,7 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
 FETCH_SPENDING_STATUSES = ("ok", "failed")
 
 
-@router.post("/claims/release")
+@router.post("/claims/release", response_model=ReleaseClaimsResponse)
 def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
     """
     Releases claims after a scrape batch completes.

@@ -8,6 +8,17 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ops.api_models import (
+    AuthorizeResponse,
+    CompletedResponse,
+    CoordinationState,
+    DrainStatusResponse,
+    HostEvidenceResponse,
+    LocalDrainResponse,
+    PhaseResponse,
+    ReleaseStatusResponse,
+    RequestedResponse,
+)
 from ops.coordination_contract import HOST_TARGET, expand_targets
 from ops.coordination_drain import collect_drain_status
 from ops.coordination_release import collect_release_status
@@ -542,6 +553,7 @@ def _authorize() -> tuple[str, dict[str, Any] | None]:
 
 @router.get(
     "/status",
+    response_model=CoordinationState,
     responses={
         503: {"description": "Database unavailable."},
     },
@@ -550,7 +562,7 @@ def coordination_status() -> dict[str, Any]:
     return _status()
 
 
-@router.get("/local-drain")
+@router.get("/local-drain", response_model=LocalDrainResponse)
 def local_drain_status() -> dict[str, Any]:
     """Expose ops maintenance work as one named drain-evidence source."""
     evidence = job_snapshot()
@@ -559,6 +571,7 @@ def local_drain_status() -> dict[str, Any]:
 
 @router.post(
     "/request",
+    response_model=RequestedResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         422: {"description": "The request is not a valid coordination request."},
@@ -583,6 +596,7 @@ def request_coordination(payload: CoordinationRequest) -> dict[str, Any]:
 
 @router.post(
     "/begin-drain",
+    response_model=PhaseResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         503: {"description": "Database unavailable."},
@@ -599,6 +613,7 @@ def begin_coordination_drain() -> dict[str, str]:
 
 @router.get(
     "/drain-status",
+    response_model=DrainStatusResponse,
     responses={
         503: {"description": "Database unavailable."},
     },
@@ -609,6 +624,7 @@ def coordination_drain_status() -> dict[str, Any]:
 
 @router.get(
     "/release-status",
+    response_model=ReleaseStatusResponse,
     responses={
         503: {"description": "Database unavailable."},
     },
@@ -620,6 +636,7 @@ def coordination_release_status() -> dict[str, Any]:
 
 @router.post(
     "/host-evidence",
+    response_model=HostEvidenceResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         422: {"description": "The request is not a valid coordination request."},
@@ -640,6 +657,7 @@ def submit_host_evidence(payload: HostEvidenceRequest) -> dict[str, Any]:
 
 @router.post(
     "/complete",
+    response_model=CompletedResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         503: {"description": "Database unavailable."},
@@ -657,6 +675,7 @@ def complete_coordination(payload: CompletionRequest) -> dict[str, Any]:
 
 @router.post(
     "/authorize",
+    response_model=AuthorizeResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         503: {"description": "Database unavailable."},
@@ -675,6 +694,7 @@ def authorize_coordination() -> dict[str, Any]:
 
 @router.post(
     "/cancel",
+    response_model=PhaseResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         503: {"description": "Database unavailable."},
@@ -691,6 +711,7 @@ def cancel_coordination() -> dict[str, str]:
 
 @router.post(
     "/begin-validation",
+    response_model=PhaseResponse,
     responses={
         409: {"description": "The coordination row is not in the phase this operation requires."},
         503: {"description": "Database unavailable."},

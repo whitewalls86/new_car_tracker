@@ -163,13 +163,20 @@ def test_status_route_is_registered(mock_client, mocker):
     the route `scripts/host_maintenance.py` polls as `GET /coordination/status`
     before it will proceed, so a rename here strands the host maintenance
     workflow rather than failing anything in this suite.
+
+    Plan 162 Stage AA: this asserted `== {"phase": "none"}`, which is a body
+    `_status` cannot return -- it answers `dict(row)` over the sixteen columns
+    `select_coordination_state.sql` names, so a one-key record is not a small
+    version of the real one, it is a shape that does not occur. The route being
+    registered is what this test is for, so it asserts the phase reaching the
+    caller and leaves the full record to `test_status_serializes_timestamps`.
     """
     mocker.patch("ops.routers.coordination._status", return_value={"phase": "none"})
 
     response = mock_client.get("/coordination/status")
 
     assert response.status_code == 200
-    assert response.json() == {"phase": "none"}
+    assert response.json()["phase"] == "none"
 
 
 @pytest.mark.parametrize(

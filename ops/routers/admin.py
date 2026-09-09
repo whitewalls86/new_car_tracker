@@ -572,6 +572,7 @@ def update_search(
 
 @router.post(
     "/searches/{search_key}/toggle",
+    response_class=HTMLResponse,
     responses={
         303: {"description": "Change applied; redirect to the search list."},
         404: {"description": "No search config with that key; nothing was changed."},
@@ -602,6 +603,7 @@ def toggle_search(request: Request, search_key: str):
 
 @router.post(
     "/searches/{search_key}/delete",
+    response_class=HTMLResponse,
     responses={
         303: {"description": "Change applied; redirect to the search list."},
         404: {"description": "No search config with that key; nothing was changed."},

@@ -59,8 +59,12 @@ _REDIRECT_TO_LANDING = {
 }
 
 
-@router.get("/info", responses=_REDIRECT_TO_LANDING)
-@router.head("/info", responses=_REDIRECT_TO_LANDING)
+@router.get(
+    "/info", response_class=RedirectResponse, responses=_REDIRECT_TO_LANDING
+)
+@router.head(
+    "/info", response_class=RedirectResponse, responses=_REDIRECT_TO_LANDING
+)
 def info_redirect() -> RedirectResponse:
     """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
 
