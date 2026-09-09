@@ -385,15 +385,16 @@ moved it to the end without making it a different stage.
 | 18 | [**T**](#stage-t-exists-because-this-plan-grew-the-suite) | 12 | Shared fixtures: what the suite duplicates at 3,988 tests | — | `done` | CAR-80 |
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
-| 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `next` | CAR-104 |
-| 22 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
-| 23 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
-| 24 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
-| 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
-| 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
-| 27 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
-| 28 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
-| 29 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+| 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `done` | CAR-104 |
+| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `done` | CAR-114 |
+| 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `next` | CAR-78 |
+| 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
+| 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
+| 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
+| 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
+| 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
+| 29 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
+| 30 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -2452,6 +2453,69 @@ archives and take the reason with it.
   because it exercises the over-declaration direction -- the half that stops
   declarations rotting into a description of what the routes used to do.
 
+### Stage AF: the harness that proves the rules is proved by nothing
+
+**Issue:** CAR-114 · **State:** `done` · **Gap:** G29
+
+**Every "demonstrated by X failing" exit in this plan rests on
+`scripts/verify_testing_contract_mutations.py`, and nothing guards it.** Its own
+docstring says so in the one sentence that matters: *"This is not a CI step."*
+So its 59 anchors are literal strings in 22 files that can stop matching at any
+time, and nobody finds out until a human runs it — which happens when somebody
+remembers, and the whole plan exists because *"a check you must remember is
+weaker than one you cannot forget."*
+
+**Measured 2026-09-09.** 61 rules are named in `docs/TESTING.md`'s `Asserted by`
+column. **41 are proved by a mutation and 20 are not.** The harness holds 59
+mutations across 49 distinct rules, ten of which carry two; the 8 it names that
+the column does not are the waiver-hygiene rules, which predate that table and
+belong to it rather than to a gap.
+
+**Stage Y is the argument, and it is a measurement rather than a conviction.**
+Six rules landed there. **Every one shipped with a bug that made the repository
+look healthier than it was, and not one of those bugs failed a test.** The
+observation rule keyed on the `execute` call's arguments and so never saw the
+three handlers that bind their statement first — *it passed on a tree with a
+`rowcount` check deleted*. The coverage rule let a wildcard match a literal
+segment and took **38 of 89 handlers out of scope while its failure list still
+read four**. A response rule nearly shipped an escape clause that was itself the
+defect. Each was caught by writing the mutation and watching it not fail.
+
+**The mutations themselves cannot be derived, and that is the finding rather
+than an excuse.** `mutmut` and `cosmic-ray` generate edits automatically and
+prove the suite is sensitive *somewhere*; they cannot say that *this rule*
+catches *the defect it was written for*. The value of an entry is its
+description — *"a route stops reading the rowcount of the UPDATE it performs"* —
+and stating what a mutation is supposed to prove is what caught the two worst
+bugs above. The prose is the artifact, and a generator does not write it.
+
+**Two things around it derive cleanly, and both are cheap.**
+
+**The obligation.** Every rule named in the `Asserted by` column owes a
+mutation. That column already exists and is already asserted the other way by
+`test_every_asserted_rule_names_a_real_test`, so this is one table with a second
+obligation rather than a new registry. It seeds at 20.
+
+**The anchors.** Each `_edit` anchor must still match exactly once in the file it
+names, checkable with a string search per entry and no mutation run at all.
+**This is not hypothetical.** Stage Y broke five waivers keyed on
+`admin.py:135:_fetch_dbt_context` by adding lines above them while declaring
+that file's codes; the waivers failed loudly because a waiver is asserted, and
+the anchors would not have. They have the same fragility and none of the
+protection.
+
+**What this stage does not do is run the harness in CI.** It costs a pytest
+subprocess per mutation and the tree has to be mutated and restored, which is a
+minute or two of wall clock against a workflow Stage R exists to shrink. Making
+the *anchors* checkable is a second's work and catches the rot; making the
+*mutations* run every time is a cost decision this stage records rather than
+takes.
+
+**Exit:** every rule in the `Asserted by` column has a mutation, seeded at 20 and
+drained to 0; every `_edit` anchor is asserted to match its file exactly once,
+in CI; the harness's docstring says which of its two halves runs there and why
+the other does not; demonstrated by a stale anchor failing.
+
 ### Stage Z: the contract is generated, committed and gated
 
 **Issue:** unassigned · **State:** `backlog` · **Gap:** G22 · **Blocked by:** Stage Y
@@ -4317,5 +4381,112 @@ the dead `dbt_runner` admin panel -- five endpoints deleted in April and May wit
 every caller left standing. Stage AA owns whether that panel is removed or the
 endpoints return, and all fourteen entries drain on that answer.
 
+**Deployed 2026-09-09**, in two commands: the five services sharing an image
+with a changed file at 13:44:23Z -- `pack-worker` among them because it shares
+`archiver`'s digest rather than because it changed -- and `ops` alone at
+13:49:19Z. All six healthy, and the loaded code read back from inside each
+container rather than inferred from the checkout.
+
+**Cost: estimated 2, actual 2.** The stage tripled its gap count while it ran and
+still landed on its estimate, which is worth recording precisely because a delta
+of zero is the evidence that the scale works.
+
 Measurements, recipes and the full table of rule bugs:
 [`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md).
+
+### Stage AF — the harness that proves the rules is proved by nothing
+
+**Issue:** CAR-114 · **Closed:** 2026-09-09
+
+**The instrument every other stage's evidence rested on had none of its own.**
+`scripts/verify_testing_contract_mutations.py` is what every *"demonstrated by X
+failing"* exit in this plan cites, and its docstring said why nothing guarded it:
+*"This is not a CI step."* So its anchors were literal strings living in other
+people's files, and they stop matching the way any literal does -- silently, and
+only where nobody is looking.
+
+**Two halves, split on cost rather than on value.** The anchors are asserted in
+CI by `test_every_mutation_anchor_still_matches_its_file`, with
+`test_the_mutation_harness_corpus_is_not_empty` as its floor. The obligation is
+asserted by `test_every_asserted_rule_is_proved_by_a_mutation`, which reads
+`docs/TESTING.md`'s `Asserted by` column for a second duty rather than opening a
+new registry -- the column was already asserted the other way by
+`test_every_asserted_rule_names_a_real_test`, and one reader now serves both so
+the table's shape cannot be understood two ways. Running the mutations stays a
+deliberate command, and the docstring now states that split rather than leaving
+it implied.
+
+**G29 drained 20 to 0**, and the harness went from 59 mutations to 82. Three of
+the 22 new entries prove the rules this stage itself added, so the instrument is
+measured by the instrument.
+
+**The anchors were already rotting, which is the argument rather than a
+prediction.** The rule found two ambiguous anchors on the day it landed.
+`Waiver(subject, gap="G5", owner=162)` matched twice because
+`test_no_waiver_outlives_the_plan_that_owns_it` quotes it in its own docstring as
+*"literal source text"* -- the sentence documenting the anchor is what made the
+anchor ambiguous. The `int_listing_state_runs` `CREATE` had grown a second
+occurrence in a fixture. Both had been mutating the earlier site by position
+rather than by intent, and `_edit`'s own guard cannot see that case at all: it
+raises on an anchor it cannot find and says nothing about one it finds twice.
+That asymmetry is why the rule asserts *exactly once* rather than *present*.
+
+**Writing the mutations found a false CAUGHT, which is the method defending
+itself.** Each new entry was checked to fail on *its own assertion* rather than
+merely to fail. One did not: the `UNDOCUMENTED` ledger append landed outside its
+tuple and failed on a `SyntaxError`, and the harness had reported that as a
+success. It is the failure the harness's own comment warns about -- a mutation
+measured against a suite that never collected its assertion -- and nothing but
+reading the failure would have caught it.
+
+**One rule of the twenty needed a live engine, and the cost of that turned out
+to be the deciding measurement.**
+`test_every_test_statement_plans_against_the_migrated_schema` `PREPARE`s every
+`tests/sql/` statement against the live catalogue, so a fixture left behind by a
+renamed column is a condition no static reading can express. Two alternatives
+were considered and both rejected: a declared exception ledger, which the
+obligation rule's own docstring argues against in the same breath as forbidding
+one, and moving the proof to a Layer 2 CI gate beside
+`tests/integration/dbt/test_constraint_mutation.py`, which is a stage of its own.
+Measurement settled it -- **3s to a ready `postgres:16` and 4s to apply 51
+migrations**, both images already cached. The harness now provisions a throwaway
+database on port 55432, migrates it with `ci.yml`'s placeholder set, and destroys
+it. The port is not 5432 deliberately: a script whose whole discipline is not
+disturbing the tree it runs in must not shadow a running stack either.
+
+**The DSN alone is not trusted.** The engine-bound node must pass *unmutated*
+before its mutation is judged, because an unmigrated database fails every
+`PREPARE` and would report CAUGHT having proved nothing. With no engine the entry
+reports `UNPROVEN HERE` and the run does not fail -- no engine is a fact about
+the machine, not a finding about the repository, and failing there would make the
+honest answer indistinguishable from a rule that had actually gone quiet.
+
+**This exceeds what the stage was written to do, and is recorded rather than
+applied quietly.** The *"explicitly not in scope"* clause holds: the mutations
+still do not run in CI. But "the harness starts and destroys a Docker container"
+is a new fact about a script that previously touched nothing but the working
+tree, and it belongs in the record next to an exit it was not part of.
+
+**A Windows-only defect in the harness fell out of the work.** The child encoded
+its stdout with the console codepage while the parent decoded UTF-8, so the
+em-dash in `test_the_encoding_rule_sees_the_shape_ruff_cannot`'s own source
+raised `UnicodeDecodeError` before any mutation could be judged. That is the same
+locale-dependent defect the rule exists to catch, arriving in the harness that
+proves it, and it was invisible on the Linux half of this repository's two boxes.
+
+**Verified 2026-09-09.** The harness: 82 of 82 CAUGHT, zero missed, zero
+unproven; baseline and restore both 86 passed; the throwaway container destroyed;
+115s wall clock including provisioning and teardown. Locally, `ruff` clean and
+3,895 unit tests pass. **Observed in CI** on run `34373255590` for
+[#404](https://github.com/whitewalls86/new_car_tracker/pull/404) -- all fourteen
+jobs green with two scope-skipped, and `Unit tests (pytest)` is where the three
+new rules actually ran, which is what makes the exit's *"in CI"* an observation
+rather than a reading of `ci.yml`.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. `README.md:317` and `info.html:855` both say *"More than
+3,000 tests run in CI"*, which stays true at 3,895.
+
+**Cost: no estimate carried, actual 1.** The issue was created without one, so
+there is no delta to learn from here -- which is itself the finding, since an
+unestimated closed issue undercounts its cycle silently.

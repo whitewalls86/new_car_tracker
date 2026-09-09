@@ -3606,6 +3606,43 @@ _ASSERTED_BY_ROW = re.compile(r"^\|[^|]+\|([^|]+)\|[^|]+\|\s*$", re.M)
 _TEST_NAME = re.compile(r"`(test_\w+)`")
 
 
+def _asserted_rule_cells() -> list[str]:
+    """The ``Asserted by`` cells of the rules table, header rows removed.
+
+    One reader because the column now carries two duties -- the test below
+    says every name in it exists, and
+    ``test_every_asserted_rule_is_proved_by_a_mutation`` says every name in it
+    has been watched fail. Two parses of one table is two places for the
+    table's shape to be understood differently, and the shape assertions here
+    are the whole reason either duty can be trusted.
+    """
+    section = _read(CONTRACT).split("## What CI asserts")[1]
+    section = section.split("### Specified here")[0]
+    matched = _ASSERTED_BY_ROW.findall(section)
+    assert len(matched) > 2, (
+        f"no rules table parsed out of {CONTRACT} under 'What CI asserts'"
+    )
+    # A markdown table opens with exactly two non-content rows. Asserting their
+    # shape rather than skipping them blind means a reordered or renamed column
+    # fails here instead of silently exempting the first real rule.
+    header, separator, *rows = matched
+    assert header.strip() == "Asserted by", (
+        f"the second column of the rules table in {CONTRACT} is "
+        f"'{header.strip()}', not 'Asserted by'"
+    )
+    assert set(separator.strip()) <= set("-:"), (
+        f"expected a markdown separator row, got '{separator.strip()}'"
+    )
+    return rows
+
+
+def _asserted_rule_names() -> list[str]:
+    """Every test name the rules table claims a rule is asserted by."""
+    return sorted({
+        name for cell in _asserted_rule_cells() for name in _TEST_NAME.findall(cell)
+    })
+
+
 def test_every_asserted_rule_names_a_real_test():
     """The rules table may not claim a check the suite does not implement.
 
@@ -3630,23 +3667,7 @@ def test_every_asserted_rule_names_a_real_test():
     without a row. A row cannot exist without a rule, and overclaiming was the
     failure that happened.
     """
-    section = _read(CONTRACT).split("## What CI asserts")[1]
-    section = section.split("### Specified here")[0]
-    matched = _ASSERTED_BY_ROW.findall(section)
-    assert len(matched) > 2, (
-        f"no rules table parsed out of {CONTRACT} under 'What CI asserts'"
-    )
-    # A markdown table opens with exactly two non-content rows. Asserting their
-    # shape rather than skipping them blind means a reordered or renamed column
-    # fails here instead of silently exempting the first real rule.
-    header, separator, *rows = matched
-    assert header.strip() == "Asserted by", (
-        f"the second column of the rules table in {CONTRACT} is "
-        f"'{header.strip()}', not 'Asserted by'"
-    )
-    assert set(separator.strip()) <= set("-:"), (
-        f"expected a markdown separator row, got '{separator.strip()}'"
-    )
+    rows = _asserted_rule_cells()
 
     # **Every test module, not just this one.** Until Plan 162 Stage X this
     # read only this file, which made the rules table unable to name a check
@@ -3686,6 +3707,240 @@ def test_every_asserted_rule_names_a_real_test():
         f"in {Path(__file__).name}: {phantom}. Either the check was never "
         f"written, or it was renamed and the contract now describes a "
         f"mechanism that is not there."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The instrument -- `scripts/verify_testing_contract_mutations.py` itself.
+# ---------------------------------------------------------------------------
+# Plan 162 Stage AF. Every "demonstrated by X failing" exit in this plan rests
+# on that harness, and until this stage nothing rested on the harness. Its own
+# docstring records why in the sentence that matters: *"This is not a CI step."*
+# So its anchors are literal strings living in other people's files, and they
+# stop matching the way any literal does -- silently, and only where nobody is
+# looking. **This is not hypothetical.** Stage Y broke five waivers keyed on
+# `admin.py:135:_fetch_dbt_context` by adding lines above them; those failed
+# loudly because a waiver is asserted, and the anchors beside them would not
+# have. Same fragility, none of the protection.
+#
+# **The mutations themselves cannot be derived, and this file does not try.**
+# `mutmut` and `cosmic-ray` generate edits automatically and prove the suite is
+# sensitive *somewhere*; neither can say that *this* rule catches *the defect it
+# was written for*. The value of an entry is its description -- "a route stops
+# reading the rowcount of the UPDATE it performs" -- and Stage Y is the
+# measurement behind that claim rather than a conviction about it: six rules
+# landed there, every one shipped with a bug that made the repository look
+# healthier than it was, not one of those bugs failed a test, and each was
+# caught by writing the mutation and watching it fail to fail.
+#
+# **Two things around them derive cleanly, and both are asserted here.**
+#
+# That every rule the `Asserted by` column names owes a mutation -- one table
+# carrying a second duty rather than a new registry, since
+# `test_every_asserted_rule_names_a_real_test` already reads the same column the
+# other way. It seeded at 20 on 2026-09-09.
+#
+# And that every anchor still matches the file it names, exactly once. That is a
+# string search per entry with no mutation run at all, which is why it can live
+# in CI while running the mutations cannot: the harness costs a pytest
+# subprocess per entry plus a mutate-and-restore of the working tree, against a
+# workflow Stage R exists to shrink. Making the anchors checkable is a second's
+# work and catches the rot; making the mutations run every time is a cost this
+# stage records rather than takes, and the harness's docstring says so.
+MUTATION_HARNESS = "scripts/verify_testing_contract_mutations.py"
+
+#: The payload helpers whose arguments this file can check without running
+#: anything. ``_write`` is deliberately absent: its path may already exist or
+#: may be created by the mutation, so there is nothing true to assert about it.
+_CHECKABLE_PAYLOADS = ("_edit", "_delete")
+
+
+@lru_cache(maxsize=None)
+def _harness_tree() -> ast.Module:
+    return ast.parse(_read(MUTATION_HARNESS), filename=MUTATION_HARNESS)
+
+
+@lru_cache(maxsize=None)
+def _harness_constants() -> dict[str, str]:
+    """Module-level ``NAME = "..."`` bindings an anchor is allowed to name.
+
+    ``TEST`` is the only one today, and it is the reason names are resolved at
+    all: two entries pass it where every other passes a literal. A reader that
+    understood literals only would have to either skip those two -- exempting
+    the module most of the anchors point into -- or fail on a shape that is
+    perfectly clear.
+    """
+    return {
+        target.id: node.value.value
+        for node in _harness_tree().body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def _harness_string(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return _harness_constants().get(node.id)
+    return None
+
+
+def _harness_mutations() -> list[tuple[str, str, list[ast.Call]]]:
+    """``MUTATIONS`` read as (node, description, the payload calls it makes).
+
+    Read from the source rather than imported, because importing the harness to
+    inspect it would hand this rule a list of lambdas, and running one is the
+    only way to learn what such a lambda edits. The anchors are literals in the
+    file; reading them as literals is both cheaper and the only way to check
+    them without mutating the tree the rule is running in.
+    """
+    assignments = [
+        node.value for node in _harness_tree().body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id == "MUTATIONS"
+    ]
+    assert len(assignments) == 1, (
+        f"{MUTATION_HARNESS} binds MUTATIONS {len(assignments)} time(s); this "
+        f"rule reads it by name and cannot tell which binding the harness runs."
+    )
+    entries = []
+    for entry in assignments[0].elts:
+        node, description = (ast.literal_eval(item) for item in entry.elts[:2])
+        entries.append((node, description, [
+            call for call in ast.walk(entry.elts[2])
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+            and call.func.id in _CHECKABLE_PAYLOADS
+        ]))
+    return entries
+
+
+def test_the_mutation_harness_corpus_is_not_empty():
+    """The floor, for the reason every derived rule in this file has one.
+
+    The anchor rule below is a loop over parsed entries, and a loop over
+    nothing passes. A renamed ``MUTATIONS``, a payload helper that stops being
+    called by name, or an entry shape that stops unpacking would empty the
+    corpus and retire that rule silently -- which is the failure it exists to
+    prevent, arriving one level up.
+    """
+    entries = _harness_mutations()
+    assert len(entries) >= 50, (
+        f"only {len(entries)} mutations parsed out of {MUTATION_HARNESS}; the "
+        f"rule below is checking almost nothing. Check the MUTATIONS entry "
+        f"shape before trusting a green run."
+    )
+    anchored = [
+        call for _, _, calls in entries for call in calls if call.func.id == "_edit"
+    ]
+    assert len(anchored) >= 40, (
+        f"only {len(anchored)} _edit anchors found across {len(entries)} "
+        f"mutations. The payloads are resolved by function name, so a rename "
+        f"of _edit would read here as a harness that anchors nothing."
+    )
+
+
+def test_every_mutation_anchor_still_matches_its_file():
+    """An anchor that stopped matching has stopped testing anything.
+
+    ``_edit`` already raises on an anchor it cannot find and ``_delete``
+    already raises on a path that is gone -- but only when somebody runs the
+    harness, which is the thing nobody is obliged to do. This is those two
+    checks moved to where they run whether or not anyone remembers.
+
+    **Exactly once, not merely present.** ``_edit`` replaces the first match,
+    so an anchor that has quietly become ambiguous mutates whichever site
+    happens to come first and the entry's description stops describing what it
+    does. Stage AF found two on the day this was written, both of them already
+    ambiguous. ``CREATE TABLE int_listing_state_runs (run_duration_hours
+    INTEGER)`` had grown a second occurrence in
+    ``tests/scripts/test_audit_adaptive_refresh_features.py``. And
+    ``Waiver(subject, gap="G5", owner=162)`` matched twice in this file --
+    because ``test_no_waiver_outlives_the_plan_that_owns_it`` quotes it in its
+    own docstring as *"literal source text"*, so the sentence documenting the
+    anchor is what made the anchor ambiguous. Both mutations had been landing
+    on the earlier site by position rather than by intent.
+
+    A payload whose path or anchor this rule cannot read as a string **fails**
+    rather than being skipped. An unreadable anchor is an unchecked anchor, and
+    skipping it would hand the harness a way to hold anchors this rule cannot
+    see -- which is the blind spot itself, not an edge case around it.
+    """
+    stale = []
+    for _, description, calls in _harness_mutations():
+        for call in calls:
+            relative = _harness_string(call.args[0])
+            if relative is None:
+                stale.append(
+                    f"{description}: {call.func.id}() names a path this rule "
+                    f"cannot read as a string"
+                )
+                continue
+            path = REPO_ROOT / relative
+            if not path.is_file():
+                stale.append(f"{description}: {relative} is not on disk")
+                continue
+            if call.func.id == "_delete":
+                continue
+            anchor = _harness_string(call.args[1])
+            if anchor is None:
+                stale.append(
+                    f"{description}: the anchor into {relative} is not a "
+                    f"literal this rule can read"
+                )
+                continue
+            found = path.read_text(encoding="utf-8").count(anchor)
+            if found != 1:
+                stale.append(
+                    f"{description}: the anchor into {relative} matches "
+                    f"{found} times, not once -- {anchor.splitlines()[0][:60]!r}"
+                )
+
+    assert not stale, (
+        f"{MUTATION_HARNESS} holds anchors that no longer describe the tree "
+        f"they point into:\n  " + "\n  ".join(stale) +
+        "\n\nRe-anchor the entry on text that still exists and still appears "
+        "once. An anchor matching zero times makes the harness raise; one "
+        "matching twice makes it mutate a site nobody chose, and both mean the "
+        "mutation has stopped proving what its description claims."
+    )
+
+
+def test_every_asserted_rule_is_proved_by_a_mutation():
+    """The `Asserted by` column's second duty: a rule nobody has watched fail.
+
+    ``test_every_asserted_rule_names_a_real_test`` reads this column to say the
+    contract cannot claim a check that was never written. This reads the same
+    column to say it cannot claim a check nobody has watched fail -- and Stage
+    Y is the measurement showing those are different questions. Six rules
+    landed there; all six existed, all six were named, and every one of them
+    was wrong in the direction that reads as a healthy repository. The
+    observation rule keyed on the ``execute`` call's arguments and so never saw
+    the three handlers that bind their statement first -- *it passed on a tree
+    with a* ``rowcount`` *check deleted*. The coverage rule let a wildcard match
+    a literal segment and took 38 of 89 handlers out of scope while its failure
+    list still read four. Naming a test proved neither of them wrong; mutating
+    did.
+
+    **There is no exception ledger, and adding one is a decision rather than a
+    fix.** The same argument
+    ``test_every_mutation_observes_whether_it_changed_anything`` records: an
+    empty ledger and no ledger differ in exactly one way -- what the next gap
+    costs to repair -- and with a ledger that is a tuple append.
+    """
+    unproved = sorted(set(_asserted_rule_names()) - {
+        node.split("::")[-1] for node, _, _ in _harness_mutations()
+    })
+    assert not unproved, (
+        f"{CONTRACT} names these rules as asserted and {MUTATION_HARNESS} "
+        f"holds no mutation for them, so nobody has watched them fail:\n  "
+        + "\n  ".join(unproved) +
+        "\n\nAdd an entry to MUTATIONS saying in prose what defect the rule is "
+        "meant to catch, then run the harness and watch it fail to fail. "
+        "Seeded at 20 on 2026-09-09."
     )
 
 

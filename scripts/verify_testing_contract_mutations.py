@@ -5,22 +5,48 @@ anything about. This applies one mutation per rule, runs the single assertion
 that should notice, and restores the tree — so the claim "the test fails when
 the contract and the repository disagree" is demonstrated rather than asserted.
 
-    python scripts/verify_testing_contract_mutations.py
-
 Exits non-zero if any mutation goes unnoticed, or if the tree does not come
 back green. It writes to the working tree and restores from an in-memory
 snapshot: it must never ``git checkout --`` anything, because the files it
 mutates are exactly the ones a change in progress is editing.
 
-This is not a CI step. It is the evidence run behind the contract, cheap enough
-to repeat whenever a rule is added or reworded — which is the moment a rule
-most often stops checking anything.
+**This file has two halves, and only one of them runs in CI.**
+
+*The anchors run there.* Every ``_edit`` anchor below must still match its file
+exactly once, and every ``_delete`` path must still be on disk — a string search
+per entry, no mutation applied and no subprocess started, so it costs a fraction
+of a second. ``test_every_mutation_anchor_still_matches_its_file`` in
+``tests/test_testing_contract.py`` is that check, and it is there because an
+anchor is a literal in somebody else's file: it stops matching silently, and the
+only thing that ever noticed was a human choosing to run this script. Plan 162
+Stage Y broke five waivers keyed on ``admin.py:135:_fetch_dbt_context`` by adding
+lines above them; the waivers failed loudly, and the anchors beside them would
+not have. That rule found two already-ambiguous anchors the day it was written.
+
+*The mutations do not.* Running them costs a pytest subprocess per entry plus a
+mutate-and-restore of the working tree — a minute or two of wall clock, against
+a workflow Plan 162 Stage R exists to shrink. That is a **cost decision, not a
+verdict on their value**: the mutations are what actually prove a rule can fail,
+and everything below is written so that running them stays cheap enough to do by
+hand whenever a rule is added or reworded, which is the moment a rule most often
+stops checking anything.
+
+    python scripts/verify_testing_contract_mutations.py
+
+What CI does assert about them is the *obligation*:
+``test_every_asserted_rule_is_proved_by_a_mutation`` fails if a rule named in
+``docs/TESTING.md``'s ``Asserted by`` column has no entry here. So a rule cannot
+land unproven and an anchor cannot go stale in silence, while the proving itself
+stays a deliberate run.
 """
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,10 +57,161 @@ TEST = "tests/test_testing_contract.py"
 #: a mutation measured against a suite that never collected its assertion
 #: reports CAUGHT for the wrong reason. ``tests/test_env_example_wiring.py`` is
 #: Plan 162 Stage V's and joined on 2026-09-08.
-TESTS = (TEST, "tests/test_env_example_wiring.py")
+#:
+#: The third entry is a **node, not a module**, and that is the whole of why it
+#: can be here. ``tests/integration/sql/test_fixture_statements.py`` is Layer 2
+#: and its other test takes a ``cur`` fixture, so naming the module would put a
+#: live Postgres between this harness and its own baseline. The one test in it
+#: that reads the corpus rather than planning against it takes no fixture and
+#: runs anywhere, so the baseline names exactly that test. Joined 2026-09-09 by
+#: Stage AF.
+TESTS = (
+    TEST,
+    "tests/test_env_example_wiring.py",
+    "tests/integration/sql/test_fixture_statements.py"
+    "::test_there_is_something_to_check",
+)
+
+#: The nodes whose assertion cannot be reached without a live, Flyway-migrated
+#: Postgres. **Per node and not per module**, because the module holding this
+#: one also holds a test that needs no engine at all and is in ``TESTS`` above:
+#: "which layer this lives at" is not a property of the file.
+#:
+#: One entry, and it is a Layer 2 rule on purpose. ``PREPARE`` plans a statement
+#: against the live catalogue, so a fixture left behind by a renamed column is a
+#: condition only a real engine can express -- the same argument
+#: ``test_a_database_triggered_code_is_asserted_against_a_real_engine`` makes
+#: about a mocked ``rowcount``. Its mutation is therefore run against a
+#: throwaway database this script provisions and destroys; see :func:`_engine`.
+ENGINE_BOUND = (
+    "tests/integration/sql/test_fixture_statements.py"
+    "::test_every_test_statement_plans_against_the_migrated_schema",
+)
+
+_PG_IMAGE = "postgres:16"
+_FLYWAY_IMAGE = "flyway/flyway:10-alpine"
+_PG_CONTAINER = "cartracker-mutation-harness-postgres"
+#: Not 5432. A developer running this almost certainly has the real stack up on
+#: the default port, and a throwaway database that quietly shadowed it would be
+#: the worst possible failure of a script whose whole job is not to disturb the
+#: tree it runs in.
+_PG_PORT = 55432
+_PG_DSN = f"postgresql://cartracker:cartracker@localhost:{_PG_PORT}/cartracker"
+_VIEWER_DSN = f"postgresql://viewer:ci_viewer@localhost:{_PG_PORT}/cartracker"
+
+#: The same placeholders `ci.yml`'s Flyway step passes, because the migrations
+#: do not apply without them and a second set of values here would be a second
+#: schema to keep in step with the first.
+_FLYWAY_PLACEHOLDERS = (
+    "-placeholders.viewerPassword=ci_viewer",
+    "-placeholders.scraperPassword=ci_scraper",
+    "-placeholders.dbtPassword=ci_dbt",
+    "-placeholders.authEmailSalt=ci_salt",
+    "-placeholders.adminEmail=ci@example.com",
+    "-placeholders.airflowPassword=ci_airflow",
+    "-placeholders.airflowAppPassword=ci_airflow_app",
+    "-placeholders.metricsPassword=ci_metrics",
+)
 
 
-def _pytest(node: str | None = None) -> tuple[int, str]:
+def _docker(*args: str, timeout: int = 180) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=timeout,
+    )
+
+
+def _provision_postgres() -> str | None:
+    """Start a throwaway Postgres, migrate it, and hand back its DSN.
+
+    Measured at roughly eight seconds on a machine that already holds both
+    images: three to a ready server and four to apply the migrations. That is
+    what makes running the engine-bound mutation here reasonable rather than a
+    thing to declare an exception about -- the cost of *provisioning* an engine
+    turned out to be smaller than the cost of explaining why we had not.
+
+    Returns ``None`` on any failure, and every failure is one this script must
+    survive: no Docker daemon, no images, a port already taken. The caller then
+    reports the entry as unproven rather than judging it, because a mutation
+    measured against a suite that could not run is the CAUGHT-for-the-wrong-
+    reason this file warns about everywhere else.
+    """
+    try:
+        _docker("rm", "-f", _PG_CONTAINER, timeout=60)
+        started = _docker(
+            "run", "-d", "--name", _PG_CONTAINER,
+            "-e", "POSTGRES_USER=cartracker",
+            "-e", "POSTGRES_PASSWORD=cartracker",
+            "-e", "POSTGRES_DB=cartracker",
+            "-p", f"{_PG_PORT}:5432", _PG_IMAGE,
+        )
+        if started.returncode != 0:
+            print(f"  no engine: {started.stderr.strip().splitlines()[-1:]}")
+            return None
+
+        for _ in range(60):
+            if _docker(
+                "exec", _PG_CONTAINER, "pg_isready", "-U", "cartracker",
+                timeout=30,
+            ).returncode == 0:
+                break
+            time.sleep(1)
+        else:
+            print("  no engine: postgres never became ready")
+            return None
+
+        migrated = _docker(
+            "run", "--rm", "--network", f"container:{_PG_CONTAINER}",
+            "-v", f"{REPO_ROOT / 'db' / 'migrations'}:/flyway/sql",
+            _FLYWAY_IMAGE,
+            # `--network container:` puts Flyway in the database's own network
+            # namespace, so it reaches it on localhost with no user-defined
+            # network to create and tear down.
+            "-url=jdbc:postgresql://localhost:5432/cartracker",
+            "-user=cartracker", "-password=cartracker",
+            "-locations=filesystem:/flyway/sql", "-detectEncoding=true",
+            *_FLYWAY_PLACEHOLDERS, "-defaultSchema=public", "migrate",
+            timeout=300,
+        )
+        if migrated.returncode != 0:
+            print(f"  no engine: flyway migrate failed\n{migrated.stdout[-600:]}")
+            return None
+        return _PG_DSN
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"  no engine: {type(error).__name__}: {error}")
+        return None
+
+
+@contextmanager
+def _engine() -> Iterator[str | None]:
+    """A DSN the engine-bound nodes can plan against, or ``None``.
+
+    ``TEST_DATABASE_URL`` wins when it is set, because a developer who has
+    pointed the integration suite somewhere has said where they want it to run
+    and this script has no business starting a second database beside it.
+    Otherwise one is provisioned and destroyed.
+
+    **The DSN alone is not the check.** Whichever database is used, the caller
+    runs the engine-bound node *unmutated* first and only trusts it if that
+    passes: an empty Postgres would fail every ``PREPARE`` and make the
+    mutation look caught when nothing had been proved at all.
+    """
+    supplied = os.environ.get("TEST_DATABASE_URL")
+    if supplied:
+        print(f"engine: TEST_DATABASE_URL ({supplied.rsplit('@', 1)[-1]})")
+        yield supplied
+        return
+    print(f"engine: provisioning a throwaway {_PG_IMAGE} on port {_PG_PORT}")
+    dsn = _provision_postgres()
+    try:
+        yield dsn
+    finally:
+        if dsn is not None:
+            _docker("rm", "-f", _PG_CONTAINER, timeout=60)
+            print("engine: throwaway database destroyed")
+
+
+def _pytest(node: str | None = None, dsn: str | None = None) -> tuple[int, str]:
     # A node containing `::` names its own module; a bare name belongs to
     # `TEST`, which is where most of them still live. That is what keeps the
     # entries written before a second module existed working unchanged.
@@ -46,8 +223,27 @@ def _pytest(node: str | None = None) -> tuple[int, str]:
         [sys.executable, "-m", "pytest", *targets, "-q", "--no-header",
          "-p", "no:cacheprovider"],
         cwd=REPO_ROOT, capture_output=True, text=True,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        # ``PYTHONIOENCODING`` because the parent decodes as UTF-8 and the child
+        # would otherwise encode its stdout with the console codepage: cp1252 on
+        # Windows, where the em-dash pytest echoes out of
+        # ``test_the_encoding_rule_sees_the_shape_ruff_cannot``'s own source is
+        # byte 0x97 and the read raises ``UnicodeDecodeError`` before any
+        # mutation can be judged. Found on 2026-09-09 by Stage AF, writing that
+        # rule's mutation on the Windows half of this repository's two boxes --
+        # the same locale-dependent defect the rule itself exists to catch,
+        # arriving in the harness that proves it.
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT),
+             "PYTHONIOENCODING": "utf-8",
+             # Only when an engine was obtained -- passing a DSN
+             # unconditionally would point the integration conftest at a port
+             # with nothing behind it. The viewer DSN is set only for the
+             # database this script provisioned, whose viewer password it
+             # knows; a supplied TEST_DATABASE_URL brings its own.
+             **({"TEST_DATABASE_URL": dsn} if dsn else {}),
+             **({"TEST_VIEWER_DATABASE_URL": _VIEWER_DSN}
+                if dsn == _PG_DSN else {})},
         encoding="utf-8",
+        errors="replace",
     )
     return result.returncode, result.stdout
 
@@ -363,10 +559,15 @@ MUTATIONS = [
         "a waiver's owner plan is archived and the waiver stays behind",
         # Re-anchored from G6 to G5 by Plan 162 Stage M, for the reason above:
         # ROUTE_WAIVERS is `()` since Stage 6, so no waiver names G6 any more.
+        # Anchored on the constructor *and* the comprehension line beneath it.
+        # `test_no_waiver_outlives_the_plan_that_owns_it` quotes the constructor
+        # in its own docstring as literal source text, so the shorter anchor had
+        # come to match twice and `_edit` was choosing the code site by position
+        # rather than by intent. Found by Stage AF's anchor rule.
         lambda: _edit(
             TEST,
-            'Waiver(subject, gap="G5", owner=162)',
-            'Waiver(subject, gap="G5", owner=84)',
+            'Waiver(subject, gap="G5", owner=162)\n    for subject in (',
+            'Waiver(subject, gap="G5", owner=84)\n    for subject in (',
         ),
         [TEST],
         [],
@@ -572,10 +773,16 @@ MUTATIONS = [
     (
         "test_no_test_invents_the_shape_of_a_relation_production_defines",
         "a fixture declares a column its dbt model does not",
+        # Anchored through the seed statement on the next line: the CREATE has
+        # grown a second, identical occurrence in `test_negative_durations_
+        # included_when_configured`, and only the seed distinguishes them.
+        # Found by Stage AF's anchor rule.
         lambda: _edit(
             "tests/scripts/test_audit_adaptive_refresh_features.py",
-            "CREATE TABLE int_listing_state_runs (run_duration_hours INTEGER)",
-            "CREATE TABLE int_listing_state_runs (run_hours INTEGER)",
+            'CREATE TABLE int_listing_state_runs (run_duration_hours INTEGER)")\n'
+            '        con.execute(SQL("duckdb/insert_int_listing_state_runs"))',
+            'CREATE TABLE int_listing_state_runs (run_hours INTEGER)")\n'
+            '        con.execute(SQL("duckdb/insert_int_listing_state_runs"))',
         ),
         ["tests/scripts/test_audit_adaptive_refresh_features.py"],
         [],
@@ -791,22 +998,365 @@ MUTATIONS = [
         ["tests/test_testing_contract.py"],
         [],
     ),
+    # -----------------------------------------------------------------------
+    # Plan 162 Stage AF. The twenty rules the `Asserted by` column named and
+    # nobody had watched fail. Each description says what defect the rule is
+    # meant to catch, because that sentence is the artifact -- see the stage's
+    # note in `tests/test_testing_contract.py` on why no generator writes it.
+    # -----------------------------------------------------------------------
+    (
+        "tests/integration/sql/test_fixture_statements.py"
+        "::test_every_test_statement_plans_against_the_migrated_schema",
+        "a fixture statement is left behind by a column the schema renamed",
+        # The only entry here that needs an engine, and the reason `ENGINE_BOUND`
+        # exists. `PREPARE` resolves `artifact_kind` against the live catalogue
+        # and refuses the statement; nothing static can see this, which is the
+        # whole argument for the rule sitting at Layer 2.
+        lambda: _edit(
+            "tests/sql/integration/sql/test_ops_views/insert_ops_artifacts_queue.sql",
+            "(minio_path, artifact_type, fetched_at, status)",
+            "(minio_path, artifact_kind, fetched_at, status)",
+        ),
+        ["tests/sql/integration/sql/test_ops_views/insert_ops_artifacts_queue.sql"],
+        [],
+    ),
+    (
+        "test_no_route_is_hidden_from_the_schema_this_rule_reads",
+        "a route opts out of the schema the routing-table rule enumerates from",
+        lambda: _edit(
+            "ops/routers/public.py",
+            # Both public page routes share the decorator's first two lines, so
+            # the anchor reaches the 404 description that distinguishes them.
+            "    methods=_PUBLIC_METHODS,\n    response_class=FileResponse,\n"
+            '    responses={\n        404: {"description": "No recap has been '
+            'published under that name."},',
+            "    methods=_PUBLIC_METHODS,\n    include_in_schema=False,\n"
+            "    response_class=FileResponse,\n"
+            '    responses={\n        404: {"description": "No recap has been '
+            'published under that name."},',
+        ),
+        ["ops/routers/public.py"],
+        [],
+    ),
+    (
+        "test_the_assertionless_rule_sees_a_test_that_only_executes",
+        "a delegated assertion stops counting, so an empty result set means nothing",
+        lambda: _edit(
+            TEST,
+            'if name.lstrip("_").startswith("assert"):',
+            'if name.startswith("assert"):',
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "test_the_encoding_rule_sees_the_shape_ruff_cannot",
+        "the rotating log handler drops out of the shapes the encoding rule reads",
+        lambda: _edit(
+            TEST,
+            '    "FileHandler", "RotatingFileHandler", "TimedRotatingFileHandler",',
+            '    "FileHandler", "TimedRotatingFileHandler",',
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "test_every_text_read_and_write_states_its_encoding",
+        "a text read stops naming its encoding and asks the locale instead",
+        lambda: _edit(
+            "shared/query_loader.py",
+            'path.read_text(encoding="utf-8")',
+            "path.read_text()",
+        ),
+        ["shared/query_loader.py"],
+        [],
+    ),
+    (
+        "test_the_mutation_corpus_is_not_empty",
+        "the UPDATE/DELETE pattern stops matching, retiring the observation rule",
+        lambda: _edit(
+            TEST,
+            r'_MUTATING_VERB = re.compile(r"\b(?:UPDATE|DELETE\s+FROM)\b", re.I)',
+            r'_MUTATING_VERB = re.compile(r"\b(?:UPSERT|TRUNCATE)\b", re.I)',
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "test_the_outcome_type_corpus_is_not_empty",
+        "the fields that make a class an outcome type narrow to almost none",
+        lambda: _edit(
+            TEST,
+            '_OUTCOME_FIELDS = frozenset({"status", "ok", "error", "detail", '
+            '"failure_reason"})',
+            '_OUTCOME_FIELDS = frozenset({"failure_reason"})',
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "test_the_permanent_phantom_ledger_still_describes_a_phantom",
+        "the recap slug gains a type, so its declared 422 stops being a phantom",
+        lambda: _edit(
+            "ops/routers/public.py",
+            "def recap_page(slug: str) -> FileResponse:",
+            "def recap_page(slug: int) -> FileResponse:",
+        ),
+        ["ops/routers/public.py"],
+        [],
+    ),
+    (
+        "test_a_database_triggered_code_is_asserted_against_a_real_engine",
+        "the only real-engine test of a rowcount-triggered 404 stops asserting it",
+        lambda: _edit(
+            "tests/integration/ops/test_user_management.py",
+            '        "/admin/users/99999/revoke", follow_redirects=False\n'
+            "    )\n    assert response.status_code == 404",
+            '        "/admin/users/99999/revoke", follow_redirects=False\n'
+            "    )\n    assert response.status_code == 303",
+        ),
+        ["tests/integration/ops/test_user_management.py"],
+        [],
+    ),
+    (
+        "test_the_database_triggered_corpus_is_not_empty",
+        "rowcount stops being recognised where it is bound, emptying the corpus",
+        lambda: _edit(
+            TEST,
+            # Two rules bind rowcount this way; the indentation and the guard
+            # under it are what pick out `_database_triggered_codes`.
+            '        bound = _names_bound_from(function, "rowcount")\n'
+            "        if not bound:",
+            '        bound = _names_bound_from(function, "rowcounts")\n'
+            "        if not bound:",
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "test_the_check_constraint_corpus_is_not_empty",
+        "the CHECK ... IN reader stops matching, disarming both vocabulary rules",
+        lambda: _edit(
+            TEST,
+            r'    r"CHECK\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.IGNORECASE | re.DOTALL',
+            r'    r"CONSTRAIN\s*\(\s*(\w+)\s+IN\s*\(([^)]*)\)", re.IGNORECASE | re.DOTALL',
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "test_every_check_constrained_column_has_one_declared_vocabulary",
+        "a value is renamed in the declared vocabulary and not in the migration",
+        lambda: _edit(
+            "shared/db_vocabularies.py",
+            '    RETRY = "retry"\n    SKIP = "skip"',
+            '    RETRY = "retry"\n    SKIP = "skipped"',
+        ),
+        ["shared/db_vocabularies.py"],
+        [],
+    ),
+    (
+        "test_no_module_retypes_a_database_vocabulary_it_could_import",
+        "a call site retypes a role db/migrations/ owns instead of importing it",
+        lambda: _edit(
+            "ops/app.py",
+            "if role == UserRole.OBSERVER and",
+            'if role == "observer" and',
+        ),
+        ["ops/app.py"],
+        [],
+    ),
+    (
+        "test_every_dag_status_check_accepts_only_statuses_its_service_emits",
+        "the DAG accepts the status Stage W found it accepting and the exporter "
+        "never returns",
+        lambda: _edit(
+            "airflow/dags/export_ci_lake_snapshot.py",
+            'acceptable = {"audited"}',
+            'acceptable = {"audited", "created"}',
+        ),
+        ["airflow/dags/export_ci_lake_snapshot.py"],
+        [],
+    ),
+    (
+        "test_the_dag_status_rule_has_something_to_check",
+        "the checker's subject is renamed and the DAG population empties",
+        lambda: _edit(
+            TEST,
+            'if "status" not in _subject_names(node.left):',
+            'if "state" not in _subject_names(node.left):',
+        ),
+        [TEST],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py"
+        "::test_no_undocumented_declaration_is_quietly_documented",
+        "a variable declared absent from .env.example is documented there anyway",
+        lambda: _edit(
+            ".env.example",
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog",
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog\n"
+            "HTML_COMPRESSION_DICT_ID=",
+        ),
+        [".env.example"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py"
+        "::test_every_undocumented_declaration_names_a_file_that_interpolates_it",
+        "an Undocumented entry outlives the Compose file it was written for",
+        lambda: _edit(
+            "tests/test_env_example_wiring.py",
+            'compose_file="docker-compose.mlflow.yml"',
+            'compose_file="docker-compose.lakehouse.yml"',
+        ),
+        ["tests/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py"
+        "::test_neither_ledger_grows_without_the_ceiling_moving",
+        "a fifth undocumented variable is declared and the ceiling stays at four",
+        lambda: _edit(
+            "tests/test_env_example_wiring.py",
+            # Anchored on the tuple's last entry and its close, so the append
+            # lands *inside* UNDOCUMENTED. Anchoring on the comment below it
+            # put the new entry after the closing paren, and the module then
+            # failed to import -- which the harness reported as CAUGHT, for
+            # exactly the wrong reason.
+            "        since=date(2026, 9, 8),\n    ),\n)\n\n#: Ceilings, not counts",
+            "        since=date(2026, 9, 8),\n"
+            "    ),\n"
+            "    Undocumented(\n"
+            '        "HARNESS_QUIET_APPEND",\n'
+            '        compose_file="docker-compose.yml",\n'
+            '        reason="appended without moving the ceiling",\n'
+            "        since=date(2026, 9, 9),\n"
+            "    ),\n"
+            ")\n\n#: Ceilings, not counts",
+        ),
+        ["tests/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/test_env_example_wiring.py::test_both_corpora_are_not_empty",
+        "the docker-compose glob stops matching and every rule there goes quiet",
+        lambda: _edit(
+            "tests/test_env_example_wiring.py",
+            'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
+            'return sorted(_REPO_ROOT.glob("docker-compose*.yaml"))',
+        ),
+        ["tests/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/integration/sql/test_fixture_statements.py"
+        "::test_there_is_something_to_check",
+        "the tests/sql tree moves and the statement corpus empties under the rule",
+        lambda: _edit(
+            TEST,
+            # Three readers walk this tree; the engine filter under it is what
+            # picks out `postgres_test_statements`.
+            '        for path in sorted(SQL_ROOT.rglob("*.sql"))\n'
+            "        if not _ENGINE_DIRECTORIES",
+            '        for path in sorted(SQL_ROOT.rglob("*.psql"))\n'
+            "        if not _ENGINE_DIRECTORIES",
+        ),
+        [TEST],
+        [],
+    ),
+    # The three rules Stage AF added, proved the same way as the ones they
+    # guard. The anchor rule's own mutation is the stage's exit criterion.
+    (
+        "test_every_mutation_anchor_still_matches_its_file",
+        "a documented key is repeated, and every anchor keyed on it goes ambiguous",
+        # The *twice* case rather than the *missing* case, deliberately: `_edit`
+        # already raises on an anchor it cannot find, so a mutation that deletes
+        # one would be proving the harness's own guard. An anchor that matches
+        # twice is the half nothing could see -- `_edit` silently takes the
+        # first match and the entry stops describing what it changes.
+        lambda: _edit(
+            ".env.example",
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog",
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog\n"
+            "LAKEKEEPER_CATALOG_URI=http://lakekeeper:8181/catalog",
+        ),
+        [".env.example"],
+        [],
+    ),
+    (
+        "test_every_asserted_rule_is_proved_by_a_mutation",
+        "a mutation's node is renamed and the rule it proved goes unproven",
+        # Anchored on the node *and* its description. A mutation that edits
+        # this file has to name the text it is looking for, which puts a second
+        # copy of that text in this file -- so a one-line anchor here matches
+        # itself. Two lines joined by an escaped newline do not appear in the
+        # argument, only in the entry being mutated.
+        lambda: _edit(
+            "scripts/verify_testing_contract_mutations.py",
+            '        "test_the_dag_status_rule_has_something_to_check",\n'
+            "        \"the checker's subject is renamed and the DAG population "
+            'empties",',
+            '        "test_the_dag_status_rule_has_something_to_checked",\n'
+            "        \"the checker's subject is renamed and the DAG population "
+            'empties",',
+        ),
+        ["scripts/verify_testing_contract_mutations.py"],
+        [],
+    ),
+    (
+        "test_the_mutation_harness_corpus_is_not_empty",
+        "the payload helpers narrow, and the harness reads as anchoring nothing",
+        lambda: _edit(
+            TEST,
+            '_CHECKABLE_PAYLOADS = ("_edit", "_delete")',
+            '_CHECKABLE_PAYLOADS = ("_delete",)',
+        ),
+        [TEST],
+        [],
+    ),
 ]
 
 
 def main() -> int:
+    with _engine() as dsn:
+        return _run(dsn)
+
+
+def _run(dsn: str | None) -> int:
     code, output = _pytest()
     print("baseline:", output.strip().splitlines()[-1])
     if code != 0:
         print("the suite must be green before any mutation means anything")
         return 1
 
-    missed = []
+    # The engine-bound nodes, unmutated, before anything is mutated. A
+    # `PREPARE` suite against an unmigrated database fails every statement, and
+    # a mutation measured against that reports CAUGHT having proved nothing.
+    # So the engine earns its entries by passing first, or it does not get them.
+    engine_ready = dsn is not None
+    if engine_ready:
+        for node in ENGINE_BOUND:
+            code, output = _pytest(node, dsn)
+            if code != 0:
+                engine_ready = False
+                print(f"engine: {node.split('::')[-1]} does not pass unmutated "
+                      f"-- {output.strip().splitlines()[-1]}")
+                break
+    if engine_ready:
+        print("engine: ready, and the engine-bound baseline passes")
+
+    missed, unproven = [], []
     for node, description, mutate, snapshot, created in MUTATIONS:
+        if node in ENGINE_BOUND and not engine_ready:
+            unproven.append(description)
+            print(f"{'UNPROVEN HERE':14} {description}")
+            continue
         saved = {rel: (REPO_ROOT / rel).read_text(encoding="utf-8") for rel in snapshot}
         try:
             mutate()
-            code, _ = _pytest(node)
+            code, _ = _pytest(node, dsn)
         finally:
             for rel, text in saved.items():
                 (REPO_ROOT / rel).write_text(text, encoding="utf-8")
@@ -824,6 +1374,14 @@ def main() -> int:
     print("\nrestored:", output.strip().splitlines()[-1])
     if missed:
         print("\nunnoticed mutations:\n  " + "\n  ".join(missed))
+    if unproven:
+        # Reported, never fatal. No engine is a fact about the machine, not a
+        # finding about the repository, and failing here would make the honest
+        # answer indistinguishable from a rule that had actually gone quiet.
+        print("\nnot proven in this run, for want of an engine:\n  "
+              + "\n  ".join(unproven)
+              + "\n\nStart Docker, or point TEST_DATABASE_URL at a "
+                "Flyway-migrated Postgres, and run again.")
     return 1 if missed or code != 0 else 0
 
 
