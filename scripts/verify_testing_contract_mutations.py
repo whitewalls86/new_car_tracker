@@ -108,6 +108,17 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_no_route_declares_a_422_no_request_can_trigger",
+        "a route's only parameter loosens, and its declared 422 becomes a phantom",
+        lambda: _edit(
+            "ops/routers/users.py",
+            "def revoke_user(request: Request, user_id: int):",
+            "def revoke_user(request: Request, user_id: str):",
+        ),
+        ["ops/routers/users.py"],
+        [],
+    ),
+    (
         "test_every_route_declares_the_statuses_it_can_return",
         "a route stops declaring a code it still answers with",
         lambda: _edit(

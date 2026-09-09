@@ -4769,8 +4769,14 @@ def _resolve_request_path(
 
 
 @lru_cache(maxsize=None)
-def asserted_status_codes() -> tuple[tuple[str | None, str, str, frozenset], ...]:
-    """``(service hint, METHOD, path, codes)`` for every request a test makes."""
+def asserted_status_codes() -> tuple[tuple[str | None, str, str, frozenset, bool], ...]:
+    """``(service hint, METHOD, path, codes, is real-engine)`` per request.
+
+    The last element is what lets the layer clause below ask a second question of
+    the same scan: a test under `tests/integration/` runs against a real Postgres,
+    and a code whose trigger is the database matching nothing cannot be produced
+    anywhere else.
+    """
     found = []
     for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
         hint = next((s for s in service_packages() if s in path.parts), None)
@@ -4798,16 +4804,23 @@ def asserted_status_codes() -> tuple[tuple[str | None, str, str, frozenset], ...
                         node.args[0], constants, injected):
                     if requested.startswith("/"):
                         found.append((hint, node.func.attr.upper(),
-                                      requested.split("?")[0], frozenset(codes)))
+                                      requested.split("?")[0], frozenset(codes),
+                                      "integration" in path.parts))
     return tuple(found)
 
 
-def _coverage() -> tuple[dict[str, set[int]], set[str]]:
-    """Per handler, the codes some test asserts for it -- and the ambiguous ones."""
+def _coverage(real_engine_only: bool = False) -> tuple[dict[str, set[int]], set[str]]:
+    """Per handler, the codes some test asserts for it -- and the ambiguous ones.
+
+    With *real_engine_only*, only tests under `tests/integration/` count, which
+    is what the layer clause asks.
+    """
     covered: dict[str, set[int]] = {}
     ambiguous: set[str] = set()
     handlers = [h for h in route_handlers() if _literal_segments(h[3])]
-    for hint, method, requested, codes in asserted_status_codes():
+    for hint, method, requested, codes, integration in asserted_status_codes():
+        if real_engine_only and not integration:
+            continue
         candidates = [
             h for h in handlers
             if method in h[4]
@@ -4982,6 +4995,268 @@ def test_every_route_declares_the_statuses_it_can_return():
 
 
 # ---------------------------------------------------------------------------
+# Rule 13 -- a declared 422 is one a request can actually trigger.
+# ---------------------------------------------------------------------------
+# The one code the rule above cannot see. FastAPI injects `422` into a route's
+# schema on the **presence** of a parameter, never its fallibility -- read from
+# `fastapi/openapi/utils.py`, and byte-identical in 0.128.0 and 0.141.1, so no
+# upgrade removes it:
+#
+#     http422 = "422"
+#     if (all_route_params or route.body_field) and not any(
+#         status in operation["responses"] for status in [http422, "4XX", "default"]
+#     ):
+#
+# The declaration rule reads the **decorator**, where 422 never appears, so this
+# is the half it is structurally blind to -- and Stage Z commits the schema, not
+# the decorator, so a phantom 422 would be committed as contract.
+#
+# Measured: 41 routes declare it, 33 can produce it, 8 cannot. The eight take an
+# unconstrained string and nothing else, so there is no request that fails
+# validation. Six are the dead admin routes Stage AA resolves. **Two are
+# permanent and carry no owner**: `GET` and `HEAD /recaps/{slug}` guard the slug
+# in the handler and answer 404, and moving that into `Path(pattern=...)` would
+# turn a public page's "no such recap" into a validation error. That is a
+# decision with no expiry, so it is shaped like `DORMANT_SUITES` rather than a
+# waiver -- a waiver dies when its owner plan archives and would take the reason
+# with it.
+_PARAM_PROBE = """
+import importlib, json, os, sys, tempfile
+VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
+CONSTRAINED = {
+    "pattern", "minLength", "maxLength", "enum", "format",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+}
+repo, service = sys.argv[1], sys.argv[2]
+os.environ.setdefault("LOG_PATH", os.path.join(tempfile.gettempdir(), "contract.log"))
+if len(sys.argv) > 3:
+    sys.path.insert(0, os.path.join(repo, service))
+sys.path.insert(0, repo)
+app = importlib.import_module(service + ".app").app
+
+
+def fallible(schema):
+    if not isinstance(schema, dict):
+        return True
+    if "$ref" in schema or CONSTRAINED & set(schema):
+        return True
+    if {"anyOf", "allOf", "oneOf"} & set(schema):
+        return True
+    return schema.get("type") != "string"
+
+
+out = []
+for path, operations in app.openapi()["paths"].items():
+    for method, operation in operations.items():
+        if method.lower() not in VERBS:
+            continue
+        declares = "422" in operation.get("responses", {})
+        can = "requestBody" in operation or any(
+            fallible(parameter.get("schema", {}))
+            for parameter in operation.get("parameters", [])
+        )
+        out.append([method.upper(), path, declares, can])
+print(json.dumps(sorted(out)))
+"""
+
+
+@lru_cache(maxsize=None)
+def route_validation_surface(service: str) -> tuple[tuple[str, str, bool, bool], ...]:
+    """``(METHOD, path, declares 422, can produce one)`` for one service.
+
+    Same two import recipes and the same loud failure as :func:`app_routes`: a
+    service whose app will not import is a failure, never a skip.
+    """
+    failures = []
+    for extra in ([], ["--service-dir"]):
+        result = subprocess.run(
+            [sys.executable, "-c", _PARAM_PROBE, str(REPO_ROOT), service] + extra,
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        if result.returncode == 0:
+            found = tuple(
+                (method, path, declares, can)
+                for method, path, declares, can in json.loads(result.stdout)
+            )
+            assert found, (
+                f"{service}'s app imported but exposed no routes, so nothing "
+                f"can be proved about its validation surface."
+            )
+            return found
+        failures.append(result.stderr.strip()[-600:])
+    raise AssertionError(
+        f"{service}'s routing table could not be loaded, so its declared 422s "
+        f"cannot be checked. This is a failure, not a skip.\n\n"
+        + "\n\n---\n\n".join(failures)
+    )
+
+
+#: Routes whose declared 422 no request can trigger, and which stay that way.
+#: **No owner and no expiry**, deliberately: nobody is going to "fix" these, and
+#: a waiver would fail the day Plan 162 archives and have to be quieted by
+#: deleting the reason. `_SLUG_RE` in `ops/routers/public.py` already refuses a
+#: malformed slug and answers 404; moving it into `Path(pattern=...)` would make
+#: FastAPI answer 422 instead, which is the wrong answer for "no such page" on a
+#: route crawlers hit.
+PERMANENT_PHANTOM_422 = (
+    ("GET", "/recaps/{slug}"),
+    ("HEAD", "/recaps/{slug}"),
+)
+
+PHANTOM_422_WAIVERS: tuple[Waiver, ...] = (
+    # All six take an unconstrained string and nothing else. Four are the dead
+    # admin routes Stage AA resolves; the other two guard their parameter in the
+    # handler the way `/recaps/{slug}` does, and follow whatever that stage
+    # decides for the panel around them.
+    Waiver("POST /admin/dbt/intents/{intent_name}/delete", "G21", 162, date(2026, 9, 8)),
+    Waiver("GET /admin/searches/{search_key}/edit", "G21", 162, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/toggle", "G21", 162, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/delete", "G21", 162, date(2026, 9, 8)),
+    Waiver("POST /scrape_results/jobs/{job_id}/fetched", "G21", 162, date(2026, 9, 8)),
+    Waiver("GET /project-status/{project}", "G21", 162, date(2026, 9, 8)),
+)
+
+
+def test_no_route_declares_a_422_no_request_can_trigger():
+    """The half the declaration rule is blind to, because FastAPI writes it.
+
+    Stage Z commits the schema rather than the decorator, so a 422 nothing can
+    trigger is a false claim that would be committed as contract -- which is the
+    exact failure this plan opened against.
+    """
+    phantom = set()
+    for service in sorted(service_packages()):
+        entrypoint = REPO_ROOT / service / "app.py"
+        # The same test the route rule applies: `dashboard` has an `app.py` and
+        # no routing table, because Streamlit owns its URLs. Asking it for a
+        # schema is asking a question it has no way to answer.
+        if not entrypoint.is_file() or "FastAPI(" not in entrypoint.read_text(
+            encoding="utf-8"
+        ):
+            continue
+        for method, path, declares, can in route_validation_surface(service):
+            if declares and not can and (method, path) not in PERMANENT_PHANTOM_422:
+                phantom.add(f"{method} {path}")
+
+    _assert_exactly(
+        phantom, PHANTOM_422_WAIVERS,
+        "These routes declare a 422 that no request can produce: their only "
+        "parameters are unconstrained strings, so nothing fails validation.",
+    )
+
+
+def test_the_permanent_phantom_ledger_still_describes_a_phantom():
+    """The other direction, for the entries no waiver hygiene will ever check.
+
+    An ownerless entry is exempt from the archived-owner rule, so nothing else
+    would notice it going stale. If `/recaps/{slug}` ever constrains its slug in
+    the signature, its 422 becomes real and this entry has to go.
+    """
+    surface = {
+        (method, path): (declares, can)
+        for method, path, declares, can in route_validation_surface("ops")
+    }
+    stale = sorted(
+        f"{method} {path}"
+        for method, path in PERMANENT_PHANTOM_422
+        if surface.get((method, path), (False, True))[1]
+        or not surface.get((method, path), (False, False))[0]
+    )
+    assert not stale, (
+        "PERMANENT_PHANTOM_422 names routes whose 422 is no longer phantom, or "
+        "which no longer declare one at all: " + ", ".join(stale) + ". Delete "
+        "the entry -- an exemption that has stopped being true is worse than "
+        "none, because it reads as a decision somebody still stands behind."
+    )
+
+
+def _database_triggered_codes(path: Path) -> dict[str, set[int]]:
+    """``file:handler`` -> codes answered only because the database matched nothing.
+
+    Derived from the shape rather than listed: a name bound from ``.rowcount``,
+    a branch whose test reads it, and the codes produced inside that branch --
+    resolved through the response helpers the way the declaration rule does,
+    since that is where every one of these 404s actually lives.
+    """
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+    constants = {
+        target.id: node.value.value
+        for node in tree.body if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, int)
+    }
+
+    found: dict[str, set[int]] = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        bound = _names_bound_from(function, "rowcount")
+        if not bound:
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.If):
+                continue
+            if not {child.id for child in ast.walk(node.test)
+                    if isinstance(child, ast.Name)} & bound:
+                continue
+            codes = _produced_codes(node, constants, tree, path)
+            if codes:
+                found.setdefault(f"{relative}:{function.name}", set()).update(codes)
+    return found
+
+
+REAL_ENGINE_COVERAGE_WAIVERS: tuple[Waiver, ...] = ()
+
+
+def test_a_database_triggered_code_is_asserted_against_a_real_engine():
+    """A mocked `rowcount = 0` is a belief about psycopg2, not an observation.
+
+    These codes exist only because the database matched no rows, and that is a
+    condition a unit test cannot produce -- it can only assert the number it
+    seeded. `mock_cursor_context` hands back a `MagicMock` whose `rowcount` is
+    truthy and never zero, which is why every one of these routes answered 303
+    for years with a green suite: the environment could not express the failing
+    case at all.
+
+    So the assertion has to happen where the condition is real. This is the one
+    place in the stage where *which layer* a test lives at is part of the rule
+    rather than a matter of taste.
+    """
+    real_engine, ambiguous = _coverage(real_engine_only=True)
+    gaps = set()
+    for path in production_python_files():
+        for key, codes in _database_triggered_codes(path).items():
+            if key in ambiguous:
+                continue
+            missing = sorted(codes - real_engine.get(key, set()))
+            if missing:
+                gaps.add(f"{key} {missing}")
+
+    _assert_exactly(
+        gaps, REAL_ENGINE_COVERAGE_WAIVERS,
+        "These codes are answered only when the database matches nothing, and "
+        "no test under tests/integration/ asserts them.",
+    )
+
+
+def test_the_database_triggered_corpus_is_not_empty():
+    """The floor. A rule over an empty set of codes is a rule about nothing."""
+    found = {}
+    for path in production_python_files():
+        found.update(_database_triggered_codes(path))
+    assert len(found) >= 4, (
+        f"only {sorted(found)} handlers answer a code on a rowcount branch. "
+        f"Either the repairs were reverted or _names_bound_from has stopped "
+        f"seeing how rowcount is read."
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
@@ -4996,6 +5271,8 @@ ALL_WAIVERS = (
     + UNEXERCISED_CODE_WAIVERS
     + AMBIGUOUS_ROUTE_WAIVERS
     + DECLARED_CODE_WAIVERS
+    + PHANTOM_422_WAIVERS
+    + REAL_ENGINE_COVERAGE_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS
