@@ -1025,15 +1025,17 @@ MUTATIONS = [
         "a route opts out of the schema the routing-table rule enumerates from",
         lambda: _edit(
             "ops/routers/public.py",
-            # Both public page routes share the decorator's first two lines, so
-            # the anchor reaches the 404 description that distinguishes them.
-            "    methods=_PUBLIC_METHODS,\n    response_class=FileResponse,\n"
-            '    responses={\n        404: {"description": "No recap has been '
-            'published under that name."},',
-            "    methods=_PUBLIC_METHODS,\n    include_in_schema=False,\n"
-            "    response_class=FileResponse,\n"
-            '    responses={\n        404: {"description": "No recap has been '
-            'published under that name."},',
+            # Re-anchored by Plan 162 Stage Z, which split this route's single
+            # `api_route(methods=["GET", "HEAD"])` into a `get`/`head` pair so
+            # the two halves stop sharing one operation ID. The old anchor
+            # reached for the 404 description because both page routes shared
+            # the decorator's first two lines; the pair's own decorator line is
+            # distinguishing on its own, and `get` rather than `head` so the
+            # mutation hides the route a reader would actually request.
+            '@router.get("/recaps/{slug}", response_class=FileResponse, '
+            "responses=_NO_SUCH_RECAP)",
+            '@router.get("/recaps/{slug}", response_class=FileResponse, '
+            "responses=_NO_SUCH_RECAP, include_in_schema=False)",
         ),
         ["ops/routers/public.py"],
         [],

@@ -4924,6 +4924,28 @@ def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], .
                 if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant)
                 and isinstance(node.value.value, int)
             }
+            # `responses=_NO_SUCH_RECAP` rather than an inline dict. Plan 162
+            # Stage Z split six `api_route(methods=["GET", "HEAD"])` routes into
+            # a `get`/`head` pair each, and both halves have to declare the same
+            # codes -- which is a shared constant, because two copies of a
+            # literal is how they stop agreeing.
+            #
+            # Reading only `ast.Dict` here saw no declarations at all for those
+            # routes. That direction fails loudly rather than quietly: an
+            # unresolved name leaves `declared` empty and the route is reported
+            # as producing an undeclared code, which is how this was found.
+            response_constants = {
+                target.id: node.value
+                for node in tree.body if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.Dict)
+            }
+            method_constants = {
+                target.id: node.value
+                for node in tree.body if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.List)
+            }
             for function in ast.walk(tree):
                 if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
@@ -4940,15 +4962,23 @@ def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], .
                     declared_success = 200
                     for keyword in decorator.keywords:
                         if keyword.arg == "methods":
-                            if isinstance(keyword.value, ast.List):
+                            # Resolved through `method_constants` rather than
+                            # guessed. This branch used to answer `{"GET",
+                            # "HEAD"}` for *any* name it could not read, which
+                            # was right for `_PUBLIC_METHODS` -- the only such
+                            # constant that ever existed -- and would have been
+                            # a confident wrong answer for the next one. Plan
+                            # 162 Stage Z deleted that constant, so the guess
+                            # went with it.
+                            literal = keyword.value
+                            if isinstance(literal, ast.Name):
+                                literal = method_constants.get(literal.id)
+                            if isinstance(literal, ast.List):
                                 methods |= {
                                     element.value.upper()
-                                    for element in keyword.value.elts
+                                    for element in literal.elts
                                     if isinstance(element, ast.Constant)
                                 }
-                            elif isinstance(keyword.value, ast.Name):
-                                # ``_PUBLIC_METHODS`` -- the one such constant here
-                                methods |= {"GET", "HEAD"}
                         if keyword.arg == "status_code":
                             resolved = _status_constant(keyword.value, constants)
                             if resolved is not None:
@@ -4959,12 +4989,15 @@ def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], .
                             resolved = _status_constant(keyword.value, constants)
                             if resolved is not None:
                                 declared.add(resolved)
-                        if keyword.arg == "responses" and isinstance(
-                                keyword.value, ast.Dict):
-                            for key in keyword.value.keys:
-                                resolved = _status_constant(key, constants)
-                                if resolved is not None:
-                                    declared.add(resolved)
+                        if keyword.arg == "responses":
+                            literal = keyword.value
+                            if isinstance(literal, ast.Name):
+                                literal = response_constants.get(literal.id)
+                            if isinstance(literal, ast.Dict):
+                                for key in literal.keys:
+                                    resolved = _status_constant(key, constants)
+                                    if resolved is not None:
+                                        declared.add(resolved)
                     codes = _produced_codes(function, constants, tree, path)
                     if _returns_a_bare_value(function) or not codes:
                         codes |= {declared_success}

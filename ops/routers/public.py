@@ -31,7 +31,22 @@ router = APIRouter()
 # Nothing a browser does breaks on that, which is why it survived five stages --
 # but uptime monitors and link checkers use HEAD, and a 405 reads to them as the
 # site being down. Every public route answers both.
-_PUBLIC_METHODS = ["GET", "HEAD"]
+# Two decorators per route rather than one ``api_route(methods=[...])``. FastAPI
+# derives a route's operation ID once per *route* and reuses it for every method
+# that route serves, so a single registration gave each page's ``GET`` and
+# ``HEAD`` the same ID -- forbidden by the OpenAPI spec, warned about by FastAPI
+# on every startup, and picked by ``list(route.methods)[0]`` over a *set*, so it
+# moved with the process hash seed. Plan 162 Stage Z; the same note sits over the
+# two routes in ``info.py``.
+#
+# Each pair's ``responses`` is a shared constant because both halves must
+# declare the same thing, and two copies of a literal is how they stop agreeing.
+_NO_RECAPS_PUBLISHED = {
+    404: {"description": "No recaps have been published."},
+}
+_NO_SUCH_RECAP = {
+    404: {"description": "No recap has been published under that name."},
+}
 
 PUBLIC_BASE_URL = "https://cartracker.info"
 
@@ -73,14 +88,8 @@ def published_slugs() -> list[str]:
     return sorted(slugs, reverse=True)
 
 
-@router.api_route(
-    "/recaps",
-    methods=_PUBLIC_METHODS,
-    response_class=FileResponse,
-    responses={
-        404: {"description": "No recaps have been published."},
-    },
-)
+@router.get("/recaps", response_class=FileResponse, responses=_NO_RECAPS_PUBLISHED)
+@router.head("/recaps", response_class=FileResponse, responses=_NO_RECAPS_PUBLISHED)
 def recap_index() -> FileResponse:
     index = os.path.join(RECAPS_DIR, "index.html")
     if not os.path.isfile(index):
@@ -88,14 +97,8 @@ def recap_index() -> FileResponse:
     return FileResponse(index, media_type="text/html")
 
 
-@router.api_route(
-    "/recaps/{slug}",
-    methods=_PUBLIC_METHODS,
-    response_class=FileResponse,
-    responses={
-        404: {"description": "No recap has been published under that name."},
-    },
-)
+@router.get("/recaps/{slug}", response_class=FileResponse, responses=_NO_SUCH_RECAP)
+@router.head("/recaps/{slug}", response_class=FileResponse, responses=_NO_SUCH_RECAP)
 def recap_page(slug: str) -> FileResponse:
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=404, detail="No such recap.")
@@ -105,9 +108,8 @@ def recap_page(slug: str) -> FileResponse:
     return FileResponse(page, media_type="text/html")
 
 
-@router.api_route(
-    "/robots.txt", methods=_PUBLIC_METHODS, response_class=PlainTextResponse
-)
+@router.get("/robots.txt", response_class=PlainTextResponse)
+@router.head("/robots.txt", response_class=PlainTextResponse)
 def robots() -> PlainTextResponse:
     lines = ["User-agent: *", "Allow: /"]
     lines += [f"Disallow: {path}" for path in _DISALLOWED]
@@ -115,7 +117,8 @@ def robots() -> PlainTextResponse:
     return PlainTextResponse("\n".join(lines))
 
 
-@router.api_route("/sitemap.xml", methods=_PUBLIC_METHODS)
+@router.get("/sitemap.xml")
+@router.head("/sitemap.xml")
 def sitemap() -> Response:
     paths = ["/", "/recaps"] + [f"/recaps/{slug}" for slug in published_slugs()]
     urls = "".join(

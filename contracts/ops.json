@@ -480,7 +480,7 @@
         "summary": "Info Page"
       },
       "head": {
-        "operationId": "info_page__get",
+        "operationId": "info_page__head",
         "responses": {
           "200": {
             "content": {
@@ -2012,7 +2012,7 @@
       },
       "head": {
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
-        "operationId": "info_redirect_info_get",
+        "operationId": "info_redirect_info_head",
         "responses": {
           "200": {
             "content": {
@@ -2140,7 +2140,7 @@
         "summary": "Recap Index"
       },
       "head": {
-        "operationId": "recap_index_recaps_get",
+        "operationId": "recap_index_recaps_head",
         "responses": {
           "200": {
             "description": "Successful Response"
@@ -2187,7 +2187,7 @@
         "summary": "Recap Page"
       },
       "head": {
-        "operationId": "recap_page_recaps__slug__get",
+        "operationId": "recap_page_recaps__slug__head",
         "parameters": [
           {
             "in": "path",
@@ -2304,7 +2304,7 @@
         "summary": "Robots"
       },
       "head": {
-        "operationId": "robots_robots_txt_get",
+        "operationId": "robots_robots_txt_head",
         "responses": {
           "200": {
             "content": {
@@ -2482,7 +2482,7 @@
         "summary": "Sitemap"
       },
       "head": {
-        "operationId": "sitemap_sitemap_xml_get",
+        "operationId": "sitemap_sitemap_xml_head",
         "responses": {
           "200": {
             "content": {
