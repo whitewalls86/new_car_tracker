@@ -89,13 +89,19 @@ class Branch:
         return f"{self.id}  `{self.predicate}`"
 
 
-def _manifest_model_names(base: Path) -> set[str]:
-    """The model names dbt's own manifest declares, found beside *base*.
+def _manifest_model_relative_paths(base: Path) -> set[str]:
+    """Each model's source path, relative to ``models/``, from dbt's manifest.
 
     Walked up from the compiled root rather than hardcoded, so the same rule
     resolves ``dbt/target/compiled/...`` (manifest two levels up, in
     ``target/``) and the temporary copies ``compiled_in_both_phases()`` makes
     (manifest copied into the temp directory beside ``compiled/``).
+
+    **The manifest's ``path``, not its ``name``.** dbt lays the compiled tree
+    out so that a model's compiled SQL sits at exactly ``<compiled
+    root>/<node path>``, which makes the mapping a lookup rather than a search.
+    Reading the name and searching for it is what put 45 fixture files in the
+    model list -- see :func:`compiled_model_paths`.
     """
     import json
 
@@ -103,13 +109,13 @@ def _manifest_model_names(base: Path) -> set[str]:
         manifest = candidate / "manifest.json"
         if manifest.is_file():
             document = json.loads(manifest.read_text(encoding="utf-8"))
-            names = {
-                node["name"]
+            paths = {
+                node["path"]
                 for node in document["nodes"].values()
                 if node["resource_type"] == "model"
             }
-            assert names, f"{manifest} declares no models"
-            return names
+            assert paths, f"{manifest} declares no models"
+            return paths
     raise FileNotFoundError(
         f"no manifest.json found beside {base} or any of its parents. The "
         f"model list comes from dbt's manifest, not from filename convention "
@@ -120,17 +126,34 @@ def _manifest_model_names(base: Path) -> set[str]:
 
 
 def compiled_model_paths(root: Path | None = None) -> list[Path]:
-    """Every compiled model, as dbt's manifest declares them.
+    """Every compiled model, at the path dbt's manifest gives it.
 
-    Filtered by ``resource_type == "model"`` from ``manifest.json`` rather than
-    by filename convention. The convention (`<model>.schema.yml/` for data
-    tests, ``unit_tests.yml/`` for unit tests) matches this repository today,
-    but it is a fact about how properties files happen to be named, not dbt's
-    rule: dbt names a compiled test directory after whatever ``.yml`` declared
-    the test, so a grouped ``coverage.yml`` would have put every ``not_null_*``
-    under an unrecognized directory and its ``where`` clause into the models'
-    branch denominator. The manifest is what the sibling constraint-mutation
-    gate already reads, and it cannot be fooled by a rename.
+    Read by lookup -- ``<compiled root>/<node path>`` -- and never by search.
+
+    **The search was wrong, and it was wrong quietly.** This globbed every
+    ``*.sql`` under the compiled root and kept the ones whose *stem* matched a
+    manifest model name. dbt writes each unit test's **input fixtures** into
+    ``<properties file>.yml/`` named after the input *model* -- so
+    ``marts/unit_tests.yml/stg_blocked_cooldown_events.sql`` holds a literal
+    ``select ... union all select ...`` row list and matched the filter.
+    Measured 2026-09-09 on this project: **68 paths returned, 45 of them unit
+    test fixtures and 23 of them models.** Two thirds of the branch-coverage
+    denominator was fixture rows, on every green run, attributed to the models
+    those fixtures feed.
+
+    It also produced the flake that found it. Three unit tests in
+    ``marts/coverage/unit_tests.yml`` declare ``input:
+    ref('stg_blocked_cooldown_events')`` with different rows, and all three
+    compile to that one path under ``threads: 2``; an interleaved write leaves
+    SQL with a ``union all select`` missing from the middle, which is a
+    ``sqlglot`` ``ParseError`` in a file this function should never have
+    returned. Nothing in production is affected -- dbt executes SQL it holds in
+    memory and ``target/compiled`` is an inspection artifact, which is why the
+    build reported ``PASS=290 ERROR=0`` while the file on disk was torn.
+
+    The previous docstring argued for the manifest over filename convention and
+    was right about that; it applied the manifest to the *name*, and the name is
+    the part dbt reuses. The path is unique per model.
     """
     base = root or COMPILED_ROOT
     if not base.is_dir():
@@ -140,8 +163,16 @@ def compiled_model_paths(root: Path | None = None) -> list[Path]:
             f"build) has to have run first. Returning an empty list here would "
             f"make every branch-coverage number downstream read zero and pass."
         )
-    models = _manifest_model_names(base)
-    return sorted(path for path in base.rglob("*.sql") if path.stem in models)
+    declared = _manifest_model_relative_paths(base)
+    paths = sorted(base / relative for relative in declared)
+    missing = [str(path) for path in paths if not path.is_file()]
+    assert not missing, (
+        f"{len(missing)} model(s) the manifest declares have no compiled SQL "
+        f"at the path it gives:\n    " + "\n    ".join(missing) +
+        "\n\nDropping them silently would shrink the branch denominator and "
+        "read as coverage improving."
+    )
+    return paths
 
 
 def _conjuncts(predicate: exp.Expression) -> list[exp.Expression]:

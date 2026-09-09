@@ -1,0 +1,87 @@
+# Plan 162 Stage Q: the CI-only override for docker-compose.yml.
+#
+# CI's Postgres, MinIO and Flyway used to be hand-declared in five GitHub
+# Actions `services:` blocks -- five copies of postgres:16, four of
+# minio/minio:latest and six transcriptions of Flyway's argument list. Nothing
+# asserted that any of them matched what production runs, and by 2026-09-04
+# none of them did: CI's Postgres had neither `shared_buffers` nor `shm_size`,
+# its MinIO had no console and no `MINIO_PROMETHEUS_AUTH_TYPE`, and its Flyway
+# omitted `-baselineOnMigrate=true`.
+#
+# So the jobs now start production's own definitions, and this file holds the
+# entire difference between what production runs and what CI runs. That is the
+# point of it being small: `tests/test_ci_compose_parity.py` resolves both
+# chains through `docker compose config` and requires the difference between
+# the two documents to equal the allowlist declared there. A drift that nobody
+# thought to assert cannot hide, because the diff is computed rather than
+# enumerated.
+#
+# Usage (see the heavy jobs in .github/workflows/ci.yml):
+#   docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml \
+#     --env-file .env.ci up -d --wait postgres minio
+#   docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml \
+#     --env-file .env.ci run --rm flyway
+#
+# Note there is no `flyway:` block below. That is deliberate and is most of
+# this stage's value: the base file's command -- placeholders, `-defaultSchema`
+# and `-baselineOnMigrate=true` alike -- is what CI executes, with `.env.ci`
+# supplying the variables production supplies from `.env`.
+
+# `postgres:` has no block here at all, and that is the strongest thing this
+# file says. CI runs production's command, production's `shm_size`, production's
+# healthcheck and production's `shared_buffers=2GB` -- on a 7GB runner that also
+# hosts DuckDB, a dbt build and an Airflow venv. Overriding those was considered
+# and declined: an override adopted defensively is exactly the untested
+# divergence this file exists to delete, and if the runner cannot carry
+# production's numbers that is a measurement worth having rather than a
+# difference worth hiding. Grow this file when something measures a reason.
+
+services:
+  minio:
+    environment:
+      # Production's MinIO authenticates operators against Google; CI has no
+      # OAuth client and no console to reach.
+      #
+      # **Blanked rather than removed, and the difference mattered.** Compose's
+      # `!reset` tag deletes an inherited key outright, which is what this
+      # wanted -- but `!reset` is a Compose extension that `yaml.safe_load`
+      # cannot construct, and five existing rules (test_env_example_wiring,
+      # test_image_keep_set) `safe_load` every `docker-compose*.yml` in the
+      # repository. Teaching five rules a Compose-only tag to accommodate one
+      # file is the wrong trade, so these are set empty instead. Verified
+      # 2026-09-09 that MinIO starts and reports healthy with an empty
+      # `MINIO_IDENTITY_OPENID_CONFIG_URL`: an empty provider URL disables the
+      # provider rather than half-configuring it.
+      MINIO_IDENTITY_OPENID_CONFIG_URL: ""
+      MINIO_IDENTITY_OPENID_CLIENT_ID: ""
+      MINIO_IDENTITY_OPENID_CLIENT_SECRET: ""
+      MINIO_IDENTITY_OPENID_REDIRECT_URI: ""
+      MINIO_IDENTITY_OPENID_CLAIM_NAME: ""
+      MINIO_IDENTITY_OPENID_SCOPES: ""
+      # Points at https://cartracker.info/minio, which does not exist here.
+      MINIO_BROWSER_REDIRECT_URL: ""
+
+volumes:
+  # `external: true` in the base file: production creates the volume out of
+  # band so that a `docker compose down -v` cannot take the database with it.
+  # In CI there is nothing to preserve and nothing to protect, so Compose
+  # creates it per job and discards it. Note `postgres:` still mounts it by
+  # name -- the service definition CI runs is production's exactly.
+  #
+  # **The rename is a safety fix, not a style choice.** The base file pins
+  # `name: cartracker_pgdata`, and an explicit `name:` is not project-scoped,
+  # so dropping `external` alone makes Compose create and destroy a volume
+  # under that exact global name. On a runner that is harmless. On a developer
+  # machine running the real stack locally it means `down -v` against this
+  # chain deletes their actual database -- found 2026-09-09 by watching this
+  # override create `cartracker_pgdata` on a machine that could have had one.
+  cartracker_pgdata:
+    external: false
+    name: cartracker_pgdata_ci
+
+networks:
+  # Production joins a network the VM owns; CI has no such network, so this
+  # makes `docker compose up` create it fresh. Same move as
+  # docker-compose.lakehouse.ci.yml, for the same reason.
+  cartracker-net:
+    external: false

@@ -40,7 +40,10 @@ from functools import lru_cache
 
 import pytest
 
-from tests.dbt.branch_list import compiled_model_paths
+from tests.dbt.branch_list import (
+    branch_list_both_phases,
+    compiled_model_paths,
+)
 from tests.dbt.branch_probe import (
     attribute_units,
     covered_ids,
@@ -326,3 +329,72 @@ def test_the_unreachable_set_is_exactly_what_no_data_can_reach():
         f"no longer unreachable: {sorted(UNREACHABLE_BRANCHES - actual)} -- these "
         f"now owe coverage like any other branch."
     )
+
+
+# ---------------------------------------------------------------------------
+# The floor. Every check above measures coverage *of* a corpus and none of them
+# asks whether the corpus is the right size, which is how this gate spent its
+# whole life reading 118 branch points where there were 295.
+# ---------------------------------------------------------------------------
+#: The branch corpus at the fix, 2026-09-09. A floor rather than an equality:
+#: adding a model or a guard should not need this number edited, and the defect
+#: this guards against moves it downward. Raise it when the corpus grows for a
+#: reason; never lower it to make a red run green.
+BRANCH_CORPUS_FLOOR = 250
+
+
+def test_the_branch_corpus_has_not_silently_shrunk():
+    """A denominator that collapses reads as coverage improving.
+
+    **This is the check whose absence cost the most.** Until 2026-09-09
+    ``compiled_model_paths`` globbed every compiled ``*.sql`` and kept stem
+    matches, so dbt's unit-test *input fixtures* -- written under
+    ``<properties file>.yml/`` and named after the input model -- entered the
+    model list. Worse than an addition: ``branch_list_both_phases`` keys on
+    ``path.name``, so for **10 of the 23 models the fixture replaced the model**
+    and those models' real branches were never enumerated at all. The corpus
+    read **118** where it should have read **295**, and all seven checks above
+    passed throughout, because each one measures coverage of whatever it is
+    handed.
+
+    Every other instrument in this plan carries a floor for this reason --
+    ``test_the_route_code_corpus_is_not_empty``,
+    ``test_the_mutation_harness_corpus_is_not_empty`` -- and Stage Y's record
+    says why: every bug those rules had while being written moved the same
+    number the same way, and none of them made anything go red.
+    """
+    full_root, incremental_root = compiled_in_both_phases()
+    branches = branch_list_both_phases(full_root, incremental_root)
+    assert len(branches) >= BRANCH_CORPUS_FLOOR, (
+        f"the branch corpus is {len(branches)}, below the floor of "
+        f"{BRANCH_CORPUS_FLOOR}. Models do not lose branches by the dozen: the "
+        f"likely cause is that the corpus is being read wrongly and the "
+        f"coverage figures above are measuring a fraction of the models. Find "
+        f"the reason before touching this number."
+    )
+
+
+def test_every_compiled_model_path_is_a_model():
+    """...and the corpus holds models, not artifacts that resemble them.
+
+    The companion to the floor: a corpus can be the right *size* and still hold
+    the wrong files. The paths now come from each manifest node's ``path``, so
+    a compiled test or fixture cannot enter by having a familiar filename --
+    and this asserts the count matches the manifest exactly, in both
+    directions, rather than trusting that it does.
+    """
+    full_root, incremental_root = compiled_in_both_phases()
+    for label, root in (("full", full_root), ("incremental", incremental_root)):
+        paths = compiled_model_paths(root)
+        strays = sorted(str(p) for p in paths if ".yml" in p.parent.name)
+        assert not strays, (
+            f"the {label} model corpus holds compiled output that belongs to a "
+            f"properties file rather than to a model:\n    "
+            + "\n    ".join(strays)
+        )
+        assert len({p.name for p in paths}) == len(paths), (
+            f"the {label} model corpus holds two paths with the same filename. "
+            f"branch_list_both_phases keys on the name, so one would silently "
+            f"replace the other -- which is exactly how fixtures displaced 10 "
+            f"models before this was asserted."
+        )
