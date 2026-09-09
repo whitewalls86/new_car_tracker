@@ -108,6 +108,18 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_no_route_swallows_a_failed_write_and_reports_success",
+        "a route's failed write is logged and then answered as a success",
+        lambda: _edit(
+            "ops/routers/users.py",
+            'logger.exception("Failed to revoke user")\n'
+            "        return _db_error_response(request=request)",
+            'logger.exception("Failed to revoke user")',
+        ),
+        ["ops/routers/users.py"],
+        [],
+    ),
+    (
         "test_every_mutation_observes_whether_it_changed_anything",
         "a route stops reading the rowcount of the UPDATE it performs",
         lambda: _edit(

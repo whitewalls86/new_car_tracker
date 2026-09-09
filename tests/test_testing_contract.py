@@ -4024,6 +4024,149 @@ def test_the_mutation_corpus_is_not_empty():
 
 
 # ---------------------------------------------------------------------------
+# Rule 10b -- a swallowed write changes what the caller is told.
+# ---------------------------------------------------------------------------
+# The other half of G27, and the same defect arriving a second way. A mutation
+# can go unobserved because nobody read its rowcount, or because an exception
+# ate it and the handler carried on to the success path it would have reached
+# anyway. `revoke_user` had both: no row matched *and* a raising DELETE were
+# each reported to the admin as a successful revocation.
+#
+# **A swallowed read is not this.** It gives the caller less data, and an empty
+# page or a missing field is visible. A swallowed *write* gives the caller a
+# success message for work that did not happen, and
+# `scraper/processors/scrape_detail.py:196` is the control case for the
+# difference: it swallows a MinIO write and binds `minio_write_error` into the
+# artifact it returns, so the caller can tell. That is the shape this rule asks
+# for, and it was already in the tree.
+#
+# **Scoped to route handlers**, because the rule is about what a route tells its
+# client. A helper that swallows and returns nothing tells nobody anything --
+# `ops/routers/snapshots.py` swallows its `last_used_at` write deliberately, and
+# Plan 173 argues it in prose: a credential that has already authenticated must
+# not be refused because its bookkeeping failed. Distinguishing *the operation*
+# from *bookkeeping incidental to it* is a judgement no AST can make, so the
+# rule asks the question only where a response exists to be wrong.
+SWALLOWED_WRITE_WAIVERS: tuple[Waiver, ...] = (
+    # Both call `dbt_runner` endpoints that were deleted in April and May
+    # (9f08336, d88a41e), swallow the failure with a bare `except Exception:
+    # pass`, and return the same 303 they would on success -- which is why the
+    # admin dbt panel has done nothing since April without reporting it.
+    #
+    # **Waived rather than repaired, and unlike the rowcount clause above this
+    # one needs a ledger.** There the thirteen sites all resolved and an empty
+    # list was deleted; here two violations are genuinely outstanding and their
+    # repair is not this stage's to make: whether the intent UI is deleted or
+    # `dbt_runner` regains the endpoints is the same decision as what the
+    # repaired test asserts, and Stage AA owns it. A waiver with a named owner
+    # is exactly the object for that, and it dies when Plan 162 archives.
+    Waiver("ops/routers/admin.py:dbt_intent_upsert", "G27", 162, date(2026, 9, 8)),
+    Waiver("ops/routers/admin.py:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
+)
+
+_HTTP_WRITE_VERBS = frozenset({"post", "put", "patch", "delete"})
+
+
+def _route_decorated(function: ast.AST) -> bool:
+    """Is this function registered as a route?
+
+    Reads the decorator rather than the app's routing table on purpose: this
+    rule is about the shape of the source, and importing six FastAPI apps to
+    answer a question the decorator already answers is the harness deciding
+    another test's outcome.
+    """
+    return any(
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr in _HTTP_VERBS | {"api_route"}
+        for decorator in getattr(function, "decorator_list", [])
+    )
+
+
+def _performs_a_write(block: list[ast.stmt]) -> bool:
+    """Does this ``try`` body mutate anything -- our database or someone else's?"""
+    module = ast.Module(body=block, type_ignores=[])
+    constants = query_constants()
+    statements = mutating_statements()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name):
+            path = constants.get(node.id)
+            if path in statements:
+                return True
+    for node in ast.walk(module):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _HTTP_WRITE_VERBS):
+            return True
+    return False
+
+
+def _handler_exits(block: list[ast.stmt]) -> bool:
+    module = ast.Module(body=block, type_ignores=[])
+    return any(
+        isinstance(node, (ast.Return, ast.Raise)) for node in ast.walk(module)
+    )
+
+
+def _silently_swallowed_writes(path: Path) -> list[str]:
+    """``file:handler`` for each route handler that eats a failed write."""
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    found = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _route_decorated(function):
+            continue
+
+        returned = {
+            child.id
+            for node in ast.walk(function) if isinstance(node, ast.Return)
+            for child in ast.walk(node) if isinstance(child, ast.Name)
+        }
+        for attempt in [n for n in ast.walk(function) if isinstance(n, ast.Try)]:
+            if not _performs_a_write(attempt.body):
+                continue
+            for handler in attempt.handlers:
+                if _handler_exits(handler.body):
+                    continue
+                bound = {
+                    target.id
+                    for node in ast.walk(ast.Module(body=handler.body,
+                                                    type_ignores=[]))
+                    if isinstance(node, ast.Assign)
+                    for target in node.targets if isinstance(target, ast.Name)
+                }
+                if bound & returned:
+                    continue
+                found.append(f"{relative}:{function.name}")
+    return sorted(set(found))
+
+
+def test_no_route_swallows_a_failed_write_and_reports_success():
+    """The second half of the same defect: the write failed and nobody said so.
+
+    Satisfied three ways, and the first two are already how most of the tree
+    behaves: return or raise from the handler, or bind something in the
+    ``except`` that the response carries. Only falling through to the success
+    path with nothing recorded fails.
+    """
+    found = set()
+    for path in production_python_files():
+        found |= set(_silently_swallowed_writes(path))
+
+    _assert_exactly(
+        found,
+        SWALLOWED_WRITE_WAIVERS,
+        "A route handler swallowed a failed write and answered exactly as it "
+        "would have on success.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # The waiver list itself.
 # ---------------------------------------------------------------------------
 ALL_WAIVERS = (
@@ -4032,6 +4175,7 @@ ALL_WAIVERS = (
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
     + DUPLICATE_SQL_WAIVERS
+    + SWALLOWED_WRITE_WAIVERS
     + INLINE_SQL_WAIVERS
     + SQL_LITERAL_WAIVERS
     + TEST_SQL_WAIVERS
