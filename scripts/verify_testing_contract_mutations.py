@@ -1318,6 +1318,50 @@ MUTATIONS = [
         [TEST],
         [],
     ),
+    # Plan 162 Stage Z. The gate is `generate_service_contracts.py --check`;
+    # these four prove the rules that stop the gate being quietly removed --
+    # its artifacts, its CI step, and the pins that make its output mean
+    # anything. A gate deleted from the workflow fails nothing on its own.
+    (
+        "test_every_service_has_a_committed_contract",
+        "a service's committed contract leaves the tree and nothing says it is gone",
+        lambda: _delete("contracts/processing.json"),
+        ["contracts/processing.json"],
+        [],
+    ),
+    (
+        "test_the_service_contract_gate_runs_in_ci",
+        "CI stops diffing the contracts, so six accurate files go quietly stale",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "        run: python scripts/generate_service_contracts.py --check",
+            "        run: echo the contract diff no longer runs",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_version_that_decides_the_schema_is_pinned_exactly",
+        "a version that decides the schema loosens from an exact pin to a floor",
+        lambda: _edit(
+            "constraints.txt",
+            "fastapi==0.141.1",
+            "fastapi>=0.141.1",
+        ),
+        ["constraints.txt"],
+        [],
+    ),
+    (
+        "test_every_ci_install_runs_under_the_pinned_stack",
+        "the inherited constraint is dropped and every job resolves its own versions",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "  PIP_CONSTRAINT: ${{ github.workspace }}/constraints.txt",
+            "  PIP_CONSTRAINT_UNSET: ${{ github.workspace }}/constraints.txt",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
 ]
 
 

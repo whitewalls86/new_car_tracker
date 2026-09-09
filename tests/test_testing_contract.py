@@ -6109,3 +6109,178 @@ def test_the_dag_status_rule_has_something_to_check():
         "one was deleted; the first is a broken instrument and the second is a "
         "change worth noticing."
     )
+
+
+# ---------------------------------------------------------------------------
+# The generated service contracts -- `contracts/`, and what keeps them honest.
+# ---------------------------------------------------------------------------
+# Plan 162 Stage Z, G22. `scripts/generate_service_contracts.py` writes each
+# service's whole OpenAPI schema, canonicalised, and CI diffs it. The rules
+# below hold the parts of that arrangement a diff cannot hold up on its own:
+# that every service *has* an artifact, that CI still *runs* the gate, and that
+# the versions deciding what the schema says are still pinned exactly.
+#
+# The gate is the mechanism; these stop the mechanism being quietly removed. A
+# gate deleted from the workflow fails nothing, which is the exact shape of
+# failure this plan is named after.
+CONTRACTS_DIR = REPO_ROOT / "contracts"
+
+# The one step that opts out of the workflow-level `PIP_CONSTRAINT`, and why.
+# Airflow pins a starlette the FastAPI services cannot run, which is why it
+# installs into a venv of its own; applying the pin there would make the step
+# impossible rather than isolated. Named here so the exemption is a decision
+# with a reader, rather than a flag somebody forgot to add.
+CONSTRAINT_EXEMPT_STEPS = frozenset({
+    "Install Airflow test dependencies (isolated venv)",
+})
+
+
+def _fastapi_services() -> set[str]:
+    """Service packages whose ``app.py`` constructs a ``FastAPI()``.
+
+    Derived the way the generator derives it, deliberately: a rule keeping its
+    own list would agree with the generator right up until somebody edited one
+    of them.
+    """
+    found = set()
+    for service in service_packages():
+        entrypoint = REPO_ROOT / service / "app.py"
+        if entrypoint.is_file() and "FastAPI(" in entrypoint.read_text(
+            encoding="utf-8"
+        ):
+            found.add(service)
+    return found
+
+
+def test_every_service_has_a_committed_contract():
+    """Both directions, because only one of them notices a deletion.
+
+    A service with no artifact is the case the gate exists for: a new service
+    arrives and nothing records what it serves. An artifact with no service is
+    the quieter half -- a file left behind after a service is removed still
+    reads as a contract somebody could rely on, and ``--check`` would never
+    mention it, because it only walks the services that exist.
+    """
+    services = _fastapi_services()
+    assert services, (
+        "no service exposes a FastAPI app, so this rule would pass by having "
+        "nothing to check -- the failure it exists to prevent."
+    )
+    committed = {path.stem for path in CONTRACTS_DIR.glob("*.json")}
+
+    missing = sorted(services - committed)
+    assert not missing, (
+        f"these services serve a routing table and have no committed "
+        f"contract: {missing}. Run `python "
+        f"scripts/generate_service_contracts.py` and commit the result."
+    )
+    stray = sorted(committed - services)
+    assert not stray, (
+        f"contracts/ holds artifacts for services that no longer serve a "
+        f"FastAPI app: {stray}. Delete them -- a contract for nothing still "
+        f"reads as something to rely on."
+    )
+
+
+def test_the_service_contract_gate_runs_in_ci():
+    """A committed artifact nobody diffs is a document again.
+
+    The whole argument for generating rather than writing the contract is that
+    a generated file cannot be forgotten -- but that holds only while something
+    regenerates it. Deleting the step would leave six accurate files going
+    quietly stale with nothing to say so.
+    """
+    invoked = [
+        f"{job} / {step}"
+        for job, step, lines in workflow_steps()
+        if any(
+            "generate_service_contracts.py" in line and "--check" in line
+            for line in lines
+        )
+    ]
+    assert invoked, (
+        f"no step in {WORKFLOW} runs `generate_service_contracts.py --check`, "
+        f"so nothing regenerates the committed contracts and compares them to "
+        f"what the services serve. The artifacts under contracts/ are then "
+        f"documentation, which is what Plan 162 Stage Z exists to stop."
+    )
+
+
+def test_every_version_that_decides_the_schema_is_pinned_exactly():
+    """Canonicalisation is ``sort_keys`` and an indent because of this file.
+
+    The generator drops nothing -- no field list, no maintained record of what
+    was discarded -- and it can afford that only while the schema is a pure
+    function of the source tree. ``constraints.txt`` is what makes it one, and
+    a range rather than an exact pin quietly gives that up: CI resolved 0.141
+    against this repository's 0.128, ``include_router`` changed how it
+    flattens, and 50 of ``ops``'s 54 routes stopped being checked without
+    anything going red.
+
+    Asserted as *exact* pins rather than merely present, because ``>=`` is how
+    the repository got here.
+    """
+    text = _read("constraints.txt")
+    requirements = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    loose = sorted(line for line in requirements if "==" not in line)
+    assert not loose, (
+        f"constraints.txt holds requirements that are not exact pins: {loose}. "
+        f"A range resolves differently in two places, and the committed "
+        f"contracts stop being comparable to what any of them built."
+    )
+    pinned = {line.split("==")[0].strip().lower() for line in requirements}
+    # These four decide the schema. `prometheus-fastapi-instrumentator` belongs
+    # with the obvious three because `.expose(app)` adds a `/metrics` route, so
+    # its version moves the route set the same way FastAPI's does.
+    required = {
+        "fastapi", "pydantic", "starlette", "prometheus-fastapi-instrumentator",
+    }
+    assert required <= pinned, (
+        f"constraints.txt does not pin {sorted(required - pinned)}, and each of "
+        f"those decides what `app.openapi()` emits. Unpinned, the committed "
+        f"contracts describe whichever versions happened to resolve."
+    )
+
+
+def test_every_ci_install_runs_under_the_pinned_stack():
+    """Workflow level, with every opt-out named here rather than inferred.
+
+    Thirteen install sites each carrying ``-c constraints.txt`` is thirteen
+    places to remember and one to forget, and a job nobody has written yet
+    remembers none of them. So the constraint is inherited -- the precedent
+    Stage U set for ``REQUIRE_DECLARED_SKIPS`` -- and a step that escapes it
+    says so where it escapes.
+
+    Both directions: an undeclared override is a job quietly resolving its own
+    versions, and a declared exemption nobody takes is a rule about nothing.
+    """
+    document = yaml.safe_load(_read(WORKFLOW))
+    assert document.get("env", {}).get("PIP_CONSTRAINT"), (
+        f"{WORKFLOW} sets no workflow-level PIP_CONSTRAINT, so every install "
+        f"step resolves whatever pip picks that day and the committed "
+        f"contracts stop describing what CI actually built."
+    )
+
+    overriding = {
+        _step_name(step)
+        for job in document["jobs"].values()
+        for step in job.get("steps", [])
+        if "PIP_CONSTRAINT" in (step.get("env") or {})
+    }
+    undeclared = sorted(overriding - CONSTRAINT_EXEMPT_STEPS)
+    assert not undeclared, (
+        f"these steps override PIP_CONSTRAINT without being named as "
+        f"exemptions: {undeclared}. Add the step to CONSTRAINT_EXEMPT_STEPS "
+        f"with the reason it cannot resolve the pinned stack, or drop the "
+        f"override. Escaping the pin is a decision, not a convenience."
+    )
+    stale = sorted(CONSTRAINT_EXEMPT_STEPS - overriding)
+    assert not stale, (
+        f"these steps are declared exempt from PIP_CONSTRAINT and no longer "
+        f"override it: {stale}. Either the step was renamed, or it stopped "
+        f"needing the exemption and the declaration outlived it."
+    )
