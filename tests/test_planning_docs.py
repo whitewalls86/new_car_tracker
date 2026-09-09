@@ -1677,3 +1677,91 @@ class TestTheStateParserClassifiesEveryLiveHeading:
             f"not read as states: {wrong}. Both files describe the same index; "
             f"when they disagree the script is the one that fails quietly."
         )
+
+
+# ---------------------------------------------------------------------------
+# Plan 162 Stage Q, one level up from itself.
+# ---------------------------------------------------------------------------
+# That stage opened G30 -- a rule can exist unregistered and unproved -- and
+# then demonstrated the same class while writing the plan document for the
+# stage that repairs it: two stage headers claimed **Gap:** G30 and G31 when
+# neither entry existed yet, and the suite stayed green. A stage header that
+# names a gap is making a claim about another document, and until now nothing
+# read it.
+CONTRACT = "docs/TESTING.md"
+
+#: A row in the gap list. Anchored to the line start so that a `G21` appearing
+#: inside another row's prose -- and they do, constantly -- is not mistaken for
+#: an entry of its own.
+_GAP_ENTRY = re.compile(r"^\| (G\d+) \|", re.MULTILINE)
+
+#: The **claim**, and only the claim. Plan documents mention drained gaps all
+#: through their prose and their order tables, and the gap list says why that
+#: is correct: an entry "is deleted when it is repaired, not marked closed",
+#: and "the plan documents stay the place the history lives". A rule keyed on
+#: every `G\d+` in a plan document would fail on legitimate history the day
+#: the first entry was deleted. This one keys on the structured field a stage
+#: header uses to claim a gap, which is the only place the reference has to
+#: resolve.
+_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")
+
+
+@lru_cache(maxsize=None)
+def gap_entries() -> frozenset[str]:
+    """Every gap the contract defines."""
+    return frozenset(_GAP_ENTRY.findall(_read(CONTRACT)))
+
+
+@lru_cache(maxsize=None)
+def gap_claims() -> tuple[tuple[str, str], ...]:
+    """``(gap, document)`` for every gap a stage header claims."""
+    claims = []
+    for path in plan_documents():
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        for match in _GAP_CLAIM.finditer(_read(relative)):
+            for gap in re.findall(r"G\d+", match.group(1)):
+                claims.append((gap, path.name))
+    return tuple(claims)
+
+
+class TestGapReferences:
+    """A stage may not claim a gap the contract does not define."""
+
+    def test_every_gap_a_stage_claims_exists(self):
+        defined = gap_entries()
+        dangling = sorted(
+            f"{document} claims {gap}"
+            for gap, document in gap_claims()
+            if gap not in defined
+        )
+        assert not dangling, (
+            "these stage headers claim a gap that "
+            f"{CONTRACT} does not define:\n    "
+            + "\n    ".join(dangling)
+            + f"\n\nEither open the entry in {CONTRACT}'s gap list, or drop "
+            "the claim. A stage that closes a gap nobody has written down "
+            "closes nothing, and the number reads as evidence."
+        )
+
+    def test_the_gap_claim_corpus_is_not_empty(self):
+        """The floor, and it is load-bearing.
+
+        The rule above measures a set built by two regexes. If either stops
+        matching -- a header format changes, the gap table gains a leading
+        column -- the difference is empty and the rule passes having read
+        nothing. That is the failure mode every instrument in this plan has
+        had at least once, so the denominators are asserted rather than
+        assumed.
+        """
+        assert len(gap_claims()) >= 10, (
+            f"only {len(gap_claims())} stage headers claim a gap, which is "
+            "fewer than have existed since this rule was written. The likely "
+            "cause is that the `**Gap:**` header format changed and the "
+            "pattern above no longer matches it, in which case the rule is "
+            "reading an empty set and proving nothing."
+        )
+        assert len(gap_entries()) >= 10, (
+            f"only {len(gap_entries())} rows parsed out of {CONTRACT}'s gap "
+            "list. If the table's shape changed, every claim above is being "
+            "checked against an empty set of definitions."
+        )

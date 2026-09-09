@@ -53,6 +53,12 @@ _RUNBOOK = _REPO_ROOT / "docs" / "runbooks" / "runbook_storage_maintenance.md"
 COMPOSE_PROJECTS = {
     "docker-compose.yml": DEFAULT_PROJECT,
     "docker-compose.override.yml": DEFAULT_PROJECT,
+    # Plan 162 Stage Q. An override of the default project's file rather than
+    # a project of its own -- the same attribution `docker-compose.lakehouse
+    # .ci.yml` gets below, for the same reason. It declares no `image:` and no
+    # `build:`, so it contributes nothing to the index; it is here because
+    # every `docker-compose*.yml` must be attributed to something.
+    "docker-compose.ci.yml": DEFAULT_PROJECT,
     "docker-compose.test.yml": "cartracker-test",
     "docker-compose.lakehouse.yml": "cartracker-lakehouse",
     "docker-compose.lakehouse.a3.yml": "cartracker-lakehouse",

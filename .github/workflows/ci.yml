@@ -499,61 +499,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes, lint]
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: cartracker
-          POSTGRES_PASSWORD: cartracker
-          POSTGRES_DB: cartracker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-        command: server /data
-
     steps:
       - uses: actions/checkout@v4
 
+      - name: Start the services production defines
+        # Plan 162 Stage Q. This job used to declare its own `postgres:16`
+        # (and its own `minio/minio:latest`) in a `services:` block, which is
+        # how CI came to run a Postgres with none of production's tuning and a
+        # MinIO with none of its configuration. The definitions now come from
+        # docker-compose.yml, and docker-compose.ci.yml holds the entire
+        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # which diffs the two resolved documents rather than naming fields.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
+
       - name: Apply migrations (Flyway)
-        uses: docker://flyway/flyway:10-alpine
-        with:
-          args: >-
-            -url=jdbc:postgresql://postgres:5432/cartracker
-            -user=cartracker
-            -password=cartracker
-            -locations=filesystem:/github/workspace/db/migrations
-            -detectEncoding=true
-            -placeholders.viewerPassword=ci_viewer
-            -placeholders.scraperPassword=ci_scraper
-            -placeholders.dbtPassword=ci_dbt
-            -placeholders.authEmailSalt=ci_salt
-            -placeholders.adminEmail=ci@example.com
-            -placeholders.airflowPassword=ci_airflow
-            -placeholders.airflowAppPassword=ci_airflow_app
-            -placeholders.metricsPassword=ci_metrics
-            -defaultSchema=public
-            migrate
-        # Flyway runs as a Docker container step; it must reach the postgres
-        # service by its service name ("postgres"), not localhost. dbt's
-        # on-run-start hook reads Postgres, so the models still need it even
-        # though every assertion here lands in DuckDB.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci run --rm flyway
 
       - uses: actions/setup-python@v5
         with:
@@ -832,37 +792,18 @@ jobs:
     #     closure, which Plan 120 records as the hard part and once got wrong.
     #   * A snapshot captured after production's last dbt run can be red while
     #     production is green, only because production has not run yet.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: cartracker
-          POSTGRES_PASSWORD: cartracker
-          POSTGRES_DB: cartracker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-        command: server /data
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start the services production defines
+        # Plan 162 Stage Q. This job used to declare its own `postgres:16`
+        # (and its own `minio/minio:latest`) in a `services:` block, which is
+        # how CI came to run a Postgres with none of production's tuning and a
+        # MinIO with none of its configuration. The definitions now come from
+        # docker-compose.yml, and docker-compose.ci.yml holds the entire
+        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # which diffs the two resolved documents rather than naming fields.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
 
       - name: Apply migrations (Flyway)
         # Not only for dbt's on-run-start hook, as in `dbt-models`: this job's
@@ -871,24 +812,7 @@ jobs:
         # own. A column a migration added after the pinned snapshot was exported
         # arrives NULL and fails on its NOT NULL -- which is the correct signal
         # to bump the pin, and is only available because the schema is real.
-        uses: docker://flyway/flyway:10-alpine
-        with:
-          args: >-
-            -url=jdbc:postgresql://postgres:5432/cartracker
-            -user=cartracker
-            -password=cartracker
-            -locations=filesystem:/github/workspace/db/migrations
-            -detectEncoding=true
-            -placeholders.viewerPassword=ci_viewer
-            -placeholders.scraperPassword=ci_scraper
-            -placeholders.dbtPassword=ci_dbt
-            -placeholders.authEmailSalt=ci_salt
-            -placeholders.adminEmail=ci@example.com
-            -placeholders.airflowPassword=ci_airflow
-            -placeholders.airflowAppPassword=ci_airflow_app
-            -placeholders.metricsPassword=ci_metrics
-            -defaultSchema=public
-            migrate
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci run --rm flyway
 
       - uses: actions/setup-python@v5
         with:
@@ -1012,57 +936,21 @@ jobs:
     # for `apache-airflow==<version>` and requires exactly one distinct match,
     # so a prose mention becomes a second, punctuation-mangled "pin". Say
     # "the pinned Airflow venv" and let the install step below be the pin.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: cartracker
-          POSTGRES_PASSWORD: cartracker
-          POSTGRES_DB: cartracker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-        command: server /data
-
     steps:
       - uses: actions/checkout@v4
 
+      - name: Start the services production defines
+        # Plan 162 Stage Q. This job used to declare its own `postgres:16`
+        # (and its own `minio/minio:latest`) in a `services:` block, which is
+        # how CI came to run a Postgres with none of production's tuning and a
+        # MinIO with none of its configuration. The definitions now come from
+        # docker-compose.yml, and docker-compose.ci.yml holds the entire
+        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # which diffs the two resolved documents rather than naming fields.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
+
       - name: Apply migrations (Flyway)
-        uses: docker://flyway/flyway:10-alpine
-        with:
-          args: >-
-            -url=jdbc:postgresql://postgres:5432/cartracker
-            -user=cartracker
-            -password=cartracker
-            -locations=filesystem:/github/workspace/db/migrations
-            -detectEncoding=true
-            -placeholders.viewerPassword=ci_viewer
-            -placeholders.scraperPassword=ci_scraper
-            -placeholders.dbtPassword=ci_dbt
-            -placeholders.authEmailSalt=ci_salt
-            -placeholders.adminEmail=ci@example.com
-            -placeholders.airflowPassword=ci_airflow
-            -placeholders.airflowAppPassword=ci_airflow_app
-            -placeholders.metricsPassword=ci_metrics
-            -defaultSchema=public
-            migrate
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci run --rm flyway
 
       - uses: actions/setup-python@v5
         with:
@@ -1257,7 +1145,28 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/airflow/dags
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow.db
+          # Plan 162 Stage Q settled whether these suites should share the real
+          # Airflow metadata schema this job now builds two steps up. **They
+          # should not, and the reason is not the one Plan 139 Stage F gave.**
+          # That note said sqlite kept test data out of the Postgres metadata
+          # schema `tests/integration/sql/` reads. Measured 2026-09-09, nothing
+          # here writes metadata at all: no test in `tests/integration/airflow/`
+          # imports the Airflow ORM, `Session` or `create_session` -- the only
+          # Airflow API the suite uses is `DagBag(dag_folder=...)` -- and no DAG
+          # in `airflow/dags/` calls `Variable.get`, `Connection.get` or
+          # `BaseHook`, so parsing them cannot reach a metadata database
+          # either. The two consumers are genuinely separate: the SQL suite
+          # needs the migrated `airflow.*` tables and has them; this suite
+          # needs a connection string only so that Airflow does not provision
+          # one of its own at import.
+          #
+          # **So the string points nowhere on purpose.** A value that cannot be
+          # opened turns "these suites never touch the metadata database" from
+          # a comment into an assertion: the day one starts, this step fails
+          # and says so. Pointing it at Postgres instead would couple a suite
+          # to a service it does not use, which is the coupling Stage E split
+          # these jobs to remove.
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////nonexistent/airflow.db
           AIRFLOW__CORE__LOAD_EXAMPLES: "false"
 
       # Plan 162 Stage X. The record is per job because a statement may execute
@@ -1281,43 +1190,26 @@ jobs:
     # Five suites whose only shared dependency is a Postgres with the Flyway
     # migrations applied. None of them touches MinIO, dbt or Airflow, and
     # before the split every one of them waited on all three.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: cartracker
-          POSTGRES_PASSWORD: cartracker
-          POSTGRES_DB: cartracker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
 
+      - name: Start the services production defines
+        # Plan 162 Stage Q. This job used to declare its own `postgres:16`
+        # (and its own `minio/minio:latest`) in a `services:` block, which is
+        # how CI came to run a Postgres with none of production's tuning and a
+        # MinIO with none of its configuration. The definitions now come from
+        # docker-compose.yml, and docker-compose.ci.yml holds the entire
+        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # which diffs the two resolved documents rather than naming fields.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres
+
       - name: Apply migrations (Flyway)
-        uses: docker://flyway/flyway:10-alpine
-        with:
-          args: >-
-            -url=jdbc:postgresql://postgres:5432/cartracker
-            -user=cartracker
-            -password=cartracker
-            -locations=filesystem:/github/workspace/db/migrations
-            -detectEncoding=true
-            -placeholders.viewerPassword=ci_viewer
-            -placeholders.scraperPassword=ci_scraper
-            -placeholders.dbtPassword=ci_dbt
-            -placeholders.authEmailSalt=ci_salt
-            -placeholders.adminEmail=ci@example.com
-            -placeholders.airflowPassword=ci_airflow
-            -placeholders.airflowAppPassword=ci_airflow_app
-            -placeholders.metricsPassword=ci_metrics
-            -defaultSchema=public
-            migrate
+        # dbt's on-run-start hook reads Postgres, so the models still need it
+        # even though every assertion in this job lands in DuckDB. The note
+        # that used to stand here about reaching the service by its name
+        # rather than localhost went with the container step: Flyway runs
+        # inside the Compose network now, exactly as production runs it.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci run --rm flyway
 
       - uses: actions/setup-python@v5
         with:
@@ -1425,57 +1317,21 @@ jobs:
     # The two suites that read and write real objects. Postgres is here
     # because the archiver's flush paths write rows as well as Parquet; no dbt
     # and no Airflow, because neither suite has ever needed them.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: cartracker
-          POSTGRES_PASSWORD: cartracker
-          POSTGRES_DB: cartracker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: cartracker
-          MINIO_ROOT_PASSWORD: cartracker123
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-        command: server /data
-
     steps:
       - uses: actions/checkout@v4
 
+      - name: Start the services production defines
+        # Plan 162 Stage Q. This job used to declare its own `postgres:16`
+        # (and its own `minio/minio:latest`) in a `services:` block, which is
+        # how CI came to run a Postgres with none of production's tuning and a
+        # MinIO with none of its configuration. The definitions now come from
+        # docker-compose.yml, and docker-compose.ci.yml holds the entire
+        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # which diffs the two resolved documents rather than naming fields.
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
+
       - name: Apply migrations (Flyway)
-        uses: docker://flyway/flyway:10-alpine
-        with:
-          args: >-
-            -url=jdbc:postgresql://postgres:5432/cartracker
-            -user=cartracker
-            -password=cartracker
-            -locations=filesystem:/github/workspace/db/migrations
-            -detectEncoding=true
-            -placeholders.viewerPassword=ci_viewer
-            -placeholders.scraperPassword=ci_scraper
-            -placeholders.dbtPassword=ci_dbt
-            -placeholders.authEmailSalt=ci_salt
-            -placeholders.adminEmail=ci@example.com
-            -placeholders.airflowPassword=ci_airflow
-            -placeholders.airflowAppPassword=ci_airflow_app
-            -placeholders.metricsPassword=ci_metrics
-            -defaultSchema=public
-            migrate
+        run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci run --rm flyway
 
       - uses: actions/setup-python@v5
         with:

@@ -3682,11 +3682,19 @@ def test_every_asserted_rule_names_a_real_test():
     # that a name could be satisfied by a same-named test in another module,
     # which is a weaker guard than the original for a claim nobody makes by
     # accident.
+    # `ast.walk`, not `.body`. Reading only module-level functions made this
+    # rule blind to every test defined inside a class, which is how most of
+    # this repository's Layer 0 suites are organised -- so it reported a
+    # phantom for a test that plainly existed, and a class-based module could
+    # never register a rule at all. Found 2026-09-09 by Plan 162 Stage Q, on
+    # the first rule anyone tried to name inside a class.
     defined = {
         node.name
         for path in all_test_modules()
-        for node in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body
-        if isinstance(node, ast.FunctionDef)
+        for node in ast.walk(
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        )
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
     unnamed = [cell.strip() for cell in rows if not _TEST_NAME.search(cell)]
