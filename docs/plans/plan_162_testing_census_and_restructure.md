@@ -395,6 +395,8 @@ moved it to the end without making it a different stage.
 | 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
 | 29 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
 | 30 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+| 31 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `—` | CAR-115 |
+| 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -2839,6 +2841,95 @@ its read made strict in the same change as its default moved; the waiver tuple
 has drained to zero and been deleted; and the twelve that moved are verified by
 asking a deployed container what it loaded, not by asking whether it is up.
 Demonstrated by an inline default failing, not asserted.
+
+### Stage AG: rules live in a directory, and an unregistered one cannot exist
+
+**Issue:** CAR-115 · **State:** `—` · **Gap:** G30
+
+**Found by Stage Q, in the shape this plan keeps finding things.** That stage
+wrote four rules, ran the suite, and reported **3,899 passed** — with all four
+rules unregistered, unmutated, and one of them *broken*. The obligation
+[Stage AF](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing)
+added reads `docs/TESTING.md`'s `Asserted by` column, so a rule named in no row
+owes no mutation, and a green run said only that nothing had been claimed.
+Registering them made the obligation fire, and writing the mutation for
+`test_every_heavy_job_starts_the_compose_services` found that it joined a job's
+every `run:` step into one string — the Flyway step's own mention of the
+override file satisfied it with the `up` step deleted. **A rule that was named,
+implemented and green did not work**, which is Stage Y's finding arriving twice.
+
+**The reverse direction was declined for a reason that has expired.**
+`test_every_asserted_rule_names_a_real_test` asserts table → test and says
+plainly why it does not assert test → table: the waiver-hygiene checks have no
+row, and enumerating them "would need exactly the curated list this file
+refuses to keep." Measured 2026-09-09, that list is **7 items**, four of which
+already carry mutations, and Stage AF's own note says the waiver-hygiene rules
+"belong to" the column rather than to a gap.
+
+**Detection cannot be derived from shape, and this was measured rather than
+assumed.** If a rule were "a test that asserts about the repository rather than
+exercising its code", the scope would be **411 of the 421** definitions at the
+top level of `tests/` — sweeping in 132 observability-config tests, 43
+planning-docs tests and 39 deploy-script tests. Something has to be declared.
+
+**So the declaration moves from per test to per module, and becomes a
+directory.** The repository already reasons this way: Layer is assigned by
+directory, and [Stage G](#stage-g-what-the-split-is-and-why-a-directory-rather-than-a-list)
+is titled for the argument. A new file's author chooses where it lives, once,
+and the mechanism reads the filesystem instead of a table.
+
+**The boundary is "asserts a repo-wide invariant", not "is about testing."**
+The rules are the guardrails anything operating in this repository works
+inside, so `test_planning_docs.py` belongs beside `test_testing_contract.py`
+however different their subjects look. That puts **155 definitions** in scope
+against **266** that stay at the top level as Layer 0 config tests — the ones
+whose subject is one artifact's configuration rather than a convention. That
+distinction is where the boundary will be argued next, and it is written here
+so the argument starts from a stated line.
+
+**The migration is small and self-verifying.** Three modules move (79
+definitions), carrying 34 path references in the mutation harness and one real
+import in `scripts/check_sql_execution_coverage.py`. A botched move is loud
+rather than silent, because Stage AF's `test_every_mutation_anchor_still_matches_its_file`
+fails on any anchor that stops matching exactly once.
+
+**Exit.** Rules live in their own directory; every test there is named in the
+`Asserted by` column and proved by a mutation, seeded at ~83 and drained to 0;
+a test added to that directory with no row fails, and so does a rule module
+that never joins it; the 266 that stay are stated with the reason they are not
+rules; demonstrated by an unregistered rule failing, not asserted.
+
+### Stage AH: every rule has a skill that helps an agent obey it
+
+**Issue:** CAR-116 · **State:** `—` · **Gap:** G31
+
+**A rule with no skill is a rule an agent discovers by failing CI.** Stage AG
+makes the rule set complete and provable; this makes it *reachable* from inside
+the work. The two halves are the same claim from opposite ends — one says every
+rule is enforced, the other says every rule is learnable before it is enforced.
+
+**Partial coverage already exists and shows the shape.** On the code side
+[`add-sql`](../../.claude/skills/add-sql/SKILL.md) carries the SQL rules: where
+a statement lives, what loads it, and the Layer 2 test that discharges its
+coverage obligation. On the documentation side the plan-document family —
+`plans`, `plan-draft`, `plan-start`, `stage-close`, `close-out`,
+`note-evidence` — carries what `test_planning_docs.py` asserts. Both were
+written because the rule alone was not enough to act on.
+
+**The uncovered rules are the ones an agent trips over without knowing they
+exist**: patching is `mocker` everywhere, encoding-sensitive I/O states its
+encoding, a route declares the statuses it can return, `.env.example` wiring in
+both directions, and — added by Stage Q — CI's services come from the Compose
+definitions. Each is a rule whose first contact is a red CI run.
+
+**The mapping is asserted, not maintained.** A rule's row gains a skill
+reference the same way it gains a mutation, and the same rule that fails on a
+missing mutation fails on a missing skill — otherwise this becomes another
+column that drifts, which is the defect the whole plan is named for.
+
+**Exit.** Every rule in the `Asserted by` column names a skill that helps an
+agent comply with it; a rule with no skill fails; the skills that do not yet
+exist are written; demonstrated by a rule losing its skill reference failing.
 
 ## Success criteria
 
