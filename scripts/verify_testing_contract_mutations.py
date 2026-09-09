@@ -2036,6 +2036,583 @@ MUTATIONS = [
         ["docs/runbooks/runbook_storage_maintenance.md"],
         [],
     ),
+    # -----------------------------------------------------------------------
+    # `tests/rules/test_planning_docs.py` -- 43 rules, the largest single
+    # block Stage AG registered. The subject is the planning system itself:
+    # `docs/PLANS.md`, the archive, the plan documents and the recaps. Seven of
+    # these mutate what Plan 146 Stage 5 mutated by hand before the writing
+    # skill existed, when all eighteen assertions then in the file passed on
+    # every one.
+    # -----------------------------------------------------------------------
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanTableCoverage::test_every_plan_document_filename_declares_an_identifier",
+        "a plan document arrives under a name the parser cannot read, so it is "
+        "in no table by construction and excluded from coverage in silence",
+        lambda: _write("docs/plans/notes_on_the_next_one.md", "# Notes\n"),
+        [],
+        ["docs/plans/notes_on_the_next_one.md"],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanTableCoverage::test_every_plan_document_appears_in_a_table",
+        "a plan has a document and no row, which is how Plan 65 shipped and "
+        "disappeared for four months",
+        lambda: _write("docs/plans/plan_999_unclaimed.md", "# Plan 999: unclaimed\n"),
+        [],
+        ["docs/plans/plan_999_unclaimed.md"],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanTableCoverage::test_no_plan_number_appears_in_two_tables",
+        "a plan is claimed by two tables, so 'is plan N done?' is unanswerable "
+        "from the index and the reader takes whichever row they saw first",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n",
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n"
+            "| [162](plans/plan_162_testing_census_and_restructure.md) | "
+            "Testing census and CI restructure | 75 | L | **A trigger** |\n",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract"
+        "::test_published_build_order_window_carries_what_this_plan_is_for",
+        "a plan inside the published build-order window loses the section the "
+        "public page renders, and no waiver may cover that window",
+        lambda: _edit(
+            "docs/plans/plan_134_archiver_endpoint_failure_contract.md",
+            "## What this plan is for",
+            "## What this plan was for",
+        ),
+        ["docs/plans/plan_134_archiver_endpoint_failure_contract.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_published_archive_window_carries_public_summary",
+        "a plan inside the published archive window loses its public summary",
+        lambda: _edit(
+            "docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md",
+            "## Public summary",
+            "## Public summary of the work",
+        ),
+        ["docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_no_waiver_covers_a_published_plan",
+        "a waiver reaches into the published window, which is the one place "
+        "the contract allows none",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
+            "    SectionWaiver(162),\n"
+            "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_live_plans_carry_what_this_plan_is_for_or_a_waiver",
+        "a live plan loses the section and is covered by no waiver",
+        lambda: _edit(
+            "docs/plans/plan_179_derived_service_call_graph.md",
+            "## What this plan is for",
+            "## What this plan is about",
+        ),
+        ["docs/plans/plan_179_derived_service_call_graph.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_closeout_plans_carry_the_checks_or_a_waiver",
+        "a plan in closeout owes `## The checks` and does not carry it, which "
+        "is the section `close-out` writes on exactly that transition",
+        lambda: _edit(
+            "docs/plans/plan_170_container_image_reclaim_policy.md",
+            "## The checks",
+            "## The checks it ran",
+        ),
+        ["docs/plans/plan_170_container_image_reclaim_policy.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_no_waiver_outlives_the_plan_it_names",
+        "a waiver names a plan that has left every live table, so it grandfathers "
+        "nothing and nobody notices",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(64), SectionWaiver(66),",
+            "    SectionWaiver(4), SectionWaiver(66),",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract"
+        "::test_no_waiver_names_a_plan_that_postdates_the_contract",
+        "a plan drafted under the contract is waived rather than fixed, which "
+        "is the contract being bypassed the week it landed",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(169), SectionWaiver(171),",
+            "    SectionWaiver(169), SectionWaiver(179),",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_neither_waiver_list_has_grown",
+        "the escape valve widens by one legitimate-looking entry, which every "
+        "per-entry check passes cleanly and only the count can see",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(149), SectionWaiver(160),\n)",
+            "    SectionWaiver(149), SectionWaiver(160), SectionWaiver(154),\n)",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_every_live_plan_without_a_document_is_named",
+        "a live plan with no document is named nowhere, so it disappears from "
+        "both the compliant count and the waived one",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "NO_DOCUMENT_LIVE_PLANS = frozenset({88})",
+            "NO_DOCUMENT_LIVE_PLANS = frozenset()",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestRowExitConditions::test_every_closeout_row_has_a_parsable_lands_date",
+        "a closeout row's date stops parsing, and the day somebody looks is no "
+        "longer a day",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "[142](plans/plan_142_planned_host_maintenance.md) | **2026-09-30**",
+            "[142](plans/plan_142_planned_host_maintenance.md) | **end of September**",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestRowExitConditions::test_every_closeout_row_has_a_gate",
+        "a closeout row names nothing that removes it, so the date arrives and "
+        "nothing changes",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n",
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n"
+            "| [66](plans/plan_66_sql_injection.md) | **2026-12-01** | -- |\n",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestRowExitConditions::test_every_backlog_row_has_a_trigger",
+        "a backlog row names no trigger, and a row with no trigger is a wish",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M | -- |\n"
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestBuildOrderBlockers::test_every_blocker_names_a_known_plan_or_a_date",
+        "a blocker becomes a vague wait with no plan and no date, so nobody can "
+        "tell when the row becomes workable",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| **N** | Plan 125 Gate D | 76 | L |",
+            "| **N** | once the dust settles | 76 | L |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestBuildOrderBlockers::test_no_blocker_names_a_plan_that_does_not_exist",
+        "a typo'd plan number reads as a real dependency and blocks a row forever",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| **N** | Plan 112 | 74 | M |",
+            "| **N** | Plan 912 | 74 | M |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestIndexLineBudget::test_the_index_states_a_line_budget",
+        "the index stops stating a budget, which makes the check below "
+        "unreadable rather than false",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "**Line budget: 250 lines.**",
+            "**Line allowance: 250 lines.**",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestIndexLineBudget::test_the_index_is_under_its_stated_budget",
+        "the index exceeds the budget it states, which is narrative that "
+        "belongs in the decision log",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "**Line budget: 250 lines.**",
+            "**Line budget: 10 lines.**",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestDocumentationLinks::test_no_markdown_link_in_docs_is_dangling",
+        "a link under docs/ stops resolving, which is how Plan 146 started",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "(plans/plan_66_sql_injection.md)",
+            "(plans/plan_66_sql_injection_audit.md)",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestDocumentationLinks::test_the_scan_actually_reads_links",
+        "the link pattern stops matching, and a link checker that matches "
+        "nothing passes forever",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'    r"(?<!\\)\[[^\]]*\]\(\s*([^)\s]+?)\s*(?:\"[^\"]*\")?\s*\)"',
+            r'    r"(?<!\\)\[\[[^\]]*\]\]\(\s*([^)\s]+?)\s*(?:\"[^\"]*\")?\s*\)"',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestParserAgreesWithTheDocuments::test_every_plan_cell_parses",
+        "a Plan cell stops parsing, in a file whose whole argument is that a "
+        "row nobody parsed is a row nobody enforced",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| [73](plans/plan_73_scraper_refactor.md) | Scraper code review",
+            "| plan seventy-three | Scraper code review",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestParserAgreesWithTheDocuments::test_the_archive_still_holds_the_bulk_of_the_record",
+        "the archive is truncated, so completed plans have gone missing rather "
+        "than being archived",
+        lambda: _write(
+            "docs/planning/completed_plans.md",
+            "\n".join(
+                (REPO_ROOT / "docs/planning/completed_plans.md")
+                .read_text(encoding="utf-8").splitlines()[:35]
+            ) + "\n",
+        ),
+        ["docs/planning/completed_plans.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestSupersededRowExitConditions::test_every_superseded_row_names_what_superseded_it",
+        "a superseded row names nothing that replaced it, so nobody can tell it "
+        "was replaced rather than abandoned",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| Plan | Title | Superseded by |\n|---|---|---|\n",
+            "| Plan | Title | Superseded by |\n|---|---|---|\n"
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | -- |\n",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestArchiveOrdering::test_every_archive_row_has_a_parsable_date",
+        "an archive Date stops parsing, so the row sorts nowhere and the "
+        "ordering check silently stops seeing it -- Plan 146 Stage 5's mutation D",
+        lambda: _edit(
+            "docs/planning/completed_plans.md",
+            "The record is the deliverable rather than the pipeline surviving. | 2026-09-08 |",
+            "The record is the deliverable rather than the pipeline surviving. "
+            "| sometime in September |",
+        ),
+        ["docs/planning/completed_plans.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestArchiveOrdering::test_the_archive_is_newest_first",
+        "a row is appended rather than prepended -- what `>>` does, and what the "
+        "archive's own header says not to -- so the order inverts. Plan 146 "
+        "Stage 5's mutation B",
+        lambda: _edit(
+            "docs/planning/completed_plans.md",
+            "which the harness refused rather than skipped. | 2026-09-08 |",
+            "which the harness refused rather than skipped. | 2026-09-20 |",
+        ),
+        ["docs/planning/completed_plans.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestBuildOrderNumbering::test_the_build_order_is_numbered_one_to_n_without_gaps",
+        "the Order column jumps, which reads as a row somebody deleted -- Plan "
+        "146 Stage 5's mutation C",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| 5 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+            "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanLinksNameTheirOwnPlan"
+        "::test_every_linked_plan_cell_points_at_that_plans_document",
+        "a Plan cell's link text and target disagree: well-formed markdown, a "
+        "real file, parses as the right plan, and sends the reader to another "
+        "one. Plan 146 Stage 5's mutation E, which neither the dangling-link "
+        "check nor coverage can see",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| 6 | [179](plans/plan_179_derived_service_call_graph.md)",
+            "| 6 | [179](plans/plan_178_role_grant_scoping.md)",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestNoRowVanishesSilently::test_the_census_reads_the_reconciliation_record",
+        "the reconciliation record leaves the tree, removing the only defence "
+        "the six documentless index rows have",
+        lambda: _delete("docs/planning/plan_state_reconciliation.md"),
+        ["docs/planning/plan_state_reconciliation.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestNoRowVanishesSilently::test_every_reconciled_plan_is_still_claimed_by_a_table",
+        "a row disappears rather than moving, which is the leak Plan 146 exists "
+        "to close -- its Stage 1 sweep found 33 across 16 separate days. Stage "
+        "5's mutation F",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| [73](plans/plan_73_scraper_refactor.md) | Scraper code review and refactor |",
+            "| [66](plans/plan_66_sql_injection.md) | Scraper code review and refactor |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheIndexCountsTheArchiveCorrectly::test_the_index_states_the_archives_row_count",
+        "the index stops claiming how many rows the archive holds, which is "
+        "what made it checkable",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "— 124 rows, newest first",
+            "— every finished plan, newest first",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheIndexCountsTheArchiveCorrectly::test_the_stated_count_matches_the_archive",
+        "the index's count goes stale, which is what happens the moment the "
+        "archiving skill succeeds -- archiving is two edits and this is the "
+        "second, a number in a sentence nothing read",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "— 124 rows, newest first",
+            "— 123 rows, newest first",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_recap_is_named_for_the_sunday_that_ends_its_window",
+        "a recap is filed under a day that is not the Sunday ending its window, "
+        "so the deferred days stop showing on the filesystem",
+        lambda: _write("docs/recaps/2026-09-05.md", "# Week of 2026-08-31\n"),
+        [],
+        ["docs/recaps/2026-09-05.md"],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_recap_carries_its_required_sections",
+        "a recap drops a required section, and a missing section is silence you "
+        "cannot tell from an oversight",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "## Merges",
+            "## Merged branches",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_recap_states_its_window_run_date_and_commit_count",
+        "a recap loses its publication marker, and both defaults are wrong -- "
+        "true publishes an unread week, false drops one off the site in silence",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "**Publish:** true",
+            "**Published:** true",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_no_recap_borrows_the_archives_provenance_labels",
+        "a recap reuses the archive's provenance vocabulary as generic hedging, "
+        "which makes 25 backfilled archive rows look like hedging too",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "**Recapped:** 2026-09-07",
+            "**Recapped:** 2026-09-07 *(observed)*",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_recap_series_has_no_interior_gap",
+        "a week is skipped and nobody notices, which is a week whose work has "
+        "no durable why",
+        lambda: _delete("docs/recaps/2026-06-14.md"),
+        ["docs/recaps/2026-06-14.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_recap_series_is_not_stale",
+        "the staleness deadline moves a week forward, so a current recap set "
+        "reads as stale",
+        # **The deadline rather than a deletion, and the reason is decay.**
+        # Deleting the newest recap would be the truer mutation on the day it
+        # is written and a different one a week later: the file named here
+        # becomes interior as recaps accumulate, and the entry would quietly
+        # start proving `test_the_recap_series_has_no_interior_gap` instead.
+        # Moving the boundary is date-independent, so it means the same thing
+        # in 2027 as it does today. Unconditional on `within_grace`, because a
+        # mutation that only fires Monday through Wednesday is a mutation that
+        # reports MISSED on a Thursday.
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    return last_complete - timedelta(days=7 if within_grace else 0)",
+            "    return last_complete - timedelta(days=-7 if within_grace else -7)",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_deadline_lands_on_the_wednesday",
+        "the grace window slips by a day, which is exactly the failure a rule "
+        "of this shape has -- easy to state correctly in prose and wrong by one "
+        "day in code",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "RECAP_GRACE_DAYS = 3",
+            "RECAP_GRACE_DAYS = 4",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_recap_scan_actually_reads_recaps",
+        "the sha pattern stops matching, so the check below it proves nothing "
+        "and the emptying of docs/recaps/ stops being visible",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_SHORT_SHA = re.compile(r"\b[0-9a-f]{7}\b")',
+            r'_SHORT_SHA = re.compile(r"\b[0-9a-f]{40}\b")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_sha_a_recap_names_is_a_real_commit",
+        "a recap cites a commit that does not exist, which reads as evidence",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "**Commits in window:** 392",
+            "**Commits in window:** 392, opened by `fffff00`",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheStateParserClassifiesEveryLiveHeading::test_no_live_heading_is_silently_skipped",
+        "the index grows a heading the state parser neither maps nor ignores, "
+        "and the parser skips what it does not recognise -- so the table under "
+        "it drops out of every state timeline in silence",
+        # `## Parked`, not `## Notes to self`: the first draft used the latter
+        # and was MISSED, because `notes` is one of `IGNORED_HEADING_PREFIXES`
+        # and the rule was right to pass. That is the rule's own subject
+        # arriving in its mutation -- a heading is unclassified only if the
+        # script neither maps *nor ignores* it, and reading only the map is the
+        # half-answer this entry nearly shipped.
+        lambda: _edit(
+            "docs/PLANS.md",
+            "## Completed",
+            "## Parked\n\n## Completed",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheStateParserClassifiesEveryLiveHeading"
+        "::test_every_live_table_section_is_mapped_to_a_state",
+        "a section this file parses as a table stops being read as a state by "
+        "the script -- the shape `current closeout` was in for nine days, during "
+        "which every closeout plan read as absent",
+        lambda: _edit(
+            "scripts/audit_plan_state_history.py",
+            '    "default build order": "build",\n',
+            "",
+        ),
+        ["scripts/audit_plan_state_history.py"],
+        [],
+    ),
 ]
 
 
