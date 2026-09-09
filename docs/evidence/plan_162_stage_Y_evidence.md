@@ -5,9 +5,8 @@ which grew from *a route declares the statuses it can return* into that plus
 G27 and G28 while it was being written.
 
 **The plan document holds what the numbers mean; this file holds the numbers and
-the recipe for each.** The stage runs in three steps and this accumulates across
-them — step 1 (handlers observe their effects) is recorded below; the
-declarations and the coverage rule are not yet taken.
+the recipe for each.** All three steps are recorded: handlers observing their
+effects, the declarations, and the coverage rule.
 
 The short version: **writing the contract down found routes with nothing true to
 write**, and the stage's own original rule passes every one of them.
@@ -245,3 +244,105 @@ before this step `fetches_recorded` was `len(fetched_ids)` and would have read
 observed in production rather than inferred: `airflow/dags/scrape_detail_pages.py`
 logs `result.get("status")` and `release_claims` has never returned a `status`
 key.
+
+
+## The rules, and what writing them cost
+
+Six rules landed across the stage's three gaps, each proved by a mutation rather
+than by argument. **Every one of them had a bug that made the repository look
+healthier than it was**, and none of those bugs failed a test — which is the
+argument for the mutations and for the floors, stated as measurements rather
+than as a principle.
+
+| Rule | The bug it shipped with | What it hid |
+|---|---|---|
+| a mutation observes its effect | keyed on the `execute` call's arguments | `admin.py` binds the statement first, so all three search handlers were unseen — **it passed on a tree with a rowcount check deleted** |
+| the same | read only `matched = cur.rowcount`, not `if not cur.rowcount:` | reported six compliant functions as violations |
+| the same | fed a bare expression to a statement walker | the gate check answered `False` for every gated mutation in the tree |
+| every produced code is asserted | a template-only decorator path is a suffix of everything | 99 of 100 requested paths matched more than one handler |
+| the same | unioned the implicit 200 in unconditionally | demanded a 200 test from every route that only redirects — 10 of the first 16 findings |
+| the same | enumerated response *classes* | never saw `templates.TemplateResponse(..., status_code=404)`, which is how both admin routers answer |
+| the same | let a wildcard match a literal segment | **38 of 89 handlers left scope while the failure list still read four** |
+| a response has its status read | nearly shipped an escape clause crediting a shape check | an inference one step from crediting a 200 that happens to parse |
+
+The last of those was not repaired in the rule. **The conforming code was changed
+instead**, on the argument that six explicit `raise_for_status()` calls in
+working code buy a rule that states one thing and cannot be argued around. It
+was free: `HTTPError` subclasses `RequestException`, which those gates already
+catch and already turn into an `unknown` verdict.
+
+## What the rules found that no census had
+
+**Two dead call sites in the DAGs.** Both detail-scrape DAGs `POST` to
+`mark_job_fetched`, which answers **404** when the job is already gone — and a
+404 is not a `RequestException`, so the `except` beneath never fired and the job
+stayed in the scraper's memory unreported.
+
+**Five dead endpoints.** `ops` calls `GET /dbt/lock`, `GET` and `POST
+/dbt/intents`, `DELETE /dbt/intents/{intent_name}` and `GET /logs` on
+`dbt_runner`. All five were deleted by `9f08336` (2026-04-28) and `d88a41e`
+(2026-05-05) and every caller was left standing, each wrapped in
+`except Exception: pass` and followed by an unconditional 303. The admin dbt
+panel and log viewer have done nothing since April.
+
+**A five-valued result thrown away.** `_set_intent` returns `ok`, `locked`,
+`invalid`, `unavailable` and `error`; the admin deploy buttons discard it and
+redirect. `_intent_release`'s own docstring records the near miss — it returned a
+bare `bool` until Stage K *"collapsing five outcomes into False"*. Stage K
+widened the signal and the caller never started reading it.
+
+## The declarations
+
+**Recipe.** The declaration rule's own failure list, seeded at 52 from its first
+run and drained by declaring each route, file by file. Entries were deleted only,
+never regenerated: a drain that rewrites the ledger to match reality absorbs
+anything broken on the way, and this one reports it instead. Nothing was
+reported.
+
+| Service | Declared before | Declared after |
+|---|---|---|
+| `ops` | `200 422` | `200 303 307 308 400 401 403 404 409 422 500 503` |
+| `archiver` | `200 422` | `200 400 409 422 500 503` |
+| `dbt_runner` | `200 422` | `200 400 409 422 500 503` |
+| `scraper` | `200 422` | `200 400 404 422 503` |
+| `processing` | `200 422` | `200 404 422 503` |
+| `container_health` | `200 422` | `200 422` — unchanged, and correctly: its four routes produce nothing else |
+
+## The coverage gaps, and two of them were ours
+
+**Recipe.** The coverage rule's failure list, seeded at 11 and drained by writing
+sixteen tests across five files.
+
+Nine were pre-existing: `/recaps` answering 404 before the first generator run,
+the snapshot archive download's entire refusal surface, archiver's pack and prune
+400s, coordination's status and host-evidence arms.
+
+**Two were introduced by this stage's own repairs, hours earlier.**
+`approve_access_request` and `deny_access_request` gained a 503 when their
+swallowed database errors were fixed, and neither got a test. The rule written
+after them is what said so.
+
+Writing those tests produced two findings in the tests themselves. One asserted
+`status_code in (400, 404)`, which is the vague shape this plan exists to remove;
+it is a definite 400 now. And four of them were **invisible to the coverage
+rule** — they built their path from a class attribute, which the resolver cannot
+read, so four tests existed and credited nothing while the file showed green.
+
+## The phantom 422
+
+**Recipe.** Each operation's `parameters` and `requestBody` in the emitted
+schema, scanned for a parameter that can actually fail validation — anything
+other than an unconstrained string.
+
+41 routes declare `422`; **33 can produce it and 8 cannot**. Six are the dead
+admin routes and are waived to Stage AA. Two are permanent and carry no owner:
+`GET` and `HEAD /recaps/{slug}` guard the slug in the handler and answer 404, and
+moving that into `Path(pattern=...)` would turn a public page's *no such recap*
+into a validation error.
+
+## What the stage could not close
+
+Every live waiver across all four G27 clauses and the phantom-422 ledger is a
+call into the dead `dbt_runner` admin panel. **Fourteen entries across five
+rules, and one decision drains all of them** — whether that panel is deleted or
+the endpoints return, which is Stage AA's and not this stage's to force.

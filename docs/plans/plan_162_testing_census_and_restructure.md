@@ -2432,14 +2432,25 @@ archives and take the reason with it.
   directions — an undeclared code fails, and a declared code nothing raises
   fails too.
 - No route executes a mutation whose effect it does not observe, and no handler
-  swallows an effect's exception without changing what the caller observes.
-  Neither carries a ledger.
+  swallows an effect's exception without changing what the caller observes. The
+  first carries no ledger. The second carries only calls into the dead
+  `dbt_runner` panel, waived to Stage AA, and drains when that stage resolves
+  it.
 - Every declared code is asserted by a test, and a database-triggered code is
   asserted at a real-engine layer.
 - The phantom-422 ledger holds exactly the two `/recaps/{slug}` routes, with no
   owner and no expiry.
-- Demonstrated, not asserted: deleting the body of `toggle_search` and leaving
-  its redirect fails three separate clauses; it passes the suite today.
+- Demonstrated, not asserted, by mutation rather than by argument: keeping
+  `toggle_search`'s `UPDATE` and dropping its `rowcount` check fails the
+  observation rule; gutting its body to the redirect fails the declaration rule,
+  because it then declares a 404 and a 503 it can no longer answer. **The
+  original wording of this clause predicted one mutation failing three rules and
+  was wrong**, which is worth keeping rather than quietly correcting: gutting
+  the body removes the `UPDATE` as well, so the observation rule has nothing
+  left to object to and the coverage rule sees a route producing only 303. The
+  two halves need two mutations, and the second is the better demonstration
+  because it exercises the over-declaration direction -- the half that stops
+  declarations rotting into a description of what the routes used to do.
 
 ### Stage Z: the contract is generated, committed and gated
 
@@ -4269,3 +4280,42 @@ Stage AA's second instance observed in production rather than inferred.
 a mutation whose effect it does not observe. It is evidence that the repair is
 live and quiet, not that the clause is met: what would meet it is the rule that
 makes the next blind mutation fail, and that rule is not written yet.
+
+**The rules, written after the repairs and against them.** Six across the three
+gaps, each proved by a mutation. **Every one shipped with a bug that made the
+repository look healthier than it was, and not one of those bugs failed a test**
+-- the observation rule keyed on the `execute` call's arguments and so passed on
+a tree with a rowcount check deleted; the coverage rule let a wildcard match a
+literal segment and took 38 of 89 handlers out of scope while its failure list
+still read four. That is the argument for the mutations and the floors as a
+measurement rather than a principle, and it is the reason the floors assert
+population counts rather than merely non-emptiness.
+
+**One rule was nearly written with an escape clause, and the escape clause was
+the bug.** Six coordination helpers never read a response status and were
+correct anyway, because each subscripts the parsed payload and an error body
+raises into a handler returning `unknown`. Crediting that shape is an inference
+one step from crediting a 200 that happens to parse, so **the conforming code was
+changed instead** -- six explicit `raise_for_status()` calls, free because
+`HTTPError` subclasses the `RequestException` those gates already catch, in
+exchange for a rule that states one thing and cannot be argued around.
+
+**G21 drained 52 to 0.** The rule was written before any declaration existed so
+that its failure list was the work; the census had estimated 46 and the reader
+found 52, the difference being that every admin route's 404 and 503 arrive
+through a response helper. The schema now carries eleven codes where every
+service claimed two.
+
+**G28 drained 11 to 0, and two of the eleven were this stage's own.**
+`approve_access_request` and `deny_access_request` gained a 503 when their
+swallowed database errors were repaired that morning, and neither got a test
+until the rule written after them said so.
+
+**What the stage could not close is one decision, not fourteen repairs.** Every
+live waiver across the four G27 clauses and the phantom-422 ledger is a call into
+the dead `dbt_runner` admin panel -- five endpoints deleted in April and May with
+every caller left standing. Stage AA owns whether that panel is removed or the
+endpoints return, and all fourteen entries drain on that answer.
+
+Measurements, recipes and the full table of rule bugs:
+[`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md).
