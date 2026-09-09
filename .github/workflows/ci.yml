@@ -264,6 +264,29 @@ jobs:
       - name: Verify the recorded Docker API contract against the real proxy
         run: python scripts/verify_container_health_docker_contract.py
 
+  flaresolverr-contract:
+    name: FlareSolverr solve envelope (real image)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # No pip install at all: the checker reads `scraper/processors/cf_session.py`
+      # as text to derive which fields it must find, and talks to the solver
+      # over urllib. Installing the scraper's requirements here would pull
+      # curl_cffi to check a contract that has nothing to do with it.
+      #
+      # Plan 162 Stage AB. The scraper reads six keys out of FlareSolverr's
+      # /v1 envelope and four of them with `.get` and a default, so a renamed
+      # key caches empty credentials and reports the bootstrap as successful --
+      # the 2026-08-14 failure mode with a different cause. Nothing else in
+      # CI starts FlareSolverr, and the unit tests replace it with a MagicMock.
+      - name: Verify the solve envelope against the pinned image
+        run: python scripts/verify_flaresolverr_contract.py
+
   service-contracts:
     name: Service OpenAPI contracts (generated and diffed)
     runs-on: ubuntu-latest
