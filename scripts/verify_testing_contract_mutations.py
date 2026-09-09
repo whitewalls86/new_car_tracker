@@ -108,6 +108,18 @@ def _statement(name: str) -> str:
 
 MUTATIONS = [
     (
+        "test_every_route_declares_the_statuses_it_can_return",
+        "a route stops declaring a code it still answers with",
+        lambda: _edit(
+            "ops/routers/users.py",
+            '        404: {"description": '
+            '"No user with that id; nobody was revoked."},\n',
+            "",
+        ),
+        ["ops/routers/users.py"],
+        [],
+    ),
+    (
         "test_every_status_code_a_route_can_produce_is_asserted",
         "a route starts answering with a code no test asserts",
         lambda: _edit(

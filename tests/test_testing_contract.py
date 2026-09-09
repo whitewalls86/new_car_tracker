@@ -4571,8 +4571,59 @@ def _returns_a_bare_value(function: ast.AST) -> bool:
     return False
 
 
+@lru_cache(maxsize=None)
+def _module_functions(relative: str) -> dict[str, ast.AST]:
+    """Top-level functions of one module here, by name."""
+    path = REPO_ROOT / relative
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return {}
+    return {
+        node.name: node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _imported_helpers(module: ast.Module, path: Path) -> dict[str, ast.AST]:
+    """Functions this module imported from elsewhere in the repository.
+
+    **The trap this closes was latent, not live.** The four response helpers
+    that carry every admin route's 404 and 503 are duplicated inside
+    `admin.py` and `users.py`, so same-module resolution saw them. Deduplicating
+    them into one shared module is the obvious next refactor, and it would have
+    made a *new* handler's 503 invisible here -- the declaration would go
+    unwritten and nothing would say so. An existing one moving is safe by
+    accident, because the rule's other direction fires on the code it can no
+    longer see produced; it is new code that would slip.
+    """
+    here = path.relative_to(REPO_ROOT).parent
+    found: dict[str, ast.AST] = {}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if node.level:                      # `from .x import y`, `from ..x import y`
+            base = here
+            for _ in range(node.level - 1):
+                base = base.parent
+            target = base.joinpath(*node.module.split("."))
+        else:                               # `from ops.routers.x import y`
+            target = Path(*node.module.split("."))
+        for candidate in (f"{target.as_posix()}.py", f"{target.as_posix()}/__init__.py"):
+            functions = _module_functions(candidate)
+            if not functions:
+                continue
+            for alias in node.names:
+                if alias.name in functions:
+                    found[alias.asname or alias.name] = functions[alias.name]
+            break
+    return found
+
+
 def _produced_codes(
-    function: ast.AST, constants: dict[str, int], module: ast.Module
+    function: ast.AST, constants: dict[str, int], module: ast.Module, path: Path
 ) -> set[int]:
     """Every status code *function* can answer with, helpers included.
 
@@ -4586,6 +4637,7 @@ def _produced_codes(
         node.name: node for node in module.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    helpers.update(_imported_helpers(module, path))
     codes = _codes_at_call_sites(function, constants)
     for node in ast.walk(function):
         if isinstance(node, ast.Call):
@@ -4658,7 +4710,7 @@ def route_handlers() -> tuple[tuple[str, str, str, str, frozenset, frozenset], .
                                 resolved = _status_constant(key, constants)
                                 if resolved is not None:
                                     declared.add(resolved)
-                    codes = _produced_codes(function, constants, tree)
+                    codes = _produced_codes(function, constants, tree, path)
                     if _returns_a_bare_value(function) or not codes:
                         codes |= {declared_success}
                     found.append((
