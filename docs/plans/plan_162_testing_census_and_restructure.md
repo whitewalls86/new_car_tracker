@@ -386,8 +386,8 @@ moved it to the end without making it a different stage.
 | 19 | [**W**](#stage-w-a-test-may-not-supply-both-halves-of-a-contract) | 15 | A test may not supply both halves of a contract | — | `done` | CAR-82 |
 | 20 | [**V**](#stage-v-a-variable-the-environment-documents-reaches-the-service-that-reads-it) | 14 | A variable the environment documents reaches the service that reads it | — | `done` | CAR-88 |
 | 21 | [**Y**](#stage-y-grew-its-rule-passes-a-route-that-reports-work-it-did-not-do) | — | A route declares its statuses, observes its own effects, and exercises both | G21, G27, G28 | `done` | CAR-104 |
-| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `next` | CAR-114 |
-| 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `—` | CAR-78 |
+| 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `done` | CAR-114 |
+| 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `next` | CAR-78 |
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `—` | CAR-106 |
 | 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `—` | CAR-107 |
@@ -2455,7 +2455,7 @@ archives and take the reason with it.
 
 ### Stage AF: the harness that proves the rules is proved by nothing
 
-**Issue:** CAR-114 · **State:** `—` · **Gap:** G29
+**Issue:** CAR-114 · **State:** `done` · **Gap:** G29
 
 **Every "demonstrated by X failing" exit in this plan rests on
 `scripts/verify_testing_contract_mutations.py`, and nothing guards it.** Its own
@@ -4393,3 +4393,100 @@ of zero is the evidence that the scale works.
 
 Measurements, recipes and the full table of rule bugs:
 [`plan_162_stage_Y_evidence.md`](../evidence/plan_162_stage_Y_evidence.md).
+
+### Stage AF — the harness that proves the rules is proved by nothing
+
+**Issue:** CAR-114 · **Closed:** 2026-09-09
+
+**The instrument every other stage's evidence rested on had none of its own.**
+`scripts/verify_testing_contract_mutations.py` is what every *"demonstrated by X
+failing"* exit in this plan cites, and its docstring said why nothing guarded it:
+*"This is not a CI step."* So its anchors were literal strings living in other
+people's files, and they stop matching the way any literal does -- silently, and
+only where nobody is looking.
+
+**Two halves, split on cost rather than on value.** The anchors are asserted in
+CI by `test_every_mutation_anchor_still_matches_its_file`, with
+`test_the_mutation_harness_corpus_is_not_empty` as its floor. The obligation is
+asserted by `test_every_asserted_rule_is_proved_by_a_mutation`, which reads
+`docs/TESTING.md`'s `Asserted by` column for a second duty rather than opening a
+new registry -- the column was already asserted the other way by
+`test_every_asserted_rule_names_a_real_test`, and one reader now serves both so
+the table's shape cannot be understood two ways. Running the mutations stays a
+deliberate command, and the docstring now states that split rather than leaving
+it implied.
+
+**G29 drained 20 to 0**, and the harness went from 59 mutations to 82. Three of
+the 22 new entries prove the rules this stage itself added, so the instrument is
+measured by the instrument.
+
+**The anchors were already rotting, which is the argument rather than a
+prediction.** The rule found two ambiguous anchors on the day it landed.
+`Waiver(subject, gap="G5", owner=162)` matched twice because
+`test_no_waiver_outlives_the_plan_that_owns_it` quotes it in its own docstring as
+*"literal source text"* -- the sentence documenting the anchor is what made the
+anchor ambiguous. The `int_listing_state_runs` `CREATE` had grown a second
+occurrence in a fixture. Both had been mutating the earlier site by position
+rather than by intent, and `_edit`'s own guard cannot see that case at all: it
+raises on an anchor it cannot find and says nothing about one it finds twice.
+That asymmetry is why the rule asserts *exactly once* rather than *present*.
+
+**Writing the mutations found a false CAUGHT, which is the method defending
+itself.** Each new entry was checked to fail on *its own assertion* rather than
+merely to fail. One did not: the `UNDOCUMENTED` ledger append landed outside its
+tuple and failed on a `SyntaxError`, and the harness had reported that as a
+success. It is the failure the harness's own comment warns about -- a mutation
+measured against a suite that never collected its assertion -- and nothing but
+reading the failure would have caught it.
+
+**One rule of the twenty needed a live engine, and the cost of that turned out
+to be the deciding measurement.**
+`test_every_test_statement_plans_against_the_migrated_schema` `PREPARE`s every
+`tests/sql/` statement against the live catalogue, so a fixture left behind by a
+renamed column is a condition no static reading can express. Two alternatives
+were considered and both rejected: a declared exception ledger, which the
+obligation rule's own docstring argues against in the same breath as forbidding
+one, and moving the proof to a Layer 2 CI gate beside
+`tests/integration/dbt/test_constraint_mutation.py`, which is a stage of its own.
+Measurement settled it -- **3s to a ready `postgres:16` and 4s to apply 51
+migrations**, both images already cached. The harness now provisions a throwaway
+database on port 55432, migrates it with `ci.yml`'s placeholder set, and destroys
+it. The port is not 5432 deliberately: a script whose whole discipline is not
+disturbing the tree it runs in must not shadow a running stack either.
+
+**The DSN alone is not trusted.** The engine-bound node must pass *unmutated*
+before its mutation is judged, because an unmigrated database fails every
+`PREPARE` and would report CAUGHT having proved nothing. With no engine the entry
+reports `UNPROVEN HERE` and the run does not fail -- no engine is a fact about
+the machine, not a finding about the repository, and failing there would make the
+honest answer indistinguishable from a rule that had actually gone quiet.
+
+**This exceeds what the stage was written to do, and is recorded rather than
+applied quietly.** The *"explicitly not in scope"* clause holds: the mutations
+still do not run in CI. But "the harness starts and destroys a Docker container"
+is a new fact about a script that previously touched nothing but the working
+tree, and it belongs in the record next to an exit it was not part of.
+
+**A Windows-only defect in the harness fell out of the work.** The child encoded
+its stdout with the console codepage while the parent decoded UTF-8, so the
+em-dash in `test_the_encoding_rule_sees_the_shape_ruff_cannot`'s own source
+raised `UnicodeDecodeError` before any mutation could be judged. That is the same
+locale-dependent defect the rule exists to catch, arriving in the harness that
+proves it, and it was invisible on the Linux half of this repository's two boxes.
+
+**Verified 2026-09-09.** The harness: 82 of 82 CAUGHT, zero missed, zero
+unproven; baseline and restore both 86 passed; the throwaway container destroyed;
+115s wall clock including provisioning and teardown. Locally, `ruff` clean and
+3,895 unit tests pass. **Observed in CI** on run `34373255590` for
+[#404](https://github.com/whitewalls86/new_car_tracker/pull/404) -- all fourteen
+jobs green with two scope-skipped, and `Unit tests (pytest)` is where the three
+new rules actually ran, which is what makes the exit's *"in CI"* an observation
+rather than a reading of `ci.yml`.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. `README.md:317` and `info.html:855` both say *"More than
+3,000 tests run in CI"*, which stays true at 3,895.
+
+**Cost: no estimate carried, actual 1.** The issue was created without one, so
+there is no delta to learn from here -- which is itself the finding, since an
+unestimated closed issue undercounts its cycle silently.
