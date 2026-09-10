@@ -25,7 +25,7 @@
 # (tests/test_deploy_script.py::load_health_exemptions): '#' in column 0 is a
 # comment, an empty line separates entries, an indented line continues the
 # previous one. Entries here additionally begin their reason with a CLASS
-# token, and tests/test_maintenance_running_set.py checks it is a known one.
+# token, and tests/rules/test_maintenance_running_set.py checks it is a known one.
 #
 # Keys are `project/service` wherever the service name alone is ambiguous --
 # `minio`, `lakekeeper` and `scraper` each appear in more than one Compose

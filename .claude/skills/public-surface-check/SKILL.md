@@ -23,7 +23,7 @@ articles. The three generated surfaces are governed by their sources and their
 `--check`; the `docs/PLANS.md` build-order row is covered by the `plans` skill,
 which knows it is publishing; and since Plan 138 Stage 9 a planned row's
 published sentence is a plan document's `## What this plan is for`, held only by
-`tests/test_planning_docs.py`. That split is recorded as the contract's **P4**
+`tests/rules/test_planning_docs.py`. That split is recorded as the contract's **P4**
 rather than silently widened.
 
 ## Read the diff, not the files

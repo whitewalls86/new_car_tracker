@@ -36,13 +36,13 @@ from pathlib import Path
 
 import yaml
 
-from tests.test_maintenance_running_set import (
+from tests.rules.test_maintenance_running_set import (
     DEFAULT_PROJECT,
     _split,
     load_registry,
 )
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNBOOK = _REPO_ROOT / "docs" / "runbooks" / "runbook_storage_maintenance.md"
 
 # Which project each Compose file contributes services to. Overrides add to a
@@ -78,7 +78,7 @@ PROTECTED_CLASSES = {"aux-paused", "on-demand", "profile-running", "aux-foreign"
 _SENTINEL = "# Derived from docker-compose*.yml and maintenance-running-set.txt"
 _BLOCK_HEADER = (
     f"{_SENTINEL}\n"
-    "# by tests/test_image_keep_set.py, which asserts this block. Do not edit.\n"
+    "# by tests/rules/test_image_keep_set.py, which asserts this block. Do not edit.\n"
 )
 
 # `${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}` -- the default is

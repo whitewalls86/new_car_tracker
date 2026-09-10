@@ -382,7 +382,7 @@ body, which is fine, but check.
 ## After writing
 
 ```bash
-LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/test_planning_docs.py -q
+LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/rules/test_planning_docs.py -q
 python scripts/build_public_recaps.py
 git status --short
 ```

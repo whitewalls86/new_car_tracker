@@ -8,7 +8,7 @@ it finds and restructures CI around what the census showed actually mattered.
 
 ## The case
 
-[`tests/test_testing_contract.py`](../../tests/test_testing_contract.py)
+[`tests/test_testing_contract.py`](../../tests/rules/test_testing_contract.py)
 implemented seven mechanical rules when the census ran, and eight since Stage C
 added the coverage rule. It passes, and **a pass means only that those rules
 hold** — every violation standing on 2026-08-31 is grandfathered in a waiver
@@ -395,7 +395,7 @@ moved it to the end without making it a different stage.
 | 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
 | 29 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
 | 30 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
-| 31 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `—` | CAR-115 |
+| 31 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `done` | CAR-115 |
 | 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
 
 `State` takes the five values [the plan-document
@@ -1812,7 +1812,7 @@ correctness hole in a rule whose whole subject is silent departure. No
 `--update` flag: a manifest that regenerates itself is a rubber stamp, and the
 diff someone reads is the entire mechanism. `SQL_ABSORBED_BY_DBT` stays out of
 `ALL_WAIVERS` — it is permanent record rather than a draining queue, and
-[`test_no_waiver_outlives_the_plan_that_owns_it`](../../tests/test_testing_contract.py)
+[`test_no_waiver_outlives_the_plan_that_owns_it`](../../tests/rules/test_testing_contract.py)
 would turn the whole ledger red the day this plan archives.
 
 **6. The column contract is derived from a build, and its Spark half leaves.**
@@ -2844,7 +2844,7 @@ Demonstrated by an inline default failing, not asserted.
 
 ### Stage AG: rules live in a directory, and an unregistered one cannot exist
 
-**Issue:** CAR-115 · **State:** `—` · **Gap:** G30
+**Issue:** CAR-115 · **State:** `done` · **Gap:** G30
 
 **Found by Stage Q, in the shape this plan keeps finding things.** That stage
 wrote four rules, ran the suite, and reported **3,899 passed** — with all four
@@ -2887,10 +2887,12 @@ whose subject is one artifact's configuration rather than a convention. That
 distinction is where the boundary will be argued next, and it is written here
 so the argument starts from a stated line.
 
-**The migration is small and self-verifying.** Three modules move (79
-definitions), carrying 34 path references in the mutation harness and one real
-import in `scripts/check_sql_execution_coverage.py`. A botched move is loud
-rather than silent, because Stage AF's `test_every_mutation_anchor_still_matches_its_file`
+**The migration is small and self-verifying.** Three of the modules carry 34
+path references in the mutation harness and one real import in
+`scripts/check_sql_execution_coverage.py`; those 79 definitions are where the
+migration's risk is, not its size — **eight modules move**, which is what the
+155-against-266 boundary above already said. A botched move is loud rather than
+silent, because Stage AF's `test_every_mutation_anchor_still_matches_its_file`
 fails on any anchor that stops matching exactly once.
 
 **Exit.** Rules live in their own directory; every test there is named in the
@@ -4765,3 +4767,78 @@ neither surface states — and `README.md`'s "More than 3,000 tests" holds at
 AA](#stage-aa-a-test-may-not-invent-another-services-response) together, so it
 is recorded once, when AA closes. Stage Z was a single day's work: four commits
 and a merge, `7410fd3`..`003f63a`.
+
+### Stage AG — rules live in a directory, and an unregistered one cannot exist
+
+**Issue:** CAR-115 · **Closed:** 2026-09-09 · **Measurements:**
+[plan_162_stage_AG_evidence.md](../evidence/plan_162_stage_AG_evidence.md)
+
+**The declaration moved from per test to per module, because per test had already
+failed.** Eight modules and **161 definitions** now live in `tests/rules/`,
+against **266** that stayed as Layer 0 config tests -- each of those named in
+[`docs/TESTING.md`](../TESTING.md) with the one artifact it is about, because
+*"the rest"* is not a reason. Membership obliges a row and a mutation in both
+directions, and shape could not have supplied the definition: *"a test that
+asserts about the repository"* scopes **411 of the 421** definitions that were at
+the top level. **G30 drained 89 rows and 81 mutations to 0**, and the harness went
+from 92 entries to 177. The stage estimated `~83`; that was `155 - 72` against
+pre-Stage-Z counts, and 89 is the measured number.
+
+**Three of the four defects this stage found were in the instrument, not the
+repository**, which is Stage AF's finding arriving with more force than it
+arrived the first time. **Six mutations had been reporting CAUGHT without ever
+running their rule** -- a bare node for a rule living in another module resolves
+to a test that does not exist, pytest exits 4 saying *not found*, and
+`caught = code != 0` read that as proof since the day each was written. The
+verdict is now **exit 1 exactly**, with `NO RUN` reported separately from
+`MISSED`, which also closes mechanically the false CAUGHT Stage AF had to catch
+by reading output. **The engine-bound exemption admitted 614 definitions to
+exempt one**, because it keyed on the directory's layer and every directory under
+`tests/integration/` is Layer 2 or deeper -- so a static repo-wide rule dropped
+into `tests/integration/ops/` would have escaped the membership rule entirely.
+It now reads the harness's `ENGINE_BOUND` per node, **614 to 1**, adding no
+registry because that tuple already decides what the harness provisions a
+database for; its own comment had already said why the layer is the wrong key.
+And **pytest's rewrite cache was producing wrong verdicts** -- it keys on
+*(mtime, size)*, so a same-length mutation restored in the same second leaves the
+next child importing mutated bytecode from a correct tree. All three are the same
+class: a verdict about something other than what its description claims.
+
+**The fourth was the rule catching the harness mid-proof.** Two mutations shipped
+with their payloads typed out as SQL, and `scripts/` is production Python, so the
+next baseline failed on `verify_testing_contract_mutations.py` itself. Reading
+the statement out of the file that owns it is both the repair and the better
+mutation.
+
+**Three mutations were MISSED and all three were the entry's fault rather than
+the rule's** -- two mutated a manifest classification where the rule reads a
+Compose `profiles:` key, and one used a heading that is an ignored prefix. Every
+correction is recorded beside its entry, which is the method defending itself in
+the direction Stage AF named.
+
+**Verified 2026-09-09.** The harness: **177 of 177 CAUGHT**, zero missed, zero
+unproven, exit 0, **twice in a row** -- the cache failure is order-dependent, so
+one clean run would not have been evidence. Locally 3,920 unit tests and `ruff`
+clean. **Observed in CI** on run `34418730747` for
+[#407](https://github.com/whitewalls86/new_car_tracker/pull/407): fourteen jobs
+green with `Documentation tests` scope-skipped, `Unit tests (pytest)` at 3,919
+passed with each new rule named in the log, and **`1 declared skip(s)
+accepted`** -- the re-pointed registry key matching the real nodeid at runtime,
+which is the one thing no static rule and no local run could prove.
+
+**Two things are not covered, and the evidence file says so rather than
+implying it.** `Documentation tests` scope-skips on a changeset this wide, so the
+`--noconftest tests/rules/test_planning_docs.py` step this stage re-pointed ran
+locally (54 passed) and not in CI; the first docs-only changeset exercises it.
+And a rule that is neither registered nor in the directory is reachable by no
+mechanism here -- the directory speaks only for what joined it, and that residual
+is written into the rule's docstring and into G30.
+
+**Public surfaces:** no mechanism, name or quantity either surface states was
+changed by this work. `README.md:317` and `info.html:855` both say *"More than
+3,000 tests run in CI"*, which holds at 3,919.
+
+**Cost: estimate 1, actual 1 (0).** Six commits in one day,
+`55e3d6b`..`331b340`. The estimate was argued down from a proposal to seed the
+backlog and drain it later, on the reasoning that 80 mutations against a settled
+pattern is not half a day of prompting -- which held.

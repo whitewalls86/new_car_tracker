@@ -3336,7 +3336,7 @@ published window**.
 
 Restricted to the 29 comparable commits whose window holds only plans that carry
 the section today, which is the state
-[`tests/test_planning_docs.py`](../../tests/test_planning_docs.py) now holds every
+[`tests/test_planning_docs.py`](../../tests/rules/test_planning_docs.py) now holds every
 future window to: **20 slice-only public edits under the old rule, 0 under the
 new one.** That is the stage's result.
 

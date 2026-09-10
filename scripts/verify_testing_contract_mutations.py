@@ -1,4 +1,4 @@
-"""Plan 161 / CAR-34: prove ``tests/test_testing_contract.py`` can fail.
+"""Plan 161 / CAR-34: prove ``tests/rules/test_testing_contract.py`` can fail.
 
 A contract test that nobody has watched fail is a contract test nobody knows
 anything about. This applies one mutation per rule, runs the single assertion
@@ -16,7 +16,7 @@ mutates are exactly the ones a change in progress is editing.
 exactly once, and every ``_delete`` path must still be on disk — a string search
 per entry, no mutation applied and no subprocess started, so it costs a fraction
 of a second. ``test_every_mutation_anchor_still_matches_its_file`` in
-``tests/test_testing_contract.py`` is that check, and it is there because an
+``tests/rules/test_testing_contract.py`` is that check, and it is there because an
 anchor is a literal in somebody else's file: it stops matching silently, and the
 only thing that ever noticed was a human choosing to run this script. Plan 162
 Stage Y broke five waivers keyed on ``admin.py:135:_fetch_dbt_context`` by adding
@@ -50,27 +50,20 @@ from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TEST = "tests/test_testing_contract.py"
+TEST = "tests/rules/test_testing_contract.py"
 
-#: Every module holding contract rules this harness proves can fail. A rule in
-#: its own module is still a contract rule, and the baseline has to run it --
+#: Every rule this harness proves can fail, as the baseline has to run it --
 #: a mutation measured against a suite that never collected its assertion
-#: reports CAUGHT for the wrong reason. ``tests/test_env_example_wiring.py`` is
-#: Plan 162 Stage V's and joined on 2026-09-08.
+#: reports CAUGHT for the wrong reason.
 #:
-#: The third entry is a **node, not a module**, and that is the whole of why it
-#: can be here. ``tests/integration/sql/test_fixture_statements.py`` is Layer 2
-#: and its other test takes a ``cur`` fixture, so naming the module would put a
-#: live Postgres between this harness and its own baseline. The one test in it
-#: that reads the corpus rather than planning against it takes no fixture and
-#: runs anywhere, so the baseline names exactly that test. Joined 2026-09-09 by
-#: Stage AF.
-TESTS = (
-    TEST,
-    "tests/test_env_example_wiring.py",
-    "tests/integration/sql/test_fixture_statements.py"
-    "::test_there_is_something_to_check",
-)
+#: **One directory, and nothing else.** Stage AF kept a list of modules here
+#: plus one node picked out of a Layer 2 suite -- the corpus floor, which takes
+#: no fixture and so could be run without a database while its sibling could
+#: not. Plan 162 Stage AG moved that floor into ``tests/rules/`` where it
+#: belongs and the list collapsed to the directory: enumerating the rule set
+#: here was a second copy of it, and this plan is named for what happens to
+#: those. Everything this harness mutates now runs from one path.
+TESTS = ("tests/rules/",)
 
 #: The nodes whose assertion cannot be reached without a live, Flyway-migrated
 #: Postgres. **Per node and not per module**, because the module holding this
@@ -248,6 +241,32 @@ def _pytest(node: str | None = None, dsn: str | None = None) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def _drop_rewritten_bytecode(relative: str) -> None:
+    """Delete pytest's rewritten bytecode for one source file.
+
+    **Without this the harness reports the wrong verdict, silently.** pytest
+    rewrites assertions and caches the result in ``__pycache__`` under a key of
+    *(mtime, size)*. A mutation that changes a file's content without changing
+    its length -- ``rglob("test_*.py")`` to ``rglob("rule_*.py")`` is exactly
+    that -- and is restored in the same second leaves that key identical, so the
+    *next* child run imports the **mutated** bytecode from a tree that is back to
+    normal. Found 2026-09-09 by Plan 162 Stage AG: the entry after that one
+    reported MISSED, and the final restore check reported two failures, against
+    a working tree that was byte-for-byte correct.
+
+    It is the same class as the false CAUGHT this file already records -- a
+    verdict about something other than what the description claims -- and it
+    cannot be left to the conventions, because a same-length mutation is a
+    perfectly reasonable thing to write.
+    """
+    cache = (REPO_ROOT / relative).parent / "__pycache__"
+    if not cache.is_dir():
+        return
+    stem = Path(relative).stem
+    for compiled in cache.glob(f"{stem}.*.pyc"):
+        compiled.unlink(missing_ok=True)
+
+
 def _edit(relative: str, old: str, new: str) -> None:
     path = REPO_ROOT / relative
     text = path.read_text(encoding="utf-8")
@@ -257,12 +276,14 @@ def _edit(relative: str, old: str, new: str) -> None:
             f"stale, which means it has stopped testing anything."
         )
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    _drop_rewritten_bytecode(relative)
 
 
 def _write(relative: str, text: str) -> None:
     path = REPO_ROOT / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    _drop_rewritten_bytecode(relative)
 
 
 def _delete(relative: str) -> None:
@@ -281,6 +302,7 @@ def _delete(relative: str) -> None:
             f"gone stale, which means it has stopped testing anything."
         )
     path.unlink()
+    _drop_rewritten_bytecode(relative)
 
 
 # (assertion that should notice, what changed, how to change it, files to
@@ -300,6 +322,25 @@ def _statement(name: str) -> str:
     stand-in for it.
     """
     return (_TEST_SQL / f"{name}.sql").read_text(encoding="utf-8")
+
+
+def _production_statement(relative: str) -> str:
+    """A production statement, read from the ``.sql`` file that owns it.
+
+    The general form of :func:`_statement`, and it is here for the same reason
+    stated one function up -- except that this time the rule caught the harness
+    rather than the harness anticipating the rule. Plan 162 Stage AG registered
+    ``test_no_production_module_holds_a_sql_statement``, wrote two mutations
+    with their payloads typed out as SQL literals, and the very next baseline
+    run failed on this file: ``scripts/`` is production Python, so a statement
+    typed here is inline SQL like any other. Reading the text out of the file
+    that owns it is both the fix and the better mutation -- what gets filed
+    twice is the *real* statement rather than a plausible-looking stand-in.
+    """
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    return "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    ).strip()
 
 
 MUTATIONS = [
@@ -341,12 +382,12 @@ MUTATIONS = [
         "test_the_route_code_corpus_is_not_empty",
         "the path matcher stops matching, and the coverage rule goes quiet",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             "    return all(a.startswith(\"{\") or a == b "
             "for a, b in zip(decorator, tail))",
             "    return False",
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
@@ -825,22 +866,22 @@ MUTATIONS = [
         "test_every_sql_corpus_exemption_is_declared",
         "an exemption quietly shrinks the coverage denominator",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")',
             '_SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/", "dashboard/")',
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
         "test_the_production_sql_corpus_is_not_empty",
         "the corpus glob stops matching and every coverage number reads 0 of 0",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             "            for path in REPO_ROOT.rglob(\"*.sql\")",
             "            for path in REPO_ROOT.rglob(\"*.sqlx\")",
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     (
@@ -911,7 +952,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
+        "tests/rules/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
         "a key is documented in .env.example that no Compose service delivers",
         lambda: _edit(
             ".env.example",
@@ -922,7 +963,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
+        "tests/rules/test_env_example_wiring.py::test_every_documented_key_reaches_a_service",
         "the same key, named only in a docker-compose.yml comment",
         lambda: (
             _edit(
@@ -941,7 +982,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_no_undelivered_key_is_quietly_wired",
+        "tests/rules/test_env_example_wiring.py::test_no_undelivered_key_is_quietly_wired",
         "a key declared undelivered is wired into Compose after all",
         lambda: _edit(
             "docker-compose.yml",
@@ -953,19 +994,19 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_every_undelivered_declaration_names_a_consumer_that_reads_it",
         "an Undelivered entry names a real file that does not read its key",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             'consumer="scraper/processors/scrape_results.py"',
             'consumer="scraper/app.py"',
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
+        "tests/rules/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
         "a Compose service interpolates a variable .env.example never documents",
         lambda: _edit(
             "docker-compose.yml",
@@ -977,32 +1018,32 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
+        "tests/rules/test_env_example_wiring.py::test_every_interpolated_variable_is_documented",
         "the $$ escape strip is removed, so $${HOSTNAME} reads as interpolated",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             '_REFERENCE.findall(_ESCAPED.sub("", node))',
             "_REFERENCE.findall(node)",
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
         "test_the_fixture_relation_corpus_is_not_empty",
         "the shadowing _CREATE_TABLE comes back and empties the corpus",
         lambda: _edit(
-            "tests/test_testing_contract.py",
+            "tests/rules/test_testing_contract.py",
             "_CREATE_TABLE_BODY = re.compile(",
             "_CREATE_TABLE = re.compile(",
         ),
-        ["tests/test_testing_contract.py"],
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     # -----------------------------------------------------------------------
     # Plan 162 Stage AF. The twenty rules the `Asserted by` column named and
     # nobody had watched fail. Each description says what defect the rule is
     # meant to catch, because that sentence is the artifact -- see the stage's
-    # note in `tests/test_testing_contract.py` on why no generator writes it.
+    # note in `tests/rules/test_testing_contract.py` on why no generator writes it.
     # -----------------------------------------------------------------------
     (
         "tests/integration/sql/test_fixture_statements.py"
@@ -1192,7 +1233,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_no_undocumented_declaration_is_quietly_documented",
         "a variable declared absent from .env.example is documented there anyway",
         lambda: _edit(
@@ -1205,23 +1246,23 @@ MUTATIONS = [
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_every_undocumented_declaration_names_a_file_that_interpolates_it",
         "an Undocumented entry outlives the Compose file it was written for",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             'compose_file="docker-compose.mlflow.yml"',
             'compose_file="docker-compose.lakehouse.yml"',
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/test_env_example_wiring.py"
+        "tests/rules/test_env_example_wiring.py"
         "::test_neither_ledger_grows_without_the_ceiling_moving",
         "a fifth undocumented variable is declared and the ceiling stays at four",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             # Anchored on the tuple's last entry and its close, so the append
             # lands *inside* UNDOCUMENTED. Anchoring on the comment below it
             # put the new entry after the closing paren, and the module then
@@ -1238,23 +1279,22 @@ MUTATIONS = [
             "    ),\n"
             ")\n\n#: Ceilings, not counts",
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/test_env_example_wiring.py::test_both_corpora_are_not_empty",
+        "tests/rules/test_env_example_wiring.py::test_both_corpora_are_not_empty",
         "the docker-compose glob stops matching and every rule there goes quiet",
         lambda: _edit(
-            "tests/test_env_example_wiring.py",
+            "tests/rules/test_env_example_wiring.py",
             'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
             'return sorted(_REPO_ROOT.glob("docker-compose*.yaml"))',
         ),
-        ["tests/test_env_example_wiring.py"],
+        ["tests/rules/test_env_example_wiring.py"],
         [],
     ),
     (
-        "tests/integration/sql/test_fixture_statements.py"
-        "::test_there_is_something_to_check",
+        "test_there_is_something_to_check",
         "the tests/sql tree moves and the statement corpus empties under the rule",
         lambda: _edit(
             TEST,
@@ -1326,7 +1366,7 @@ MUTATIONS = [
     # the rules are required in CI precisely because `ubuntu-latest` has the
     # CLI, and an undeclared skip there fails the run.
     (
-        "test_the_ci_override_is_the_whole_difference",
+        "tests/rules/test_ci_compose_parity.py::test_the_ci_override_is_the_whole_difference",
         "CI's services gain a difference from production's that nobody declared",
         lambda: _edit(
             "docker-compose.ci.yml",
@@ -1338,7 +1378,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_ci_runs_productions_flyway_command",
+        "tests/rules/test_ci_compose_parity.py::test_ci_runs_productions_flyway_command",
         "production's Flyway stops baselining and CI stops noticing",
         lambda: _edit(
             "docker-compose.yml",
@@ -1349,7 +1389,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_no_heavy_job_declares_its_own_services",
+        "tests/rules/test_ci_compose_parity.py::test_no_heavy_job_declares_its_own_services",
         "a job goes back to hand-declaring the database it tests against",
         lambda: _edit(
             ".github/workflows/ci.yml",
@@ -1365,7 +1405,7 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_heavy_job_starts_the_compose_services",
+        "tests/rules/test_ci_compose_parity.py::test_every_heavy_job_starts_the_compose_services",
         "a job stops starting its services and only the Flyway step still names them",
         # Anchored on the one `up` line that does not start MinIO, so it
         # matches exactly once across the five jobs.
@@ -1378,7 +1418,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_gap_a_stage_claims_exists",
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_every_gap_a_stage_claims_exists",
         "a gap entry is renamed and the stage claiming it points at nothing",
         # G29 is Stage AF's, and its header claims it. Renaming the row is a
         # truer mutation than deleting it: the gap list is allowed to lose a
@@ -1393,14 +1434,15 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_the_gap_claim_corpus_is_not_empty",
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_the_gap_claim_corpus_is_not_empty",
         "the gap-claim pattern stops matching and the rule reads an empty set",
         lambda: _edit(
-            "tests/test_planning_docs.py",
+            "tests/rules/test_planning_docs.py",
             r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
             r'_GAP_CLAIM = re.compile(r"\*\*Gaps:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
         ),
-        ["tests/test_planning_docs.py"],
+        ["tests/rules/test_planning_docs.py"],
         [],
     ),
     # Plan 162 Stage Z. The gate is `generate_service_contracts.py --check`;
@@ -1447,6 +1489,1215 @@ MUTATIONS = [
         [".github/workflows/ci.yml"],
         [],
     ),
+    # -----------------------------------------------------------------------
+    # Plan 162 Stage AG. The rules that moved into `tests/rules/` and had no
+    # row, and therefore owed no mutation -- which is G30 exactly: the
+    # obligation reads the `Asserted by` column, so an unregistered rule was
+    # asked for nothing. Registering them is what made these owed.
+    # -----------------------------------------------------------------------
+    # `tests/rules/test_readme_contract.py`. The subject is `README.md`, which
+    # is published on merge with no deploy in between, so every mutation here
+    # is an edit to the file itself rather than to the rule that reads it.
+    (
+        "tests/rules/test_readme_contract.py::test_every_local_readme_link_resolves",
+        "a README link stops resolving, which is a 404 on the front door",
+        lambda: _edit(
+            "README.md",
+            "](docs/TESTING.md)",
+            "](docs/TESTING_STRATEGY.md)",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_the_readme_states_both_halves_of_the_production_split",
+        "a heading is reworded, and the two section rules would pass vacuously",
+        lambda: _edit(
+            "README.md",
+            "**Proven but not production-serving.**",
+            "**Proven, but not yet serving production.**",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_no_experimental_component_is_listed_as_production",
+        "a migration-track name appears in the production list",
+        lambda: _edit(
+            "README.md",
+            "- MinIO holds replayable bronze HTML and permanent Parquet history.",
+            "- MinIO holds replayable bronze HTML and permanent Iceberg history.",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_the_experimental_stack_is_still_disclaimed_by_name",
+        "an experimental name is deleted rather than moved, which the rule above allows",
+        lambda: _edit(
+            "README.md",
+            "- dbt-Spark parity work and MLflow experiment provenance.",
+            "- dbt-Spark parity work and experiment provenance.",
+        ),
+        ["README.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_readme_contract.py"
+        "::test_duckdb_is_named_as_what_actually_serves",
+        "the README stops naming what actually serves the dashboard",
+        lambda: _edit(
+            "README.md",
+            "- dbt and DuckDB build and serve every analytical mart used by the public page,",
+            "- dbt builds and serves every analytical mart used by the public page,",
+        ),
+        ["README.md"],
+        [],
+    ),
+    # `tests/rules/test_declared_skips.py`. The subject is the hook in
+    # `tests/plugins/declared_skips.py`, so each mutation takes out one of the
+    # three directions it enforces. A hook that quietly stopped noticing is the
+    # defect it exists to prevent, which is why these are worth having at all.
+    (
+        "tests/rules/test_declared_skips.py::test_an_undeclared_skip_fails_the_run",
+        "the hook stops noticing a skip nobody declared",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    undeclared = sorted("
+            "nodeid for nodeid in observed if nodeid not in declared)",
+            "    undeclared = []",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py::test_a_declared_skip_is_accepted_and_named",
+        "the hook stops reporting on a green run, so a job where it never "
+        "loaded looks identical to one where it was satisfied",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            '    terminalreporter.section("Declared skips", red=failed)',
+            '    if failed:\n'
+            '        terminalreporter.section("Declared skips", red=failed)',
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_a_declared_skip_that_stops_skipping_fails_the_run",
+        "a declaration whose reason has stopped being true goes unreported",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    silent = sorted(\n"
+            '        f"{nodeid} (declared {entry.since}: {entry.condition})"',
+            "    silent = []\n"
+            "    _unused = (\n"
+            '        f"{nodeid} (declared {entry.since}: {entry.condition})"',
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_a_declared_skip_a_run_never_selected_is_not_a_failure",
+        "the drift direction stops reading the selected set, so every job "
+        "fails for the declarations belonging to the other jobs",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "        if nodeid in _selected and nodeid not in observed",
+            "        if nodeid not in observed",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_a_declared_skip_firing_for_a_different_cause_fails_the_run",
+        "a test skipping for a new cause inherits the old declaration",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    mismatched = sorted(\n"
+            '        f"{nodeid}\\n      declared condition: '
+            '{declared[nodeid].condition!r}"',
+            "    mismatched = []\n"
+            "    _unused = (\n"
+            '        f"{nodeid}\\n      declared condition: '
+            '{declared[nodeid].condition!r}"',
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py::test_the_gate_is_off_by_default",
+        "the gate defaults on, and every local run fails for the recap check "
+        "that correctly does not skip on a full clone",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    if not os.environ.get(GATE):\n        return",
+            "    if os.environ.get(GATE) == \"off\":\n        return",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_declared_skips.py"
+        "::test_an_unfamiliar_report_shape_is_read_rather_than_indexed",
+        "an unfamiliar report shape is indexed instead of stringified, so it "
+        "surfaces as an IndexError in a terminal summary rather than a "
+        "mismatch someone can read",
+        lambda: _edit(
+            "tests/plugins/declared_skips.py",
+            "    if isinstance(longrepr, tuple) and len(longrepr) == 3:",
+            "    if longrepr is not None:",
+        ),
+        ["tests/plugins/declared_skips.py"],
+        [],
+    ),
+    # `tests/rules/test_maintenance_running_set.py`. The subject is
+    # `maintenance-running-set.txt`, and the derivation is negative -- anything
+    # not named is expected running -- so most of these delete or reclassify an
+    # entry rather than adding a wrong one.
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_the_file_exists",
+        "the manifest leaves the tree, and a restore can no longer tell a "
+        "deliberately-stopped service from a forgotten one",
+        lambda: _delete("maintenance-running-set.txt"),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_every_entry_declares_a_known_class",
+        "an entry declares a class no restore knows how to act on",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "snapshot-worker on-demand Profile-gated",
+            "snapshot-worker on-demand-oneshot Profile-gated",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_every_entry_carries_a_reason",
+        "an entry loses the written reason somebody has to re-evaluate at 2am",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "dbt_test on-demand Profile-gated (`tools`) tools image, same as `dbt`.",
+            "dbt_test on-demand same as dbt.",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestRegistryShape::test_every_entry_names_a_real_service",
+        "a renamed service leaves an entry behind that then covers whatever "
+        "takes its name next",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "april-processor on-demand Profile-gated",
+            "april-processor-run on-demand Profile-gated",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestDefaultProjectIsFullyClassified::test_profile_gated_services_are_all_classified",
+        "a profile-gated service is unclassified, so a plain `up -d` gets it "
+        "wrong in one direction and nothing says which",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "dbt on-demand Profile-gated (`tools`) tools image, invoked as a one-shot\n"
+            "    `docker compose run`. Never started by `up -d` and never restored.\n"
+            "\n",
+            "",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestDefaultProjectIsFullyClassified::test_services_without_a_restart_policy_are_classified",
+        "a service Docker will not restart after a reboot is named nowhere, "
+        "so the fleet comes back missing it and nobody is looking",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "flyway oneshot Runs the Flyway migrations to completion and exits. Every\n"
+            "    consumer gates on `condition: service_completed_successfully`. A restore\n"
+            '    that waits for it to be "running" waits forever.\n'
+            "\n",
+            "",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestDefaultProjectIsFullyClassified::test_long_running_services_are_not_silently_absent",
+        "the solver is reclassified on-demand, so the expected-running set "
+        "stops containing a service that must be restored",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "trawl profile-running Profile-gated",
+            "trawl on-demand Profile-gated",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestKnownFindingsStayRecorded::test_caddy_restart_gap_is_recorded_while_it_exists",
+        "caddy loses the restart policy Plan 142 gave it and no entry records "
+        "the gap, so :80 and :443 stay down after a reboot with nothing "
+        "reporting it",
+        lambda: _edit(
+            "docker-compose.yml",
+            "    # leave the policy silently unapplied.\n    restart: unless-stopped",
+            "    # leave the policy silently unapplied.\n    restart: \"no\"",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestKnownFindingsStayRecorded::test_the_four_soak_containers_are_all_aux_paused",
+        "one of the four stale unhealthy containers the Plan 140 soak found "
+        "is reclassified, re-arming that finding",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "cartracker-mlflow/mlflow aux-paused Standalone",
+            "cartracker-mlflow/mlflow on-demand Standalone",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_maintenance_running_set.py"
+        "::TestKnownFindingsStayRecorded::test_trawl_and_redis_trawl_are_restored_together",
+        "the solver's Redis stops being restored with it, which is the "
+        "2026-08-14 outage with an extra step",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "redis-trawl profile-running Backs",
+            "redis-trawl on-demand Backs",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    # `tests/rules/test_image_keep_set.py`. Two subjects -- the Compose files
+    # and the manifest the keep-set is derived from, and the runbook block that
+    # carries the answer to the operator holding the prune command.
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_every_compose_file_is_attributed_to_a_project",
+        "a Compose file is attributed to no project, so its images are "
+        "invisible to the keep-set and a prune takes them",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            '    "docker-compose.test.yml": "cartracker-test",\n',
+            "",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_a_shared_image_is_joined_to_every_service_that_builds_it",
+        "a service stops sharing the image two others build, and the join "
+        "that protects it loses a holder",
+        lambda: _edit(
+            "docker-compose.yml",
+            "    image: cartracker-archiver\n"
+            "    container_name: cartracker-pack-worker",
+            "    image: cartracker-pack-worker\n"
+            "    container_name: cartracker-pack-worker",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_one_running_service_protects_a_shared_image",
+        "the holder join goes from any-to-all, which is the label-to-image "
+        "hazard Plan 170 Stage A named: an image two running services need "
+        "enters the keep-set because a third holder is on-demand",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            "        if not keys & held",
+            "        if not keys <= held",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape::test_interpolated_and_digest_references_resolve_to_what_the_host_shows",
+        "an interpolated image reference stops resolving to its default, so "
+        "the rendered block cannot be matched by eye against the host",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            "    interpolated = _INTERPOLATED.match(reference)\n"
+            "    if interpolated:\n"
+            "        reference = interpolated.group(\"default\")",
+            "    interpolated = None",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_every_entry_is_classified_by_the_manifest",
+        "a kept image is held only by services no manifest entry names, so "
+        "the block says it is kept and cannot say why",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "cartracker-mlflow/mlflow aux-paused Standalone Plan 112 Gate B tracking server",
+            "cartracker-mlflow-server/mlflow aux-paused Standalone Plan 112 Gate B server",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_every_entry_carries_a_protected_class",
+        "a kept image's only class is one that does not justify keeping it, "
+        "so the keep-set is over-protecting and nothing says so",
+        lambda: _edit(
+            "maintenance-running-set.txt",
+            "cartracker-lakehouse/lakekeeper-migrate aux-paused Same project and pause.",
+            "cartracker-lakehouse/lakekeeper-migrate oneshot Same project and pause.",
+        ),
+        ["maintenance-running-set.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_the_four_paused_and_on_demand_images_are_all_in_it",
+        "a profile gate is dropped, and one of the four images `docker image "
+        "prune -a` would take silently leaves the keep-set",
+        # **Not a reclassification in the manifest.** The first draft of this
+        # entry dropped `on-demand` from `PROTECTED_CLASSES` and was MISSED:
+        # that tuple is read by `test_every_entry_carries_a_protected_class`
+        # alone, and `keep_set()` asks only whether a container holds the image.
+        # The mutation has to change the *derivation's* answer, and a `profiles:`
+        # key is what decides it.
+        lambda: _edit(
+            "docker-compose.yml",
+            '    profiles: [ "tools" ]',
+            "    # the profile gate that kept this image out of `up -d`",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_the_third_party_catalog_is_carried_by_name",
+        "the third-party catalog loses one of the two services that carry it, "
+        "which is the only reason an unlabelled image is in the block at all",
+        lambda: _edit(
+            "docker-compose.lakehouse.yml",
+            "    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}\n"
+            "    container_name: cartracker-lakekeeper-migrate",
+            "    image: quay.io/lakekeeper/catalog:v0.13.2\n"
+            "    container_name: cartracker-lakekeeper-migrate",
+        ),
+        ["docker-compose.lakehouse.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheKeepSetProtectsWhatTheManifestNames::test_the_solver_and_its_redis_are_both_kept",
+        "the solver's Redis loses its profile gate, so it leaves the keep-set "
+        "and a prune in the window before `--profile trawl` takes it",
+        # Same correction as the entry above: the class in the manifest is not
+        # what `keep_set()` reads, so reclassifying `redis-trawl` was MISSED.
+        lambda: _edit(
+            "docker-compose.yml",
+            '    restart: unless-stopped\n    profiles: ["trawl"]\n'
+            "    # Plan 124: bound Redis memory alongside the trawl solver it backs.",
+            "    restart: unless-stopped\n"
+            "    # Plan 124: bound Redis memory alongside the trawl solver it backs.",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheRunbookCarriesTheDerivation::test_the_rendered_block_matches_the_derivation",
+        "the runbook block stops matching the derivation, so the operator "
+        "holding the prune command is told the old answer",
+        lambda: _edit(
+            "docs/runbooks/runbook_storage_maintenance.md",
+            "on-demand       cartracker-dbt:latest",
+            "on-demand       cartracker-dbt:v2",
+        ),
+        ["docs/runbooks/runbook_storage_maintenance.md"],
+        [],
+    ),
+    # The five rules that were already in `test_testing_contract.py` and had
+    # never been registered, so the obligation never asked them for anything.
+    (
+        "test_no_sql_comment_contains_a_parameter_placeholder",
+        "a comment written to explain a parameter adds one, and psycopg2 "
+        "counts it -- so the caller passes too few and the route answers 503",
+        lambda: _edit(
+            "ops/sql/select_user_role.sql",
+            "-- Resolve a caller's role from the hash of their email address.",
+            "-- Resolve a caller's role from the hash %s of their email address.",
+        ),
+        ["ops/sql/select_user_role.sql"],
+        [],
+    ),
+    (
+        "test_no_two_production_sql_files_hold_the_same_statement",
+        "a statement is filed twice, which is two things to edit and one to forget",
+        # `_write` rather than `_edit`, because an `_edit` anchor into a `.sql`
+        # file *is* a SQL literal in this module and fails the rule one entry
+        # down. The anchor rule reads only the path and the anchor, so a
+        # computed replacement is fine -- but here there is no anchor to read
+        # that would not itself be a statement.
+        lambda: _write(
+            "ops/sql/select_live_cooldown_listings.sql",
+            _production_statement("ops/sql/select_user_role.sql"),
+        ),
+        ["ops/sql/select_live_cooldown_listings.sql"],
+        [],
+    ),
+    (
+        "test_the_sql_in_python_rule_sees_every_shape_that_can_hold_a_statement",
+        "the detector goes back to reading an f-string's head only, which is "
+        "Rule 5b's hole restored: an f-string leads with a verb and nothing "
+        "after it, so the clause grammar judges it not a statement",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            "    if isinstance(node, ast.JoinedStr):\n"
+            '        return "".join(\n'
+            "            value.value\n"
+            "            if isinstance(value, ast.Constant) "
+            "and isinstance(value.value, str)\n"
+            '            else " ? "\n'
+            "            for value in node.values\n"
+            "        )",
+            "    if isinstance(node, ast.JoinedStr):\n"
+            "        return next(\n"
+            "            (value.value for value in node.values\n"
+            "             if isinstance(value, ast.Constant)\n"
+            "             and isinstance(value.value, str)),\n"
+            "            None,\n"
+            "        )",
+        ),
+        ["tests/rules/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_no_production_module_holds_a_sql_statement",
+        "a production module grows a SQL statement in Python, so it is in no "
+        "`.sql` file and the Layer 2 census cannot count it",
+        lambda: _edit(
+            "shared/db_vocabularies.py",
+            '    ("vin_to_listing_events", "event_type"): VinToListingEvent,\n}',
+            '    ("vin_to_listing_events", "event_type"): VinToListingEvent,\n}\n\n'
+            'ROLE_LOOKUP = """'
+            + _production_statement("ops/sql/select_user_role.sql")
+            + '"""',
+        ),
+        ["shared/db_vocabularies.py"],
+        [],
+    ),
+    (
+        "test_no_waiver_is_listed_twice",
+        "a waiver is listed twice, making the ledger look longer than the debt "
+        "it records -- and every ceiling in this repository is read off a "
+        "ledger's length",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            "    Waiver(\n"
+            '        "ops/sql/cancel_coordination_state.sql == "\n'
+            '        "ops/sql/release_deploy_coordination.sql",\n'
+            '        gap="G17",\n'
+            "        owner=162,\n"
+            "    ),",
+            "    Waiver(\n"
+            '        "ops/sql/cancel_coordination_state.sql == "\n'
+            '        "ops/sql/release_deploy_coordination.sql",\n'
+            '        gap="G17",\n'
+            "        owner=162,\n"
+            "    ),\n"
+            "    Waiver(\n"
+            '        "ops/sql/cancel_coordination_state.sql == "\n'
+            '        "ops/sql/release_deploy_coordination.sql",\n'
+            '        gap="G17",\n'
+            "        owner=162,\n"
+            "    ),",
+        ),
+        ["tests/rules/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheRunbookCarriesTheDerivation::test_the_block_appears_exactly_once",
+        "a second block is appended rather than the stale one replaced, which "
+        "satisfies the match rule and leaves the runbook holding two answers",
+        lambda: _edit(
+            "docs/runbooks/runbook_storage_maintenance.md",
+            "# Derived from docker-compose*.yml and maintenance-running-set.txt\n",
+            "# Derived from docker-compose*.yml and maintenance-running-set.txt\n"
+            "# Derived from docker-compose*.yml and maintenance-running-set.txt\n",
+        ),
+        ["docs/runbooks/runbook_storage_maintenance.md"],
+        [],
+    ),
+    # The three rules Stage AG added, proved by the instrument they are part
+    # of -- the same self-measurement Stage AF recorded when three of its own
+    # twenty-two entries proved the rules it had just written.
+    (
+        "test_the_rules_directory_is_not_empty",
+        "the rules directory's glob stops matching, which retires both "
+        "membership directions in silence -- G30 one level up from itself",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            'for path in sorted(RULES_DIR.rglob("test_*.py")):',
+            'for path in sorted(RULES_DIR.rglob("rule_*.py")):',
+        ),
+        ["tests/rules/test_testing_contract.py"],
+        [],
+    ),
+    (
+        "test_every_test_in_the_rules_directory_is_named_in_the_contract",
+        "a rule joins the directory with no row, so nothing obliges it to have "
+        "been watched fail -- which is Stage Q's four rules and 3,899 passed",
+        # The stage's own exit reads *demonstrated by an unregistered rule
+        # failing, not asserted*, and this is that demonstration made durable:
+        # the payload is a real new rule module, not an edit to an existing one.
+        lambda: _write(
+            "tests/rules/test_an_unregistered_rule.py",
+            '"""Layer 0. A rule nobody registered, written to be caught."""\n'
+            "\n\ndef test_a_rule_that_joined_no_row():\n"
+            "    assert True\n",
+        ),
+        [],
+        ["tests/rules/test_an_unregistered_rule.py"],
+    ),
+    (
+        "test_every_asserted_rule_lives_in_the_rules_directory",
+        "the engine-bound exemption empties, so the one rule that legitimately "
+        "lives outside the directory is reported misplaced -- the fail-closed "
+        "direction, which is what stops an unreadable ENGINE_BOUND exempting "
+        "everything instead of nothing",
+        # Anchored on the line *above* the tuple rather than on
+        # ``ENGINE_BOUND = (``, which the replacement would reintroduce -- the
+        # anchor rule caught that on the first run, matching three times
+        # instead of once. Commenting the binding out empties the set the
+        # exemption reads, because the parse finds no such assignment.
+        lambda: _edit(
+            "scripts/verify_testing_contract_mutations.py",
+            "#: throwaway database this script provisions and destroys; "
+            "see :func:`_engine`.\nENGINE_BOUND",
+            "#: throwaway database this script provisions and destroys; "
+            "see :func:`_engine`.\n_NO_LONGER_ENGINE_BOUND",
+        ),
+        ["scripts/verify_testing_contract_mutations.py"],
+        [],
+    ),
+    (
+        "test_every_asserted_rule_lives_in_the_rules_directory",
+        "a rule is registered and written outside the directory, where the "
+        "membership rule above cannot see it and the next Stage Q would land",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| The rules table may not claim a check the suite does not "
+            "implement | `test_every_asserted_rule_names_a_real_test` |",
+            "| The rules table may not claim a check the suite does not "
+            "implement | `test_every_asserted_rule_names_a_real_test`, "
+            "`test_the_first_entry_line_is_service_then_reason` |",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    # -----------------------------------------------------------------------
+    # `tests/rules/test_planning_docs.py` -- 43 rules, the largest single
+    # block Stage AG registered. The subject is the planning system itself:
+    # `docs/PLANS.md`, the archive, the plan documents and the recaps. Seven of
+    # these mutate what Plan 146 Stage 5 mutated by hand before the writing
+    # skill existed, when all eighteen assertions then in the file passed on
+    # every one.
+    # -----------------------------------------------------------------------
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanTableCoverage::test_every_plan_document_filename_declares_an_identifier",
+        "a plan document arrives under a name the parser cannot read, so it is "
+        "in no table by construction and excluded from coverage in silence",
+        lambda: _write("docs/plans/notes_on_the_next_one.md", "# Notes\n"),
+        [],
+        ["docs/plans/notes_on_the_next_one.md"],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanTableCoverage::test_every_plan_document_appears_in_a_table",
+        "a plan has a document and no row, which is how Plan 65 shipped and "
+        "disappeared for four months",
+        lambda: _write("docs/plans/plan_999_unclaimed.md", "# Plan 999: unclaimed\n"),
+        [],
+        ["docs/plans/plan_999_unclaimed.md"],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanTableCoverage::test_no_plan_number_appears_in_two_tables",
+        "a plan is claimed by two tables, so 'is plan N done?' is unanswerable "
+        "from the index and the reader takes whichever row they saw first",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n",
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n"
+            "| [162](plans/plan_162_testing_census_and_restructure.md) | "
+            "Testing census and CI restructure | 75 | L | **A trigger** |\n",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract"
+        "::test_published_build_order_window_carries_what_this_plan_is_for",
+        "a plan inside the published build-order window loses the section the "
+        "public page renders, and no waiver may cover that window",
+        lambda: _edit(
+            "docs/plans/plan_134_archiver_endpoint_failure_contract.md",
+            "## What this plan is for",
+            "## What this plan was for",
+        ),
+        ["docs/plans/plan_134_archiver_endpoint_failure_contract.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_published_archive_window_carries_public_summary",
+        "a plan inside the published archive window loses its public summary",
+        lambda: _edit(
+            "docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md",
+            "## Public summary",
+            "## Public summary of the work",
+        ),
+        ["docs/plans/plan_151_distributed_tracing_and_runtime_topology_audit.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_no_waiver_covers_a_published_plan",
+        "a waiver reaches into the published window, which is the one place "
+        "the contract allows none",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
+            "    SectionWaiver(162),\n"
+            "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_live_plans_carry_what_this_plan_is_for_or_a_waiver",
+        "a live plan loses the section and is covered by no waiver",
+        lambda: _edit(
+            "docs/plans/plan_179_derived_service_call_graph.md",
+            "## What this plan is for",
+            "## What this plan is about",
+        ),
+        ["docs/plans/plan_179_derived_service_call_graph.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_closeout_plans_carry_the_checks_or_a_waiver",
+        "a plan in closeout owes `## The checks` and does not carry it, which "
+        "is the section `close-out` writes on exactly that transition",
+        lambda: _edit(
+            "docs/plans/plan_170_container_image_reclaim_policy.md",
+            "## The checks",
+            "## The checks it ran",
+        ),
+        ["docs/plans/plan_170_container_image_reclaim_policy.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_no_waiver_outlives_the_plan_it_names",
+        "a waiver names a plan that has left every live table, so it grandfathers "
+        "nothing and nobody notices",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(64), SectionWaiver(66),",
+            "    SectionWaiver(4), SectionWaiver(66),",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract"
+        "::test_no_waiver_names_a_plan_that_postdates_the_contract",
+        "a plan drafted under the contract is waived rather than fixed, which "
+        "is the contract being bypassed the week it landed",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(169), SectionWaiver(171),",
+            "    SectionWaiver(169), SectionWaiver(179),",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_neither_waiver_list_has_grown",
+        "the escape valve widens by one legitimate-looking entry, which every "
+        "per-entry check passes cleanly and only the count can see",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(149), SectionWaiver(160),\n)",
+            "    SectionWaiver(149), SectionWaiver(160), SectionWaiver(154),\n)",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_every_live_plan_without_a_document_is_named",
+        "a live plan with no document is named nowhere, so it disappears from "
+        "both the compliant count and the waived one",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "NO_DOCUMENT_LIVE_PLANS = frozenset({88})",
+            "NO_DOCUMENT_LIVE_PLANS = frozenset()",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestRowExitConditions::test_every_closeout_row_has_a_parsable_lands_date",
+        "a closeout row's date stops parsing, and the day somebody looks is no "
+        "longer a day",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "[142](plans/plan_142_planned_host_maintenance.md) | **2026-09-30**",
+            "[142](plans/plan_142_planned_host_maintenance.md) | **end of September**",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestRowExitConditions::test_every_closeout_row_has_a_gate",
+        "a closeout row names nothing that removes it, so the date arrives and "
+        "nothing changes",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n",
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n"
+            "| [66](plans/plan_66_sql_injection.md) | **2026-12-01** | -- |\n",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestRowExitConditions::test_every_backlog_row_has_a_trigger",
+        "a backlog row names no trigger, and a row with no trigger is a wish",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M | -- |\n"
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestBuildOrderBlockers::test_every_blocker_names_a_known_plan_or_a_date",
+        "a blocker becomes a vague wait with no plan and no date, so nobody can "
+        "tell when the row becomes workable",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| **N** | Plan 125 Gate D | 76 | L |",
+            "| **N** | once the dust settles | 76 | L |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestBuildOrderBlockers::test_no_blocker_names_a_plan_that_does_not_exist",
+        "a typo'd plan number reads as a real dependency and blocks a row forever",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| **N** | Plan 112 | 74 | M |",
+            "| **N** | Plan 912 | 74 | M |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestIndexLineBudget::test_the_index_states_a_line_budget",
+        "the index stops stating a budget, which makes the check below "
+        "unreadable rather than false",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "**Line budget: 250 lines.**",
+            "**Line allowance: 250 lines.**",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestIndexLineBudget::test_the_index_is_under_its_stated_budget",
+        "the index exceeds the budget it states, which is narrative that "
+        "belongs in the decision log",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "**Line budget: 250 lines.**",
+            "**Line budget: 10 lines.**",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestDocumentationLinks::test_no_markdown_link_in_docs_is_dangling",
+        "a link under docs/ stops resolving, which is how Plan 146 started",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "(plans/plan_66_sql_injection.md)",
+            "(plans/plan_66_sql_injection_audit.md)",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestDocumentationLinks::test_the_scan_actually_reads_links",
+        "the link pattern stops matching, and a link checker that matches "
+        "nothing passes forever",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'    r"(?<!\\)\[[^\]]*\]\(\s*([^)\s]+?)\s*(?:\"[^\"]*\")?\s*\)"',
+            r'    r"(?<!\\)\[\[[^\]]*\]\]\(\s*([^)\s]+?)\s*(?:\"[^\"]*\")?\s*\)"',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestParserAgreesWithTheDocuments::test_every_plan_cell_parses",
+        "a Plan cell stops parsing, in a file whose whole argument is that a "
+        "row nobody parsed is a row nobody enforced",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| [73](plans/plan_73_scraper_refactor.md) | Scraper code review",
+            "| plan seventy-three | Scraper code review",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestParserAgreesWithTheDocuments::test_the_archive_still_holds_the_bulk_of_the_record",
+        "the archive is truncated, so completed plans have gone missing rather "
+        "than being archived",
+        lambda: _write(
+            "docs/planning/completed_plans.md",
+            "\n".join(
+                (REPO_ROOT / "docs/planning/completed_plans.md")
+                .read_text(encoding="utf-8").splitlines()[:35]
+            ) + "\n",
+        ),
+        ["docs/planning/completed_plans.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestSupersededRowExitConditions::test_every_superseded_row_names_what_superseded_it",
+        "a superseded row names nothing that replaced it, so nobody can tell it "
+        "was replaced rather than abandoned",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| Plan | Title | Superseded by |\n|---|---|---|\n",
+            "| Plan | Title | Superseded by |\n|---|---|---|\n"
+            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | -- |\n",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestArchiveOrdering::test_every_archive_row_has_a_parsable_date",
+        "an archive Date stops parsing, so the row sorts nowhere and the "
+        "ordering check silently stops seeing it -- Plan 146 Stage 5's mutation D",
+        lambda: _edit(
+            "docs/planning/completed_plans.md",
+            "The record is the deliverable rather than the pipeline surviving. | 2026-09-08 |",
+            "The record is the deliverable rather than the pipeline surviving. "
+            "| sometime in September |",
+        ),
+        ["docs/planning/completed_plans.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestArchiveOrdering::test_the_archive_is_newest_first",
+        "a row is appended rather than prepended -- what `>>` does, and what the "
+        "archive's own header says not to -- so the order inverts. Plan 146 "
+        "Stage 5's mutation B",
+        lambda: _edit(
+            "docs/planning/completed_plans.md",
+            "which the harness refused rather than skipped. | 2026-09-08 |",
+            "which the harness refused rather than skipped. | 2026-09-20 |",
+        ),
+        ["docs/planning/completed_plans.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestBuildOrderNumbering::test_the_build_order_is_numbered_one_to_n_without_gaps",
+        "the Order column jumps, which reads as a row somebody deleted -- Plan "
+        "146 Stage 5's mutation C",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| 5 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+            "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanLinksNameTheirOwnPlan"
+        "::test_every_linked_plan_cell_points_at_that_plans_document",
+        "a Plan cell's link text and target disagree: well-formed markdown, a "
+        "real file, parses as the right plan, and sends the reader to another "
+        "one. Plan 146 Stage 5's mutation E, which neither the dangling-link "
+        "check nor coverage can see",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| 6 | [179](plans/plan_179_derived_service_call_graph.md)",
+            "| 6 | [179](plans/plan_178_role_grant_scoping.md)",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestNoRowVanishesSilently::test_the_census_reads_the_reconciliation_record",
+        "the reconciliation record leaves the tree, removing the only defence "
+        "the six documentless index rows have",
+        lambda: _delete("docs/planning/plan_state_reconciliation.md"),
+        ["docs/planning/plan_state_reconciliation.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestNoRowVanishesSilently::test_every_reconciled_plan_is_still_claimed_by_a_table",
+        "a row disappears rather than moving, which is the leak Plan 146 exists "
+        "to close -- its Stage 1 sweep found 33 across 16 separate days. Stage "
+        "5's mutation F",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "| [73](plans/plan_73_scraper_refactor.md) | Scraper code review and refactor |",
+            "| [66](plans/plan_66_sql_injection.md) | Scraper code review and refactor |",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheIndexCountsTheArchiveCorrectly::test_the_index_states_the_archives_row_count",
+        "the index stops claiming how many rows the archive holds, which is "
+        "what made it checkable",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "— 124 rows, newest first",
+            "— every finished plan, newest first",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheIndexCountsTheArchiveCorrectly::test_the_stated_count_matches_the_archive",
+        "the index's count goes stale, which is what happens the moment the "
+        "archiving skill succeeds -- archiving is two edits and this is the "
+        "second, a number in a sentence nothing read",
+        lambda: _edit(
+            "docs/PLANS.md",
+            "— 124 rows, newest first",
+            "— 123 rows, newest first",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_recap_is_named_for_the_sunday_that_ends_its_window",
+        "a recap is filed under a day that is not the Sunday ending its window, "
+        "so the deferred days stop showing on the filesystem",
+        lambda: _write("docs/recaps/2026-09-05.md", "# Week of 2026-08-31\n"),
+        [],
+        ["docs/recaps/2026-09-05.md"],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_recap_carries_its_required_sections",
+        "a recap drops a required section, and a missing section is silence you "
+        "cannot tell from an oversight",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "## Merges",
+            "## Merged branches",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_recap_states_its_window_run_date_and_commit_count",
+        "a recap loses its publication marker, and both defaults are wrong -- "
+        "true publishes an unread week, false drops one off the site in silence",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "**Publish:** true",
+            "**Published:** true",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_no_recap_borrows_the_archives_provenance_labels",
+        "a recap reuses the archive's provenance vocabulary as generic hedging, "
+        "which makes 25 backfilled archive rows look like hedging too",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "**Recapped:** 2026-09-07",
+            "**Recapped:** 2026-09-07 *(observed)*",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_recap_series_has_no_interior_gap",
+        "a week is skipped and nobody notices, which is a week whose work has "
+        "no durable why",
+        lambda: _delete("docs/recaps/2026-06-14.md"),
+        ["docs/recaps/2026-06-14.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_recap_series_is_not_stale",
+        "the staleness deadline moves a week forward, so a current recap set "
+        "reads as stale",
+        # **The deadline rather than a deletion, and the reason is decay.**
+        # Deleting the newest recap would be the truer mutation on the day it
+        # is written and a different one a week later: the file named here
+        # becomes interior as recaps accumulate, and the entry would quietly
+        # start proving `test_the_recap_series_has_no_interior_gap` instead.
+        # Moving the boundary is date-independent, so it means the same thing
+        # in 2027 as it does today. Unconditional on `within_grace`, because a
+        # mutation that only fires Monday through Wednesday is a mutation that
+        # reports MISSED on a Thursday.
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    return last_complete - timedelta(days=7 if within_grace else 0)",
+            "    return last_complete - timedelta(days=-7 if within_grace else -7)",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_deadline_lands_on_the_wednesday",
+        "the grace window slips by a day, which is exactly the failure a rule "
+        "of this shape has -- easy to state correctly in prose and wrong by one "
+        "day in code",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "RECAP_GRACE_DAYS = 3",
+            "RECAP_GRACE_DAYS = 4",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_the_recap_scan_actually_reads_recaps",
+        "the sha pattern stops matching, so the check below it proves nothing "
+        "and the emptying of docs/recaps/ stops being visible",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_SHORT_SHA = re.compile(r"\b[0-9a-f]{7}\b")',
+            r'_SHORT_SHA = re.compile(r"\b[0-9a-f]{40}\b")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestWeeklyRecaps::test_every_sha_a_recap_names_is_a_real_commit",
+        "a recap cites a commit that does not exist, which reads as evidence",
+        lambda: _edit(
+            "docs/recaps/2026-09-06.md",
+            "**Commits in window:** 392",
+            "**Commits in window:** 392, opened by `fffff00`",
+        ),
+        ["docs/recaps/2026-09-06.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheStateParserClassifiesEveryLiveHeading::test_no_live_heading_is_silently_skipped",
+        "the index grows a heading the state parser neither maps nor ignores, "
+        "and the parser skips what it does not recognise -- so the table under "
+        "it drops out of every state timeline in silence",
+        # `## Parked`, not `## Notes to self`: the first draft used the latter
+        # and was MISSED, because `notes` is one of `IGNORED_HEADING_PREFIXES`
+        # and the rule was right to pass. That is the rule's own subject
+        # arriving in its mutation -- a heading is unclassified only if the
+        # script neither maps *nor ignores* it, and reading only the map is the
+        # half-answer this entry nearly shipped.
+        lambda: _edit(
+            "docs/PLANS.md",
+            "## Completed",
+            "## Parked\n\n## Completed",
+        ),
+        ["docs/PLANS.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestTheStateParserClassifiesEveryLiveHeading"
+        "::test_every_live_table_section_is_mapped_to_a_state",
+        "a section this file parses as a table stops being read as a state by "
+        "the script -- the shape `current closeout` was in for nine days, during "
+        "which every closeout plan read as absent",
+        lambda: _edit(
+            "scripts/audit_plan_state_history.py",
+            '    "default build order": "build",\n',
+            "",
+        ),
+        ["scripts/audit_plan_state_history.py"],
+        [],
+    ),
     # Plan 162 Stage AB. These rules stand between the suite and every system
     # this repository does not build, and each of them is a set difference --
     # the shape that reads green by matching nothing. So the mutations here
@@ -1454,7 +2705,8 @@ MUTATIONS = [
     # an anchor that quietly stopped matching would disarm the census in
     # silence, which is the failure the census exists to name.
     (
-        "test_every_census_entry_is_replayed_or_carries_a_reason",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_census_entry_is_replayed_or_carries_a_reason",
         "a census entry is left with neither a replay nor a reason",
         lambda: _edit(
             "tests/external_vocabulary_census.py",
@@ -1467,20 +2719,22 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_replayed_census_entry_names_something_that_exists",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_replayed_census_entry_names_something_that_exists",
         "a census entry names a replay whose file has been renamed away",
         lambda: _edit(
             "tests/external_vocabulary_census.py",
-            '            "tests/test_external_vocabularies.py"\n'
+            '            "tests/rules/test_external_vocabularies.py"\n'
             '            "::test_every_restated_curl_cffi_target_is_a_real_browser_type"',
-            '            "tests/test_external_vocabularies_renamed.py"\n'
+            '            "tests/rules/test_external_vocabularies_renamed.py"\n'
             '            "::test_every_restated_curl_cffi_target_is_a_real_browser_type"',
         ),
         ["tests/external_vocabulary_census.py"],
         [],
     ),
     (
-        "test_every_census_site_still_exists",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_census_site_still_exists",
         "a census entry goes on naming a site that has moved",
         lambda: _edit(
             "tests/external_vocabulary_census.py",
@@ -1491,7 +2745,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_no_declared_vocabulary_is_empty",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_declared_vocabulary_is_empty",
         "a members tuple is emptied, which turns every rule keyed on it green",
         lambda: _edit(
             "tests/external_vocabulary_census.py",
@@ -1502,7 +2757,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_no_test_fabricates_a_cars_com_status_production_has_never_seen",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_test_fabricates_a_cars_com_status_production_has_never_seen",
         "a test fabricates a cars.com status the recorded corpus does not hold",
         lambda: _edit(
             "tests/scraper/processors/test_scrape_detail.py",
@@ -1519,25 +2775,36 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_no_test_fabricates_a_cars_com_status_production_has_never_seen",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_test_fabricates_a_cars_com_status_production_has_never_seen",
         "the recorded corpus drifts away from what the suite fabricates",
         lambda: _edit("tests/fixtures/external/cars_com_responses.json", "    403,\n", ""),
         ["tests/fixtures/external/cars_com_responses.json"],
         [],
     ),
     (
-        "test_the_cars_com_corpus_is_not_empty",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_cars_com_corpus_is_not_empty",
         "the corpus is emptied, which would make the rule above vacuous",
+        # **This entry was a false CAUGHT until Stage AG landed.** Its node
+        # name was bare, so it resolved into `test_testing_contract.py` where
+        # no such test exists, and pytest's exit 4 read as a failure under the
+        # old `code != 0`. The payload was wrong too: it dropped two statuses
+        # from a list of seven against a floor of two, so even correctly
+        # addressed it would not have tripped the rule. Both halves are fixed
+        # here, and the second was only visible once the first was.
         lambda: _edit(
             "tests/fixtures/external/cars_com_responses.json",
-            '"statuses_observed": [\n    200,\n    302,\n',
-            '"statuses_observed": [\n',
+            '"statuses_observed": [\n    200,\n    302,\n    403,\n'
+            '    500,\n    502,\n    503,\n    504\n  ],',
+            '"statuses_observed": [],',
         ),
         ["tests/fixtures/external/cars_com_responses.json"],
         [],
     ),
     (
-        "test_the_corpus_records_which_instrument_saw_each_status",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_corpus_records_which_instrument_saw_each_status",
         "an observation loses the instrument that produced it",
         lambda: _edit(
             "tests/fixtures/external/cars_com_responses.json",
@@ -1548,7 +2815,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_restated_curl_cffi_target_is_a_real_browser_type",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_restated_curl_cffi_target_is_a_real_browser_type",
         "the census names an impersonation target curl_cffi does not have",
         lambda: _edit(
             "tests/external_vocabulary_census.py",
@@ -1559,21 +2827,24 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_the_declared_curl_cffi_targets_are_the_ones_the_scraper_holds",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_declared_curl_cffi_targets_are_the_ones_the_scraper_holds",
         "the scraper's target list drifts away from the census",
         lambda: _edit("scraper/processors/cf_session.py", '    (146, "chrome146"),\n', ""),
         ["scraper/processors/cf_session.py"],
         [],
     ),
     (
-        "test_no_chrome_target_curl_cffi_offers_is_missing_from_the_scraper",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_chrome_target_curl_cffi_offers_is_missing_from_the_scraper",
         "curl_cffi offers a target the scraper never added -- the silent direction",
         lambda: _edit("scraper/processors/cf_session.py", '    (145, "chrome145"),\n', ""),
         ["scraper/processors/cf_session.py"],
         [],
     ),
     (
-        "test_every_airflow_state_the_dags_compare_against_is_declared",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_airflow_state_the_dags_compare_against_is_declared",
         "a DAG compares a task state against a word the census does not declare",
         lambda: _edit(
             "airflow/dags/notifications.py",
@@ -1584,7 +2855,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_every_observed_cars_com_status_is_handled",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_observed_cars_com_status_is_handled",
         "a status the corpus has observed loses its handling and takes the catchall",
         lambda: _edit(
             "scraper/fetch_outcomes.py",
@@ -1595,7 +2867,8 @@ MUTATIONS = [
         [],
     ),
     (
-        "test_the_unknown_catchall_is_reachable",
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_unknown_catchall_is_reachable",
         "the catchall stops being conservative and lets an unknown body reach the parser",
         lambda: _edit(
             "scraper/fetch_outcomes.py",
@@ -1603,6 +2876,37 @@ MUTATIONS = [
             "    return outcome is not FetchOutcome.REDIRECTED",
         ),
         ["scraper/fetch_outcomes.py"],
+        [],
+    ),
+    # The Cloudflare marker set, and the two directions that make it a
+    # discriminator rather than a string search. Plan 128's outage was eight
+    # hours of interstitials counted as successful scrapes; the fix that was
+    # tried first keyed on `cdn-cgi/challenge-platform`, which Cloudflare
+    # injects into *every* cars.com page including the good ones. So the
+    # positive case alone is not evidence, and both mutations below exist
+    # because either one alone would leave the other direction unproved.
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_challenge_marker_set_still_classifies_the_recorded_interstitial",
+        "the marker set narrows and stops recognising a captured interstitial",
+        lambda: _edit(
+            "shared/challenge.py",
+            r'r"just a moment|attention required|checking your browser"',
+            r'r"attention required|checking your browser"',
+        ),
+        ["shared/challenge.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_a_real_detail_page_is_not_classified_as_an_interstitial",
+        "the marker set widens until it matches a real detail page too",
+        lambda: _edit(
+            "shared/challenge.py",
+            r'r"just a moment|attention required|checking your browser"',
+            r'r"just a moment|attention required|checking your browser|cars"',
+        ),
+        ["shared/challenge.py"],
         [],
     ),
 ]
@@ -1649,15 +2953,36 @@ def _run(dsn: str | None) -> int:
         finally:
             for rel, text in saved.items():
                 (REPO_ROOT / rel).write_text(text, encoding="utf-8")
+                _drop_rewritten_bytecode(rel)
             for rel in created:
                 path = REPO_ROOT / rel
                 path.unlink(missing_ok=True)
+                _drop_rewritten_bytecode(rel)
                 if path.parent != REPO_ROOT and path.parent.exists():
                     if not any(path.parent.iterdir()):
                         path.parent.rmdir()
-        caught = code != 0
-        missed += [] if caught else [description]
-        print(f"{'CAUGHT' if caught else '*** MISSED ***':14} {description}")
+        # **Exit 1 exactly, not merely non-zero.** pytest exits 1 when a test
+        # fails and something else when it could not run one: 4 for a node it
+        # cannot find, 5 for nothing collected, 2 for a module that would not
+        # import. Reading every non-zero code as CAUGHT conflates *the rule
+        # noticed* with *the harness never asked it*, and both halves of that
+        # have already happened here. Stage AF found the import half -- an
+        # `UNDOCUMENTED` append landed outside its tuple, pytest exited on a
+        # `SyntaxError`, and this loop called it a success. Stage AG found the
+        # other half: six entries named a bare node for a rule living in
+        # `test_ci_compose_parity.py` or `test_planning_docs.py`, so the target
+        # resolved to `TEST::<name>`, pytest exited 4 saying *not found*, and
+        # all six had reported CAUGHT since the day they were written while
+        # never running the rule at all. Stage AF caught its case by a human
+        # reading the failure; this is the same catch made mechanical.
+        caught = code == 1
+        if not caught:
+            label = "*** MISSED ***" if code == 0 else f"*** NO RUN ({code}) ***"
+            missed.append(
+                description if code == 0
+                else f"{description} [pytest exited {code}: the rule never ran]"
+            )
+        print(f"{'CAUGHT' if caught else label:14} {description}")
 
     code, output = _pytest()
     print("\nrestored:", output.strip().splitlines()[-1])

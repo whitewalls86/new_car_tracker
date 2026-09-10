@@ -305,7 +305,7 @@ class TestHeadIsAnsweredEverywhereGetIs:
 
     def test_a_recap_page_answers_head(self, mock_client):
         # A literal path, not an f-string: the routing-table assertion in
-        # tests/test_testing_contract.py reads request literals out of the
+        # tests/rules/test_testing_contract.py reads request literals out of the
         # source, and a computed slug is invisible to it. The guard below is
         # what keeps the literal honest if this recap ever stops being
         # published.

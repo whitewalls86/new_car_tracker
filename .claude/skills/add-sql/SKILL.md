@@ -12,7 +12,7 @@ the order that gets all three in one pass.
 
 **Read this before writing the file, not after the suite fails.** The
 obligations below are each derivable by running `pytest
-tests/test_testing_contract.py` and reading the failure, and that is how they
+tests/rules/test_testing_contract.py` and reading the failure, and that is how they
 were learned. It costs about six suite runs. This page costs one.
 
 ## The five steps
@@ -97,7 +97,7 @@ Each of these cost a suite run to discover. None is in an error message.
 ## Verify before committing
 
 ```bash
-python -m pytest tests/test_testing_contract.py -q
+python -m pytest tests/rules/test_testing_contract.py -q
 python -m pytest tests/integration/sql/<your_test>.py -q -m integration
 python -m ruff check .
 ```

@@ -14,7 +14,7 @@ Three forms carry this contract:
 |---|---|---|
 | For a person | this document | Plan 172 / CAR-70 |
 | For a coding agent | `plan-draft`, `plan-start`, `note-evidence`, `stage-close`, and `close-out` | Plan 172 |
-| For the repository | [`tests/test_planning_docs.py`](../tests/test_planning_docs.py) and [`scripts/build_public_roadmap.py`](../scripts/build_public_roadmap.py) | Plan 172 and Plan 138 |
+| For the repository | [`tests/rules/test_planning_docs.py`](../tests/rules/test_planning_docs.py) and [`scripts/build_public_roadmap.py`](../scripts/build_public_roadmap.py) | Plan 172 and Plan 138 |
 
 ---
 
@@ -187,7 +187,7 @@ exemption.
 | Design, lettered stages, exits, and order table | `plan-start` |
 | Record entries and stage completion | `note-evidence` and `stage-close` |
 | Checks, archive transition, and completed public copy | `close-out` |
-| Live-document adoption, waivers, and both published windows | `tests/test_planning_docs.py` |
+| Live-document adoption, waivers, and both published windows | `tests/rules/test_planning_docs.py` |
 | The completed projection, and `## Public summary`'s cap | `scripts/build_public_roadmap.py` |
 | The planned projection reading `## What this plan is for` | `scripts/build_public_roadmap.py`, since [Plan 138](plans/plan_138_public_surface_refresh.md) Stage 9 landed it 2026-09-03. The build order's slice cell is the fallback for a row whose plan has no section, and is no longer published copy for one that does |
 

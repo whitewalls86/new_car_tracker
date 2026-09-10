@@ -75,7 +75,7 @@ CENSUS = (
         ),
         "verdict": REPLAYED,
         "checked": (
-            "tests/test_external_vocabularies.py"
+            "tests/rules/test_external_vocabularies.py"
             "::test_no_test_fabricates_a_cars_com_status_production_has_never_seen"
         ),
         "why": (
@@ -96,7 +96,7 @@ CENSUS = (
         "sites": ("shared/challenge.py",),
         "verdict": REPLAYED,
         "checked": (
-            "tests/test_external_vocabularies.py"
+            "tests/rules/test_external_vocabularies.py"
             "::test_the_challenge_marker_set_still_classifies_the_recorded_interstitial"
         ),
         "why": (
@@ -167,7 +167,7 @@ CENSUS = (
         ),
         "verdict": REPLAYED,
         "checked": (
-            "tests/test_external_vocabularies.py"
+            "tests/rules/test_external_vocabularies.py"
             "::test_every_restated_curl_cffi_target_is_a_real_browser_type"
         ),
         "why": (

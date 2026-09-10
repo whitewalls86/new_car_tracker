@@ -25,7 +25,7 @@ import yaml
 
 from tests.test_deploy_script import load_health_exemptions
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _REGISTRY = _REPO_ROOT / "maintenance-running-set.txt"
 _MAIN = _REPO_ROOT / "docker-compose.yml"
 

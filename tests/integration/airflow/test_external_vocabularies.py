@@ -24,6 +24,14 @@ That is the corpus/replay split ``scripts/verify_promtail_contract.py`` and
 one corpus, two consumers, neither importing the other. The corpus is
 ``tests/external_vocabulary_census.py``.
 
+**The third rule that used to live here moved to
+``tests/rules/test_external_vocabularies.py`` in Stage AG.** It reads
+``notifications.py`` with ``ast`` and compares against the census, imports
+no Airflow at all, and is therefore a repository-wide rule that happened to
+be sitting in an integration suite. The two that remain genuinely need the
+installed package, which is why they stay here and stay out of the
+``Asserted by`` column.
+
 **Neither of the two rules below works alone**, which is Stage W's lesson
 repeated one system out. ``test_every_restated_airflow_task_state_is_a_real_member``
 alone would pass a census that had drifted away from the DAG -- it checks the
@@ -38,7 +46,6 @@ root off ``sys.path`` in this venv -- the job runs with
 import ...`` raises ``ModuleNotFoundError`` here while passing locally. CI run
 33444675959 failed exactly that way for ``tests/health_sensor_census.py``.
 """
-import ast
 import importlib.util
 from pathlib import Path
 
@@ -113,48 +120,4 @@ def test_every_restated_airflow_trigger_rule_is_a_real_member():
         f"{CENSUS_PATH} declares these as TriggerRule members and "
         f"apache-airflow does not have them: {unreal}.\n"
         f"Real members: {sorted(real)}."
-    )
-
-
-@pytest.mark.integration
-def test_every_airflow_state_the_dags_compare_against_is_declared():
-    """The other end of the pin: the DAG's literal is a census member.
-
-    Reads the comparison out of ``notifications.py`` with ``ast`` rather than
-    trusting the census to still describe it. Without this, editing the DAG to
-    compare against ``"upstream_failed"`` would leave both tests green and the
-    new word checked by nothing.
-    """
-    declared = set(_declared("airflow.utils.state.TaskInstanceState"))
-    tree = ast.parse(NOTIFICATIONS.read_text(encoding="utf-8"))
-
-    compared: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare):
-            continue
-        # `str(getattr(state, "value", state)) == "failed"` -- the state is on
-        # the left and the word on the right, so read the constants being
-        # compared against and keep the ones that look like a state name.
-        if not any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops):
-            continue
-        source = ast.unparse(node.left)
-        if "state" not in source:
-            continue
-        for comparator in node.comparators:
-            if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
-                compared.add(comparator.value)
-
-    assert compared, (
-        f"no `state == <literal>` comparison found in {NOTIFICATIONS}. Either "
-        "the comparison moved and this reader must follow it, or it stopped "
-        "being a literal -- in which case delete the census row rather than "
-        "leaving a rule that checks nothing."
-    )
-
-    undeclared = sorted(compared - declared)
-    assert not undeclared, (
-        f"{NOTIFICATIONS} compares a task state against {undeclared}, which "
-        f"{CENSUS_PATH} does not declare, so nothing checks those words "
-        "against real Airflow. Add them to the census row for "
-        "airflow.utils.state.TaskInstanceState."
     )

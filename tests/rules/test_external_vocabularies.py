@@ -37,12 +37,13 @@ import pytest
 
 from tests.external_vocabulary_census import CENSUS, OUT_OF_SCOPE, REPLAYED
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 CORPUS = REPO_ROOT / "tests" / "fixtures" / "external" / "cars_com_responses.json"
 CHALLENGE_FIXTURE = (
     REPO_ROOT / "tests" / "fixtures" / "html" / "challenge_just_a_moment.html.gz"
 )
 CF_SESSION = REPO_ROOT / "scraper" / "processors" / "cf_session.py"
+NOTIFICATIONS = REPO_ROOT / "airflow" / "dags" / "notifications.py"
 
 # The three modules that fabricate a cars.com response, and the seam they do it
 # at. Named rather than discovered: a fourth one is a decision to add a row
@@ -536,3 +537,59 @@ def test_no_declared_vocabulary_is_empty(row):
     edit that silently disarms this whole module.
     """
     assert row["members"], f"{row['what']} declares no members"
+
+
+# ---------------------------------------------------------------------------
+# Airflow -- the half of the pin that needs no Airflow
+# ---------------------------------------------------------------------------
+#
+# The two rules that ask the real ``TaskInstanceState`` live in
+# ``tests/integration/airflow/`` and run only in the isolated
+# ``apache-airflow==3.2.0`` venv. This one asks the *code*, not Airflow: it
+# reads the comparison out of the DAG with ``ast`` and checks it against the
+# census, so it needs nothing installed and belongs here. Stage AG's rule is
+# what surfaced that -- it had been sitting in an integration suite because
+# its two siblings had to, which is exactly the conflation that rule exists
+# to break.
+
+def test_every_airflow_state_the_dags_compare_against_is_declared():
+    """The other end of the pin: the DAG's literal is a census member.
+
+    Reads the comparison out of ``notifications.py`` with ``ast`` rather than
+    trusting the census to still describe it. Without this, editing the DAG to
+    compare against ``"upstream_failed"`` would leave both tests green and the
+    new word checked by nothing.
+    """
+    declared = set(_declared("airflow.utils.state.TaskInstanceState"))
+    tree = ast.parse(NOTIFICATIONS.read_text(encoding="utf-8"))
+
+    compared: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        # `str(getattr(state, "value", state)) == "failed"` -- the state is on
+        # the left and the word on the right, so read the constants being
+        # compared against and keep the ones that look like a state name.
+        if not any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops):
+            continue
+        source = ast.unparse(node.left)
+        if "state" not in source:
+            continue
+        for comparator in node.comparators:
+            if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                compared.add(comparator.value)
+
+    assert compared, (
+        f"no `state == <literal>` comparison found in {NOTIFICATIONS}. Either "
+        "the comparison moved and this reader must follow it, or it stopped "
+        "being a literal -- in which case delete the census row rather than "
+        "leaving a rule that checks nothing."
+    )
+
+    undeclared = sorted(compared - declared)
+    assert not undeclared, (
+        f"{NOTIFICATIONS} compares a task state against {undeclared}, which "
+        f"the census does not declare, so nothing checks those words "
+        "against real Airflow. Add them to the census row for "
+        "airflow.utils.state.TaskInstanceState."
+    )
