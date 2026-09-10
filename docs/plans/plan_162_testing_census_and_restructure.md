@@ -5452,3 +5452,36 @@ changed by this work.
 101 and 102 series across `ops`, `processing` and `scraper`, `GET
 /dbt/selectors` answering the four names `selectors.yml` declares, and `/info`
 answering 308.
+
+### Stage AL — the seam rules and their ledgers
+
+**The Step 0 baseline reproduces at `0dc736f`: 12 judged, 81 skipped, of 93
+declarations.** Recipe: the handoff's script —
+[`docs/prompts/claude_prompt_plan_162_stage_al_rules.md`](../prompts/claude_prompt_plan_162_stage_al_rules.md)
+§Step 0 — run with `PYTHONPATH=.` from a clean worktree at `0dc736f` on the
+Windows dev machine, 2026-09-10. It imports `_exit_codes`, `_handler_index`,
+`_handler_name` and `artifact_declarations` from
+`tests/rules/test_the_artifact_declares_what_the_handler_returns` and counts
+the handlers whose exits all resolve against those that skip. Printed `12 81`,
+exactly the handoff's expectation, so every number §Stage AL was measured
+against still describes this tree and the seeds below are usable without
+re-measuring.
+
+**The mock-object defect reproduces: a real 503 and a bare `Mock` carrying the
+identical body give `_service_jobs` opposite answers.** Recipe: from the same
+worktree, patch `ops.coordination_drain.requests.get` to return (a) a
+`requests.Response` with `status_code = 503` and the `/ready` detail body as
+`_content`, then (b) a `Mock()` with the same `status_code` and the same dict
+on `.json.return_value`, and call `_service_jobs("archiver_jobs")` under each.
+Result, 2026-09-10:
+
+```
+real 503 Response -> {'status': 'unknown', 'count': None,
+                      'reason': 'service evidence unavailable or malformed'}
+mocker.Mock()     -> {'status': 'known',   'count': 2}
+```
+
+The real response raises in `raise_for_status()` and the bare mock does not,
+which is why `test_service_503_body_is_still_known_positive_evidence` passes
+while production returns `unknown` — the measurement Step 1's third rule (no
+test fabricates a response object's behaviour) exists to make impossible.

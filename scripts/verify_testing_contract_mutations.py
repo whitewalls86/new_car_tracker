@@ -3285,6 +3285,36 @@ MUTATIONS = [
         ["tests/ops/test_coordination_release.py"],
         [],
     ),
+    (
+        "tests/rules/test_no_service_imports_another_services_package.py"
+        "::test_no_service_imports_another_services_package",
+        "a service's import into another service moves to a module the ledger "
+        "does not name -- a new cross-service dependency, and the seeded entry "
+        "beside it goes stale, so both directions of the rule fire at once",
+        lambda: _edit(
+            "ops/coordination_release.py",
+            "from container_health.expected import EXPECTED_SERVICES, "
+            "HEALTHCHECK_EXEMPT_SERVICES",
+            "from container_health.collector import EXPECTED_SERVICES, "
+            "HEALTHCHECK_EXEMPT_SERVICES",
+        ),
+        ["ops/coordination_release.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_service_imports_another_services_package.py"
+        "::test_the_service_root_corpus_is_complete",
+        "a service's dockerfile path stops naming its package, and the "
+        "compose derivation loses that whole service's code -- every import "
+        "it makes then goes unread rather than unwaived",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      dockerfile: dashboard/Dockerfile",
+            "      dockerfile: Dockerfile",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
 ]
 
 
