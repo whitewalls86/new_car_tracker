@@ -5583,3 +5583,17 @@ declare nothing (`/metrics` ×5, the recap pages, `/sitemap.xml`,
 ledger with the 76, seeding
 `UNDECLARED_BODY_LEDGER` at 89 in
 `tests/rules/test_every_response_declares_a_shape_or_a_kind.py`.
+
+**Verified at `7501eca`, 2026-09-10, all on the Windows dev machine.**
+`pytest tests/rules -q -m "not integration"`: 286 passed, every ledger
+seeded rather than any violation unwaived. `pytest tests/ -q -m "not
+integration"`: 4067 passed — the 4051 the handoff recorded at `0dc736f`
+plus exactly the 16 tests this stage added. `python
+scripts/generate_service_contracts.py --check` exited 0 with the artifact
+unmoved, so nothing here changed service behaviour. `python
+scripts/verify_testing_contract_mutations.py` (full run, throwaway
+Postgres provisioned): every mutation CAUGHT including all 17 added for
+the ten new tests, no MISSED, no NO RUN, restored suite green — each of
+the 17 had also been watched fail by hand before its entry landed. The
+harness's snapshot-restore writes LF where the checkout had CRLF; the
+five files it touched were restored from git with zero content change.
