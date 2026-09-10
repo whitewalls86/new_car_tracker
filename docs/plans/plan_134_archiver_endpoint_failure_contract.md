@@ -926,3 +926,34 @@ clause of this stage's exit.
 **Its 48-hour gate has not opened.** Nothing is claimed here about the endpoint
 in production. The deploy time and the gate reading append to this entry when
 they exist.
+
+**Deploy 2 went live 2026-09-10 19:16:00Z.** Merged as `6bcd3ac` at 19:13:31Z
+([PR #412](https://github.com/whitewalls86/new_car_tracker/pull/412)), pulled to
+`/opt/cartracker`, and deployed with `bash scripts/redeploy.sh archiver` in a
+tmux session; the script reported every pollable service healthy after 6 s. The
+live time is the container's own, not the merge time deploy 1's row had to
+stand in with:
+
+```bash
+docker inspect cartracker-archiver --format '{{.State.StartedAt}}'
+# 2026-09-10T19:16:00.626134898Z
+```
+
+**The running container was asked what it loaded, rather than the pull being
+taken as proof.** Both halves agree:
+
+```bash
+docker exec cartracker-archiver grep -n 'flush_staging: run failed' /app/archiver/app.py
+# 632:            logger.error("flush_staging: run failed — %s", reason)
+
+docker exec cartracker-archiver python -c "import json,urllib.request; \
+d=json.load(urllib.request.urlopen('http://localhost:8001/openapi.json')); \
+print(sorted(d['paths']['/flush/staging/run']['post']['responses'].keys()))"
+# ['200', '500']
+```
+
+**The 48-hour gate runs 2026-09-10 19:16Z → 2026-09-12 19:16Z.** Nothing is read
+from it yet. When it closes, its reading appends here using deploy 1's recipes
+with `time=2026-09-12T19:16:00Z` — anchored, for the reason deploy 1's entry
+records — and with `compact_silver` swapped for `hourly_analytics_refresh` in
+the DAG-run read, since that is the DAG carrying this endpoint.
