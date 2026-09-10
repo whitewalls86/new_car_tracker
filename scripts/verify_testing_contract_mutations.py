@@ -3453,6 +3453,56 @@ MUTATIONS = [
         ["tests/rules/test_no_call_site_retypes_a_declared_status.py"],
         [],
     ),
+    (
+        "tests/rules/test_a_status_code_means_the_same_thing_to_both.py"
+        "::test_every_declared_meaning_of_an_ambiguous_code_is_proven",
+        "a handler whose 503 provably means what its route declares starts "
+        "raising a different meaning under the same code -- the declaration "
+        "goes on describing what the handler used to say",
+        lambda: _edit(
+            "ops/routers/coordination.py",
+            '        raise HTTPException(status_code=409, '
+            'detail="Coordination is not requested.")\n'
+            '    raise HTTPException(status_code=503, '
+            'detail="Database unavailable.")',
+            '        raise HTTPException(status_code=409, '
+            'detail="Coordination is not requested.")\n'
+            '    raise HTTPException(status_code=503, '
+            'detail="The database took a holiday.")',
+        ),
+        ["ops/routers/coordination.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_a_status_code_means_the_same_thing_to_both.py"
+        "::test_the_meaning_rule_has_something_to_read",
+        "the ambiguity filter quietly stops matching any code, and the "
+        "meaning rule reads nothing while its 28-entry ledger keeps it "
+        "looking busy",
+        lambda: _edit(
+            "tests/rules/test_a_status_code_means_the_same_thing_to_both.py",
+            "        if len(meanings) > 1",
+            "        if len(meanings) > 99",
+        ),
+        ["tests/rules/test_a_status_code_means_the_same_thing_to_both.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_a_status_code_means_the_same_thing_to_both.py"
+        "::test_every_ambiguous_meaning_is_declared_somewhere",
+        "Busy's meaning text collapses into DependencyUnreachable's, so the "
+        "vocabulary looks fully declared and the entry recording that "
+        "nothing declares busy goes stale",
+        lambda: _edit(
+            "shared/api_envelope.py",
+            '    meaning = "Busy: jobs are in flight, and the body carries '
+            'the evidence."',
+            '    meaning = "A dependency this service needs is not '
+            'reachable."',
+        ),
+        ["shared/api_envelope.py"],
+        [],
+    ),
 ]
 
 

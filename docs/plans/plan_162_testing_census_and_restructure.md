@@ -5547,3 +5547,24 @@ argument in its docstring; owned-seam caller comparisons (ops 4) and
 processing's three are in. That corpus is 101 literal sites: ops 68,
 archiver 18, dbt_runner 9, scraper 3, processing 3, collapsing to 80
 file-function-code keys in `RETYPED_STATUS_LEDGER`.
+
+**The meaning rule seeds at 28 unproven rows plus one undeclared meaning,
+and the recorded 29-plus-4 reconciles as a sharpening.** Recipe:
+`unproven_meanings()` in
+`tests/rules/test_a_status_code_means_the_same_thing_to_both.py`, 2026-09-10
+— for every declared response at a code the envelope gives more than one
+meaning (today exactly 503), the description must be an envelope meaning and
+every meaning the handler provably raises at that code must equal it. The
+four `/ready` rows are seeded exactly as named (dict detail, unreadable
+meaning, declared as a dependency problem while meaning busy). Of the 29
+`"Database unavailable."` declarations, the routes whose handlers provably
+raise only that text — `begin-drain`, `begin-validation`, `cancel`,
+`request` — are correct and carry no entry; the remainder seed as proven
+mismatches (the coordination handlers raise `Coordination state is
+missing.`, `Host evidence could not be recorded.`, `Coordination could not
+be completed.`, `Authorization evidence unavailable.` against the one
+declared text) or as unreadable (the admin rows answer through a rendered
+template). `processing POST /process/batch` is a 34th declaration the named
+seeds did not include, entering for declaring a text the envelope does not
+carry. `Busy` is declared by no response anywhere and seeds the one-entry
+undeclared-meaning ledger.
