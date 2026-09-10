@@ -1,6 +1,6 @@
 """Response models for the shapes more than one service returns.
 
-Plan 162 Stage AA, gap G31.
+Plan 162 Stage AA, gap G32.
 
 **FastAPI made the request side mandatory and the response side optional, and
 this repository took the default on every route.** ``ops/routers/scrape.py``

@@ -1,6 +1,6 @@
 """What ``scraper``'s routes return.
 
-Plan 162 Stage AA, gap G31. See ``shared/api_models.py`` for the filtering
+Plan 162 Stage AA, gap G32. See ``shared/api_models.py`` for the filtering
 hazard these are written against, and
 ``tests/plugins/response_model_fidelity.py`` for what checks them.
 
@@ -12,16 +12,19 @@ through ``SERVICE_EVIDENCE``'s ``scraper_detail_jobs`` and
 ``scraper_listing_jobs``. A model that flattened them to the shared shape would
 be declaring a smaller thing than the endpoint returns.
 
-**``Job`` is a union of two job types.** A listing fetch carries ``search_key``,
-``scope``, ``attempt`` and ``page_1_blocked``; a detail batch carries
-``batch_id`` and ``listing_count``; neither carries the other's. ``job_type``
-says which, and the fields that belong to one are optional rather than split
-into two models -- ``/scrape_results/jobs/completed`` returns both kinds in one
-list, so one model is what the endpoint actually answers.
+**``JobSummary`` is a union of two job types.** A listing fetch carries
+``search_key``, ``scope``, ``attempt`` and ``page_1_blocked``; a detail batch
+carries ``batch_id`` and ``listing_count``; neither carries the other's.
+``job_type`` says which, and the fields belonging to one are optional rather
+than split into two models -- ``/scrape_results/jobs/completed`` returns both
+kinds in one list, so one model is what that endpoint answers.
 
-``artifacts`` is optional for a different reason: ``GET /scrape_results/jobs``
-strips it deliberately, being a debugging view, while
-``/scrape_results/jobs/completed`` keeps it because the poller needs it.
+**``artifacts`` is a separate model rather than an optional field**, which is
+the opposite decision and for a reason worth keeping: an optional field is
+still serialised, as ``"artifacts": null``, so one model for both job endpoints
+would have put the key straight back into the response ``GET
+/scrape_results/jobs`` exists to strip. :class:`Job` adds it for
+``/scrape_results/jobs/completed``, whose poller needs it.
 """
 from __future__ import annotations
 

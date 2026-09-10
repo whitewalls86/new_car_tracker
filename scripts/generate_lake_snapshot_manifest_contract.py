@@ -1,6 +1,6 @@
 """Record the shape of the CI snapshot manifest, one file per format version.
 
-Plan 162 Stage AA, gap G31.
+Plan 162 Stage AA, gap G32.
 
 **The manifest is written by one service and served by another, and neither
 could say what it contains.** ``archiver`` composes it, ``ops`` hands it back
@@ -133,20 +133,34 @@ def load_records() -> dict[tuple[int, int], dict[str, Any]]:
                 f"reader can find a version without opening every file."
             )
         record = json.loads(path.read_text(encoding="utf-8"))
-        named = (int(match.group(1)), int(match.group(2)))
-        declared = (
-            record["export_cache_schema_version"],
-            record["archive_cache_schema_version"],
-        )
-        if named != declared:
-            raise ValueError(
-                f"{path.name} declares {declared} and its name says {named}. "
-                f"One of them is a lie and there is no way to tell which from "
-                f"here; the archives this version describes cannot be re-read "
-                f"to settle it."
-            )
-        records[named] = record
+        records[(int(match.group(1)), int(match.group(2)))] = record
     return records
+
+
+def record_inconsistencies() -> list[str]:
+    """Records whose filename and contents disagree about which format they are.
+
+    Reported rather than raised, and that is not a style preference. This is
+    called from a module-level ``parametrize``, so raising here would make one
+    bad record a *collection* error -- every rule in that module would stop
+    running, and a suite that cannot collect a rule is indistinguishable from
+    one that has no rule. The harness saw exactly that: pytest exited 4, no
+    assertion ran, and the mutation went unnoticed.
+    """
+    problems: list[str] = []
+    for pair, record in sorted(load_records().items()):
+        declared = (
+            record.get("export_cache_schema_version"),
+            record.get("archive_cache_schema_version"),
+        )
+        if declared != pair:
+            problems.append(
+                f"export{pair[0]}-archive{pair[1]}.json declares {declared} and "
+                f"its name says {pair}. One of them is a lie and nothing here "
+                f"can tell which: the writer for that format is gone and the "
+                f"archives it describes cannot be re-read to settle it."
+            )
+    return problems
 
 
 def manifest_fixture(
@@ -209,6 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         path.write_text(_serialise(record), encoding="utf-8")
         print(f"wrote {path.relative_to(REPO_ROOT).as_posix()}")
         return 0
+
+    inconsistent = record_inconsistencies()
+    if inconsistent:
+        for problem in inconsistent:
+            print(problem, file=sys.stderr)
+        return 1
 
     records = load_records()
     if pair not in records:

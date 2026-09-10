@@ -1,6 +1,6 @@
 """The CI snapshot manifest's format version: what is written, what is served.
 
-Plan 162 Stage AA, gap G31.
+Plan 162 Stage AA, gap G32.
 
 **One definition, two roles, one file.** ``archiver`` writes the manifest and
 ``ops`` serves it back over HTTP, and the version has to mean the same thing to

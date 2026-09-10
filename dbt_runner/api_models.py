@@ -1,6 +1,6 @@
 """What ``dbt_runner``'s routes return.
 
-Plan 162 Stage AA, gap G31. See ``shared/api_models.py`` for why these exist
+Plan 162 Stage AA, gap G32. See ``shared/api_models.py`` for why these exist
 and for the filtering hazard every model here is written against.
 
 **Every optional field below is a return path, not a convenience.**

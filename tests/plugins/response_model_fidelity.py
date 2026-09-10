@@ -1,6 +1,6 @@
 """No response model may silently delete a key its handler produced.
 
-Plan 162 Stage AA, gap G31.
+Plan 162 Stage AA, gap G32.
 
 **A ``response_model`` is an assertion about a handler that nothing verifies,
 and getting it wrong is worse than not having one.** FastAPI *filters* the

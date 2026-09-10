@@ -1,6 +1,6 @@
 """What ``ops``'s routes return.
 
-Plan 162 Stage AA, gap G31. See ``shared/api_models.py`` for the filtering
+Plan 162 Stage AA, gap G32. See ``shared/api_models.py`` for the filtering
 hazard these are written against, and
 ``tests/plugins/response_model_fidelity.py`` for what checks them.
 

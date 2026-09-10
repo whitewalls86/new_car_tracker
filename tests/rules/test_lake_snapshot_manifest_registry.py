@@ -1,6 +1,6 @@
 """The writer, the reader and the fixtures all answer to one record.
 
-Plan 162 Stage AA, gap G31.
+Plan 162 Stage AA, gap G32.
 
 ``contracts/lake_snapshot_manifest/export<N>-archive<N>.json`` is the only
 statement of what a CI snapshot manifest contains. ``archiver`` writes the
@@ -24,6 +24,7 @@ whatever v2 added.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,13 +37,14 @@ from scripts.generate_lake_snapshot_manifest_contract import (
     current_record,
     load_records,
     manifest_fixture,
+    record_inconsistencies,
 )
 from shared.lake_snapshot_schema import (
     ARCHIVE_CACHE_SCHEMA_VERSION,
     EXPORT_CACHE_SCHEMA_VERSION,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _shape_keys(shape: dict, prefix: str = "") -> set[str]:
@@ -173,9 +175,16 @@ def test_the_generator_check_passes_as_a_subprocess():
     only works when something else has already imported ``archiver`` would pass
     them and fail the job.
     """
+    # `PYTHONPATH` is cleared deliberately. CI runs this script with none set,
+    # and the mutation harness runs pytest with `PYTHONPATH=REPO_ROOT` -- which
+    # a plain `subprocess.run` inherits, supplying the very import path this
+    # test exists to check. Under the harness that made the mutation for this
+    # rule pass while the script was genuinely broken, which is the same
+    # environment-dependent result the encoding rule two files over exists for.
     result = subprocess.run(
         [sys.executable, "scripts/generate_lake_snapshot_manifest_contract.py", "--check"],
         cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONPATH": ""},
     )
     assert result.returncode == 0, (
         f"generate_lake_snapshot_manifest_contract.py --check exited "
@@ -189,10 +198,45 @@ def test_every_record_is_valid_json_and_names_its_own_version():
     Once the writer moves on, nothing can reproduce an old shape -- the code
     that made it is gone and the archives cannot be re-read to recover it. So
     the only thing standing between a retired record and a silent rewrite is
-    that its filename and its contents have to agree, and ``load_records``
-    raises when they do not. This calls it for that reason.
+    that its filename and its contents agree.
+
+    The disagreement is *reported* by ``record_inconsistencies`` rather than
+    raised by the loader, and the harness is why. Raising made one bad record a
+    collection error for this whole module -- pytest exited 4, no assertion
+    ran, and the mutation for this very rule was recorded as unnoticed. A rule
+    that cannot be collected is indistinguishable from a rule that does not
+    exist.
     """
-    records = load_records()
     for path in sorted(REGISTRY_DIR.glob("*.json")):
         json.loads(path.read_text(encoding="utf-8"))
-    assert len(records) == len(list(REGISTRY_DIR.glob("*.json")))
+
+    problems = record_inconsistencies()
+    assert not problems, "; ".join(problems)
+    assert len(load_records()) == len(list(REGISTRY_DIR.glob("*.json")))
+
+
+def test_the_response_fidelity_plugin_is_registered():
+    """A plugin that is not loaded is a guard nobody notices missing.
+
+    ``tests/plugins/response_model_fidelity.py`` is what holds the other half
+    of this gap -- the handler-to-model direction, where a model short by a key
+    deletes it from every response in production while the tests and the
+    generated contract both agree with the model. It is a session fixture in a
+    ``-p`` plugin, so removing one word from ``addopts`` disarms it and every
+    test still passes. That is the same shape as the declared-skip gate above
+    it in this file, and it gets the same treatment.
+
+    Registration is asserted from ``pyproject.toml`` rather than by asking the
+    running session, because a rule that reads its own interpreter can only
+    report that the plugin loaded *here* -- and ``docs-tests`` runs pytest with
+    ``--noconftest``, so "loaded in this process" is not the property that
+    needs holding.
+    """
+    config = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "-p tests.plugins.response_model_fidelity" in config, (
+        "tests/plugins/response_model_fidelity.py is not registered in "
+        "pyproject.toml's addopts. Unregistered, it loads in no job, and a "
+        "response model short of its handler goes back to deleting keys in "
+        "production with the suite green and the generated contract agreeing "
+        "-- which is the state this gap was opened for."
+    )

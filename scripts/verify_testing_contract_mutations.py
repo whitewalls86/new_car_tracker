@@ -2710,6 +2710,120 @@ MUTATIONS = [
         ["scripts/audit_plan_state_history.py"],
         [],
     ),
+    # ------------------------------------------------------------------
+    # Plan 162 Stage AA, G32. The snapshot manifest is the one document two
+    # services exchange through object storage rather than over HTTP, so no
+    # OpenAPI schema describes it and the contract gate cannot see it.
+    # ------------------------------------------------------------------
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_writer_matches_the_record_for_the_version_it_stamps",
+        "archiver's manifest writer gains a key and the record does not move",
+        lambda: _edit(
+            "archiver/processors/lake_snapshot_archive.py",
+            '    manifest["archived_at"] = datetime.now(timezone.utc).isoformat()',
+            '    manifest["archived_at"] = datetime.now(timezone.utc).isoformat()\n'
+            '    manifest["harness_added_key"] = "x"',
+        ),
+        ["archiver/processors/lake_snapshot_archive.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_every_ops_model_declares_exactly_the_recorded_fields",
+        "the reader's model loses a field the record still names -- the silent "
+        "deletion this gap exists for, since FastAPI filters the response to the "
+        "model and the key stops reaching callers with nothing else red",
+        lambda: _edit(
+            "ops/api_models.py",
+            "    archived_at: str | None = None",
+            "",
+        ),
+        ["ops/api_models.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_ops_has_a_model_for_every_recorded_version",
+        "a recorded format loses its reader model, so every snapshot written in "
+        "it answers 409 -- the case a pinned ML rehearsal depends on",
+        # Re-pins the model at a format nothing recorded rather than emptying
+        # `ARCHIVE_MANIFEST_MODELS`, which was the first attempt: an empty tuple
+        # makes `Union[()]` raise at import, so pytest exited 4, the rule never
+        # ran, and the harness reported NO RUN rather than CAUGHT. A mutation
+        # has to leave the tree importable or it tests the collector.
+        lambda: _edit(
+            "ops/api_models.py",
+            "    archive_cache_schema_version: Literal[1]",
+            "    archive_cache_schema_version: Literal[7]",
+        ),
+        ["ops/api_models.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_fixture_builder_produces_exactly_the_recorded_shape",
+        "the builder every test manifest comes from starts returning a subset, "
+        "putting the hand-written fixture's defect back with a derivation's "
+        "reputation",
+        lambda: _edit(
+            "scripts/generate_lake_snapshot_manifest_contract.py",
+            '    manifest = build(records[pair]["shape"])',
+            '    manifest = build(records[pair]["shape"])\n'
+            '    manifest.pop("tier", None)',
+        ),
+        ["scripts/generate_lake_snapshot_manifest_contract.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_generator_check_passes_as_a_subprocess",
+        "the generator stops working outside an interpreter that has already "
+        "imported archiver, so CI's step fails while these in-process imports pass",
+        lambda: _edit(
+            "scripts/generate_lake_snapshot_manifest_contract.py",
+            "if str(REPO_ROOT) not in sys.path:\n    sys.path.insert(0, str(REPO_ROOT))",
+            "",
+        ),
+        ["scripts/generate_lake_snapshot_manifest_contract.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_every_record_is_valid_json_and_names_its_own_version",
+        "a retired record is edited to declare a version its filename does not, "
+        "which nothing can settle -- the writer is gone and the archives cannot "
+        "be re-read",
+        lambda: _edit(
+            "contracts/lake_snapshot_manifest/export3-archive1.json",
+            '"archive_cache_schema_version": 1,',
+            '"archive_cache_schema_version": 9,',
+        ),
+        ["contracts/lake_snapshot_manifest/export3-archive1.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_registry_is_not_empty",
+        "the registry directory empties and every rule above it loops over "
+        "nothing and passes",
+        lambda: _delete("contracts/lake_snapshot_manifest/export3-archive1.json"),
+        ["contracts/lake_snapshot_manifest/export3-archive1.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_response_fidelity_plugin_is_registered",
+        "the plugin registration is dropped, so a response model short of its "
+        "handler goes back to deleting keys in production with the suite green",
+        lambda: _edit(
+            "pyproject.toml",
+            " -p tests.plugins.response_model_fidelity",
+            "",
+        ),
+        ["pyproject.toml"],
+        [],
+    ),
 ]
 
 

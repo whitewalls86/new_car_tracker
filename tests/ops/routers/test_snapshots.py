@@ -563,7 +563,7 @@ class TestSnapshotManifest:
     def test_a_manifest_schema_this_service_does_not_serve_is_409(
         self, mock_client, mocker, field,
     ):
-        """Plan 162 Stage AA, G31.
+        """Plan 162 Stage AA, G32.
 
         This route hands back a document read out of MinIO, so its response
         model is a claim about data at rest rather than about code here. Both
