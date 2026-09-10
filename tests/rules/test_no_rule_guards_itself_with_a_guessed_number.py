@@ -53,6 +53,102 @@ _NON_EMPTY = {(ast.Gt, 0), (ast.GtE, 1), (ast.NotEq, 0)}
 
 _INEQUALITIES = (ast.Gt, ast.GtE, ast.Lt, ast.LtE)
 
+#: Parsed once per module path -- `test_testing_contract.py` alone imports from
+#: several, and this reader runs at collection time.
+_IMPORTED_CONSTANTS: dict[str, dict[str, int]] = {}
+
+
+def _is_int(node: ast.AST) -> bool:
+    """An int literal, and not ``True``/``False``, which `isinstance` calls int."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, int)
+        and not isinstance(node.value, bool)
+    )
+
+
+def _module_constants(tree: ast.Module) -> dict[str, int]:
+    """Module-level names bound to an int literal, in one file."""
+    found: dict[str, int] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if not _is_int(value):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                found[target.id] = value.value
+    return found
+
+
+def _constants_in_scope(tree: ast.Module) -> dict[str, int]:
+    """Every int constant a module can name -- its own, and the ones it imports.
+
+    ``_SQL_CORPUS_FLOOR = 100`` above ``assert len(corpus) > _SQL_CORPUS_FLOOR``
+    says exactly what ``> 100`` says. Giving a guess a name does not stop it
+    being one, and the name is the more dangerous form, because the number is
+    no longer on the line the reader is reading.
+
+    Imports are followed one level and repo-local: ``DECLARED_SKIP_CEILING``
+    crosses a module boundary to reach its assertion. Package ``__init__``
+    re-exports and aliased module paths are not resolved, because no bound in
+    this directory arrives that way -- and a resolver that guessed at the rest
+    would be the thing this rule forbids.
+    """
+    found = dict(_module_constants(tree))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module is None or node.level:
+            continue
+        if node.module not in _IMPORTED_CONSTANTS:
+            source = REPO_ROOT.joinpath(*node.module.split(".")).with_suffix(".py")
+            try:
+                imported = _module_constants(
+                    ast.parse(source.read_text(encoding="utf-8"))
+                )
+            except (OSError, SyntaxError):
+                imported = {}
+            _IMPORTED_CONSTANTS[node.module] = imported
+        for alias in node.names:
+            if alias.name in _IMPORTED_CONSTANTS[node.module]:
+                found[alias.asname or alias.name] = _IMPORTED_CONSTANTS[node.module][
+                    alias.name
+                ]
+    return found
+
+
+def _table_bound_names(tree: ast.Module, constants: dict[str, int]) -> set[str]:
+    """Loop variables that a literal table unpacks a chosen number into.
+
+    ``for waivers, ceiling, ... in ((WAIVERS, MAX_WAIVERS, ...), ...)`` moves
+    the number one hop further from its assertion without changing what it is,
+    and the assertion then reads ``<= ceiling``, which looks derived.
+
+    Only literal tables of literal rows are followed. A loop over anything
+    computed is iterating over a value that came from somewhere, which is the
+    shape a floor is allowed to have.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For) or not isinstance(node.target, ast.Tuple):
+            continue
+        if not isinstance(node.iter, (ast.Tuple, ast.List)):
+            continue
+        for row in node.iter.elts:
+            if not isinstance(row, (ast.Tuple, ast.List)):
+                continue
+            for target, element in zip(node.target.elts, row.elts):
+                if not isinstance(target, ast.Name):
+                    continue
+                if _is_int(element) or (
+                    isinstance(element, ast.Name) and element.id in constants
+                ):
+                    names.add(target.id)
+    return names
+
 
 def _guessed_bounds() -> list[str]:
     """Every assertion in this directory bounded by a number somebody chose."""
@@ -69,6 +165,8 @@ def _guessed_bounds() -> list[str]:
             # what it did.
             continue
         relative = path.relative_to(REPO_ROOT).as_posix()
+        constants = _constants_in_scope(tree)
+        table_bound = _table_bound_names(tree, constants)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assert):
                 continue
@@ -84,16 +182,22 @@ def _guessed_bounds() -> list[str]:
                     if (
                         isinstance(right, ast.BinOp)
                         and isinstance(right.op, (ast.Sub, ast.Add))
-                        and isinstance(right.right, ast.Constant)
-                        and isinstance(right.right.value, int)
+                        and _is_int(right.right)
                     ):
                         found.append(f"{relative}: {ast.unparse(comparison)}")
                         continue
-                    if not (
-                        isinstance(right, ast.Constant)
-                        and isinstance(right.value, int)
-                        and not isinstance(right.value, bool)
-                    ):
+                    # A name that resolves to an int literal is the same guess
+                    # spelled at a distance. The non-empty exemption still
+                    # applies to it: a constant that *is* 0 asserts nothing
+                    # about size, whatever it is called.
+                    if isinstance(right, ast.Name):
+                        if right.id in table_bound or (
+                            right.id in constants
+                            and (type(operator), constants[right.id]) not in _NON_EMPTY
+                        ):
+                            found.append(f"{relative}: {ast.unparse(comparison)}")
+                        continue
+                    if not _is_int(right):
                         continue
                     if (type(operator), right.value) in _NON_EMPTY:
                         continue
@@ -141,6 +245,23 @@ GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     "tests/rules/test_testing_contract.py: len(ambiguous) <= 8",
     "tests/rules/test_testing_contract.py: len(requests) >= 100",
     "tests/rules/test_testing_contract.py: len(found) >= 4",
+    # Added 2026-09-10, Stage AK, when this reader learned to resolve a name.
+    # The seed above was 24 because the reader only saw int *literals*, so a
+    # guess survived it by being given a name -- which is the more dangerous
+    # form, since the number is then not on the line anyone is reading. Six
+    # more, one from each depth the resolution now reaches: a constant in the
+    # same file (`_SQL_CORPUS_FLOOR = 100`, `_DB_VOCABULARY_FLOOR = 10`,
+    # `UNDELIVERED_CEILING = 1`, `UNDOCUMENTED_CEILING = 4`), a constant
+    # imported from another module (`DECLARED_SKIP_CEILING = 2`), and one a
+    # literal loop table unpacks into a variable that then reads as derived
+    # (`ceiling`, from `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` and
+    # `MAX_THE_CHECKS_WAIVERS`).
+    "tests/rules/test_env_example_wiring.py: len(UNDELIVERED) <= UNDELIVERED_CEILING",
+    "tests/rules/test_env_example_wiring.py: len(UNDOCUMENTED) <= UNDOCUMENTED_CEILING",
+    "tests/rules/test_planning_docs.py: len(waivers) <= ceiling",
+    "tests/rules/test_testing_contract.py: len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING",
+    "tests/rules/test_testing_contract.py: len(corpus) > _SQL_CORPUS_FLOOR",
+    "tests/rules/test_testing_contract.py: len(owners) >= _DB_VOCABULARY_FLOOR",
 )
 
 
