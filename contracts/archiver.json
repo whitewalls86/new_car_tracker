@@ -386,7 +386,7 @@
         "type": "object"
       },
       "FlushStagingResponse": {
-        "description": "``POST /flush/staging/run``.",
+        "description": "``POST /flush/staging/run`` -- enforced, so a failing run is a 500.",
         "properties": {
           "error": {
             "anyOf": [
@@ -1626,7 +1626,7 @@
     },
     "/flush/staging/run": {
       "post": {
-        "description": "Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).\n\n**Still warning-only.** A run failing ``_flush_staging_failure_reason``\nlogs a ``would fail`` warning naming the tables and returns 200. Stage C\ndeploy 2 of 3 turns that into a 500 carrying the summary and a\n``failure_reason`` — second of the three, since the dbt build does not\nread staging events.",
+        "description": "Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_flush_staging_failure_reason`` returns 500\nwith the summary and a ``failure_reason`` as ``detail`` naming the tables\nthat did not land; both callers go through ``sensors.post_json``, which\nraises ``JsonPostError`` carrying that body, so the task goes red and\n``hourly_analytics_refresh``'s ``notify`` can quote the reason.\n\nPlan 134 Stage C, deploy 2 of 3. Second because the dbt build does not read\nstaging events, so the hour dbt skips here is an hour it would have built\nfrom unchanged inputs anyway — which is *not* the same as the build being\nunaffected: ``flush_staging_events`` sits upstream of ``dbt_build`` in the\nDAG, so a red task here skips it. ``/flush/silver/run`` is last because\nthere the skipped build would also have been building on stale data. It is\nstill warning-only and leaves the observation window on deploy 3.",
         "operationId": "trigger_flush_staging_flush_staging_run_post",
         "responses": {
           "200": {
@@ -1638,6 +1638,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The flush failed; the summary is the detail."
           }
         },
         "summary": "Trigger Flush Staging"
