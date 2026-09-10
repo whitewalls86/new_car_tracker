@@ -4,6 +4,15 @@ import logging
 
 import pytest
 
+from archiver.api_models import (
+    CompactSilverResponse,
+    DiskUsageResponse,
+    PackBronzeResponse,
+    PrunePackedResponse,
+    VerifyPackResponse,
+)
+from tests.response_fixtures import fixture_for
+
 
 @pytest.fixture(scope="module", autouse=True)
 def allow_pack_jobs_in_endpoint_tests():
@@ -23,74 +32,47 @@ def allow_pack_jobs_in_endpoint_tests():
 
 
 # ---------------------------------------------------------------------------
-# Processor result factories -- Plan 162 Stage AA.
+# Processor result factories -- Plan 162 Stage AA, G32.
 #
-# Every one of these returns the *complete* summary its processor returns, and
-# takes overrides for the fields a test actually cares about. Before this stage
-# the fakes below were written key by key -- one was `{}`, several were a single
-# key -- and the endpoints passed them straight through, so a test could assert
-# on a body its processor could never produce.
+# Each returns the complete summary its producer returns, built from the
+# response model that serialises it and overridden only where a test cares.
 #
-# Nothing said so, because nothing compared the two. Declaring `response_model`
-# on these routes made FastAPI compare them, and it rejected 31 of these tests
-# on the first run. That is the same defect this stage is named for, one layer
-# in: a test inventing a shape rather than deriving it. The factories are how it
-# stops recurring -- a new test overrides what it means to exercise and inherits
-# a truthful body for everything else.
+# Before this stage these were dicts written key by key from reading the
+# producer -- one was `{}`, several were a single key -- and the endpoints
+# passed them straight through, so a test could assert on a body its own
+# production code cannot return. 31 did. Completing them by hand was the
+# first repair and left them transcriptions, free to drift the moment a
+# producer gained a key: that mutation passed 592 tests.
+#
+# Building them from the model is what removes the copy. The model is held
+# against the producer by `test_no_response_model_is_short_of_its_producer`
+# and against the handler by `tests/plugins/response_model_fidelity.py`, so
+# a fixture built from it inherits both checks rather than needing its own.
 # ---------------------------------------------------------------------------
 
 def _pack_result(**over):
-    """``pack_bronze_html``'s 16-key summary."""
-    return {
-        "mode": "dry_run", "artifact_type": None, "repacking": False,
-        "buckets_eligible": 0, "buckets_processed": 0, "objects_pending": 0,
-        "packs_written": 0, "members_packed": 0, "members_verified": 0,
-        "read_failures": 0, "pack_bytes": 0, "source_bytes": 0,
-        "free_space": None, "stopped_for_deploy": False, "error": None,
-        "buckets": [], **over,
-    }
+    """``pack_bronze_html``'s summary, built from the model that serialises it."""
+    return fixture_for(PackBronzeResponse, **over)
 
 
 def _prune_result(**over):
-    """``delete_packed_source_html``'s 26-key summary."""
-    return {
-        "mode": "dry_run", "year": 2026, "month": 4, "artifact_type": None,
-        "grace_days": 7, "max_objects": None, "max_packs": None,
-        "packs_considered": 0, "packs_drained": 0, "packs_skipped_grace": 0,
-        "orphan_packs": [], "objects_surviving_before": 0, "objects_deleted": 0,
-        "objects_verified": 0, "objects_already_gone": 0, "objects_refused": 0,
-        "bytes_freed": 0, "inodes_freed_estimated": 0.0,
-        "inodes_freed_measured": None, "free_space_before": None,
-        "free_space_after": None, "by_status": {}, "failures": [],
-        "capped": False, "stopped_for_deploy": False, "error": None, **over,
-    }
+    """``delete_packed_source_html``'s summary."""
+    return fixture_for(PrunePackedResponse, **over)
 
 
 def _verify_result(**over):
-    """``verify_pack_read_path``'s 9-key summary."""
-    return {
-        "bucket": "bronze", "prefix": "html/2026/04/", "sampled": 0,
-        "verified": 0, "failed": 0, "sidecars": 0,
-        "sources_already_deleted": 0, "latency_ms": {}, "failures": [], **over,
-    }
+    """``verify_pack_read_path``'s summary."""
+    return fixture_for(VerifyPackResponse, **over)
 
 
 def _compact_result(**over):
-    """``compact_silver``'s 9-key summary. ``incremental`` is a count."""
-    return {
-        "scanned": 0, "compacted": 0, "incremental": 0, "skipped": 0,
-        "failed": 0, "size_before_mb": 0.0, "size_after_mb": 0.0,
-        "error": None, "partitions": [], **over,
-    }
+    """``compact_silver``'s summary. ``incremental`` is a count, not a flag."""
+    return fixture_for(CompactSilverResponse, **over)
 
 
 def _disk_result(**over):
     """``run_disk_usage``'s summary. ``unpublished`` is target names, not a count."""
-    return {
-        "include_slow": False, "textfile": "/tmp/disk.prom", "measured": 0,
-        "carried_forward": 0, "failed": 0, "unpublished": [], "results": [],
-        **over,
-    }
+    return fixture_for(DiskUsageResponse, **over)
 
 
 def _snapshot_result(**over):

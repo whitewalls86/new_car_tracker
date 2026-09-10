@@ -2824,6 +2824,34 @@ MUTATIONS = [
         ["pyproject.toml"],
         [],
     ),
+    (
+        "tests/rules/test_response_models_match_their_producers.py"
+        "::test_no_response_model_is_short_of_its_producer",
+        "a processor grows a key its endpoint's response model does not declare, "
+        "so FastAPI deletes it on the way out -- invisible to the runtime plugin "
+        "because the endpoint's tests mock that processor, and to the contract "
+        "gate because the artifact is built from the model",
+        lambda: _edit(
+            "archiver/processors/pack_bronze_html.py",
+            '        "buckets": [],\n    }',
+            '        "buckets": [],\n        "harness_added_key": 1,\n    }',
+        ),
+        ["archiver/processors/pack_bronze_html.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_response_models_match_their_producers.py"
+        "::test_the_producer_corpus_is_not_empty",
+        "the decorator keyword this rule reads is renamed, so no route resolves "
+        "to a producer and the rule above compares nothing over an empty corpus",
+        lambda: _edit(
+            "tests/rules/test_response_models_match_their_producers.py",
+            'if keyword.arg == "response_model":',
+            'if keyword.arg == "response_model_renamed":',
+        ),
+        ["tests/rules/test_response_models_match_their_producers.py"],
+        [],
+    ),
 ]
 
 
