@@ -845,7 +845,7 @@ class TestExpectedServicesMatchTheManifest:
 
     def test_the_frozen_set_equals_the_manifest_derivation(self):
         from container_health.expected import EXPECTED_SERVICES
-        from tests.test_maintenance_running_set import expected_running_services
+        from tests.rules.test_maintenance_running_set import expected_running_services
 
         derived = expected_running_services()
         assert set(EXPECTED_SERVICES) == derived, (

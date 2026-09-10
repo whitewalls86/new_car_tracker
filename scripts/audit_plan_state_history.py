@@ -72,7 +72,7 @@ STATE_BY_HEADING = {
     # The short form was missing for nine days, during which every closeout plan
     # read as ``absent`` -- Plan 136 as having left the index, Plans 149 and 160
     # as never arriving. ``TestTheStateParserClassifiesEveryLiveHeading`` in
-    # ``tests/test_planning_docs.py`` is what stops the next rename doing that.
+    # ``tests/rules/test_planning_docs.py`` is what stops the next rename doing that.
     "current closeout": "closeout",
     "current closeout -- finish before opening another large build": "closeout",
     "operational monitoring and completed implementation awaiting closeout": "closeout",

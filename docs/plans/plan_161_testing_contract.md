@@ -14,7 +14,7 @@ met. The contract is [`docs/TESTING.md`](../TESTING.md);
 [the nine questions are answered](#the-answers); the reviewer is
 [`.claude/skills/testing-contract/`](../../.claude/skills/testing-contract/SKILL.md);
 the asserting test is
-[`tests/test_testing_contract.py`](../../tests/test_testing_contract.py); and
+[`tests/test_testing_contract.py`](../../tests/rules/test_testing_contract.py); and
 the known violations are G1-G14 in the gap list. See
 [CAR-33's evidence](#evidence--car-33-2026-08-31) and
 [CAR-34's](#evidence--car-34-2026-08-31).
@@ -666,7 +666,7 @@ the one CI runs. Its own work is the four judgement rules, and it is required
 to end by naming which rules it could not reach — never with a bare approval.
 
 **The asserting test** is
-[`tests/test_testing_contract.py`](../../tests/test_testing_contract.py), Layer
+[`tests/test_testing_contract.py`](../../tests/rules/test_testing_contract.py), Layer
 0, 15 assertions, ~4s, no dependencies. Every subject is derived: the services
 from the top-level Python packages on disk (which is exactly the eight the
 "enough" table has rows for), the routes from each app's real `app.routes` in a

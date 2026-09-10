@@ -50,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS_DIR = REPO_ROOT / "contracts"
 
 # Run in a subprocess, one service at a time, for the reason `_ROUTE_PROBE` in
-# tests/test_testing_contract.py records: importing six FastAPI apps into one
+# tests/rules/test_testing_contract.py records: importing six FastAPI apps into one
 # interpreter registers six sets of Prometheus collectors in a single registry
 # and leaves `scraper/` on `sys.path` for everything after it.
 #

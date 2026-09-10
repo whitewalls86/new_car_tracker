@@ -175,7 +175,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
-      - run: pytest --noconftest tests/test_planning_docs.py -q
+      - run: pytest --noconftest tests/rules/test_planning_docs.py -q
         env:
           # The repo root carries an __init__.py, so pytest's package-root walk
           # climbs past it whenever the checkout directory name is a valid
@@ -517,7 +517,7 @@ jobs:
         # how CI came to run a Postgres with none of production's tuning and a
         # MinIO with none of its configuration. The definitions now come from
         # docker-compose.yml, and docker-compose.ci.yml holds the entire
-        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # declared difference -- asserted by tests/rules/test_ci_compose_parity.py,
         # which diffs the two resolved documents rather than naming fields.
         run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
 
@@ -810,7 +810,7 @@ jobs:
         # how CI came to run a Postgres with none of production's tuning and a
         # MinIO with none of its configuration. The definitions now come from
         # docker-compose.yml, and docker-compose.ci.yml holds the entire
-        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # declared difference -- asserted by tests/rules/test_ci_compose_parity.py,
         # which diffs the two resolved documents rather than naming fields.
         run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
 
@@ -954,7 +954,7 @@ jobs:
         # how CI came to run a Postgres with none of production's tuning and a
         # MinIO with none of its configuration. The definitions now come from
         # docker-compose.yml, and docker-compose.ci.yml holds the entire
-        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # declared difference -- asserted by tests/rules/test_ci_compose_parity.py,
         # which diffs the two resolved documents rather than naming fields.
         run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
 
@@ -1208,7 +1208,7 @@ jobs:
         # how CI came to run a Postgres with none of production's tuning and a
         # MinIO with none of its configuration. The definitions now come from
         # docker-compose.yml, and docker-compose.ci.yml holds the entire
-        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # declared difference -- asserted by tests/rules/test_ci_compose_parity.py,
         # which diffs the two resolved documents rather than naming fields.
         run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres
 
@@ -1335,7 +1335,7 @@ jobs:
         # how CI came to run a Postgres with none of production's tuning and a
         # MinIO with none of its configuration. The definitions now come from
         # docker-compose.yml, and docker-compose.ci.yml holds the entire
-        # declared difference -- asserted by tests/test_ci_compose_parity.py,
+        # declared difference -- asserted by tests/rules/test_ci_compose_parity.py,
         # which diffs the two resolved documents rather than naming fields.
         run: docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml --env-file .env.ci up -d --wait postgres minio
 

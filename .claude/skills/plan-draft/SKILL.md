@@ -58,7 +58,7 @@ slug later.
 
 Present tense, for a reader who has never seen this repository. One or two
 sentences, under **320 characters** — it is one of the two sections
-`docs/PLAN_DOCUMENT.md` caps and publishes. `tests/test_planning_docs.py`
+`docs/PLAN_DOCUMENT.md` caps and publishes. `tests/rules/test_planning_docs.py`
 checks the cap once a plan reaches the published build-order window, not at
 draft time; write within it now rather than leaving a future editor to
 discover the failure when the plan is promoted.
@@ -124,7 +124,7 @@ moment `docs/PLAN_DOCUMENT.md` means by "its one approval stop is the
 trigger" — reasoning the user can still argue with, before any file changes.
 
 Once approved, hand the five values to the `plans` skill's operation 6 exactly
-as approved. Do not run `tests/test_planning_docs.py` or
+as approved. Do not run `tests/rules/test_planning_docs.py` or
 `build_public_roadmap.py` yourself first — operation 6 owns its own preflight
 and after-every-operation checks; running a parallel copy here only invites the
 two to disagree.
@@ -154,7 +154,7 @@ A hand-edit that bypasses this check is already a contract violation on its own
 terms.
 
 The cap and the section's *presence* are enforced in CI by
-`tests/test_planning_docs.py`, and a plan cannot enter the published window
+`tests/rules/test_planning_docs.py`, and a plan cannot enter the published window
 while on a waiver list. Neither of those reads what the sentence says. That is
 this step's job.
 

@@ -80,7 +80,7 @@ class DeclaredSkip:
 
 DECLARED_SKIPS = (
     DeclaredSkip(
-        "tests/test_planning_docs.py::TestWeeklyRecaps"
+        "tests/rules/test_planning_docs.py::TestWeeklyRecaps"
         "::test_every_sha_a_recap_names_is_a_real_commit",
         reason=(
             "the check reads real git history to prove a recap's shas exist, "
