@@ -296,8 +296,6 @@ def _read_assert(
 # whatever the count was that day, and those stop meaning anything the moment
 # the tree grows past them.
 GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
-    "tests/rules/test_external_vocabularies.py: len(observed) >= 2",
-    "tests/rules/test_planning_docs.py: len(found) > 50",
     "tests/rules/test_planning_docs.py: len(gap_claims()) >= 10",
     "tests/rules/test_planning_docs.py: len(gap_entries()) >= 10",
     "tests/rules/test_planning_docs.py: found > 200",

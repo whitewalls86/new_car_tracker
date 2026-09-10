@@ -2591,6 +2591,25 @@ MUTATIONS = [
         ["docs/planning/plan_state_reconciliation.md"],
         [],
     ),
+    # Plan 162 Stage AK. The entry above deletes the record outright, which the
+    # `len(found) > 50` floor caught. This one breaks a single census pattern:
+    # `_CENSUS_BOLD` stops matching, 15 rows go unresolved and the count falls
+    # from 67 to **54** -- still over the old floor, which is the erosion case
+    # the number could not see. Measured by breaking each of the three patterns
+    # in turn: TITLED gives 43 and LIST gives 38, both of which `> 50` caught,
+    # so BOLD is the one that makes the point.
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestNoRowVanishesSilently::test_the_census_reads_the_reconciliation_record",
+        "one census pattern stops matching and the reader quietly reads less",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_CENSUS_BOLD = re.compile(r"^\*\*(\d+)\*\*$")',
+            r'_CENSUS_BOLD = re.compile(r"^\*\*(\d+)\*\*\*$")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
     (
         "tests/rules/test_planning_docs.py"
         "::TestNoRowVanishesSilently::test_every_reconciled_plan_is_still_claimed_by_a_table",
@@ -3113,6 +3132,28 @@ MUTATIONS = [
             '"statuses_observed": [\n    200,\n    302,\n    403,\n'
             '    500,\n    502,\n    503,\n    504\n  ],',
             '"statuses_observed": [],',
+        ),
+        ["tests/fixtures/external/cars_com_responses.json"],
+        [],
+    ),
+    # Plan 162 Stage AK, and the entry above wrote this one's justification two
+    # stages early: *"it dropped two statuses from a list of seven against a
+    # floor of two, so even correctly addressed it would not have tripped the
+    # rule."* That payload was abandoned as unusable. Against the equality that
+    # replaced the floor it is exactly the right payload, so here it is --
+    # `statuses_observed` loses one of its seven while `observations` keeps all
+    # ten rows, which is what a half-failed recording looks like and what
+    # `>= 2` was blind to.
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_cars_com_corpus_is_not_empty",
+        "the corpus summary loses a status its own observations still record",
+        lambda: _edit(
+            "tests/fixtures/external/cars_com_responses.json",
+            '"statuses_observed": [\n    200,\n    302,\n    403,\n'
+            '    500,\n    502,\n    503,\n    504\n  ],',
+            '"statuses_observed": [\n    200,\n    403,\n'
+            '    500,\n    502,\n    503,\n    504\n  ],',
         ),
         ["tests/fixtures/external/cars_com_responses.json"],
         [],

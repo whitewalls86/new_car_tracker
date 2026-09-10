@@ -1206,6 +1206,43 @@ def census_plan_numbers() -> frozenset[int]:
     return frozenset(found)
 
 
+def unresolved_census_rows() -> list[str]:
+    """Rows in the record's plan tables that resolve to no plan number.
+
+    The floor under :func:`census_plan_numbers`, and an exact one. The record
+    is frozen history -- Plan 146 Stage 0 settled these states once and they
+    do not move -- so the honest question is not *how many* numbers came out
+    but *whether every row that should yield one did*. A regex that stops
+    matching shows up here as the rows it stopped matching, by name.
+
+    Two table shapes live in the file. The plan tables head their first column
+    ``Plan``; the summary table heads it ``Measurement`` and its first cells
+    are prose, so it is skipped rather than parsed and failed.
+    """
+    unresolved: list[str] = []
+    in_plan_table = False
+    for line in _read(RECONCILIATION).splitlines():
+        if not line.strip().startswith("|"):
+            in_plan_table = False
+            continue
+        cell = _cells(line)[0]
+        if cell == "Plan":
+            in_plan_table = True
+            continue
+        if cell == "Measurement":
+            in_plan_table = False
+            continue
+        if not in_plan_table or set(cell.strip()) <= set("-:"):
+            continue
+        if not (
+            _CENSUS_BOLD.match(cell)
+            or _CENSUS_TITLED.match(cell)
+            or _CENSUS_LIST.match(cell)
+        ):
+            unresolved.append(cell)
+    return unresolved
+
+
 class TestNoRowVanishesSilently:
     """Mutation F: every plan Stage 0 settled is still claimed by a table."""
 
@@ -1218,11 +1255,24 @@ class TestNoRowVanishesSilently:
             f"56 -- still exist. Deleting it removes their only defence, which "
             f"is a decision to make on purpose rather than in passing."
         )
-        found = census_plan_numbers()
-        assert len(found) > 50, (
-            f"the census resolved only {len(found)} plan numbers out of "
-            f"{RECONCILIATION}. Its table shape has changed and the check "
-            f"below is no longer looking at anything."
+        # Stage AK: this was `len(found) > 50` against a corpus of 67. Measured
+        # by breaking each census pattern in turn: `_CENSUS_TITLED` and
+        # `_CENSUS_LIST` dropped it to 43 and 38, which the floor caught, and
+        # `_CENSUS_BOLD` dropped it to 54 across 15 unresolved rows, which the
+        # floor waved straight through. The record is frozen history, so the
+        # exact claim is available and is the better one regardless -- every
+        # row in a plan table resolves, and a pattern that stops matching names
+        # the rows it stopped matching instead of shrinking a total.
+        unresolved = unresolved_census_rows()
+        assert not unresolved, (
+            f"{len(unresolved)} rows in {RECONCILIATION}'s plan tables resolve "
+            f"to no plan number: {unresolved}. Its table shape has changed, or "
+            f"a census pattern has stopped matching, and the check below is no "
+            f"longer looking at all of it."
+        )
+        assert census_plan_numbers(), (
+            f"the census resolved no plan numbers at all out of "
+            f"{RECONCILIATION}."
         )
 
     def test_every_reconciled_plan_is_still_claimed_by_a_table(self):
