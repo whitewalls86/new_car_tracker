@@ -12,7 +12,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-import yaml
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -28,6 +27,7 @@ from dbt_runner.api_models import (
     SelectorsResponse,
 )
 from dbt_runner.metrics import REGISTRY, publish_snapshot
+from dbt_runner.selectors import declared_selectors
 from shared.api_models import (
     ErrorResponse,
     HealthResponse,
@@ -78,30 +78,6 @@ def _model_timings_from_run_results() -> List[Dict[str, Any]]:
         }
         for result in data.get("results", [])
     ]
-
-
-def declared_selectors() -> set[str]:
-    """The selector names ``selectors.yml`` declares, read from the file.
-
-    Plan 162 Stage AA. Read rather than restated: a list of names here would be
-    a second copy of the same four strings, free to drift from the file dbt
-    actually reads -- and the panel offering a selector dbt does not have is
-    exactly the class of defect this plan exists for.
-
-    ``selectors.yml`` sits beside this service at runtime because
-    ``dbt_runner/Dockerfile`` copies ``dbt/`` to the working directory, which is
-    the same reason ``dbt build`` finds it.
-    """
-    path = os.path.join(os.getcwd(), "selectors.yml")
-    try:
-        with open(path, encoding="utf-8") as handle:
-            declared = yaml.safe_load(handle) or {}
-    except FileNotFoundError:
-        return set()
-    return {
-        entry["name"] for entry in (declared.get("selectors") or [])
-        if isinstance(entry, dict) and entry.get("name")
-    }
 
 
 def _validate_tokens(tokens: List[str], field: str) -> None:

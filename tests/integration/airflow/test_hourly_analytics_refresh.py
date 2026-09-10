@@ -70,7 +70,7 @@ class TestHourlyDbtBuildPayload:
         sys.path.insert(0, str(REPO_ROOT))
         import os
 
-        from dbt_runner.app import declared_selectors
+        from dbt_runner.selectors import declared_selectors
         previous = os.getcwd()
         os.chdir(REPO_ROOT / "dbt")
         try:
@@ -98,7 +98,7 @@ class TestHourlyDbtBuildPayload:
         dbt_build_module._run_dbt_build(**_mock_context({"full_refresh": True}))
 
         _, kwargs = mock_post_json.call_args
-        assert kwargs["payload"] == {"select": ["tag:hourly_core"], "full_refresh": True}
+        assert kwargs["payload"] == {"selector": "hourly_core", "full_refresh": True}
 
     def test_explicit_empty_select_list_is_still_honored(self, dbt_build_module, mocker):
         """
