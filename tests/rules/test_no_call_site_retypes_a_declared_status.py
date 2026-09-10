@@ -129,6 +129,9 @@ RETYPED_STATUS_LEDGER: tuple[str, ...] = (
     "archiver/app.py::ready::503",
     "archiver/app.py::trigger_compact_silver::500",
     "archiver/app.py::trigger_disk_usage::500",
+    # Landed on master (Plan 134 Stage C deploy 2) between this ledger's
+    # measurement and its rebase; the same class as its trigger_* siblings.
+    "archiver/app.py::trigger_flush_staging::500",
     "archiver/app.py::trigger_pack_bronze_html::400",
     "archiver/app.py::trigger_pack_bronze_html::500",
     "archiver/app.py::trigger_prune_packed_source_html::400",
