@@ -350,6 +350,122 @@ subprocess, cannot be wrapped, and does not need to be: it already writes every
 compiled statement it executed to `dbt/target/run/` beside `run_results.json`.
 A declared second mechanism, not a hole.
 
+### How a service reaches another service
+
+**Every way one service depends on another is declared, and each declared
+channel has exactly one approved mechanism.** That is the section above,
+restated for the seam: classify one derived surface, and anything unclassified
+fails rather than passing quietly. `_SQL_CALL_NAMES` is the argument — an
+inventory of the ways a thing can happen is escapable by doing it a way the
+inventory has not heard of, so the fix is to make there be one way.
+
+**Naming the channels is part of the standard**, because "there is one approved
+way" means nothing if the list only contains the channels already solved. Five
+carry a dependency here and **one is governed**:
+
+| Channel | Its one mechanism | Standing |
+|---|---|---|
+| Shared Postgres | the migration owns the schema; [`shared/db_vocabularies.py`](../shared/db_vocabularies.py) declares the closed vocabularies once, guarded by a pair of rules reading in both directions | **governed** — Plan 162 Stage W |
+| HTTP | this section | Plan 162 Stage AL, [G33](#the-gap-list) |
+| Object storage | one *artifact* has a generated record — `contracts/lake_snapshot_manifest/`, with the writer, the reader's models and every fixture held to it. The **channel** has none: bronze HTML, packfiles and silver Parquet are addressed by string literals retyped across services | **partial** — Plan 162 Stage AM, [G34](#the-gap-list) |
+| Metrics | a service exposes `/metrics`, Prometheus scrapes it, and a dashboard or alert rule queries a metric *name*. `tests/test_observability_config.py` parses the configs; nothing compares an emitted name to a queried one | **unowned** |
+| Logs | Promtail to Loki, with a contract checker from Plans 141 and 160 | **partial** |
+
+The last two are one-directional and observational — a broken metric name breaks
+a dashboard, not a caller — so they are named here rather than folded into the
+statements below. That is a scope decision, not an omission: the `cartracker_*`
+gauges have already gone stale through an eight-hour outage with the alert
+silent, so "observational" is not the same as "harmless".
+
+**A service's code is reachable only over HTTP.** No service imports another
+service's package. A declaration more than one service needs lives in
+`shared/`; where a service *cannot* import `shared/` — `container_health` holds
+the Docker socket grant and its image carries as little else as possible — the
+declaration lives in a file both read, which is
+[`healthcheck-exemptions.txt`](../healthcheck-exemptions.txt)'s shape and
+already has a bash reader and a Python reader that agree without a parser.
+
+#### What must be true of a call
+
+Given service A calls an endpoint of service B:
+
+1. **Every call A makes reaches an endpoint B serves.**
+2. **Every request A sends satisfies that endpoint.**
+3. **Every endpoint B serves has a caller, or is declared externally reachable.**
+4. **Every response B declares, B can produce.**
+5. **Every response B can produce, B declares.**
+6. **Every response B declares, A handles.**
+7. **A status code means the same thing to A and B.**
+8. **Every mock of B in A's tests derives from B** — the whole response object,
+   not only its body.
+
+**One and two are not one statement, and FastAPI already splits them**: the
+first fails as a 404, the second as a 422, and the corpus declares 39 of the
+latter.
+
+**Four and five are not one statement either**, and neither is redundant with
+six. Six says A handles what B declares; four and five are what make "what B
+declares" true, because `contracts/*.json` is generated from *declarations* and
+a declaration is not a handler. Without them, six is measured against a
+fiction.
+
+**Six and seven are the pair where the defects actually are.** Handling a
+response and handling it *correctly* are different claims, and no standard
+about shape separates them. `ops/coordination_drain.py` reads every service's
+`/ready`; it *handles* a 503 and handles it as failure, when a 503 there means
+*busy* and carries the job count as evidence. Statement six was satisfied the
+whole time.
+
+**Eight is about the response object, not the body**, for the same reason. A
+test can build a body faithfully from `contracts/` and still fabricate the
+answer, because a bare `Mock`'s `raise_for_status()` does not raise — so the
+mock agrees with the contract about what B *says* and lies about what B *does*.
+
+#### What a status code means
+
+Fixed here so a caller can branch on the code rather than on the prose beside
+it. **A refusal is not a failure**: 503 from `/ready` is B answering the
+question, and the body is evidence.
+
+| Code | Means | Is not |
+|---|---|---|
+| `200` | the request was served | a failure reported in the body without saying so |
+| `303` | the outcome is elsewhere; follow it | a body |
+| `308` | this address moved, permanently | `307`, which promises the opposite |
+| `400` | the request is unusable as sent | a rejection of its *content*, which is `422` |
+| `401` | no usable credential was presented | `403` |
+| `403` | the credential does not grant what this route needs | `401` |
+| `404` | the addressed thing does not exist | a route that does not exist, which is not the handler's to report |
+| `409` | the request conflicts with the state the target is in | a validation failure |
+| `422` | the request is well-formed and its content is not usable | `400` |
+| `500` | the service failed while doing the work | the work reporting its own failure in a `200` body |
+| `503` | the service is refusing **for now** — busy, draining, or a dependency it needs is unreachable | a failure; a caller that treats it as one loses the evidence in the body |
+
+**`202`, `429` and `Retry-After` are deliberately absent.** Endpoints that queue
+work answer `200` today, nothing rate-limits, and no response carries
+`Retry-After` — all three are conventional and all three change what production
+sends to live callers, which is a different kind of change from declaring what
+it already sends. Recorded as considered rather than overlooked.
+
+#### What a response declares
+
+**Every response declares a shape, or the kind of body it is.** A JSON schema is
+the wrong answer for most of what is not JSON, and "no schema" has been standing
+in for six different things:
+
+| Kind | For |
+|---|---|
+| a `$ref` | any JSON body |
+| `html` | a rendered template, including an error page |
+| `text` | `robots.txt` and its kin |
+| `metrics` | Prometheus exposition |
+| `stream` | a file handed back to the caller |
+| `none` | genuinely no body — `/auth/check`'s 403 is `Response(status_code=403)` |
+
+An undeclared response is a response a test may fabricate freely, because
+`service_response()` has nothing to build from and `body_violations()` has
+nothing to compare against.
+
 ### Mocking: `mocker`, everywhere, no exemptions
 
 **Patching is `mocker` (pytest-mock). There is no layer, directory, or venv
@@ -786,6 +902,11 @@ invisible rather than counted.
 | Rule | Why it is not asserted | Owner |
 |---|---|---|
 | Every module-level SQL statement in a production module is executed by a Layer 2 test | ~~Inline SQL at an `.execute()` call site is the opposite direction and is measured by nothing~~ — **mechanised 2026-09-01 by Plan 162 Stage L.** [G5](#the-gap-list) and [G15](#the-gap-list) are asserted together by `test_no_production_module_holds_a_sql_statement`, which since 2026-09-02 is **one rule keyed on the statement rather than two keyed on its container**. It reads `production_python_files()` — a second derivation, deliberately **not** `service_packages()`, which answers "is this a service" rather than "is this production Python" and stops at the package boundary. It admits `airflow/dags` and the `scripts/` buckets the contract declares measured, and excludes the ones it declares spent, so a new bucket is covered by editing that table rather than this file. What stays unasserted is Spark: a SQL *fragment* (`selectExpr`, `expr`, a string `filter`) leads with no verb, and the DataFrame API is not text at all, so neither is visible to a static read | Plan 162 |
+| A service's code is reachable only over HTTP — no service imports another's package | Two imports today, and both are a shared declaration misfiled into a service package rather than a service calling another's code: `ops/coordination_drain.py` reads `airflow.dags.coordination_contract`, a pure data module four `ops` modules consume, and `ops/coordination_release.py` reads `container_health.expected`, which is resolved from `maintenance-running-set.txt` and belongs to a package that cannot import `shared/`. The first moves; the second is closed by `ops` reading the manifest instead, one file and two readers. **The rule is not worth having for two violations** — it is worth having because *[statement 9](#how-a-service-reaches-another-service)* depends on it being true | Plan 162, Stage AL |
+| Every call A makes reaches an endpoint B serves, and every request A sends satisfies it | **The reader is built to be permissive and that is load-bearing.** `caller_endpoints()` counts a path only when it *equals* one a contract declares, so a call it cannot place is dropped rather than reported — which is what stops it accusing a `cars.com` test of fabricating a response there is no contract to check. Making it exact is not a change to the rule but to what it reads: 17 modules reach 35 endpoints through ad-hoc clients today, and there is nothing common to key on. **The request half is asserted by nothing at all** — no rule in this repository reads an outbound request body | Plan 162, Stage AL |
+| Every endpoint B serves has a caller, or is declared externally reachable | The caller side of this is watched — `test_every_response_we_ask_for_has_its_status_read` waived six calls to `dbt_runner` endpoints deleted in April and May, found four and a half months later by accident. The callee side is watched by nothing, and it is the half that was actually wrong: those endpoints kept answering. `tests/test_caddy_public_routes.py` already declares which routes a stranger may reach, so the "externally reachable" half has a home to point at rather than a second list | Plan 162, Stage AL |
+| Every response B declares, A handles — and a status code means the same thing to both | **Three rules watch the caller and none of them asks this.** `test_every_response_we_ask_for_has_its_status_read` says the caller reads the status, `test_no_caller_discards_an_outcome_it_asked_for` says it does not throw the answer away, and `test_every_dag_status_check_accepts_only_statuses_its_service_emits` says a DAG's `status` comparisons are against values its service emits. All three are satisfied by a caller that reads a code and acts on the wrong meaning, which is what `ops/coordination_drain.py` does with `/ready`'s 503 today. **The meaning half has no artifact to be checked against**; that is what Stage AL's declaration module is for | Plan 162, Stage AL |
+| Every response declares a shape or the kind of body it is | 76 declared responses carry a status code and no body of any kind, all of them errors and all of them in `ops`. Not one is closable by declaring `ErrorResponse`: 37 are JSON routes where it is right, 28 render `admin/error.html` where a JSON schema would make the artifact lie, and 11 are a file stream, Prometheus exposition, or genuinely no body at all | Plan 162, Stage AL |
 | A run that succeeds has done the work its success implies | **The rule this whole document is about, stated once instead of rediscovered.** A paraphrased test passes forever. A skipped test executes nothing. A `dbt build --target spark` that writes to `spark_catalog` instead of Iceberg **exits 0 having written nothing** — `scripts/run_dbt_spark.py` documents that trap and answers it with `--verify-table`, which is a convention someone must remember, not a mechanism. Three instances, one class. **The second is now general**, and left this section on 2026-09-04: Plan 162 Stage U replaced `REQUIRE_LAYER_2_EXECUTION` -- one suite, one job -- with a declared-skips registry that fails an undeclared skip in any job, and the row above asserts it. **The first has been narrowed rather than left whole**, on 2026-09-07 by Plan 162 Stage W, which took the form of it with a signature -- one artifact enumerates a closed set of values and code elsewhere retypes a member -- and gave it the two rules above. What stays here is the rest of the class, and the boundary is where the measurement put it rather than where it was convenient. **The tests retype these vocabularies too**: 115 comparisons and 366 seeds across 49 test modules hold a value `db/migrations/` owns. That is duplication and not the both-halves defect, and the difference is what the repair above bought -- production's half now comes from `shared/db_vocabularies.py`, so a test seeding `phase="draining"` no longer supplies both sides of anything. Renaming the value in the migrations was run as a mutation and **eight tests failed, loudly**, which is a rename cost rather than silent drift. Closing the remaining 481 is a stage of its own and is not pretended to be done here. The third is untouched, and the reason it is separate work is that "did this actually do the thing" is specific to each thing: what a skip subtracts is visible in pytest's own report, and what a Spark write subtracts is not | Plan 162, and [Plan 125](plans/plan_125_duckdb_to_iceberg_migration.md) for the Spark instance |
 
 Until 2026-08-31 this rule was not in this section. It was a clause inside the
@@ -906,6 +1027,8 @@ stay the place the history lives.
 | G30 | ~~**A rule can exist unregistered, unproved and broken, and the suite stays green.**~~ — **closed 2026-09-09 by Plan 162 Stage AG**, seeded at **89 rows and 81 mutations** and drained to 0. Found by Stage Q, which wrote four rules and reported 3,899 passed with all four unregistered and one of them defective: `test_every_heavy_job_starts_the_compose_services` joined a job's every `run:` step into one string, so the Flyway step's mention of the override file satisfied it with the `up` step deleted. The obligation reads this table's `Asserted by` column, so a rule in no row owed no mutation. **Shape could not supply the missing definition, and that was measured rather than assumed**: "a test that asserts about the repository" would scope 411 of the 421 definitions then at the top level, sweeping in 132 observability-config and 39 deploy-script tests. So the declaration moved from per test to per module and became a directory — eight modules and 161 definitions into `tests/rules/`, against **266** that stayed as Layer 0 config tests, each now named with the one artifact it is about. The boundary is *asserts a repo-wide invariant*, not *is about testing*, which is why `test_planning_docs.py` sits beside `test_testing_contract.py` however different their subjects look. **Registering them found the harness lying about six entries it already held**: four of Stage Q's and two more named a bare node for a rule living in another module, so the target resolved to a test that does not exist, pytest exited 4 saying *not found*, and `caught = code != 0` had read that as proof since the day each was written. The verdict is now exit 1 exactly, with NO RUN reported separately from MISSED — the mechanical form of the false CAUGHT Stage AF caught by reading output. Twenty-three more nodes needed their class, which is the same blindness Stage Q found in `test_every_asserted_rule_names_a_real_test`, arriving in the instrument. The harness went from 92 mutations to 176 | Asserted by `test_every_test_in_the_rules_directory_is_named_in_the_contract` for the directory, `test_every_asserted_rule_lives_in_the_rules_directory` for the reverse, and `test_the_rules_directory_is_not_empty` as their floor. **No exception ledger**, for the reason the mutation obligation gives; the single exemption — a rule whose assertion needs an engine — is read per node from the harness's `ENGINE_BOUND`, after a first attempt keyed on the directory's layer was measured at **614 definitions admitted to exempt one** and replaced. **What it cannot see** is a rule that is neither registered nor in the directory: the directory speaks only for what joined it, and shape was measured and rejected. That residual is stated rather than hidden | Plan 162 |
 | G31 | **A rule with no skill is a rule an agent meets by failing CI.** The rules are the guardrails anything operating in this repository works inside, and partial coverage already shows the shape: `add-sql` carries the SQL rules on the code side, and the plan-document family — `plans`, `plan-draft`, `plan-start`, `stage-close`, `close-out`, `note-evidence` — carries what `test_planning_docs.py` asserts. Both exist because the rule alone was not enough to act on. Uncovered today: patching is `mocker` everywhere, encoding-sensitive I/O states its encoding, a route declares the statuses it can return, `.env.example` wiring in both directions, and CI's services come from the Compose definitions | Not asserted, and deliberately not a maintained column — the repair is Plan 162 Stage AH, where a rule's row names its skill on the same mechanism that requires its mutation, so the mapping cannot drift | Plan 162 |
 | G32 | **No service declares what its responses contain, so a caller cannot be contradicted.** Stage Z generated a contract per service and the response half of it was empty: **68 of 103 JSON responses carried no properties at all**, and the only 35 that did were `HTTPValidationError`, which FastAPI writes for you. Not one route declared a `response_model`. `ops/routers/scrape.py` holds the asymmetry in one file — `ReleaseRequest` and `ReleaseResult` are declared models and the endpoint consuming them answers `Dict[str, Any]` — so `contracts/ops.json` described the request precisely and the response as `{"additionalProperties": true}`, a schema permitting every body including the ones the handler cannot produce. That is why `airflow/dags/scrape_detail_pages.py` reads a `status` key from `POST /scrape/claims/release`, which has never returned one, and logs `status=None` every run with no artifact able to contradict it. **Declaring the models is not the remedy on its own, and that was measured rather than reasoned about**: `response_model` makes FastAPI *filter* the response, so a model short by one key deletes it in production — adding a `generated_at` key to `dbt_runner`'s `/dbt/docs/status` left 57 tests passing and the contract gate at exit 0 with the key gone on the wire, because the contract is generated from the model and the model is what is wrong. This plan's own defect, rebuilt inside its remedy. **And the manifest two services exchange through object storage has no OpenAPI schema at all** — `archiver` writes it, `ops` serves it back, and its shape lived in a writer, a model in a different service, and a dict typed out in each test file, with nothing comparing them. Closed at 116 declared response shapes, 0 untyped | Asserted by `test_every_ops_model_declares_exactly_the_recorded_fields` and `test_the_writer_matches_the_record_for_the_version_it_stamps` for the two sides of the manifest record, `test_ops_has_a_model_for_every_recorded_version` for the property a pinned rehearsal depends on — a format is never retired while its archives are still in the bucket — `test_the_fixture_builder_produces_exactly_the_recorded_shape` because the builder is what replaced the hand-written fixtures, `test_the_generator_check_passes_as_a_subprocess` because CI runs the script rather than these imports, `test_every_record_is_valid_json_and_names_its_own_version` because a retired record cannot be regenerated from anything, and `test_the_registry_is_not_empty` as their floor. The handler-to-model half is held at runtime by `tests/plugins/response_model_fidelity.py`, which wraps `fastapi.routing.serialize_response` so no registry of routes has to be kept truthful, and by `test_the_response_fidelity_plugin_is_registered` for the plugin itself. **What it cannot see** is a route no test exercises; that is the coverage rules' territory and it is a visible hole rather than a silent one | Plan 162, Stage AA |
+| G33 | **There is no one way for a service to reach another, so every rule about the seam has to enumerate the ways.** Measured 2026-09-10. **17 modules reach 35 endpoints through ad-hoc clients** and each rule that reads them keys on a different shape, which is `_SQL_CALL_NAMES` again one layer up: `caller_endpoints()` unions every host a module names because it cannot tell which one a call reaches, and `_codes_at_call_sites` follows a `status_code=` literal at the call site, so **128 codes are typed out across five packages** with nothing able to say two of them mean different things. The cost is not the enumeration, it is that a reader keyed on shapes measures whatever it recognises and passes: `test_the_artifact_declares_no_code_its_handler_cannot_return` **judges 12 of 93 declarations** — every route on all four small services is skipped — while its floor asserts `==` and passes, because the floor asks whether a declaration *resolves* to a handler and not whether that handler can be *read*. Proved by construction rather than argued: converting one service to a standard exit shape took it from 0 of 5 readable to 5 of 5 with zero phantom codes, `199 tests passed`, and `generate_service_contracts.py --check` at exit 0 — the artifact byte-identical, so the readability was free of any change on the wire | Not asserted. The eight statements and the two conditions under them are in [*Specified here, not yet asserted*](#specified-here-not-yet-asserted); the rules that will assert them are Stage AL's, and each owes a floor that is a derived equality and a mutation | Plan 162, Stage AL |
+| G34 | **Object storage carries four exchanges between services and one of them has a contract.** `contracts/lake_snapshot_manifest/` governs the manifest `archiver` writes and `ops` serves back. Nothing governs the other three, and their addresses are string literals retyped across packages: `silver_normalized/observations` appears in `flush_silver_observations.py`, `compact_silver.py`, `pack_bronze_html.py`, `lake_snapshot_export.py`, `lake_source_audit.py` and `.github/scripts/seed_ci_bronze_schemas.py` with no declared constant behind any of them. **The bronze HTML exchange is the one with three parties**: `scraper` writes an object at a key from `make_key()`, the key travels to `processing` through Postgres as `artifacts_queue.minio_path`, and `read_html()` may resolve it through a packfile sidecar index instead because `archiver` rewrote it underneath — so the address the writer chose is not necessarily where the object is, and nothing compares the three. Measured 2026-09-10: **20 modules across five services and `scripts/` reach object storage.** This is the shared-vocabulary defect Stage W closed for the database, in the channel next door | Not asserted | Plan 162, Stage AM |
 | G20 | ~~**No dbt model declares an enforced contract, so `schema.yml` is documentation rather than a backstop.**~~ — **closed 2026-09-07 by Plan 162 Stage S**, `DBT_CONTRACT_WAIVERS` is `()`. Was 0 of 23 models on 2026-09-05, and it was the load-bearing gap under the relation-shape rule above: that rule checks a test fixture against `schema.yml`, and nothing checked `schema.yml` against the model. Two consequences, both measured and both now closed. **The declaration was incomplete** — 18 of 23 models documented every column their final `SELECT` emits and 5 did not: `mart_deal_scores` 4/39, `int_latest_observation` 3/33, `stg_observations` 6/33, `mart_vehicle_snapshot` 5/29, `stg_price_events` 6/10. The scoping count said six models and ~101 columns and was wrong in three places — `int_listing_volatility_features` and `mart_block_rate` were complete, and `mart_deal_scores`, whose final `SELECT` is `select *` over a CTE, was the worst case and was named nowhere. **And it carried no types at all** — 0 of 187 documented columns declared a `data_type`. All 23 models now declare `contract: {enforced: true}` over **307** columns, every one typed, so dbt fails the build when a model's output stops matching its declaration. **The portability objection was retired by measurement** — [Plan 125's audit](reference/plan_125_portability_audit.md) verified that `varchar` is a hard Spark parse error and `string` is DuckDB's alias and Spark's native name, *"verified on both"* | Asserted by `test_every_dbt_model_declares_an_enforced_contract` with an empty ledger. Enforcing a contract on the 7 incremental models also required choosing `on_schema_change`, which had sat at dbt's `ignore` default — silently dropping any new column on every run, which is the drift `int_latest_observation.sql` complains about in its own prose. They are now `fail` | Plan 162, Stage S |
 | G12 | ~~**`airflow/dags/` has no `.sql` convention and cannot reach one.**~~ — **closed 2026-09-02 by Plan 162 Stage N.** The tree reaches the convention through its own `airflow/dags/dag_queries.py`, a decided exemption from the `shared.query_loader` clause and not from the file rule — see [where SQL lives](#where-sql-lives) for why mounting `shared/` into the Airflow image costs more than the two lines it saves. Two of the row's three claims were already stale when the stage opened: `airflow/sql/` had existed since Stage 7, and `_sensor_constant()` had been deleted by it. What actually remained was **one statement** — the admission `SELECT` inline at `sensors.py`'s `hook.get_first`, invisible to all three instruments at once: G5 did not scan Airflow hook methods, G14 counts only `.sql` files, and the only thing asserting on it was an `ast` substring match | `grep -rn 'from shared' airflow/dags/` still returns nothing, and that is now the intended state. What is asserted instead: the statement is in `airflow/sql/deploy_intent_gate.sql`, executed by `tests/integration/sql/test_airflow_dag_queries.py` including its column *order*, which `poke()` indexes positionally; and a new inline statement in a DAG fails `test_no_production_module_holds_a_sql_statement`. Stage 9 first closed this by adding six Airflow method names to `_SQL_CALL_NAMES`, then deleted that list outright — lengthening an inventory is not a fix for an inventory | Plan 162 |
 | G14 | ~~**56 of 76 production `.sql` files are named by no Layer 2 test.**~~ — **closed 2026-09-01 by Plan 162 Stage L**, `LAYER_2_WAIVERS` is `()`. Was All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 19 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/rules/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 names it **as a whole word**. Was 54 until 2026-09-01, when Stage 5 found the match was a bare substring and three files were being credited by identifiers that merely contained their stem. Stage 7 drained it: 132 files gained a test importing the constant production imports, 18 lake-snapshot selectors were already executed by `tests/integration/archiver/` and needed the reading widened rather than new tests, and one file was deleted under [G16](#the-gap-list)'s rule because the statement that absorbed it could be named | Plan 162 |
