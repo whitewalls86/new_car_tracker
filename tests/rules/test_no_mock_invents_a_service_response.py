@@ -38,6 +38,7 @@ from tests.service_contracts import (
     body_violations,
     caller_endpoints,
     owned_hosts,
+    responses,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -96,6 +97,39 @@ def _fabrications(tree: ast.AST) -> dict[str, list[tuple[int, dict]]]:
     return bodies
 
 
+def _fixture_seams(tree: ast.AST) -> dict[str, dict[str, str]]:
+    """A fixture's dict keys to the module each patched client belongs to.
+
+    `mock_requests["get"]` is the seam in `tests/ops/routers/test_admin.py`, and
+    the dict it indexes is built in a conftest fixture. Reading only locals
+    handed to `patch(..., return_value=x)` missed every fabrication behind it --
+    which is why that fixture now patches `ops.routers.admin.http_requests`
+    rather than the global `requests`, and why this reads the fixture's own
+    mapping rather than assuming the key matches the patched attribute.
+    """
+    seams: dict[str, dict[str, str]] = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Dict):
+                continue
+            for key, value in zip(node.value.keys, node.value.values):
+                if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                    continue
+                if not isinstance(value, ast.Call):
+                    continue
+                rendered = ast.unparse(value.func)
+                if not (rendered.endswith(".patch") or rendered == "patch"):
+                    continue
+                if not value.args or not isinstance(value.args[0], ast.Constant):
+                    continue
+                module = _seam_module(str(value.args[0].value))
+                if module is not None:
+                    seams.setdefault(function.name, {})[key.value] = module
+    return seams
+
+
 def _seams(tree: ast.AST) -> dict[str, str]:
     """Local name handed to a patched HTTP client, to that client's module."""
     seams: dict[str, str] = {}
@@ -115,6 +149,99 @@ def _seams(tree: ast.AST) -> dict[str, str]:
                 if isinstance(keyword.value, ast.Name):
                     seams[keyword.value.id] = module
     return seams
+
+
+def _fabricated_codes(tree: ast.AST) -> list[tuple[int, str, int]]:
+    """``(line, seam key, status code)`` for every status a test writes down.
+
+    Two shapes reach it and both are in this repository. `resp.status_code = N`
+    on a mock the test made, and `MagicMock(status_code=N)` where the value
+    arrives as a constructor keyword -- `airflow/dags` builds every response
+    the second way, so a reader that saw only assignments found none of them.
+    """
+    found: list[tuple[int, str, int]] = []
+
+    def seam_of(expression: str) -> str:
+        """`mock_requests['get'].return_value` -> `get`; `resp` -> `resp`."""
+        head = expression.split(".")[0]
+        if "[" in head and head.endswith("]"):
+            return head[head.index("[") + 1:-1].strip("'\"")
+        return head
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if not isinstance(node.value.value, int) or isinstance(node.value.value, bool):
+                continue
+            for target in node.targets:
+                rendered = ast.unparse(target)
+                if rendered.endswith(".status_code"):
+                    found.append((node.lineno, seam_of(rendered), node.value.value))
+        if isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg != "status_code":
+                    continue
+                if not (
+                    isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, int)
+                    and not isinstance(keyword.value.value, bool)
+                ):
+                    continue
+                found.append((node.lineno, "", keyword.value.value))
+    return found
+
+
+def fabricated_service_codes() -> list[tuple[str, str, int, list[int]]]:
+    """Every fabricated status a service this repository owns cannot answer."""
+    conftest = TESTS / "conftest.py"
+    shared = (
+        _fixture_seams(ast.parse(conftest.read_text(encoding="utf-8")))
+        if conftest.is_file() else {}
+    )
+    offenders: list[tuple[str, str, int, list[int]]] = []
+    for path in sorted(TESTS.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        # A conftest fixture applies only where it is requested. Merging it
+        # into every module attributed `tests/scraper/processors/`'s cars.com
+        # 403s to `ops/routers/admin.py` and reported eleven violations that
+        # were entirely this reader's own doing.
+        source = path.read_text(encoding="utf-8")
+        seams: dict[str, str] = {}
+        for fixture, mapping in shared.items():
+            if fixture in source:
+                seams.update(mapping)
+        for mapping in _fixture_seams(tree).values():
+            seams.update(mapping)
+        seams.update(_seams(tree))
+        if not seams:
+            continue
+
+        # One module, one callee set. Where a test names no seam for a
+        # constructor-built mock -- `MagicMock(status_code=200)` is handed
+        # straight to `patch(...)` without ever being a local this can follow --
+        # the modules that module patches are the candidates, which is the same
+        # union `caller_endpoints` already returns.
+        modules = sorted(set(seams.values()))
+        for lineno, key, code in _fabricated_codes(tree):
+            owning = [seams[key]] if key in seams else modules
+            declared: set[int] = set()
+            for module in owning:
+                for package, verb, route in caller_endpoints(module):
+                    declared |= {
+                        int(status)
+                        for status in responses(package).get((verb, route), {})
+                        if status.isdigit()
+                    }
+            if declared and code not in declared:
+                offenders.append((
+                    f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}",
+                    " + ".join(owning), code, sorted(declared),
+                ))
+    return offenders
 
 
 def fabricated_service_responses() -> list[tuple[str, str, list[str]]]:
@@ -262,6 +389,99 @@ def test_no_mock_invents_a_service_response():
             f"{where} (through {module})\n      " + "\n      ".join(reasons)
             for where, module, reasons in offenders
         )
+    )
+
+
+def test_no_mock_invents_a_code_the_service_cannot_answer():
+    """The pairing's other half: `(path, code)`, not only `(path, body)`.
+
+    A caller's test writes down a status the way it writes down a body, and it
+    is wrong the same way -- silently, for whatever number its author picked.
+    `dbt_runner` answering 202 instead of 200 would leave every one of these
+    tests agreeing with itself while the panel broke.
+
+    The codes come from `contracts/`, so a route that stops declaring one stops
+    letting a test assert it. Two shapes are read because both are here:
+    `resp.status_code = N`, and `MagicMock(status_code=N)` where the value
+    arrives as a constructor keyword, which is how every `airflow/dags` test
+    builds a response.
+    """
+    offenders = [
+        f"{where} fabricates {code} through {module}, which declares {declared}"
+        for where, module, code, declared in fabricated_service_codes()
+        if where not in FABRICATED_RESPONSE_WAIVERS
+    ]
+    assert not offenders, (
+        f"{len(offenders)} fabricated status code(s) name a service this "
+        f"repository owns and a code it does not declare: "
+        + "; ".join(offenders)
+    )
+
+
+def test_the_fabricated_code_reader_is_not_blind():
+    """The floor for the rule above. A seam that resolves nothing accuses nobody.
+
+    The rule only reports a code when the module behind the seam declares some
+    other code, so there are two ways for it to pass over everything without
+    saying so. The conftest fixture can stop naming a module this repository
+    owns -- repointing it back at the global `requests` does exactly that, and
+    the fixture then patches a client belonging to nobody. Or a module can stop
+    resolving to endpoints, which empties `declared` and makes every status at
+    that seam acceptable. Neither shows up as a failure; both show up here.
+    """
+    conftest = TESTS / "conftest.py"
+    tree = ast.parse(conftest.read_text(encoding="utf-8"))
+    resolved = {key for mapping in _fixture_seams(tree).values() for key in mapping}
+    intended = {
+        key.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+        for key, value in zip(node.value.keys, node.value.values)
+        if isinstance(key, ast.Constant)
+        and isinstance(value, ast.Call)
+        and ast.unparse(value.func).endswith("patch")
+    }
+    assert intended and intended == resolved, (
+        f"tests/conftest.py hands out {sorted(intended)} as patched HTTP "
+        f"clients and only {sorted(resolved)} name a module this repository "
+        f"owns. A fixture patching a client no service answers for is a seam "
+        f"the rule above skips rather than reads."
+    )
+
+    # Not a curated list: every module any test resolves a seam to, narrowed to
+    # the ones that reach a service this repository owns. Whether those resolve
+    # to endpoints at all is the floor above's question; this one asks whether
+    # the endpoints they resolve to declare any status, because an empty
+    # `declared` accepts every code there is. A seam pointing at a third party
+    # -- `cf_session.py` reaches cars.com -- resolves to no owned endpoint by
+    # design and is Stage AB's subject, not a hole in this reader.
+    modules: set[str] = set()
+    for path in sorted(TESTS.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            module_tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        modules |= set(_seams(module_tree).values())
+        modules |= {
+            m for mapping in _fixture_seams(module_tree).values() for m in mapping.values()
+        }
+    modules |= {m for mapping in _fixture_seams(tree).values() for m in mapping.values()}
+
+    owned_seams = sorted(module for module in modules if caller_endpoints(module))
+    silent = [
+        module for module in owned_seams
+        if not any(
+            any(status.isdigit() for status in responses(package).get((verb, route), {}))
+            for package, verb, route in caller_endpoints(module)
+        )
+    ]
+    assert owned_seams and not silent, (
+        f"{len(silent)} module(s) are named as the far side of a patched seam "
+        f"and reach a service this repository owns whose endpoints declare no "
+        f"status code, so every fabricated code behind them is accepted: "
+        + ", ".join(silent)
     )
 
 

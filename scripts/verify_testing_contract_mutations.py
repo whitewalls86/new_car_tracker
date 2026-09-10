@@ -3232,6 +3232,41 @@ MUTATIONS = [
         [],
         ["tests/rules/test_harness_unparseable.py"],
     ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_no_mock_invents_a_code_the_service_cannot_answer",
+        "a caller's test writes down a status its callee does not declare, "
+        "which is the body defect one field over and just as silent: the test "
+        "goes on agreeing with itself whatever the service answers",
+        # Anchored with the enclosing `def`, because the assignment alone
+        # appears three times in that module and an ambiguous anchor mutates a
+        # site nobody chose.
+        lambda: _edit(
+            "tests/ops/routers/test_admin.py",
+            "def test_dbt_docs_generate_ok(mock_client, mock_requests, "
+            "mock_dbt_context, mock_templates):\n"
+            '    mock_requests["post"].return_value.status_code = 200',
+            "def test_dbt_docs_generate_ok(mock_client, mock_requests, "
+            "mock_dbt_context, mock_templates):\n"
+            '    mock_requests["post"].return_value.status_code = 599',
+        ),
+        ["tests/ops/routers/test_admin.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_the_fabricated_code_reader_is_not_blind",
+        "the shared fixture goes back to patching the global `requests`, which "
+        "is the defect this stage found: the seam then names no service, so "
+        "the rule above reads nothing and reports nothing",
+        lambda: _edit(
+            "tests/conftest.py",
+            '"get": mocker.patch("ops.routers.admin.http_requests.get"),',
+            '"get": mocker.patch("requests.get"),',
+        ),
+        ["tests/conftest.py"],
+        [],
+    ),
 ]
 
 
