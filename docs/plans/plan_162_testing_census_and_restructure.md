@@ -5568,3 +5568,18 @@ template). `processing POST /process/batch` is a 34th declaration the named
 seeds did not include, entering for declaring a text the envelope does not
 carry. `Busy` is declared by no response anywhere and seeds the one-entry
 undeclared-meaning ledger.
+
+**The body-declaration corpus reproduces: 237 declarations, 16 redirects,
+116 shaped, 16 kind-declared, and the 76 bodyless errors — all in `ops` —
+exactly as recorded, plus 13 bodyless 2xx.** Recipe: classify every
+declared response in `contracts/*.json` by media type — `application/json`
+with a schema is a shape, any other media type is a kind (`text/html`
+carries a vestigial `{"type": "string"}` schema FastAPI writes for a
+`response_class`, so schema presence is the wrong key), no content is bare
+— 2026-09-10. The recorded "29 where a JSON schema would be the wrong
+answer" splits into 16 that already declare their media type and 13 that
+declare nothing (`/metrics` ×5, the recap pages, `/sitemap.xml`,
+`/auth/check`'s bodyless 200, the archive download); the 13 ride in the
+ledger with the 76, seeding
+`UNDECLARED_BODY_LEDGER` at 89 in
+`tests/rules/test_every_response_declares_a_shape_or_a_kind.py`.

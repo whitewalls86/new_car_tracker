@@ -3503,6 +3503,45 @@ MUTATIONS = [
         ["shared/api_envelope.py"],
         [],
     ),
+    (
+        "tests/rules/test_every_response_declares_a_shape_or_a_kind.py"
+        "::test_every_response_declares_a_shape_or_a_kind",
+        "a ledgered bodyless response gains its kind declaration and the "
+        "entry stays behind -- the list stops describing the debt, which is "
+        "the direction that rots every ledger that only fails one way",
+        lambda: _edit(
+            "contracts/scraper.json",
+            '        "operationId": "metrics_metrics_get",\n'
+            '        "responses": {\n'
+            '          "200": {\n'
+            '            "description": "Successful Response"\n'
+            "          }",
+            '        "operationId": "metrics_metrics_get",\n'
+            '        "responses": {\n'
+            '          "200": {\n'
+            '            "content": {"text/plain": {}},\n'
+            '            "description": "Successful Response"\n'
+            "          }",
+        ),
+        ["contracts/scraper.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_response_declares_a_shape_or_a_kind.py"
+        "::test_the_body_reader_still_tells_the_three_apart",
+        "the shape classifier keys on a media type that does not exist, "
+        "every JSON body reads as a kind, and the counts the rule beside it "
+        "relies on go wrong with nothing else red",
+        lambda: _edit(
+            "tests/rules/test_every_response_declares_a_shape_or_a_kind.py",
+            '                    if (content.get("application/json") or {})'
+            '.get("schema"):',
+            '                    if (content.get("application/jsonx") or {})'
+            '.get("schema"):',
+        ),
+        ["tests/rules/test_every_response_declares_a_shape_or_a_kind.py"],
+        [],
+    ),
 ]
 
 
