@@ -5515,3 +5515,35 @@ which is why the landed rule
 rather than the seam. All 25 keys seed `FABRICATED_OBJECT_LEDGER`; the two
 extra sites are the same defect in the same files, so the delta is reader
 coverage, not corpus growth.
+
+**The coupled readers landed in one commit, and the judged set went from 12
+of 93 declarations to 35 of 93 handlers with zero phantoms.** Recipe: rerun
+the Step 0 script against the rewritten `_exit_codes` (model returns,
+kwarg-less framework responses and raised declared refusals credit the
+decorator's declared success; a `Depends` disqualifies; one unreadable exit
+still disqualifies the handler), 2026-09-10. The first rewrite draft
+produced exactly one new phantom — `GET
+/admin/snapshots/adaptive-refresh/{snapshot_id}/download` declaring 400,
+401, 403 and 503 its body never raises — and the cause is a reader hole the
+recorded measurements never hit: those codes are raised by
+`Depends(require_snapshot_token("read"))` and by a helper called as a
+statement, neither of which the reader can follow. `Depends` now
+disqualifies (it is an exit the reader cannot read), which removed the
+phantom without teaching the reader to guess. The 58 still-unreadable
+handlers seed `UNREADABLE_EXIT_LEDGER`.
+
+**The retyped-status corpus reconciles to the recorded 128 exactly, and the
+landed ledger is 80 keys over 101 sites.** Recipe: AST-walk the service
+packages for `status_code=<int>` keywords, `HTTPException(<int>, ...)`
+positionals and `.status_code == <int>` comparisons, 2026-09-10. The
+recorded 128 (ops 94, archiver 18, dbt_runner 9, shared 4, scraper 3) counts
+line-grain `status_code=` occurrences including the 12 ops decorator
+declarations, excludes comparisons, counts `shared/minio.py`'s four S3
+*string* codes, and misses `processing`'s three sites. The landed rule
+(`test_no_call_site_retypes_a_declared_status`) scopes by envelope
+membership per Stage W — decorator declarations, non-member success codes
+(14 in ops), S3 string codes and cars.com comparisons are out on the scope
+argument in its docstring; owned-seam caller comparisons (ops 4) and
+processing's three are in. That corpus is 101 literal sites: ops 68,
+archiver 18, dbt_runner 9, scraper 3, processing 3, collapsing to 80
+file-function-code keys in `RETYPED_STATUS_LEDGER`.

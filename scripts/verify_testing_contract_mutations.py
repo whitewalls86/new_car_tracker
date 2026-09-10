@@ -3404,6 +3404,55 @@ MUTATIONS = [
         ["shared/api_envelope.py"],
         [],
     ),
+    (
+        "tests/rules/test_the_artifact_declares_what_the_handler_returns.py"
+        "::test_every_handlers_exits_are_readable",
+        "a readable handler grows an exit the reader cannot resolve -- a "
+        "bare-dict return -- and slips out of the judged set without joining "
+        "the ledger, which is exactly how 81 of 93 declarations went "
+        "unjudged with everything green",
+        lambda: _edit(
+            "ops/routers/public.py",
+            '    return FileResponse(page, media_type="text/html")',
+            "    outcome = dict(page=str(page))\n    return outcome",
+        ),
+        ["ops/routers/public.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_call_site_retypes_a_declared_status.py"
+        "::test_no_call_site_retypes_a_status_the_envelope_declares",
+        "a handler's retyped 404 becomes a retyped 409 -- a new member "
+        "literal the ledger does not key, and the abandoned entry goes "
+        "stale, so both directions fire at once",
+        lambda: _edit(
+            "processing/routers/artifact.py",
+            "            raise HTTPException(\n"
+            "                status_code=404,",
+            "            raise HTTPException(\n"
+            "                status_code=409,",
+        ),
+        ["processing/routers/artifact.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_call_site_retypes_a_declared_status.py"
+        "::test_the_retyping_reader_sees_every_shape",
+        "the shared walker stops reading the HTTPException positional shape, "
+        "and every raise in five packages goes unread while the ledger "
+        "entries for the two other shapes keep the rule looking alive",
+        lambda: _edit(
+            "tests/rules/test_no_call_site_retypes_a_declared_status.py",
+            '            if (\n'
+            '                name == "HTTPException"\n'
+            "                and node.args",
+            '            if (\n'
+            '                name == "NeverThisException"\n'
+            "                and node.args",
+        ),
+        ["tests/rules/test_no_call_site_retypes_a_declared_status.py"],
+        [],
+    ),
 ]
 
 

@@ -5023,8 +5023,39 @@ def _status_constant(node: ast.AST, constants: dict[str, int]) -> int | None:
     return None
 
 
+@lru_cache(maxsize=1)
+def _envelope_codes() -> dict[str, int]:
+    """Refusal class name to status code, from ``shared/api_envelope.py``.
+
+    The lookup ``_codes_at_call_sites`` resolves a raised declared refusal
+    through -- Plan 162 Stage AL. A lookup and not an inventory: the module's
+    classes each carry their code as a literal, so a refusal added there is
+    resolvable here without this file changing, which is the property the
+    docstring below refuses to give a hand-kept list of class names.
+    """
+    path = REPO_ROOT / "shared" / "api_envelope.py"
+    if not path.is_file():
+        return {}
+    found: dict[str, int] = {}
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            if (
+                isinstance(statement, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "status_code"
+                    for target in statement.targets
+                )
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, int)
+            ):
+                found[node.name] = statement.value.value
+    return found
+
+
 def _codes_at_call_sites(function: ast.AST, constants: dict[str, int]) -> set[int]:
-    """Codes named directly in *function*.
+    """Codes named directly in *function*, or resolved through the envelope.
 
     **Keyed on the ``status_code=`` keyword rather than on a list of response
     classes.** The first draft enumerated `Response`, `JSONResponse` and their
@@ -5034,8 +5065,16 @@ def _codes_at_call_sites(function: ast.AST, constants: dict[str, int]) -> set[in
     producing 303 and nothing else. An inventory of class names is escapable by
     using a class the inventory has not heard of, which is the same failure G5
     records for call-site names.
+
+    **A raised declared refusal resolves through ``shared/api_envelope.py``**
+    (Plan 162 Stage AL), because a declaration module moves the literal out of
+    the call site by design -- the probe that converted `processing` made this
+    reader report three routes as declaring codes nothing produces. Resolving
+    the member is a lookup into the one file that owns the literal, not the
+    class-name inventory the paragraph above refuses.
     """
     codes: set[int] = set()
+    refusals = _envelope_codes()
     for node in ast.walk(function):
         if not isinstance(node, ast.Call):
             continue
@@ -5049,6 +5088,8 @@ def _codes_at_call_sites(function: ast.AST, constants: dict[str, int]) -> set[in
             code = _status_constant(node.args[0], constants)
             if code is not None:
                 codes.add(code)
+        if name in refusals:
+            codes.add(refusals[name])
         if name == "RedirectResponse" and not any(
             keyword.arg == "status_code" for keyword in node.keywords
         ):
