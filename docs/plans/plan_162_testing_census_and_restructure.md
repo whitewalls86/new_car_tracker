@@ -397,9 +397,9 @@ moved it to the end without making it a different stage.
 | 30 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 | 31 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `done` | CAR-115 |
 | 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
-| 33 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `—` | — |
-| 34 | [**AK**](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between) | — | A floor may assert nothing, or everything, never a number between | — | `—` | — |
-| 35 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `next` | — |
+| 33 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `—` | CAR-117 |
+| 34 | [**AK**](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between) | — | A floor may assert nothing, or everything, never a number between | — | `—` | CAR-118 |
+| 35 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `next` | CAR-119 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -2938,7 +2938,7 @@ exist are written; demonstrated by a rule losing its skill reference failing.
 
 ### Stage AJ: a parser of a response we do not own, that no test executes
 
-**Issue:** unassigned · **State:** `—` · **Gap:** —
+**Issue:** CAR-117 · **State:** `—` · **Gap:** —
 
 **Found while closing Stage AB, and it is that stage's defect with the sign
 flipped.** Stage AB is about a test that *fabricates* a response from a system
@@ -3058,7 +3058,7 @@ demonstrated by a parser whose only exercising test is removed failing.
 
 ### Stage AK: a floor may assert nothing, or everything, never a number between
 
-**Issue:** unassigned · **State:** `—` · **Gap:** —
+**Issue:** CAR-118 · **State:** `—` · **Gap:** —
 
 **Every rule in `tests/rules/` is a set difference, and a set difference over
 an empty corpus is empty.** That is why each carries a floor — a second
@@ -3125,7 +3125,7 @@ reader narrowed so that it resolves less than the whole corpus failing.
 
 ### Stage AL: the services agree on what they send, and on what a code means
 
-**Issue:** unassigned · **State:** `next` · **Gap:** —
+**Issue:** CAR-119 · **State:** `next` · **Gap:** —
 
 **A stub, written 2026-09-10 from Stage AA's own friction. The measurements
 below are real; the design is not decided.**
