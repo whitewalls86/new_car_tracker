@@ -3542,6 +3542,87 @@ MUTATIONS = [
         ["tests/rules/test_every_response_declares_a_shape_or_a_kind.py"],
         [],
     ),
+    (
+        "tests/rules/test_no_module_calls_a_service_by_hand.py"
+        "::test_no_module_calls_a_service_by_hand",
+        "a ledgered module stops naming its owned host -- converted, or its "
+        "call went dead -- and the entry stays behind, which is the ledger "
+        "no longer describing the callers it exists to watch",
+        lambda: _edit(
+            "airflow/dags/dbt_build.py",
+            'DBT_RUNNER_URL = "http://dbt_runner:8080"',
+            'DBT_RUNNER_URL = "http://dbt-runner-elsewhere:8080"',
+        ),
+        ["airflow/dags/dbt_build.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_module_calls_a_service_by_hand.py"
+        "::test_the_caller_signature_and_the_resolver_agree",
+        "a DAG's call path drifts off its service's contract while the host "
+        "stays named -- the dead-call shape, visible only because two "
+        "independent readers are held equal",
+        lambda: _edit(
+            "airflow/dags/dbt_build.py",
+            'result = post_json(f"{DBT_RUNNER_URL}/dbt/build", '
+            "payload=payload, timeout=600)",
+            'result = post_json(f"{DBT_RUNNER_URL}/dbt/build-all", '
+            "payload=payload, timeout=600)",
+        ),
+        ["airflow/dags/dbt_build.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_declared_code_is_one_the_standard_names.py"
+        "::test_every_declared_code_is_one_the_standard_names",
+        "a route declares a code the standard does not name -- the stage "
+        "exit's own demonstration, and the shape /admin's 307 already has",
+        lambda: _edit(
+            "contracts/processing.json",
+            '          "404": {\n'
+            '            "content": {\n'
+            '              "application/json": {\n'
+            '                "schema": {\n'
+            '                  "$ref": "#/components/schemas/ErrorResponse"',
+            '          "418": {\n'
+            '            "content": {\n'
+            '              "application/json": {\n'
+            '                "schema": {\n'
+            '                  "$ref": "#/components/schemas/ErrorResponse"',
+        ),
+        ["contracts/processing.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_declared_code_is_one_the_standard_names.py"
+        "::test_every_standard_code_is_declared_somewhere",
+        "the standard's table grows a row no route declares -- dead "
+        "vocabulary, a meaning nobody can rely on anybody honouring",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| `400` | the request is unusable as sent | a rejection of its "
+            "*content*, which is `422` |",
+            "| `400` | the request is unusable as sent | a rejection of its "
+            "*content*, which is `422` |\n"
+            "| `402` | payment is required | anything this repository "
+            "answers |",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_declared_code_is_one_the_standard_names.py"
+        "::test_the_envelope_stays_inside_the_standard",
+        "the envelope grows a code its owner's table does not have -- the "
+        "copy outgrowing the standard it restates",
+        lambda: _edit(
+            "shared/api_envelope.py",
+            "    status_code = 400",
+            "    status_code = 402",
+        ),
+        ["shared/api_envelope.py"],
+        [],
+    ),
 ]
 
 

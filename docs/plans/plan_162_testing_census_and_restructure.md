@@ -5597,3 +5597,25 @@ the ten new tests, no MISSED, no NO RUN, restored suite green — each of
 the 17 had also been watched fail by hand before its entry landed. The
 harness's snapshot-restore writes LF where the checkout had CRLF; the
 five files it touched were restored from git with zero content change.
+
+**The two rules the handoff dropped are landed, and the second found a
+live defect on its first run.** Measured 2026-09-10, same worktree. The
+client rule seeds at exactly the plan's 17 — thirteen DAGs,
+`archiver/app.py`, the two coordination gates and `ops/routers/admin.py` —
+keyed on the one signature no call shape can dodge (an owned host's URL
+named in non-docstring code), with a floor holding that signature and the
+`caller_endpoints()` resolver equal on the same seventeen modules; recipe:
+`hand_written_callers()` in
+`tests/rules/test_no_module_calls_a_service_by_hand.py`. The
+standard-codes rule parses the eleven-code table out of §*What a status
+code means* and compares three directions; its first run found **`ops GET
+/admin` declaring `307`**, the code the table names only to refuse —
+`/info` received the 308 repair in Stage AA and `/admin` never did.
+Changing the answered code is wire behaviour, so it is the rule's one
+ledger entry with the repair named, not a quiet waiver. The reverse
+direction is clean (all eleven standard codes are declared somewhere) and
+the envelope's literals are all members. With these two, every statement
+of §*How a service reaches another service* except the request-body half
+of statement 2 has a comparator; that half is now stated alone in
+*Specified here*, draining together with the 17-module ledger when the
+client seam lands.
