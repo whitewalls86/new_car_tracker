@@ -793,3 +793,96 @@ changed by this work. (`README.md:61-62`'s stale flush schedules are
 pre-existing and already assigned to Plan 138's truth pass.)
 
 **Cost:** estimate 2 → actual 1 (−1).
+
+### Stage C — Enforcement, one endpoint per deploy
+
+**Deploy 1 of 3 — `/compact/silver/run`.** Landed 2026-09-07 in
+[PR #380](https://github.com/whitewalls86/new_car_tracker/pull/380) — `a608595`,
+merged 19:24:28 UTC. The endpoint logs at ERROR and raises
+`HTTPException(500, detail=dict(result, failure_reason=reason))` on
+`_compact_failure_reason` rather than warning and returning 200.
+
+**The 48-hour gate ran 2026-09-07 19:25 UTC → 2026-09-09 19:25 UTC and is
+clean.** The 19:25 start is the live time `docs/PLANS.md` recorded, one minute
+after the merge; the VM's actual pull was not separately recorded, the same gap
+Stage B had to reconstruct after the fact. It is not material here — the window
+holds the same two `compact_silver` runs under any deploy time between the merge
+and 04:10 the following morning.
+
+**Both scheduled runs in the window succeeded.** `compact_silver` is
+`10 4 * * *`, so the window holds exactly two runs:
+
+| Run | Start | End | Duration |
+|---|---|---|---|
+| `scheduled__2026-09-08T04:10:00+00:00` | 04:10:00.640Z | 04:10:08.926Z | 8.3 s |
+| `scheduled__2026-09-09T04:10:00+00:00` | 04:10:00.780Z | 04:10:09.971Z | 9.2 s |
+
+The first run after the gate closed, `scheduled__2026-09-10T04:10:00+00:00`,
+also succeeded (7.7 s).
+
+**The green runs are the primary evidence, not the log query.** `compact_silver`
+calls `raise_for_status()` on the endpoint, so a 500 turns the task red. Two
+green runs mean the endpoint answered 200 twice, so `_compact_failure_reason`
+returned `None` twice and no ERROR record was emitted. The Loki reads
+corroborate that; they do not carry it.
+
+**Archiver emitted 668 records across the window and every one was INFO.**
+`sum by (level)` returns a single series, `{level="INFO"} = 668` — 334/day,
+continuous, no ingestion gap. So the two zeros below are structural rather than
+empty: there is no ERROR stream and no WARNING stream on archiver in this window
+to have missed. Both queries confirm it directly, each returning an empty vector
+with zero chunks referenced:
+
+- `{service="archiver", level="ERROR"} |~ "compact_silver: run failed"` — **0**.
+  The enforced path never fired.
+- `{service="archiver", level="WARNING"} |~ "would fail"` — **0**. The
+  observation window deploys 2 and 3 are still read out of is uncontaminated,
+  which is what deploy 1's tests were written to guarantee when they moved the
+  compact case out of the warning-only class.
+
+**This deploy could not have paged, and that is a gap in the stage's reasoning
+rather than a result.** `compact_silver`'s DAG is `ready >> archiver_up >>
+compact` — no `notify` task, no failure callback. Only `hourly_analytics_refresh`,
+`dbt_build` and `pack_bronze_html` import the shared notifier. A failed
+compaction here goes red in Airflow and is silent on Telegram. Stage C's text
+says the notifier is "proven by a real page, or by deliberately failing one
+compaction run, whichever comes first" — the second clause cannot hold. The
+notifier's live proof can only come from deploy 2 or deploy 3, both of which run
+under `hourly_analytics_refresh`. The stage exit and success criterion 4 already
+name that DAG, so the exit is unaffected; the ordering rationale was wrong.
+
+**What this window did not prove.** Two clean daily runs are proof nothing
+failed, not proof the enforcement works — no run met the predicate, so the 500
+path is still verified by `tests/archiver/test_app.py` alone. With the pager gap
+above, the notifier also remains verified by tests only, exactly as it was at the
+end of Stage B.
+
+**For the exit:** one of three endpoints has held its 48 hours. Deploy 2
+(`/flush/staging/run`) and deploy 3 (`/flush/silver/run`) are still owed, as is a
+production page from `hourly_analytics_refresh` naming a failed task and quoting
+its `failure_reason`.
+
+**Recipes.** Read from production 2026-09-10, 05:55–05:58 UTC.
+
+```bash
+docker exec cartracker-airflow-scheduler airflow dags list-runs compact_silver
+```
+
+Loki instant queries, each anchored at the window's end with `time=` so `[48h]`
+covers the gate exactly. An unanchored `[48h]` ends at *query time* and silently
+measures a different window — read this way first, it shifted the span 10.5 hours
+past the gate and excluded the 09-08 04:10Z run:
+
+```bash
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum(count_over_time({service="archiver", level="ERROR"} |~ "compact_silver: run failed" [48h]))' \
+  --data-urlencode 'time=2026-09-09T19:25:00Z'
+
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum by (level) (count_over_time({service="archiver"}[48h]))' \
+  --data-urlencode 'time=2026-09-09T19:25:00Z'
+
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum(count_over_time({service="archiver", level="WARNING"} |~ "would fail" [48h]))' \
+  --data-urlencode 'time=2026-09-09T19:25:00Z'
+```
