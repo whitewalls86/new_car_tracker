@@ -376,7 +376,9 @@ def test_dbt_trigger_sends_a_selector(mock_client, mock_requests, mock_dbt_conte
     `selector`, a name from the same `selectors.yml` dbt itself reads.
     """
     mock_requests["post"].return_value.status_code = 200
-    mock_requests["post"].return_value.json.return_value = {"ok": True}
+    mock_requests["post"].return_value.json.return_value = service_response(
+        "dbt_runner", "POST", "/dbt/build", ok=True,
+    )
 
     response = mock_client.post("/admin/dbt/trigger", data={"selector": "hourly_core"})
 
@@ -389,7 +391,9 @@ def test_dbt_trigger_with_select_override(
     mock_client, mock_requests, mock_dbt_context, mock_templates
 ):
     mock_requests["post"].return_value.status_code = 200
-    mock_requests["post"].return_value.json.return_value = {"ok": True}
+    mock_requests["post"].return_value.json.return_value = service_response(
+        "dbt_runner", "POST", "/dbt/build", ok=True,
+    )
 
     response = mock_client.post("/admin/dbt/trigger", data={
         "intent": "after_srp",
@@ -418,7 +422,9 @@ def test_dbt_trigger_request_fails(mock_client, mock_requests, mock_dbt_context,
 
 def test_dbt_docs_generate_ok(mock_client, mock_requests, mock_dbt_context, mock_templates):
     mock_requests["post"].return_value.status_code = 200
-    mock_requests["post"].return_value.json.return_value = {"ok": True}
+    mock_requests["post"].return_value.json.return_value = service_response(
+        "dbt_runner", "POST", "/dbt/docs/generate", ok=True,
+    )
 
     response = mock_client.post("/admin/dbt/docs/generate")
 
@@ -429,7 +435,9 @@ def test_dbt_docs_generate_ok(mock_client, mock_requests, mock_dbt_context, mock
 
 def test_dbt_docs_generate_fails(mock_client, mock_requests, mock_dbt_context, mock_templates):
     mock_requests["post"].return_value.status_code = 500
-    mock_requests["post"].return_value.json.return_value = {"ok": False}
+    mock_requests["post"].return_value.json.return_value = service_response(
+        "dbt_runner", "POST", "/dbt/docs/generate", "500",
+    )
 
     response = mock_client.post("/admin/dbt/docs/generate")
 

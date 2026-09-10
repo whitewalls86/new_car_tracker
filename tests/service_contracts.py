@@ -236,9 +236,23 @@ def _from_schema(schema: dict[str, Any], spec: dict[str, Any]) -> Any:
             name: _from_schema(sub, spec) for name, sub in properties.items()
         }
     if kind == "array":
+        # The zero for an array, the way "" is the zero for a string. A nested
+        # array is a value the callee may well send empty, and filling it with
+        # a specimen made an empty-collection test read as a populated one.
+        # The top-level case is different and `service_response` handles it.
         return []
     return _JSON_ZEROS.get(kind)
 
+
+def _override(built: dict[str, Any], overrides: dict[str, Any], where: str) -> dict[str, Any]:
+    """*built* with *overrides* applied, refusing any key the callee never sends."""
+    unknown = sorted(set(overrides) - set(built))
+    if unknown:
+        raise KeyError(
+            f"{where} declares no {unknown}. Overriding a key the callee does "
+            f"not send is asserting on a value the caller cannot receive."
+        )
+    return {**built, **overrides}
 
 def service_response(
     package: str, verb: str, path: str, code: str = "200", **overrides: Any,
@@ -267,15 +281,30 @@ def service_response(
             f"{sorted(schemas[key])}. A caller cannot receive a code the callee "
             f"does not answer with."
         )
-    built = _from_schema(schemas[key][code], spec)
+    where = f"{package} {verb.upper()} {path} {code}"
+    schema = _resolve(schemas[key][code], spec)
+    if schema.get("type") == "array":
+        # A body that IS an array carries its shape only in its elements, so an
+        # empty list here asserts nothing at all -- which is how four fabricated
+        # `Job` bodies in tests/airflow/test_scrape_listings.py sat at a checked
+        # seam without the check ever reaching them. One specimen, and the
+        # overrides land on it, because a caller asserting on a collection is
+        # asserting on what is in it.
+        items = schema.get("items")
+        element = _from_schema(items, spec) if items else None
+        if not isinstance(element, dict):
+            return [] if element is None else [element]
+        return [_override(element, overrides, where)]
+    built = _from_schema(schema, spec)
+    if isinstance(built, list):
+        # An array body stays an array. Wrapping it in a `detail` key -- which
+        # is what this did -- invents FastAPI's error key for a route that has
+        # never sent it, so the helper against which fabrications are checked was
+        # itself fabricating. Overrides apply to the element, because a caller
+        # asserting on a collection is asserting on what is in it.
+        if not built:
+            return _override({}, overrides, where) if overrides else []
+        return [_override(built[0], overrides, where)]
     if not isinstance(built, dict):
-        return {"detail": built} if built is not None else {}
-    unknown = sorted(set(overrides) - set(built))
-    if unknown:
-        raise KeyError(
-            f"{package} {verb.upper()} {path} {code} declares no {unknown}. "
-            f"Overriding a key the callee does not send is asserting on a value "
-            f"the caller cannot receive."
-        )
-    built.update(overrides)
-    return built
+        return built
+    return _override(built, overrides, where)

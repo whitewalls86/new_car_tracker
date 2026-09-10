@@ -4565,18 +4565,20 @@ def test_the_mutation_corpus_is_not_empty():
 # from *bookkeeping incidental to it* is a judgement no AST can make, so the
 # rule asks the question only where a response exists to be wrong.
 SWALLOWED_WRITE_WAIVERS: tuple[Waiver, ...] = (
-    # Both call `dbt_runner` endpoints that were deleted in April and May
-    # (9f08336, d88a41e), swallow the failure with a bare `except Exception:
-    # pass`, and return the same 303 they would on success -- which is why the
-    # admin dbt panel has done nothing since April without reporting it.
+    # Empty since 2026-09-10, Plan 162 Stage AA. The two entries were calls to
+    # `dbt_runner` endpoints deleted in April and May (9f08336, d88a41e), which
+    # swallowed the failure with a bare `except Exception: pass` and returned
+    # the same 303 they would on success -- which is why the admin dbt panel
+    # did nothing from April onward without reporting it. Stage AA owned the
+    # decision the waiver was holding open, and decided to delete the callers
+    # rather than restore the endpoints, so both entries went with them.
     #
-    # **Waived rather than repaired, and unlike the rowcount clause above this
-    # one needs a ledger.** There the thirteen sites all resolved and an empty
-    # list was deleted; here two violations are genuinely outstanding and their
-    # repair is not this stage's to make: whether the intent UI is deleted or
-    # `dbt_runner` regains the endpoints is the same decision as what the
-    # repaired test asserts, and Stage AA owns it. A waiver with a named owner
-    # is exactly the object for that, and it dies when Plan 162 archives.
+    # **Kept as an empty tuple rather than deleted, unlike the rowcount clause
+    # above.** That one's thirteen sites all resolved and its list went; this
+    # clause guards a boundary the repository keeps crossing, so the next
+    # violation should land in a ledger that already exists rather than one
+    # somebody has to decide to recreate. A waiver here dies when Plan 162
+    # archives, which is what stops it becoming permanent.
 )
 
 _HTTP_WRITE_VERBS = frozenset({"post", "put", "patch", "delete"})

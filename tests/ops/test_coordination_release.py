@@ -273,8 +273,11 @@ def test_observability_gate_rejects_promtail_replay_storm(mocker):
 def test_auxiliary_gate_is_keyed_on_sibling_project(mocker):
     response = mocker.Mock()
     response.json.side_effect = [
-        {"known": True, "services": ["lakekeeper"]},
-        {"known": True, "services": []},
+        service_response(
+            "container_health", "GET", "/project-status/{project}",
+            services=["lakekeeper"],
+        ),
+        service_response("container_health", "GET", "/project-status/{project}"),
     ]
     mocker.patch("ops.coordination_release.requests.get", return_value=response)
 

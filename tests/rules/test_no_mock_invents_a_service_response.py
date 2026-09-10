@@ -70,32 +70,105 @@ def _seam_module(target: str) -> str | None:
 _DERIVED = frozenset({"service_response"})
 
 
+def _seam_key(expression: str) -> str:
+    """`mock_requests['get'].return_value` -> `get`; `resp.json` -> `resp`.
+
+    Shared by both readers. A fixture hands its seams out of a dict, so the
+    name that identifies the far side is the subscript, not the variable.
+    """
+    head = expression.split(".")[0]
+    if "[" in head and head.endswith("]"):
+        return head[head.index("[") + 1:-1].strip("'\"")
+    return head
+
+
+def _local_bodies(tree: ast.AST) -> tuple[dict[str, ast.AST], dict[str, ast.AST]]:
+    """``name -> value`` for local variables, and for helpers returning a dict.
+
+    A body reached through a helper is still a body. `_completed_job` in
+    tests/airflow/test_scrape_listings.py returns a hand-written `scraper` job
+    shape and is handed to four seams; a reader matching only dict literals at
+    the assignment saw none of the four.
+    """
+    names: dict[str, ast.AST] = {}
+    helpers: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names[target.id] = node.value
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for statement in node.body:
+                if isinstance(statement, ast.Return) and isinstance(statement.value, ast.Dict):
+                    helpers[node.name] = statement.value
+    return names, helpers
+
+
+def _as_bodies(
+    value: ast.AST,
+    names: dict[str, ast.AST],
+    helpers: dict[str, ast.AST],
+    seen: frozenset[str] = frozenset(),
+) -> list[ast.Dict]:
+    """Every dict literal a mock value resolves to.
+
+    Four shapes, all of them measured in this tree rather than imagined: the
+    literal itself, a sequence of them (which is what `side_effect` is and what
+    a JSON array body is), a local name, and a call to a local helper. A call
+    to one of the `_DERIVED` builders resolves to nothing on purpose -- it is
+    built from the contract, so there is no restatement to check.
+    """
+    if isinstance(value, ast.Dict):
+        return [value]
+    if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+        return [
+            body for element in value.elts for body in _as_bodies(element, names, helpers, seen)
+        ]
+    if isinstance(value, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+        return _as_bodies(value.elt, names, helpers, seen)
+    if isinstance(value, ast.Name):
+        if value.id in seen or value.id not in names:
+            return []
+        return _as_bodies(names[value.id], names, helpers, seen | {value.id})
+    if isinstance(value, ast.Call):
+        called = getattr(value.func, "id", "") or getattr(value.func, "attr", "")
+        if called in _DERIVED or called in seen or called not in helpers:
+            return []
+        return _as_bodies(helpers[called], names, helpers, seen | {called})
+    return []
+
+
 def _fabrications(tree: ast.AST) -> dict[str, list[tuple[int, dict]]]:
-    """Local name to the response bodies a test assigns onto it."""
+    """Seam key to the response bodies a test assigns onto it.
+
+    Reads `side_effect` as well as `return_value`, because a test that needs
+    two answers writes a list and the body inside it is fabricated exactly the
+    same way. `tests/ops/test_coordination_release.py:275` put two invented
+    `ops/coordination_release.py` bodies there and this reader walked past
+    both, which is why the count this rule first reported was lower than the
+    truth rather than equal to it.
+    """
+    names, helpers = _local_bodies(tree)
     bodies: dict[str, list[tuple[int, dict]]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
-        if isinstance(node.value, ast.Call):
-            called = getattr(node.value.func, "id", "") or getattr(node.value.func, "attr", "")
-            if called in _DERIVED:
-                continue
-        if not isinstance(node.value, ast.Dict):
-            continue
         for target in node.targets:
             rendered = ast.unparse(target)
-            if not rendered.endswith(".json.return_value"):
+            if not (
+                rendered.endswith(".json.return_value")
+                or rendered.endswith(".json.side_effect")
+            ):
                 continue
-            root = rendered.split(".")[0]
-            literal: dict = {}
-            for key, value in zip(node.value.keys, node.value.values):
-                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                    literal[key.value] = (
-                        value.value if isinstance(value, ast.Constant) else "<expr>"
-                    )
-            bodies.setdefault(root, []).append((node.lineno, literal))
+            for literal in _as_bodies(node.value, names, helpers):
+                shape: dict = {}
+                for key, value in zip(literal.keys, literal.values):
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        shape[key.value] = (
+                            value.value if isinstance(value, ast.Constant) else "<expr>"
+                        )
+                bodies.setdefault(_seam_key(rendered), []).append((node.lineno, shape))
     return bodies
-
 
 def _fixture_seams(tree: ast.AST) -> dict[str, dict[str, str]]:
     """A fixture's dict keys to the module each patched client belongs to.
@@ -151,6 +224,38 @@ def _seams(tree: ast.AST) -> dict[str, str]:
     return seams
 
 
+def _shared_fixture_seams() -> dict[str, dict[str, str]]:
+    """The conftest fixtures that hand out patched clients, read once."""
+    conftest = TESTS / "conftest.py"
+    if not conftest.is_file():
+        return {}
+    return _fixture_seams(ast.parse(conftest.read_text(encoding="utf-8")))
+
+
+def _resolved_seams(
+    source: str, tree: ast.AST, shared: dict[str, dict[str, str]]
+) -> dict[str, str]:
+    """Every seam key in one test module, to the module answering behind it.
+
+    Shared by both readers so they cannot disagree about what a module reaches.
+    They did disagree: the code reader learned conftest fixtures and the body
+    reader did not, so every body fabricated through `mock_requests` was
+    exempt from the body rule while the code beside it was checked.
+
+    A conftest fixture reaches only the modules that request it by name.
+    Merging its seams into every module attributed `tests/scraper/processors/`'s
+    cars.com 403s to `ops/routers/admin.py` and reported eleven violations that
+    were entirely this reader's own doing.
+    """
+    seams: dict[str, str] = {}
+    for fixture, mapping in shared.items():
+        if fixture in source:
+            seams.update(mapping)
+    for mapping in _fixture_seams(tree).values():
+        seams.update(mapping)
+    seams.update(_seams(tree))
+    return seams
+
 def _fabricated_codes(tree: ast.AST) -> list[tuple[int, str, int]]:
     """``(line, seam key, status code)`` for every status a test writes down.
 
@@ -192,31 +297,17 @@ def _fabricated_codes(tree: ast.AST) -> list[tuple[int, str, int]]:
 
 def fabricated_service_codes() -> list[tuple[str, str, int, list[int]]]:
     """Every fabricated status a service this repository owns cannot answer."""
-    conftest = TESTS / "conftest.py"
-    shared = (
-        _fixture_seams(ast.parse(conftest.read_text(encoding="utf-8")))
-        if conftest.is_file() else {}
-    )
+    shared = _shared_fixture_seams()
     offenders: list[tuple[str, str, int, list[int]]] = []
     for path in sorted(TESTS.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
+        source = path.read_text(encoding="utf-8")
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = ast.parse(source, filename=str(path))
         except SyntaxError:
             continue
-        # A conftest fixture applies only where it is requested. Merging it
-        # into every module attributed `tests/scraper/processors/`'s cars.com
-        # 403s to `ops/routers/admin.py` and reported eleven violations that
-        # were entirely this reader's own doing.
-        source = path.read_text(encoding="utf-8")
-        seams: dict[str, str] = {}
-        for fixture, mapping in shared.items():
-            if fixture in source:
-                seams.update(mapping)
-        for mapping in _fixture_seams(tree).values():
-            seams.update(mapping)
-        seams.update(_seams(tree))
+        seams = _resolved_seams(source, tree, shared)
         if not seams:
             continue
 
@@ -246,15 +337,17 @@ def fabricated_service_codes() -> list[tuple[str, str, int, list[int]]]:
 
 def fabricated_service_responses() -> list[tuple[str, str, list[str]]]:
     """Every fabricated body a service this repository owns cannot produce."""
+    shared = _shared_fixture_seams()
     offenders: list[tuple[str, str, list[str]]] = []
     for path in sorted(TESTS.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
+        source = path.read_text(encoding="utf-8")
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = ast.parse(source, filename=str(path))
         except SyntaxError:
             continue
-        seams = _seams(tree)
+        seams = _resolved_seams(source, tree, shared)
         if not seams:
             continue
         for name, bodies in _fabrications(tree).items():

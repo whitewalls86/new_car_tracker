@@ -3267,6 +3267,24 @@ MUTATIONS = [
         ["tests/conftest.py"],
         [],
     ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_no_mock_invents_a_service_response",
+        "a body goes back to being written by hand inside a `side_effect` "
+        "list -- the shape that was invisible to this reader until it learned "
+        "to follow sequences, and the one that hid two invented "
+        "`ops/coordination_release.py` bodies while the rule reported zero",
+        lambda: _edit(
+            "tests/ops/test_coordination_release.py",
+            '        service_response(\n'
+            '            "container_health", "GET", "/project-status/{project}",\n'
+            '            services=["lakekeeper"],\n'
+            '        ),',
+            '        {"known": True, "services": ["lakekeeper"]},',
+        ),
+        ["tests/ops/test_coordination_release.py"],
+        [],
+    ),
 ]
 
 

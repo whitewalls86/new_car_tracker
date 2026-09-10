@@ -2934,164 +2934,6 @@ column that drifts, which is the defect the whole plan is named for.
 agent comply with it; a rule with no skill fails; the skills that do not yet
 exist are written; demonstrated by a rule losing its skill reference failing.
 
-## Success criteria
-
-**1. The waiver list is empty.** All 120 entries deleted, each by the repair it
-was waiting for rather than by being removed. The contract's own assertions make
-this self-verifying: a waiver that no longer describes a violation fails as
-loudly as an unwaived violation does.
-
-**2. Every gap this plan closes leaves behind something that fails if it comes
-back.** A repair with no assertion behind it is Plan 84 repeated exactly — real
-tests, an accurate description, false within months, invisible because nothing
-could tell. This is the criterion the six unmechanised gaps exist to be measured
-against, and it is why Stage C comes before the stages that would otherwise be
-graded by the instrument it repairs.
-
-Three exceptions, stated here so they are decisions rather than omissions:
-
-- **G7 stopped being an exception on 2026-09-02, and the rescoping is why.**
-  As written it could not be asserted by the existing rules and needed an
-  approach invented. Narrowed to the assertionless Layer 2 suite, it is
-  ordinarily mechanisable — a Layer 2 test that executes a statement and asserts
-  nothing about the result is a rule this suite can hold — and Stage M owes that
-  rule, not just the 25 assertions. **The part that was genuinely exceptional
-  left with G18**, which is Plan 150's, so this criterion no longer carries it.
-- **G12** may close without a rule at all, because the condition a rule would
-  assert is the constraint being removed. If it ships without one, the plan says
-  so explicitly rather than leaving a silent gap.
-- **G13 closes an instance without closing its class, and cannot do better.**
-  Fixing the canary test's quoting is a one-file repair; asserting that no test
-  lets its environment decide the outcome is not mechanisable, and the one place
-  that could observe the remaining failures — CI — runs Linux and is blind to
-  every Windows-only instance by construction. The `PYTHONPATH` clause is the
-  only part with a mechanism and it already has one. This is the weakest of the
-  three exceptions and it should be recorded as such rather than dressed up: the
-  next instance of G13's class will be found the way the last two were, by
-  someone running the suite somewhere CI does not.
-
-  **That prediction came true on 2026-09-01 and the exception is now narrower.**
-  A Windows-only encoding defect broke master, found exactly as forecast — by
-  someone running the suite where CI does not. It is the third instance of the
-  class, which is enough of a pattern to stop treating each one as a one-file
-  repair, so [Stage J](#stage-j-was-added-by-the-failure-this-plan-predicted)
-  now owns the class. **The exception stands only for the part Stage J concludes
-  it cannot mechanise**, and Stage J is required to say which part that is rather than
-  leaving it implied. What is already settled is that the obvious mechanism does
-  not close it: `PLW1514` cannot see a `tmp_path / "name"` receiver, so the rule
-  that looks like the answer would have passed this defect too.
-
-  **Stage J answered this on 2026-09-01, and the exception is now one named
-  behaviour rather than a whole rule.** Encoding is mechanised:
-  `test_every_text_read_and_write_states_its_encoding` requires `encoding=` on
-  every `read_text` and `write_text` in the repository, and fails on
-  `(tmp_path / "a.md").write_text("—")` — the exact call ruff answers
-  `All checks passed` on. It covers three shapes rather than one: the two
-  `pathlib` methods, text-mode `subprocess`, and the logging handlers that open
-  a file — the last two found by running PEP 597's `EncodingWarning` once, as a
-  discovery tool, and then checked statically rather than at runtime for the
-  reasons the decision record gives. **What remains unmechanisable is two
-  things, not one.** The first is any encoding shape nobody has named yet: this
-  rule sees what it is told to see, and the next unnamed shape will be found the
-  way these were. The second is everything else the harness decides: path separators, line endings, case-insensitive filename
-  collisions, and locale-dependent collation.** Those have no textual signature
-  to match on — the code that breaks on them is not distinguishable, by reading,
-  from code that does not — so the only instrument that sees them is an actual
-  second platform, and [Stage J's decision
-  record](#stage-j--mechanising-the-encoding-sensitive-io-guard)
-  says why a Windows runner was declined rather than built. That is the residue,
-  and it is now a list of four behaviours instead of an open-ended class.
-
-**3. The `dbt build + test` job is no longer the critical path**, and what
-replaced it is named for what it does. Measured in wall-clock seconds against
-the 267s baseline, not asserted.
-
-**Met by Stage E, 2026-09-01.** Across three runs of the final configuration
-the workflow went 292s to 145-165s and the job's successor 267s to 118-134s,
-in four jobs named for what they run.
-[The precise reading](../evidence/plan_162_stage_E_evidence.md#success-criterion-3-is-met) matters more than the
-headline: the dbt job's cost fell by 55% and stopped dominating, but it is
-still the longest job in the workflow on both post-change runs. The criterion
-was accepted as met on that basis.
-
-**4. ~~Every suite in `tests/integration/` is either invoked by a named CI step
-or declared dormant with a reason.~~ Met by Stage B (CAR-45), 2026-08-31.**
-This was G1's repair and the one criterion already mechanically enforced when
-the plan was written. `CI_INVOCATION_WAIVERS` is `()` and
-`test_every_integration_suite_is_invoked_by_a_ci_step` fails against an empty
-tuple the moment a suite appears unrun, with `tests/integration/lakehouse/`
-declared in `DORMANT_SUITES` rather than waived.
-
-*Struck in Stage E rather than deleted. The sentence went on describing "the
-four current waivers" after Stage B had removed all four: the criterion was
-already true and only its description had aged, which is the small version of
-exactly what this plan exists to stop.*
-
-## Non-goals
-
-- **Deciding the standard.** That was Plan 161, and it is archived. If this plan
-  finds itself arguing about which mock library is correct, it is relitigating a
-  closed decision.
-- **Rewriting the contract to match the repository.** The waiver list shrinks by
-  repairing code, not by revising rules. A rule that turns out to be wrong is a
-  decision to make explicitly, in `docs/TESTING.md`, with the reasoning recorded
-  — not a convenience taken mid-stage.
-- **Editing `docs/PLANS.md`.** Its row for this plan still reads "stub until
-  Plan 161 lands" and names an archived blocker. Correcting it is a state
-  transition and belongs to the `plans` skill.
-
-## Intersections
-
-### Plan 161 — the testing contract
-
-Archived. It decided the rules and built the mechanism that measures them; this
-plan closes the distance. `docs/TESTING.md`'s gap list names Plan 162 as the
-owner of thirteen entries — twelve at the census, plus G13, re-owned here on
-2026-08-31 — and an assertion fails if that owner is ever an archived plan — so this plan cannot be quietly abandoned without the suite
-saying so.
-
-**This document was written as a deliberate stub on 2026-08-30**, when Plan 161
-had not yet decided the standard this plan measures against. Writing the stages
-before the standard existed would have been scoping work against a rule nobody
-had agreed. That blocker is gone: 161's contract landed, was asserted, and is
-archived.
-
-### Plans 103 and 107 — coverage
-
-Superseded, and **their targets are this plan's inheritance rather than their
-own**: 103's per-file coverage gaps and 107's testing-rubric third are what the
-gap list now measures. Read them for the gap list they assembled, not for their
-numbers.
-
-### Plan 120 — CI lake snapshot
-
-Complete, and it produced **two** artifacts this document had been conflating.
-Stage E checked, because a claim about what CI builds against should not rest
-on a sentence:
-
-- **The synthetic fixture**, `scripts/seed_lake_snapshot_fixture.py` — its own
-  docstring calls it *"the synthetic MinIO fixture used by the Plan 120
-  lake-snapshot integration tests"*. It is seeded before every `dbt build` in
-  CI and **is** read by it: `sources.yml` globs
-  `silver_normalized/observations/**/*.parquet` with `hive_partitioning=true`,
-  which picks up the fixture's reserved `obs_year=2099` partition, and the
-  real-build tests assert on rows only a build over it can produce.
-- **The production-derived snapshot** — the `snapshot-worker` →
-  `snapshot.tar.zst` + `archive_manifest.json` →
-  `ci_snapshots/adaptive_refresh/latest.json` → `download_lake_snapshot.py`
-  pipeline. `download_lake_snapshot`, `snapshot.tar.zst` and `ci_snapshots`
-  appear in no workflow and no Compose file. **Nothing pulls it**, and getting
-  it into CI means a token and production VIN/dealer data on a GitHub runner.
-
-This entry previously read that the fixture was *"unused for the dbt build it
-was paid for"*. That is false of the fixture and true of the snapshot, which
-is Stage P's.
-
-### Plan 121 — staging environment
-
-Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
-question cannot close from inside a CI job.
-
 ### Stage AJ: a parser of a response we do not own, that no test executes
 
 **Issue:** unassigned · **State:** `—` · **Gap:** —
@@ -3279,6 +3121,254 @@ equality or by a non-emptiness check with the reason an exact form does not
 exist; demonstrated by a floor loosened back to a bound failing, and by a
 reader narrowed so that it resolves less than the whole corpus failing.
 
+### Stage AL: the services agree on what they send, and on what a code means
+
+**Issue:** unassigned · **State:** `—` · **Gap:** —
+
+**A stub, written 2026-09-10 from Stage AA's own friction. The measurements
+below are real; the design is not decided.**
+
+**`contracts/*.json` is descriptive and there is nothing for it to be wrong
+against.** Stage Z generates it *from* the running apps, so it faithfully
+records whatever they do — which is why it carried a phantom 307 on `/info`, a
+phantom 422, eight phantom 200s and six routes whose callers had been deleted
+in April. Each of those was found by reading the artifact against the code by
+hand. A generated artifact cannot fail a standard that does not exist.
+
+**Measured across all six contracts on 2026-09-10**, by declared response:
+
+| | typed (`$ref`) | no schema | other |
+|---|---|---|---|
+| 2xx | 53 | 29 | 2 array, 2 boolean |
+| 3xx | — | 16 | — |
+| 4xx | 47 | 42 | — |
+| 5xx | 12 | 34 | — |
+
+**105 declared responses carry a status code and no shape at all**, setting
+aside the 16 redirects that correctly have no body -- **and 29 of those 105 are
+not a gap.** Splitting them by declared content type, which is the measurement
+this stage owed before its own number could be trusted:
+
+| | count | |
+|---|---|---|
+| 2xx `text/html` | 14 | `ops` admin pages and templates |
+| 2xx `text/plain` | 2 | `robots.txt` |
+| 2xx no content declared | 13 | five `/metrics`, `sitemap.xml`, `/recaps` GET+HEAD, `/auth/check`, a file download |
+| 4xx no content declared | 42 | |
+| 5xx no content declared | 34 | |
+
+Not one of the 29 unshaped 2xx is a JSON route with an undeclared body. They
+are HTML, plain text, XML, Prometheus exposition and a file stream, where a
+JSON schema would be the wrong answer -- though several could still declare the
+content type they do serve.
+
+**So the real population is 76, and every one is an error response.** The cause
+is exact rather than general: Stage Y closed G21 by making every route declare
+the *statuses* it can return, which is where 400, 401, 403, 404, 409, 500 and
+503 came from. Declaring a code and declaring that code's body were two
+obligations and only the first was ever asked for. 59 of the 135 error
+responses do carry a `$ref`; `shared/api_models.py` already holds the
+`ErrorResponse` the other 76 are not using.
+
+**This is what bounds Stage AA's rules rather than a separate concern.** Where a
+response declares no shape, `service_response()` has nothing to build from and
+`body_violations()` has nothing to compare against, so a test may fabricate
+anything there and no rule can contradict it. Stage AA's "0 fabrications" is
+therefore a measurement over the 116 of 221 non-redirect responses that
+carry a shape, not over all of them, and that limit is stated in its record rather than glossed.
+
+**The load-bearing half is what a code *means*, not what the body looks like.**
+Every live defect Stage AA found was a meaning defect. `dbt_runner` answers 503
+on `/ready` to mean *busy*, and `ops` read it as *failure*, so the admin dbt
+panel showed an idle runner as healthy and a running build as down. The `/info`
+307 contradicted its own docstring. Six deleted endpoints kept returning an
+unconditional 303 to callers that had nothing to call. A shape standard catches
+none of these; a standard that says *"a 503 from `/ready` is a declared refusal
+and not an error"* catches all of them.
+
+**The precedent is in this plan already.**
+[`shared/db_vocabularies.py`](../../shared/db_vocabularies.py) (Stage W)
+declares the database's closed vocabularies once in Python while the migration
+stays the owner, and is guarded by a *pair* of rules comparing in both
+directions — with stated reasoning for why neither works alone. The API case
+maps onto it: a declaration module, the running app still the owner, one rule
+that every generated contract conforms and one that no route hand-rolls a code
+or shape it could take from the declaration.
+
+**One constraint to design in rather than discover.** `container_health` cannot
+import `shared/` — the Docker-socket grant isolates it, which is why Stage AA
+gave it a local `api_models.py` instead. So the standard must tolerate exactly
+one service that copies rather than imports, and the rule must assert the copy
+matches. `db_vocabularies` solved that same problem, but only because it was
+designed for it.
+
+**Sequence this before Stage AH.** AH writes a skill per rule so an agent meets
+a rule before CI does. Skills written now would teach conventions this stage is
+about to change.
+
+**Exit:** every response every service declares has a declared shape or a stated
+reason it cannot; every status code a route declares is one the standard names,
+with a meaning a caller can rely on; the declaration and the generated contracts
+are compared in both directions; demonstrated by a route declaring a code the
+standard does not name, failing.
+
+## Success criteria
+
+**1. The waiver list is empty.** All 120 entries deleted, each by the repair it
+was waiting for rather than by being removed. The contract's own assertions make
+this self-verifying: a waiver that no longer describes a violation fails as
+loudly as an unwaived violation does.
+
+**2. Every gap this plan closes leaves behind something that fails if it comes
+back.** A repair with no assertion behind it is Plan 84 repeated exactly — real
+tests, an accurate description, false within months, invisible because nothing
+could tell. This is the criterion the six unmechanised gaps exist to be measured
+against, and it is why Stage C comes before the stages that would otherwise be
+graded by the instrument it repairs.
+
+Three exceptions, stated here so they are decisions rather than omissions:
+
+- **G7 stopped being an exception on 2026-09-02, and the rescoping is why.**
+  As written it could not be asserted by the existing rules and needed an
+  approach invented. Narrowed to the assertionless Layer 2 suite, it is
+  ordinarily mechanisable — a Layer 2 test that executes a statement and asserts
+  nothing about the result is a rule this suite can hold — and Stage M owes that
+  rule, not just the 25 assertions. **The part that was genuinely exceptional
+  left with G18**, which is Plan 150's, so this criterion no longer carries it.
+- **G12** may close without a rule at all, because the condition a rule would
+  assert is the constraint being removed. If it ships without one, the plan says
+  so explicitly rather than leaving a silent gap.
+- **G13 closes an instance without closing its class, and cannot do better.**
+  Fixing the canary test's quoting is a one-file repair; asserting that no test
+  lets its environment decide the outcome is not mechanisable, and the one place
+  that could observe the remaining failures — CI — runs Linux and is blind to
+  every Windows-only instance by construction. The `PYTHONPATH` clause is the
+  only part with a mechanism and it already has one. This is the weakest of the
+  three exceptions and it should be recorded as such rather than dressed up: the
+  next instance of G13's class will be found the way the last two were, by
+  someone running the suite somewhere CI does not.
+
+  **That prediction came true on 2026-09-01 and the exception is now narrower.**
+  A Windows-only encoding defect broke master, found exactly as forecast — by
+  someone running the suite where CI does not. It is the third instance of the
+  class, which is enough of a pattern to stop treating each one as a one-file
+  repair, so [Stage J](#stage-j-was-added-by-the-failure-this-plan-predicted)
+  now owns the class. **The exception stands only for the part Stage J concludes
+  it cannot mechanise**, and Stage J is required to say which part that is rather than
+  leaving it implied. What is already settled is that the obvious mechanism does
+  not close it: `PLW1514` cannot see a `tmp_path / "name"` receiver, so the rule
+  that looks like the answer would have passed this defect too.
+
+  **Stage J answered this on 2026-09-01, and the exception is now one named
+  behaviour rather than a whole rule.** Encoding is mechanised:
+  `test_every_text_read_and_write_states_its_encoding` requires `encoding=` on
+  every `read_text` and `write_text` in the repository, and fails on
+  `(tmp_path / "a.md").write_text("—")` — the exact call ruff answers
+  `All checks passed` on. It covers three shapes rather than one: the two
+  `pathlib` methods, text-mode `subprocess`, and the logging handlers that open
+  a file — the last two found by running PEP 597's `EncodingWarning` once, as a
+  discovery tool, and then checked statically rather than at runtime for the
+  reasons the decision record gives. **What remains unmechanisable is two
+  things, not one.** The first is any encoding shape nobody has named yet: this
+  rule sees what it is told to see, and the next unnamed shape will be found the
+  way these were. The second is everything else the harness decides: path separators, line endings, case-insensitive filename
+  collisions, and locale-dependent collation.** Those have no textual signature
+  to match on — the code that breaks on them is not distinguishable, by reading,
+  from code that does not — so the only instrument that sees them is an actual
+  second platform, and [Stage J's decision
+  record](#stage-j--mechanising-the-encoding-sensitive-io-guard)
+  says why a Windows runner was declined rather than built. That is the residue,
+  and it is now a list of four behaviours instead of an open-ended class.
+
+**3. The `dbt build + test` job is no longer the critical path**, and what
+replaced it is named for what it does. Measured in wall-clock seconds against
+the 267s baseline, not asserted.
+
+**Met by Stage E, 2026-09-01.** Across three runs of the final configuration
+the workflow went 292s to 145-165s and the job's successor 267s to 118-134s,
+in four jobs named for what they run.
+[The precise reading](../evidence/plan_162_stage_E_evidence.md#success-criterion-3-is-met) matters more than the
+headline: the dbt job's cost fell by 55% and stopped dominating, but it is
+still the longest job in the workflow on both post-change runs. The criterion
+was accepted as met on that basis.
+
+**4. ~~Every suite in `tests/integration/` is either invoked by a named CI step
+or declared dormant with a reason.~~ Met by Stage B (CAR-45), 2026-08-31.**
+This was G1's repair and the one criterion already mechanically enforced when
+the plan was written. `CI_INVOCATION_WAIVERS` is `()` and
+`test_every_integration_suite_is_invoked_by_a_ci_step` fails against an empty
+tuple the moment a suite appears unrun, with `tests/integration/lakehouse/`
+declared in `DORMANT_SUITES` rather than waived.
+
+*Struck in Stage E rather than deleted. The sentence went on describing "the
+four current waivers" after Stage B had removed all four: the criterion was
+already true and only its description had aged, which is the small version of
+exactly what this plan exists to stop.*
+
+## Non-goals
+
+- **Deciding the standard.** That was Plan 161, and it is archived. If this plan
+  finds itself arguing about which mock library is correct, it is relitigating a
+  closed decision.
+- **Rewriting the contract to match the repository.** The waiver list shrinks by
+  repairing code, not by revising rules. A rule that turns out to be wrong is a
+  decision to make explicitly, in `docs/TESTING.md`, with the reasoning recorded
+  — not a convenience taken mid-stage.
+- **Editing `docs/PLANS.md`.** Its row for this plan still reads "stub until
+  Plan 161 lands" and names an archived blocker. Correcting it is a state
+  transition and belongs to the `plans` skill.
+
+## Intersections
+
+### Plan 161 — the testing contract
+
+Archived. It decided the rules and built the mechanism that measures them; this
+plan closes the distance. `docs/TESTING.md`'s gap list names Plan 162 as the
+owner of thirteen entries — twelve at the census, plus G13, re-owned here on
+2026-08-31 — and an assertion fails if that owner is ever an archived plan — so this plan cannot be quietly abandoned without the suite
+saying so.
+
+**This document was written as a deliberate stub on 2026-08-30**, when Plan 161
+had not yet decided the standard this plan measures against. Writing the stages
+before the standard existed would have been scoping work against a rule nobody
+had agreed. That blocker is gone: 161's contract landed, was asserted, and is
+archived.
+
+### Plans 103 and 107 — coverage
+
+Superseded, and **their targets are this plan's inheritance rather than their
+own**: 103's per-file coverage gaps and 107's testing-rubric third are what the
+gap list now measures. Read them for the gap list they assembled, not for their
+numbers.
+
+### Plan 120 — CI lake snapshot
+
+Complete, and it produced **two** artifacts this document had been conflating.
+Stage E checked, because a claim about what CI builds against should not rest
+on a sentence:
+
+- **The synthetic fixture**, `scripts/seed_lake_snapshot_fixture.py` — its own
+  docstring calls it *"the synthetic MinIO fixture used by the Plan 120
+  lake-snapshot integration tests"*. It is seeded before every `dbt build` in
+  CI and **is** read by it: `sources.yml` globs
+  `silver_normalized/observations/**/*.parquet` with `hive_partitioning=true`,
+  which picks up the fixture's reserved `obs_year=2099` partition, and the
+  real-build tests assert on rows only a build over it can produce.
+- **The production-derived snapshot** — the `snapshot-worker` →
+  `snapshot.tar.zst` + `archive_manifest.json` →
+  `ci_snapshots/adaptive_refresh/latest.json` → `download_lake_snapshot.py`
+  pipeline. `download_lake_snapshot`, `snapshot.tar.zst` and `ci_snapshots`
+  appear in no workflow and no Compose file. **Nothing pulls it**, and getting
+  it into CI means a token and production VIN/dealer data on a GitHub runner.
+
+This entry previously read that the fixture was *"unused for the dbt build it
+was paid for"*. That is false of the fixture and true of the snapshot, which
+is Stage P's.
+
+### Plan 121 — staging environment
+
+Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
+question cannot close from inside a CI job.
 
 ## Record
 
