@@ -11,7 +11,7 @@ from archiver.api_models import (
     PrunePackedResponse,
     VerifyPackResponse,
 )
-from tests.response_fixtures import fixture_for
+from tests.response_fixtures import fixture_for, produced_by
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -177,7 +177,13 @@ class TestCleanupQueueRunEndpoint:
     def test_no_work_returns_zeros(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._run_cleanup_queue",
-            return_value={"total": 0, "deleted": 0, "failed": 0, "results": []},
+            return_value=produced_by(
+                "_run_cleanup_queue",
+                total=0,
+                deleted=0,
+                failed=0,
+                results=[],
+            ),
         )
         resp = mock_archiver_client.post("/cleanup/queue/run")
         assert resp.json()["total"] == 0
@@ -198,7 +204,12 @@ class TestFlushStagingRunEndpoint:
     def test_no_work_returns_zero_total(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_staging_events",
-            return_value={"total_flushed": 0, "tables": [], "error": None},
+            return_value=produced_by(
+                "_flush_staging_events",
+                total_flushed=0,
+                tables=[],
+                error=None,
+            ),
         )
         resp = mock_archiver_client.post("/flush/staging/run")
         assert resp.json()["total_flushed"] == 0
@@ -206,7 +217,12 @@ class TestFlushStagingRunEndpoint:
     def test_error_propagated_in_response(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_staging_events",
-            return_value={"total_flushed": 0, "tables": [], "error": "db down"},
+            return_value=produced_by(
+                "_flush_staging_events",
+                total_flushed=0,
+                tables=[],
+                error='db down',
+            ),
         )
         resp = mock_archiver_client.post("/flush/staging/run")
         assert resp.status_code == 200
@@ -228,7 +244,7 @@ class TestFlushSilverRunEndpoint:
     def test_no_work_returns_zero(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": None},
+            return_value=produced_by("_flush_silver_observations", flushed=0, error=None),
         )
         resp = mock_archiver_client.post("/flush/silver/run")
         assert resp.json()["flushed"] == 0
@@ -236,7 +252,11 @@ class TestFlushSilverRunEndpoint:
     def test_error_propagated_in_response(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": "minio unreachable"},
+            return_value=produced_by(
+                "_flush_silver_observations",
+                flushed=0,
+                error='minio unreachable',
+            ),
         )
         resp = mock_archiver_client.post("/flush/silver/run")
         assert resp.status_code == 200
@@ -1426,7 +1446,7 @@ class TestTheUnflippedEndpointsAreStillWarningOnly:
         """
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": "boom"},
+            return_value=produced_by("_flush_silver_observations", flushed=0, error='boom'),
         )
 
         with caplog.at_level(logging.WARNING, logger="archiver"):
@@ -1440,7 +1460,7 @@ class TestTheUnflippedEndpointsAreStillWarningOnly:
         # A quiet hour must be silent, or the window's own signal is noise.
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": None},
+            return_value=produced_by("_flush_silver_observations", flushed=0, error=None),
         )
 
         with caplog.at_level(logging.WARNING, logger="archiver"):
@@ -1485,10 +1505,16 @@ class TestCompactSignalsFailure:
     def test_a_minio_error_returns_500(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._compact_silver",
-            return_value={
-                "scanned": 0, "compacted": 0, "incremental": 0, "skipped": 0,
-                "failed": 0, "error": "connection refused", "partitions": [],
-            },
+            return_value=produced_by(
+                "_compact_silver",
+                scanned=0,
+                compacted=0,
+                incremental=0,
+                skipped=0,
+                failed=0,
+                error='connection refused',
+                partitions=[],
+            ),
         )
 
         resp = mock_archiver_client.post("/compact/silver/run")
@@ -1530,10 +1556,16 @@ class TestCompactSignalsFailure:
         """
         mocker.patch(
             "archiver.app._compact_silver",
-            return_value={
-                "scanned": 1, "compacted": 0, "incremental": 0, "skipped": 0,
-                "failed": 1, "error": None, "partitions": [],
-            },
+            return_value=produced_by(
+                "_compact_silver",
+                scanned=1,
+                compacted=0,
+                incremental=0,
+                skipped=0,
+                failed=1,
+                error=None,
+                partitions=[],
+            ),
         )
 
         with caplog.at_level(logging.WARNING, logger="archiver"):

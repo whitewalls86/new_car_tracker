@@ -120,6 +120,7 @@ import pytest
 from fastapi.responses import HTMLResponse
 
 from ops.routers import admin
+from tests.response_fixtures import produced_by
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -151,7 +152,7 @@ def mock_dbt_context(mocker):
     """Mock _fetch_dbt_context to avoid HTTP calls in endpoint tests."""
     return mocker.patch(
         "ops.routers.admin._fetch_dbt_context",
-        return_value={"lock": {}, "intents": {}, "docs_available": False},
+        return_value=produced_by("_fetch_dbt_context", lock={}, intents={}, docs_available=False),
     )
 
 
@@ -160,7 +161,7 @@ def mock_deploy_functions(mocker):
     return {
         "intent_status": mocker.patch(
             "ops.routers.admin._intent_status",
-            return_value={"intent": "none"},
+            return_value=produced_by("_intent_status", intent='none'),
         ),
         "set_intent": mocker.patch(
             "ops.routers.admin._set_intent", return_value=True

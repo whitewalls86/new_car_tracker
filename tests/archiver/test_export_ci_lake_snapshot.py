@@ -40,6 +40,7 @@ from archiver.processors.lake_snapshot_selectors import (
 )
 from shared.db import get_conn
 from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
+from tests.response_fixtures import produced_by
 
 # ---------------------------------------------------------------------------
 # Request validation
@@ -536,7 +537,12 @@ class TestExportSelectorCohortDedup:
         )
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={"selectors": {}, "errors": [], "ok": True},
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={},
+                errors=[],
+                ok=True,
+            ),
         )
         mocker.patch("archiver.processors.export_ci_lake_snapshot.open_duckdb_connection")
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
@@ -565,7 +571,7 @@ class TestExportSelectorCohortDedup:
         )
         mock_run_selectors = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.run_lake_selectors",
-            return_value={"selectors": {}, "errors": [], "ok": True},
+            return_value=produced_by("run_lake_selectors", selectors={}, errors=[], ok=True),
         )
 
         export_ci_lake_snapshot(SnapshotRequest(
@@ -591,7 +597,12 @@ def _mock_heavy_path(mocker, candidate_sets=None):
     )
     mocker.patch(
         "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-        return_value={"selectors": {}, "errors": [], "ok": True},
+        return_value=produced_by(
+            "candidate_sets_to_selector_diagnostics",
+            selectors={},
+            errors=[],
+            ok=True,
+        ),
     )
     fake_cohort = mocker.Mock()
     fake_cohort.diagnostics = {"closed_vins": 1}
@@ -980,7 +991,12 @@ class TestExportDryRunSelectorFailures:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={"selectors": {}, "errors": ["relisted_vin: boom"], "ok": False},
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={},
+                errors=['relisted_vin: boom'],
+                ok=False,
+            ),
         )
 
         result = export_ci_lake_snapshot(SnapshotRequest(
@@ -995,10 +1011,12 @@ class TestExportDryRunSelectorFailures:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={
-                "selectors": {"cooldown_bucket_11_plus": {"required": 1, "entities": 0}},
-                "errors": [], "ok": True,
-            },
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={'cooldown_bucket_11_plus': {'required': 1, 'entities': 0}},
+                errors=[],
+                ok=True,
+            ),
         )
 
         result = export_ci_lake_snapshot(SnapshotRequest(
@@ -1014,10 +1032,12 @@ class TestExportDryRunSelectorFailures:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={
-                "selectors": {"cooldown_bucket_11_plus": {"required": 1, "entities": 0}},
-                "errors": [], "ok": True,
-            },
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={'cooldown_bucket_11_plus': {'required': 1, 'entities': 0}},
+                errors=[],
+                ok=True,
+            ),
         )
 
         result = export_ci_lake_snapshot(SnapshotRequest(
@@ -1032,7 +1052,12 @@ class TestExportDryRunSelectorFailures:
         enforce, not just the heavy run_selectors+build_cohort path."""
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.run_lake_selectors",
-            return_value={"selectors": {}, "errors": ["relisted_vin: boom"], "ok": False},
+            return_value=produced_by(
+                "run_lake_selectors",
+                selectors={},
+                errors=['relisted_vin: boom'],
+                ok=False,
+            ),
         )
 
         result = export_ci_lake_snapshot(SnapshotRequest(
@@ -1096,10 +1121,13 @@ class TestExportNonDryRun:
         )
         mock_promote = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.promote_snapshot_pointers",
-            return_value={
-                "ok": True, "alias_key": "alias/x.json", "latest_key": "latest.json",
-                "error": None,
-            },
+            return_value=produced_by(
+                "promote_snapshot_pointers",
+                ok=True,
+                alias_key='alias/x.json',
+                latest_key='latest.json',
+                error=None,
+            ),
         )
         return mock_package, mock_promote
 
@@ -1324,7 +1352,11 @@ class TestExportNonDryRun:
         )
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.promote_snapshot_pointers",
-            return_value={"ok": False, "error": "alias pointer write failed: alias/x.json"},
+            return_value=produced_by(
+                "promote_snapshot_pointers",
+                ok=False,
+                error='alias pointer write failed: alias/x.json',
+            ),
         )
 
         result = export_ci_lake_snapshot(
@@ -1391,12 +1423,12 @@ class TestExportNonDryRun:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={
-                "selectors": {
-                    "cooldown_bucket_11_plus": {"required": 1, "entities": 0},
-                },
-                "errors": [], "ok": True,
-            },
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={'cooldown_bucket_11_plus': {'required': 1, 'entities': 0}},
+                errors=[],
+                ok=True,
+            ),
         )
         mock_materialize = self._mock_materialize(mocker)
 
@@ -1416,12 +1448,12 @@ class TestExportNonDryRun:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={
-                "selectors": {
-                    "cooldown_bucket_11_plus": {"required": 1, "entities": 0},
-                },
-                "errors": [], "ok": True,
-            },
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={'cooldown_bucket_11_plus': {'required': 1, 'entities': 0}},
+                errors=[],
+                ok=True,
+            ),
         )
         self._mock_materialize(mocker)
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_export_manifest")
@@ -1444,10 +1476,12 @@ class TestExportNonDryRun:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={
-                "selectors": {},
-                "errors": ["relisted_vin: boom"], "ok": False,
-            },
+            return_value=produced_by(
+                "candidate_sets_to_selector_diagnostics",
+                selectors={},
+                errors=['relisted_vin: boom'],
+                ok=False,
+            ),
         )
         mock_materialize = self._mock_materialize(mocker)
 

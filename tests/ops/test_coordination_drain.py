@@ -6,6 +6,7 @@ import requests
 
 from ops import coordination_drain
 from ops.mutation_contract import DRAIN_SOURCES
+from tests.response_fixtures import produced_by
 
 
 def _state(phase="draining", scope=None):
@@ -15,7 +16,12 @@ def _state(phase="draining", scope=None):
 def test_processing_evidence_counts_only_in_flight_not_backlog(mocker):
     database_count = mocker.patch(
         "ops.coordination_drain._database_count",
-        return_value={"source": "processing_artifacts", "status": "known", "count": 0},
+        return_value=produced_by(
+            "ops.coordination_drain._database_count",
+            source='processing_artifacts',
+            status='known',
+            count=0,
+        ),
     )
 
     coordination_drain._processing_artifacts()
@@ -190,11 +196,12 @@ def test_positive_or_unknown_evidence_blocks_and_non_draining_never_reports_drai
 def test_gate_evidence_counts_active_runs_that_have_not_observed_generation(mocker):
     database_count = mocker.patch(
         "ops.coordination_drain._database_count",
-        return_value={
-            "source": "airflow_gate_observations",
-            "status": "known",
-            "count": 0,
-        },
+        return_value=produced_by(
+            "ops.coordination_drain._database_count",
+            source='airflow_gate_observations',
+            status='known',
+            count=0,
+        ),
     )
 
     coordination_drain._airflow_gate_observations(frozenset({"processing"}), 7)

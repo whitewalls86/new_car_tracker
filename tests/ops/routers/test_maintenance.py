@@ -10,6 +10,7 @@ from ops.routers.maintenance import (
     _reap_stuck_processing,
     _reconcile_cooldown_cohorts,
 )
+from tests.response_fixtures import produced_by
 
 
 def _executed(cursor, sql):
@@ -90,7 +91,7 @@ class TestReapStuckProcessing:
     def test_route_registered(self, mock_client, mocker):
         mocker.patch(
             "ops.routers.maintenance._reap_stuck_processing",
-            return_value={"stuck": 0, "retried": 0, "skipped": 0},
+            return_value=produced_by("_reap_stuck_processing", stuck=0, retried=0, skipped=0),
         )
         resp = mock_client.post("/maintenance/reap-stuck-processing")
         assert resp.status_code == 200
@@ -127,7 +128,7 @@ class TestEvictDelistedCooldowns:
         """
         mocker.patch(
             "ops.routers.maintenance._evict_delisted_cooldowns",
-            return_value={"evicted": 0},
+            return_value=produced_by("_evict_delisted_cooldowns", evicted=0),
         )
         resp = mock_client.post("/maintenance/evict-delisted-cooldowns")
         assert resp.status_code == 200
@@ -181,9 +182,13 @@ class TestReconcileCooldownCohorts:
         """G6, Plan 162 Stage H. Reached through the router, not the helper."""
         mocker.patch(
             "ops.routers.maintenance._reconcile_cooldown_cohorts",
-            return_value={
-                "counted": 0, "live": 0, "pending_cleared": 0, "cleared": 0,
-            },
+            return_value=produced_by(
+                "_reconcile_cooldown_cohorts",
+                counted=0,
+                live=0,
+                pending_cleared=0,
+                cleared=0,
+            ),
         )
         resp = mock_client.post("/maintenance/reconcile-cooldown-cohorts")
         assert resp.status_code == 200

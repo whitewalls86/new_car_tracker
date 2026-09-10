@@ -1,5 +1,7 @@
 """Unit tests for processing/routers/batch.py — POST /process/batch endpoint.
 
+
+
 All DB and MinIO calls are patched. Tests verify:
   - Empty queue returns zero counts
   - Query params forwarded correctly
@@ -8,6 +10,7 @@ All DB and MinIO calls are patched. Tests verify:
   - A status write that matched no row is counted, not reported as a completion
 """
 from processing.routers.batch import StatusWriteFailed
+from tests.response_fixtures import produced_by
 
 
 def _make_artifact(artifact_id=1, artifact_type="results_page"):
@@ -88,11 +91,12 @@ class TestProcessBatch:
         )
         mocker.patch(
             "processing.routers.batch._process_artifact",
-            return_value={
-                "status": "complete",
-                "artifact_type": "results_page",
-                "silver_written": 3,
-            },
+            return_value=produced_by(
+                "_process_artifact",
+                status='complete',
+                artifact_type='results_page',
+                silver_written=3,
+            ),
         )
         resp = mock_processing_client.post("/process/batch")
         body = resp.json()
@@ -106,11 +110,12 @@ class TestProcessBatch:
         )
         mocker.patch(
             "processing.routers.batch._process_artifact",
-            return_value={
-                "status": "complete",
-                "artifact_type": "detail_page",
-                "silver_written": 1,
-            },
+            return_value=produced_by(
+                "_process_artifact",
+                status='complete',
+                artifact_type='detail_page',
+                silver_written=1,
+            ),
         )
         resp = mock_processing_client.post("/process/batch")
         body = resp.json()
@@ -124,7 +129,7 @@ class TestProcessBatch:
         )
         mocker.patch(
             "processing.routers.batch._process_artifact",
-            return_value={"status": "retry", "error": "MinIO down"},
+            return_value=produced_by("_process_artifact", status='retry', error='MinIO down'),
         )
         resp = mock_processing_client.post("/process/batch")
         body = resp.json()
@@ -138,7 +143,7 @@ class TestProcessBatch:
         )
         mocker.patch(
             "processing.routers.batch._process_artifact",
-            return_value={"status": "skip", "reason": "unknown type"},
+            return_value=produced_by("_process_artifact", status='skip', reason='unknown type'),
         )
         resp = mock_processing_client.post("/process/batch")
         body = resp.json()
@@ -154,11 +159,12 @@ class TestProcessBatch:
         )
         mocker.patch(
             "processing.routers.batch._process_artifact",
-            return_value={
-                "status": "complete",
-                "artifact_type": "results_page",
-                "silver_written": 0,
-            },
+            return_value=produced_by(
+                "_process_artifact",
+                status='complete',
+                artifact_type='results_page',
+                silver_written=0,
+            ),
         )
         resp = mock_processing_client.post("/process/batch")
         body = resp.json()

@@ -2844,12 +2844,55 @@ MUTATIONS = [
         "::test_the_producer_corpus_is_not_empty",
         "the decorator keyword this rule reads is renamed, so no route resolves "
         "to a producer and the rule above compares nothing over an empty corpus",
+        # Plan 162 Stage AA moved the route reader into tests/response_fixtures.py
+        # so the fixture builder and the rules could share one resolver; the
+        # anchor followed it.
         lambda: _edit(
-            "tests/rules/test_response_models_match_their_producers.py",
+            "tests/response_fixtures.py",
             'if keyword.arg == "response_model":',
             'if keyword.arg == "response_model_renamed":',
         ),
-        ["tests/rules/test_response_models_match_their_producers.py"],
+        ["tests/response_fixtures.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_shape.py"
+        "::test_no_mock_invents_a_shape_production_defines",
+        "a mock goes back to restating a producer's shape as a literal, which "
+        "is the transcription this stage drained 57 of -- correct on the day "
+        "and free to drift the next, with the suite green either way",
+        lambda: _edit(
+            "tests/ops/routers/test_maintenance.py",
+            'produced_by("_reap_stuck_processing", stuck=0, retried=0, skipped=0)',
+            '{"stuck": 0, "retried": 0, "skipped": 0}',
+        ),
+        ["tests/ops/routers/test_maintenance.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_shape.py"
+        "::test_the_mock_site_corpus_is_not_empty",
+        "the producer reader stops resolving, so the rule above walks an empty "
+        "corpus and accuses nobody rather than failing",
+        lambda: _edit(
+            "tests/response_fixtures.py",
+            "            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):",
+            "            if isinstance(node, ast.ClassDef):",
+        ),
+        ["tests/response_fixtures.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_shape.py"
+        "::test_every_waiver_names_a_site_that_still_exists",
+        "a waiver names a mock site that no longer fabricates, so it "
+        "grandfathers nothing and hides whichever site takes that line next",
+        lambda: _edit(
+            "tests/rules/test_no_mock_invents_a_shape.py",
+            "FABRICATED_PRODUCER_WAIVERS: tuple[str, ...] = ()",
+            'FABRICATED_PRODUCER_WAIVERS: tuple[str, ...] = ("tests/nowhere.py:1",)',
+        ),
+        ["tests/rules/test_no_mock_invents_a_shape.py"],
         [],
     ),
 ]
