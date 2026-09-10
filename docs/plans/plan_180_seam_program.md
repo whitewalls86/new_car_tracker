@@ -114,6 +114,39 @@ recorded in §Record as the change census; the expiry meta-rule fails a
 scaffolding rule whose named ledger is empty; demonstrated by one mutation
 per guard.
 
+### Stage M: the config field carries named parts *(from 162 Stage AK)*
+
+**Issue:** CAR-126 · **State:** `—`
+
+**Seam 7's pattern asserts the pair and says nothing about the fields the
+pair asserts on**, which is the whole of what is wrong with it. Three
+artifacts pass through one parser — `load_health_exemptions` reads
+`healthcheck-exemptions.txt`, `maintenance-running-set.txt` and
+`deploy-followers.txt` — and each treats the same reason field differently:
+`len(reason) > 40` in the first two, the identical constant written twice in
+two files, and no reason check at all in the third. Across the suite the
+idiom is six instances in five files with three constants, every one outside
+`tests/rules/` and so invisible to the ledger that exists to forbid it.
+
+**`deploy-followers.txt` already contains the answer, applied once and never
+declared.** It asserts `"docker restart" in entry` — a required *part*,
+not a length — with the reason recorded on the assertion: *"a warning
+without a command is how this stayed unfixed for two days."* Generalising
+that to the artifact and declaring it for the seam is this stage.
+
+**Why it precedes C rather than following G.** G files sections for rules
+that already exist; this stage produces rules, like A and B. And C writes
+skills against the ideal corpus, so seam 7's ideal has to be final before C
+runs — the sequencing that paused three interim drafts already.
+
+**Exit:** the tightened pattern from
+[`seam_ideal_state_spec.md`](../planning/seam_ideal_state_spec.md) §Seam 7
+carried into the contract; the reason field of the three allowlist artifacts
+carries named parts with the readers asserting on the parts; the six
+prose-length bounds drained; `deploy-followers.txt`'s ad-hoc `"docker
+restart"` check retired into the general form. Demonstrated by an entry that
+loses a required part failing.
+
 ### Stage C: skills against the ideal corpus *(ex-162 Stage AH)*
 
 **Issue:** CAR-120 · **State:** `—`
@@ -212,12 +245,13 @@ tier-2 member.
 |---|---|---|---|
 | 1 | A | 2 | no |
 | 2 | B | 2 | no |
-| 3 | C | 2 | no |
-| 4 | G | 2 | no |
-| 5 | D | 2 | **yes** |
-| 6 | E | 2 | **yes** |
-| 7 | H | 2 | **yes** |
-| 8 | J | 2 | no |
-| 9 | K | 2 | no |
-| 10 | L | 2 | no |
-| 11 | F | 2 | no |
+| 3 | M | 1 | no |
+| 4 | C | 2 | no |
+| 5 | G | 2 | no |
+| 6 | D | 2 | **yes** |
+| 7 | E | 2 | **yes** |
+| 8 | H | 2 | **yes** |
+| 9 | J | 2 | no |
+| 10 | K | 2 | no |
+| 11 | L | 2 | no |
+| 12 | F | 2 | no |
