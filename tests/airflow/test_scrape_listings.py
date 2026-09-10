@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tests.service_contracts import service_response
+
 # Ensure airflow/dags/ is importable so the DAG module loads cleanly.
 DAGS_DIR = Path(__file__).parents[2] / "airflow" / "dags"
 if str(DAGS_DIR) not in sys.path:
@@ -93,7 +95,9 @@ class TestRunScrapesPayloadContract:
 
         job_id = "job-aaa"
         submit_resp = MagicMock(status_code=200)
-        submit_resp.json.return_value = {"job_id": job_id, "status": "queued"}
+        submit_resp.json.return_value = service_response(
+            "scraper", "POST", "/scrape_results", job_id=job_id, status="queued",
+        )
         submit_resp.raise_for_status = MagicMock()
 
         poll_resp = MagicMock(status_code=200)
@@ -137,7 +141,9 @@ class TestRunScrapesPayloadContract:
 
         job_id = "job-bbb"
         submit_resp = MagicMock()
-        submit_resp.json.return_value = {"job_id": job_id, "status": "queued"}
+        submit_resp.json.return_value = service_response(
+            "scraper", "POST", "/scrape_results", job_id=job_id, status="queued",
+        )
         submit_resp.raise_for_status = MagicMock()
 
         poll_resp = MagicMock()
@@ -213,7 +219,9 @@ class TestRunScrapesPayloadContract:
 
         job_id = "job-scope"
         submit_resp = MagicMock()
-        submit_resp.json.return_value = {"job_id": job_id, "status": "queued"}
+        submit_resp.json.return_value = service_response(
+            "scraper", "POST", "/scrape_results", job_id=job_id, status="queued",
+        )
         submit_resp.raise_for_status = MagicMock()
 
         poll_resp = MagicMock()

@@ -2895,6 +2895,49 @@ MUTATIONS = [
         ["tests/rules/test_no_mock_invents_a_shape.py"],
         [],
     ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_no_mock_invents_a_service_response",
+        "a caller's test goes back to writing another service's response down "
+        "by hand, which passes for whatever its author typed and keeps passing "
+        "when that service changes",
+        lambda: _edit(
+            "tests/ops/test_coordination_release.py",
+            'response.json.return_value = service_response(\n'
+            '        "container_health", "GET", "/project-status/{project}",\n'
+            "    )",
+            'response.json.return_value = {"known": False}',
+        ),
+        ["tests/ops/test_coordination_release.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_the_service_seam_corpus_is_not_empty",
+        "a caller stops resolving to the service it calls -- here by the compose "
+        "file no longer naming the dockerfile that says which package answers "
+        "-- so every fabrication behind that seam goes unreported",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      dockerfile: container_health/Dockerfile",
+            "      dockerfile: Dockerfile",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_every_waiver_names_a_fabrication_that_still_exists",
+        "a waiver names a fabrication that has been repaired, so it "
+        "grandfathers nothing and hides whichever one lands on that line next",
+        lambda: _edit(
+            "tests/rules/test_no_mock_invents_a_service_response.py",
+            "FABRICATED_RESPONSE_WAIVERS: tuple[str, ...] = ()",
+            'FABRICATED_RESPONSE_WAIVERS: tuple[str, ...] = ("tests/nowhere.py:1",)',
+        ),
+        ["tests/rules/test_no_mock_invents_a_service_response.py"],
+        [],
+    ),
 ]
 
 
