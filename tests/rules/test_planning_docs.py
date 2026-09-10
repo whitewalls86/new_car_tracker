@@ -434,7 +434,18 @@ _CONTRACT_PLAN = 172
 #   exactly that transition, so a new entry means the skill was bypassed. This
 #   is the ceiling that gets tested first: all five entries are pre-172 plans
 #   still live, and more will reach closeout.
-MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 35
+#
+# **Asserted with ``==`` since Stage AK, and the conversion found one open.**
+# As ceilings these held the growth side only, so a repair that did not lower
+# the number left headroom -- and headroom is exactly what "never raise one"
+# is trying to deny, arriving without anyone raising anything.
+# ``MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS`` was 35 against a ledger of 34: one
+# waiver had been repaired, the number stayed, and the next append would have
+# been the silent one. It is 34 here, which is the repair the ratchet was
+# supposed to force at the time. The names still read "MAX"; renaming them is
+# a sweep through this file, ``docs/TESTING.md`` and the mutation harness, and
+# it is not what this stage is for.
+MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS = 34
 MAX_THE_CHECKS_WAIVERS = 5
 
 
@@ -678,11 +689,13 @@ class TestPlanDocumentContract:
             (THE_CHECKS_WAIVERS, MAX_THE_CHECKS_WAIVERS,
              "THE_CHECKS_WAIVERS", "MAX_THE_CHECKS_WAIVERS"),
         ):
-            assert len(waivers) <= ceiling, (
-                f"{label} holds {len(waivers)} entries, over its ceiling of "
+            assert len(waivers) == ceiling, (
+                f"{label} holds {len(waivers)} entries against a declared "
                 f"{ceiling}. docs/PLAN_DOCUMENT.md says the waiver list only "
-                f"shrinks. Write the section the new entry is waiving; do not "
-                f"raise {ceiling_label}."
+                f"shrinks. If it grew: write the section the new entry is "
+                f"waiving; do not raise {ceiling_label}. If it shrank: lower "
+                f"{ceiling_label} in this diff, because a number left above "
+                f"the ledger is room for an append nobody has to argue for."
             )
 
     def test_every_live_plan_without_a_document_is_named(self):
@@ -928,20 +941,38 @@ class TestDocumentationLinks:
         )
 
     def test_the_scan_actually_reads_links(self):
-        """A link checker that matches nothing passes forever. ``docs/`` held
-        394 resolvable links after Stage 3; this asserts the scan is still
-        looking at them rather than silently matching an empty set."""
-        found = sum(
-            len(_MARKDOWN_LINK.findall(
+        """A link checker that matches nothing passes forever.
+
+        **Stage AK: this was ``found > 200``, and the corpus is 1,571 links
+        across 219 files.** The floor sat at thirteen percent of the tree, so
+        the scan could stop reading six documents in seven and still pass. The
+        number was written when ``docs/`` held 394; every document added since
+        widened the gap, which is the erosion this stage exists to close.
+
+        There is no exact *count* here -- links are added and removed with
+        every commit -- but there is an exact *agreement*. ``](`` is a cruder
+        marker for the same thing, and it is independent of the pattern under
+        test: if ``_MARKDOWN_LINK`` stops matching, the files it stopped
+        reading still contain ``](``. Measured across all 219 files, the two
+        agree on every one, so the rule is that they keep agreeing.
+        """
+        silent = []
+        for path in markdown_files():
+            relative = str(path.relative_to(REPO_ROOT))
+            prose = _prose_only(_read(relative))
+            if "](" in prose and not _MARKDOWN_LINK.findall(prose):
+                silent.append(relative)
+        assert not silent, (
+            f"these documents contain `](` in prose and the link pattern "
+            f"found nothing in them, so the dangling check is skipping them "
+            f"silently: {silent}"
+        )
+        assert any(
+            _MARKDOWN_LINK.findall(
                 _prose_only(_read(str(path.relative_to(REPO_ROOT))))
-            ))
+            )
             for path in markdown_files()
-        )
-        assert found > 200, (
-            f"only {found} markdown links found under docs/ -- the link "
-            f"pattern has stopped matching, so the dangling check proves "
-            f"nothing."
-        )
+        ), "no markdown link found anywhere under docs/"
 
 
 class TestParserAgreesWithTheDocuments:
@@ -1774,6 +1805,65 @@ def gap_claims() -> tuple[tuple[str, str], ...]:
     return tuple(claims)
 
 
+#: The gap list's header row. Anchors the table so its data rows can be
+#: counted independently of ``_GAP_ENTRY``, which is the pattern under test.
+_GAP_TABLE_HEADER = re.compile(r"^\|\s*#\s*\|\s*Violation\s*\|", re.MULTILINE)
+
+#: The field itself, label only. Deliberately weaker than ``_GAP_CLAIM``:
+#: it finds every field, so the two can be compared and the difference is a
+#: field the claim pattern found and could not read.
+_GAP_FIELD = re.compile(r"\*\*Gap:\*\*\s*(\S+)")
+
+
+def unread_gap_rows() -> list[str]:
+    """Data rows of the contract's gap list that yield no gap id.
+
+    Iterated by line rather than from the header match's offset. The first
+    version sliced the document at ``header.end()``, which lands in the middle
+    of the header row -- the remainder read ``Measure | Owner |``, did not
+    start with a pipe, and the loop broke before its first data row. It
+    returned an empty list for every input, including a table it should have
+    rejected, and passed. Caught by the probe for this stage's own conversion,
+    which is the failure mode the conversion exists to remove.
+    """
+    lines = _read(CONTRACT).splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if _GAP_TABLE_HEADER.match(line)),
+        None,
+    )
+    if start is None:
+        return ["the gap list's header row is gone; the table cannot be found"]
+    unread = []
+    for line in lines[start + 1:]:
+        if not line.strip().startswith("|"):
+            break
+        cell = _cells(line)[0]
+        if set(cell.strip()) <= set("-:") or not cell.strip():
+            continue
+        if not _GAP_ENTRY.match(line):
+            unread.append(cell[:60])
+    return unread
+
+
+def unaccounted_gap_fields() -> list[str]:
+    """``**Gap:**`` fields that resolve to neither a gap list nor a placeholder.
+
+    The label is found one way and the value another, so a value pattern that
+    stops matching shows up as the fields it stopped reading rather than as a
+    smaller set nothing compares against.
+    """
+    unaccounted = []
+    for path in plan_documents():
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        for match in _GAP_FIELD.finditer(_read(relative)):
+            value = match.group(1)
+            if re.match(r"G\d+", value) and not _GAP_CLAIM.match(match.group(0)):
+                unaccounted.append(f"{path.name}: {match.group(0)[:40]}")
+            elif not re.match(r"G\d+", value) and set(value) - set("—-–"):
+                unaccounted.append(f"{path.name}: {match.group(0)[:40]}")
+    return unaccounted
+
+
 class TestGapReferences:
     """A stage may not claim a gap the contract does not define."""
 
@@ -1803,15 +1893,33 @@ class TestGapReferences:
         had at least once, so the denominators are asserted rather than
         assumed.
         """
-        assert len(gap_claims()) >= 10, (
-            f"only {len(gap_claims())} stage headers claim a gap, which is "
-            "fewer than have existed since this rule was written. The likely "
-            "cause is that the `**Gap:**` header format changed and the "
-            "pattern above no longer matches it, in which case the rule is "
-            "reading an empty set and proving nothing."
+        # Stage AK. Both floors were `>= 10`, against 14 claims and 23
+        # entries. The claims side has no derivable total -- only 13 of the 29
+        # stage headers in the tree carry a `**Gap:**` field at all, and that
+        # is correct: Plan 180's stages have no gaps and closed stages carry
+        # `**Closed:**` instead. So it is non-empty, plus the one exact thing
+        # available: every `**Gap:**` field present is accounted for, either as
+        # gaps or as the placeholder. That catches the value half of the
+        # pattern breaking, which is what silently shrinks the set.
+        unparsed = unaccounted_gap_fields()
+        assert not unparsed, (
+            f"these `**Gap:**` fields parsed to neither a gap nor a "
+            f"placeholder: {unparsed}. The pattern has stopped reading the "
+            f"field it still finds, so the rule above is checking a set with "
+            f"holes in it."
         )
-        assert len(gap_entries()) >= 10, (
-            f"only {len(gap_entries())} rows parsed out of {CONTRACT}'s gap "
-            "list. If the table's shape changed, every claim above is being "
-            "checked against an empty set of definitions."
+        assert gap_claims(), (
+            "no stage header claims a gap anywhere in the tree. The "
+            "`**Gap:**` header format has changed and the pattern above no "
+            "longer matches it, so the rule is reading an empty set."
+        )
+        # The entries side does have an exact denominator: the gap list is one
+        # table, findable by its header row, and every data row under it is an
+        # entry. A table that gains a leading column keeps its rows and stops
+        # matching `_GAP_ENTRY`, which is the failure this now names.
+        unread = unread_gap_rows()
+        assert not unread, (
+            f"{len(unread)} rows of {CONTRACT}'s gap list parsed to no gap "
+            f"id: {unread}. The table's shape changed, so every claim above "
+            f"is being checked against an incomplete set of definitions."
         )

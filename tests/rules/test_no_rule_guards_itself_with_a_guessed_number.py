@@ -296,9 +296,6 @@ def _read_assert(
 # whatever the count was that day, and those stop meaning anything the moment
 # the tree grows past them.
 GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
-    "tests/rules/test_planning_docs.py: len(gap_claims()) >= 10",
-    "tests/rules/test_planning_docs.py: len(gap_entries()) >= 10",
-    "tests/rules/test_planning_docs.py: found > 200",
     "tests/rules/test_testing_contract.py: len(found) > 250",
     "tests/rules/test_testing_contract.py: len(matched) > 2",
     "tests/rules/test_testing_contract.py: len(entries) >= 50",
@@ -324,7 +321,6 @@ GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     # literal loop table unpacks into a variable that then reads as derived
     # (`ceiling`, from `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` and
     # `MAX_THE_CHECKS_WAIVERS`).
-    "tests/rules/test_planning_docs.py: len(waivers) <= ceiling",
     "tests/rules/test_testing_contract.py: len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING",
     "tests/rules/test_testing_contract.py: len(corpus) > _SQL_CORPUS_FLOOR",
     "tests/rules/test_testing_contract.py: len(owners) >= _DB_VOCABULARY_FLOOR",

@@ -1523,6 +1523,35 @@ MUTATIONS = [
         ["tests/rules/test_planning_docs.py"],
         [],
     ),
+    # Plan 162 Stage AK. The entry above breaks the *label* half of the claim
+    # pattern, which empties the set and `>= 10` caught. These two break the
+    # halves a number could not see: the value half, where the field is still
+    # found and no longer read, and the gap table growing a column, where every
+    # row is still there and none of them parses.
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_the_gap_claim_corpus_is_not_empty",
+        "the gap-claim pattern still finds the field and stops reading its value",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
+            r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:H\d+(?:,\s*)?)+)")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_the_gap_claim_corpus_is_not_empty",
+        "the gap list gains a leading column and every definition stops parsing",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_GAP_ENTRY = re.compile(r"^\| (G\d+) \|", re.MULTILINE)',
+            r'_GAP_ENTRY = re.compile(r"^\| \| (G\d+) \|", re.MULTILINE)',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
     # Plan 162 Stage Z. The gate is `generate_service_contracts.py --check`;
     # these four prove the rules that stop the gate being quietly removed --
     # its artifacts, its CI step, and the pins that make its output mean
@@ -2350,6 +2379,26 @@ MUTATIONS = [
             "tests/rules/test_planning_docs.py",
             "    SectionWaiver(149), SectionWaiver(160),\n)",
             "    SectionWaiver(149), SectionWaiver(160), SectionWaiver(154),\n)",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    # Plan 162 Stage AK, and this is the half `<=` never held. A waiver is
+    # repaired, the entry goes, and the number stays where it was -- nothing
+    # was raised, no rule was bypassed, and the list now has room for one
+    # append that no diff has to argue for. `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS`
+    # was sitting at 35 against 34 entries when this stage arrived, so the
+    # headroom was not hypothetical; it is 34 now, and this proves it stays
+    # honest.
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_neither_waiver_list_has_grown",
+        "a waiver is repaired and its ceiling is left above the ledger, which "
+        "is headroom for a silent append rather than a repair",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(149), SectionWaiver(160),\n)",
+            "    SectionWaiver(149),\n)",
         ),
         ["tests/rules/test_planning_docs.py"],
         [],
