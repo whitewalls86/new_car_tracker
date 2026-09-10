@@ -391,13 +391,15 @@ moved it to the end without making it a different stage.
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
 | 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `done` | CAR-106 |
 | 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `done` | CAR-107 |
-| 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `next` | CAR-107 |
+| 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `done` | CAR-107 |
 | 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
 | 29 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
 | 30 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 | 31 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `done` | CAR-115 |
 | 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
 | 33 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `—` | — |
+| 34 | [**AK**](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between) | — | A floor may assert nothing, or everything, never a number between | — | `—` | — |
+| 35 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `next` | — |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -2334,7 +2336,7 @@ work. It can. The stages below use it.
 
 ### Stage Y grew: its rule passes a route that reports work it did not do
 
-**Issue:** CAR-104 · **State:** `next` · **Gap:** G21, G27, G28
+**Issue:** CAR-104 · **State:** `done` · **Gap:** G21, G27, G28
 
 **Re-measured 2026-09-08 against `d6e3a6d`: 100 routes across the six importable
 services, 46 of which produce a status code they never declare.** The census
@@ -2552,7 +2554,7 @@ what it drops and why; demonstrated by an unreflected route change failing.
 
 ### Stage AA: a test may not invent another service's response
 
-**Issue:** unassigned · **State:** `backlog` · **Gap:** G23 · **Blocked by:** Stage Z
+**Issue:** CAR-107 · **State:** `done` · **Gap:** G23, G27
 
 **37 fabricated HTTP status codes across 6 test modules** — `{200: 26, 403: 9,
 400: 1, 500: 1}` — and the seams they replace are `ops.coordination_drain.
@@ -3123,7 +3125,7 @@ reader narrowed so that it resolves less than the whole corpus failing.
 
 ### Stage AL: the services agree on what they send, and on what a code means
 
-**Issue:** unassigned · **State:** `—` · **Gap:** —
+**Issue:** unassigned · **State:** `next` · **Gap:** —
 
 **A stub, written 2026-09-10 from Stage AA's own friction. The measurements
 below are real; the design is not decided.**
@@ -5200,3 +5202,60 @@ corpus/replay mechanism; the mechanism was already here twice and the work was
 mostly copying it, so the expensive half turned out to be measurement rather
 than construction — three of the four commits are things the measurements
 found.
+
+### Stage AA — a test may not invent another service's response
+
+**Every number this stage inherited was wrong, and so was the population they
+named.** The census counted 37 fabricated *codes*, 28 of them ours. Codes
+measured **0** once the seams resolved; the larger population was fabricated
+*shapes*, seeded at 57 and drained to 0, and the response ledger re-measured at
+9 rather than 28.
+
+**The pairing is `(path, code)`, and that is what made the dead panel visible.**
+`ops/routers/admin.py` called five `dbt_runner` endpoints deleted in April and a
+sixth `/logs` deleted in May. A code-only comparison passes all six —
+`dbt_runner` does return 200, on routes these callers were not calling. Each
+site was wrapped in `except Exception: pass` and followed by an unconditional
+303, so **the admin dbt panel had done nothing since April and nothing reported
+it.** The callers are deleted and the panel now reads `/ready`, where **503
+means busy, not error** — the same defect one level up, and why it showed a
+running build as down. G27's open item was that decision rather than a repair,
+and deleting settled it: every ledger across its four clauses is empty.
+
+**68 routes returned untyped JSON and now declare a response model** — 116
+declared shapes — which is what made a contract-derived fixture possible at all.
+
+**The rule's own reader was the last defect it found, and three of the four were
+in this stage's machinery rather than in the tests.** `_fabrications` matched
+one shape while `_fabricated_codes` matched two, and the body reader never
+learned conftest fixtures, so ten fabrications sat at checked seams while the
+rule reported zero. `service_response` returned `{"detail": ...}` for
+array-bodied routes — inventing FastAPI's error key for a route that never sends
+it, so the helper every fabrication is checked against was itself fabricating.
+
+**A floor may not guess**, which is [Stage AK](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between),
+and it exists because this stage wrote `>= len(rows) - 5` to repair a floor of
+`>= 80` that had just caught a real defect at 73. Both forms were written by the
+same hand within twenty minutes.
+
+**CI found a defect the local suite structurally cannot see.** The cadence check
+imported `dbt_runner.app` to read a YAML file and died on `prometheus_client` in
+the isolated Airflow venv, which is the only environment that separates them.
+`declared_selectors` moved to `dbt_runner/selectors.py`.
+
+**What this does not claim.** A response that declares no shape cannot be
+checked against anything, and 105 of 221 non-redirect responses declare none —
+29 legitimately, being HTML, plain text, XML, Prometheus exposition and a file
+stream, and **76 that are all error responses**: bare codes Stage Y added when
+it made every route declare its statuses, an obligation that never reached their
+bodies. [Stage AL](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means)
+is stubbed for that with the split recorded.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+**Cost: estimate 2, actual 2 (0).** Covering Stages Z and AA, merged as
+`a59d30f` and deployed to production the same night — `/metrics` serving 121,
+101 and 102 series across `ops`, `processing` and `scraper`, `GET
+/dbt/selectors` answering the four names `selectors.yml` declares, and `/info`
+answering 308.
