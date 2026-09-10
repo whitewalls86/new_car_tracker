@@ -89,7 +89,7 @@ issues are re-pointed or superseded during 162's close-out, not duplicated.
 
 ### Stage A: the mechanisms exist
 
-**State:** `next`
+**Issue:** CAR-120 · **State:** `next`
 
 Delivers the five stubs — `refusals()` with the body-kind helpers,
 `shared/service_routes.py` generated from `contracts/*.json` and gated like
@@ -103,7 +103,7 @@ with the artifact unmoved.
 
 ### Stage B: the ideal rules, seeded at everything
 
-**State:** `—`
+**Issue:** CAR-120 · **State:** `—`
 
 The border guards from the spec's tables, each with floor, mutation,
 `Asserted by` row and shrink-only ledger seeded at the measured whole; the
@@ -116,7 +116,7 @@ per guard.
 
 ### Stage C: skills against the ideal corpus *(ex-162 Stage AH)*
 
-**State:** `—`
+**Issue:** CAR-120 · **State:** `—`
 
 **Exit** (AH's, carried): every rule in `docs/TESTING.md`'s `Asserted by`
 column names a skill that teaches meeting it before CI does; the three
@@ -124,7 +124,7 @@ paused interim drafts replaced by skills teaching the mechanisms.
 
 ### Stage G: the contract restructured on the seam spine
 
-**State:** `—`
+**Issue:** CAR-120 · **State:** `—`
 
 One section per seam — parties, owner + tier, statements, rules per
 statement with keep/expiry marked, ledgers, grade, skill — with rationale
@@ -137,7 +137,7 @@ explicit pointer.
 
 ### Stage D: the HTTP drain *(ex-162 Stage AL's tail)*
 
-**State:** `—`
+**Issue:** CAR-121 · **State:** `—`
 
 **Exit:** the HTTP seam's ledgers — unreadable exits, retyped statuses,
 unproven meanings, bodyless responses, fabricated objects, hand-written
@@ -148,7 +148,7 @@ regenerated throughout.
 
 ### Stage E: the metrics seam *(production-verified)*
 
-**State:** `—`
+**Issue:** CAR-122 · **State:** `—`
 
 **Exit:** every `cartracker_*` name declared once in `metric_names.py`;
 declared == emitted == queried in both directions; the ledger drained; the
@@ -157,7 +157,7 @@ only the config files.
 
 ### Stage H: the vocabulary columns become enums *(ex-162 Stage AC)*
 
-**State:** `—`
+**Issue:** CAR-123 · **State:** `—`
 
 **Exit** (AC's, carried): the 18 constrained columns are enum-typed; Stage
 W's corpus reader reads `CREATE TYPE … AS ENUM`; a stale literal in a
@@ -167,7 +167,7 @@ applied in production**.
 
 ### Stage J: a fixture cannot fabricate a forbidden row *(ex-162 Stage AD)*
 
-**State:** `—`
+**Issue:** CAR-124 · **State:** `—`
 
 **Exit** (AD's, carried): a unit fixture cannot carry a value the owning
 column forbids; `FABRICATED_ROW_WAIVERS` seeded at its measured count and
@@ -175,7 +175,7 @@ drained to 0; demonstrated by a fabricated row failing at construction.
 
 ### Stage K: configuration is what Compose delivers *(ex-162 Stage AE)*
 
-**State:** `—`
+**Issue:** CAR-124 · **State:** `—`
 
 **Exit** (AE's, carried): no production module reads an environment
 variable with an inline default; every variable read strictly is delivered
@@ -186,7 +186,7 @@ container what it loaded. Demonstrated by an inline default failing.
 
 ### Stage L: the parsers nobody ran *(ex-162 Stage AJ)*
 
-**State:** `—`
+**Issue:** CAR-124 · **State:** `—`
 
 **Exit** (AJ's, carried): every production function that parses a response
 from a system this repository does not own is exercised by a test or
@@ -196,7 +196,7 @@ exercising test is removed failing.
 
 ### Stage F: the object-storage channel *(ex-162 Stage AM)*
 
-**State:** `—`
+**Issue:** CAR-125 · **State:** `—`
 
 Designs what AM's stub left open, toward the spec's stated invariant.
 
