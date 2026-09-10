@@ -24,7 +24,7 @@ any test exercises the route with it.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal, Union, get_args
 
 from pydantic import BaseModel
 
@@ -301,8 +301,8 @@ class ArchiveBlock(BaseModel):
     file_count: int | None = None
 
 
-class ArchiveManifest(BaseModel):
-    """``GET /admin/snapshots/adaptive-refresh/{snapshot_id}``.
+class ArchiveManifestV1(BaseModel):
+    """The manifest at export format 3, archive format 1.
 
     The Gate D export manifest plus archive metadata -- the document CI and
     local downloaders read. ``snapshot_id`` is overlaid by the route rather
@@ -310,13 +310,26 @@ class ArchiveManifest(BaseModel):
     ``export_fingerprint`` and can be reused by several snapshot ids, so the
     persisted copy legitimately carries whichever id packaged it first.
 
-    Every field is optional because this describes a stored document rather
-    than a value this service composes, and the version guard -- not this
-    model -- is what establishes which keys are present.
+    **The two versions are pinned as literals, which is what makes this a model
+    of a format rather than of a moment.** A stored manifest is served through
+    the model whose literals match the versions it declares, so an archive
+    written last year is served by the model for the format it was written in.
+    A snapshot pinned by an ML rehearsal does not change shape because CI's
+    writer moved on.
+
+    A format bump is therefore a new class beside this one and a new entry in
+    :data:`ARCHIVE_MANIFEST_MODELS` -- never a widened set of version numbers,
+    which would let this service claim it can read a format while having no
+    description of it.
+
+    Checked field-for-field against
+    ``contracts/lake_snapshot_manifest/export3-archive1.json``, which is
+    generated from ``archiver``'s writers. Neither service defines this shape;
+    both are measured against the record.
     """
 
-    export_cache_schema_version: int | None = None
-    archive_cache_schema_version: int | None = None
+    export_cache_schema_version: Literal[3]
+    archive_cache_schema_version: Literal[1]
     export_fingerprint: str | None = None
     planning_fingerprint: str | None = None
     export_fingerprint_payload: Any | None = None
@@ -332,3 +345,46 @@ class ArchiveManifest(BaseModel):
     created_at: str | None = None
     archive: ArchiveBlock | None = None
     archived_at: str | None = None
+
+
+# Every archive-manifest format this service can serve. A stored manifest is
+# matched to the model whose version literals it satisfies, so adding a format
+# means adding a model -- there is no way to declare a version readable without
+# saying what it contains.
+ARCHIVE_MANIFEST_MODELS: tuple[type[BaseModel], ...] = (ArchiveManifestV1,)
+
+# The route's declared response. `Union` over one model is that model, so this
+# widens on its own when a format is added rather than needing the route
+# touched -- the failure mode being guarded is a second model that exists,
+# passes its own tests, and is never reachable.
+ArchiveManifestResponse = Union[ARCHIVE_MANIFEST_MODELS]
+
+
+def _pinned(model: type[BaseModel], field: str) -> int:
+    """The single version literal *model* pins *field* to."""
+    versions = get_args(model.model_fields[field].annotation)
+    if len(versions) != 1:
+        raise TypeError(
+            f"{model.__name__}.{field} pins {versions!r}. A manifest model "
+            f"answers for exactly one format, because its field list is that "
+            f"format's field list."
+        )
+    return versions[0]
+
+
+def readable_manifest_versions() -> frozenset[tuple[int, int]]:
+    """The ``(export, archive)`` format pairs this service can serve.
+
+    A pair rather than two independent sets, because the served document is two
+    formats layered -- ``build_export_manifest`` writes one half and
+    ``build_archive_manifest`` copies it and adds the other -- so the shape is
+    the combination. Treating the versions separately would claim this service
+    can serve a pairing no model describes.
+    """
+    return frozenset(
+        (
+            _pinned(model, "export_cache_schema_version"),
+            _pinned(model, "archive_cache_schema_version"),
+        )
+        for model in ARCHIVE_MANIFEST_MODELS
+    )

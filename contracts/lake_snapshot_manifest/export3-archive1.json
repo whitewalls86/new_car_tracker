@@ -1,0 +1,29 @@
+{
+  "archive_cache_schema_version": 1,
+  "export_cache_schema_version": 3,
+  "generated_by": "scripts/generate_lake_snapshot_manifest_contract.py",
+  "shape": {
+    "archive": {
+      "bytes": "<value>",
+      "file_count": "<value>",
+      "path": "<value>",
+      "sha256": "<value>"
+    },
+    "archive_cache_schema_version": "<value>",
+    "archived_at": "<value>",
+    "counts": {},
+    "coverage": {},
+    "created_at": "<value>",
+    "data_path": "<value>",
+    "export_cache_schema_version": "<value>",
+    "export_fingerprint": "<value>",
+    "export_fingerprint_payload": {},
+    "generation_id": "<value>",
+    "planning_fingerprint": "<value>",
+    "postgres_tables": {},
+    "snapshot_id": "<value>",
+    "source_window": {},
+    "tables": {},
+    "tier": "<value>"
+  }
+}

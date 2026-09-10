@@ -66,8 +66,8 @@
         "title": "ArchiveBlock",
         "type": "object"
       },
-      "ArchiveManifest": {
-        "description": "``GET /admin/snapshots/adaptive-refresh/{snapshot_id}``.\n\nThe Gate D export manifest plus archive metadata -- the document CI and\nlocal downloaders read. ``snapshot_id`` is overlaid by the route rather\nthan taken from the stored object: a Gate E archive is keyed by\n``export_fingerprint`` and can be reused by several snapshot ids, so the\npersisted copy legitimately carries whichever id packaged it first.\n\nEvery field is optional because this describes a stored document rather\nthan a value this service composes, and the version guard -- not this\nmodel -- is what establishes which keys are present.",
+      "ArchiveManifestV1": {
+        "description": "The manifest at export format 3, archive format 1.\n\nThe Gate D export manifest plus archive metadata -- the document CI and\nlocal downloaders read. ``snapshot_id`` is overlaid by the route rather\nthan taken from the stored object: a Gate E archive is keyed by\n``export_fingerprint`` and can be reused by several snapshot ids, so the\npersisted copy legitimately carries whichever id packaged it first.\n\n**The two versions are pinned as literals, which is what makes this a model\nof a format rather than of a moment.** A stored manifest is served through\nthe model whose literals match the versions it declares, so an archive\nwritten last year is served by the model for the format it was written in.\nA snapshot pinned by an ML rehearsal does not change shape because CI's\nwriter moved on.\n\nA format bump is therefore a new class beside this one and a new entry in\n:data:`ARCHIVE_MANIFEST_MODELS` -- never a widened set of version numbers,\nwhich would let this service claim it can read a format while having no\ndescription of it.\n\nChecked field-for-field against\n``contracts/lake_snapshot_manifest/export3-archive1.json``, which is\ngenerated from ``archiver``'s writers. Neither service defines this shape;\nboth are measured against the record.",
         "properties": {
           "archive": {
             "anyOf": [
@@ -80,15 +80,9 @@
             ]
           },
           "archive_cache_schema_version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Archive Cache Schema Version"
+            "const": 1,
+            "title": "Archive Cache Schema Version",
+            "type": "integer"
           },
           "archived_at": {
             "anyOf": [
@@ -142,15 +136,9 @@
             "title": "Data Path"
           },
           "export_cache_schema_version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Export Cache Schema Version"
+            "const": 3,
+            "title": "Export Cache Schema Version",
+            "type": "integer"
           },
           "export_fingerprint": {
             "anyOf": [
@@ -244,7 +232,11 @@
             "title": "Tier"
           }
         },
-        "title": "ArchiveManifest",
+        "required": [
+          "export_cache_schema_version",
+          "archive_cache_schema_version"
+        ],
+        "title": "ArchiveManifestV1",
         "type": "object"
       },
       "AuthorizeResponse": {
@@ -2315,7 +2307,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ArchiveManifest"
+                  "$ref": "#/components/schemas/ArchiveManifestV1"
                 }
               }
             },

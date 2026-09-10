@@ -4,12 +4,10 @@ from contextlib import contextmanager
 
 import pytest
 
+from ops.api_models import readable_manifest_versions
 from ops.queries import SELECT_MACHINE_TOKEN, TOUCH_MACHINE_TOKEN_LAST_USED
 from ops.routers import snapshots
-from shared.lake_snapshot_schema import (
-    ARCHIVE_CACHE_SCHEMA_VERSION,
-    EXPORT_CACHE_SCHEMA_VERSION,
-)
+from scripts.generate_lake_snapshot_manifest_contract import manifest_fixture
 
 BASE = "/admin/snapshots/adaptive-refresh"
 AUTH = {"Authorization": "Bearer test-token"}
@@ -483,34 +481,21 @@ ALIAS = {
     "archive_bytes": 1024,
     "archive_sha256": "deadbeef",
 }
-MANIFEST = {
-    # Plan 162 Stage AA: both schema versions, because the served document is
-    # two formats layered and `ops` now refuses one it cannot vouch for. A
-    # fixture without them is not a smaller manifest, it is one `archiver` has
-    # never written.
-    "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
-    "archive_cache_schema_version": ARCHIVE_CACHE_SCHEMA_VERSION,
-    "export_fingerprint": ALIAS["export_fingerprint"],
-    "planning_fingerprint": "plan-abc123",
-    "export_fingerprint_payload": {},
-    "snapshot_id": ALIAS["snapshot_id"],
-    "tier": "edge",
-    "source_window": {"start": None, "end": None},
-    "counts": {},
-    "coverage": {},
-    "tables": [],
-    "postgres_tables": [],
-    "data_path": "ci_snapshots/adaptive_refresh/data",
-    "generation_id": "gen-1",
-    "created_at": "2026-07-07T17:45:00+00:00",
-    "archive": {
+# Built from the record `archiver`'s writers generate, not typed out from
+# reading them. Plan 162 Stage AA: the hand-written version of this fixture had
+# five of the seventeen keys, and every test using it asserted a body the writer
+# has never produced.
+MANIFEST = manifest_fixture(
+    snapshot_id=ALIAS["snapshot_id"],
+    tier="ci",
+    export_fingerprint=ALIAS["export_fingerprint"],
+    archive={
         "path": ALIAS["archive_key"],
         "bytes": 1024,
         "sha256": "deadbeef",
         "file_count": 3,
     },
-    "archived_at": "2026-07-07T17:46:00+00:00",
-}
+)
 
 
 class TestSnapshotManifest:
@@ -598,7 +583,11 @@ class TestSnapshotManifest:
         resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
 
         assert resp.status_code == 409
-        assert field in resp.json()["detail"]
+        # The refusal names the pair it was given and the pairs it serves, so
+        # an operator can see which half moved without opening the object.
+        detail = resp.json()["detail"]
+        assert "99" in detail
+        assert str(sorted(readable_manifest_versions())) in detail
 
     def test_missing_manifest_is_409_not_a_silent_truncation(self, mock_client, mocker):
         """A manifest carrying neither version is refused, not served short.

@@ -45,10 +45,3 @@ from __future__ import annotations
 # What `archiver` stamps into every manifest it writes.
 ARCHIVE_CACHE_SCHEMA_VERSION = 1
 EXPORT_CACHE_SCHEMA_VERSION = 3
-
-# What `ops` will serve back. Written as literal sets rather than derived from
-# the two constants above: derived, they could never disagree, and the check
-# that they agree is the one that catches a bump whose reader half was
-# forgotten. During a format migration these hold both versions.
-READABLE_ARCHIVE_CACHE_SCHEMAS = frozenset({1})
-READABLE_EXPORT_CACHE_SCHEMAS = frozenset({3})

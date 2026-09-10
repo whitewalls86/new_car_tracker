@@ -299,6 +299,15 @@ jobs:
       - name: Regenerate each service's contract and diff it
         run: python scripts/generate_service_contracts.py --check
 
+      # The snapshot manifest is the one document two services exchange through
+      # object storage rather than over HTTP, so no OpenAPI schema describes it
+      # and the gate above cannot see it. Its record is generated from
+      # `archiver`'s writers the same way and diffed the same way; without this
+      # step the record is a committed file nobody regenerates, which is a
+      # document again.
+      - name: Regenerate the snapshot manifest record and diff it
+        run: python scripts/generate_lake_snapshot_manifest_contract.py --check
+
   git-ref-hygiene:
     name: Git ref hygiene contract (real remote)
     runs-on: ubuntu-latest
