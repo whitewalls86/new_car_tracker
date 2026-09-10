@@ -44,6 +44,11 @@ from typing import Any, Dict, NamedTuple, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ops.api_models import (
+    ArchiveManifestResponse,
+    SnapshotPointer,
+    readable_manifest_versions,
+)
 from ops.queries import (
     SELECT_ACTIVE_MACHINE_TOKEN_EXISTS,
     SELECT_MACHINE_TOKEN,
@@ -59,6 +64,7 @@ router = APIRouter(prefix="/admin/snapshots/adaptive-refresh", tags=["snapshots"
 
 ALIAS_PREFIX = "ci_snapshots/adaptive_refresh"
 LATEST_KEY = f"{ALIAS_PREFIX}/latest.json"
+
 
 # How stale `last_used_at` may get before a request refreshes it. Bound as a
 # parameter into touch_machine_token_last_used.sql, which names no window of its
@@ -342,6 +348,31 @@ def _validated_prefixed_key(value: Any, pattern: "re.Pattern[str]") -> str:
     return value
 
 
+def _unreadable_schema_reason(manifest: Dict[str, Any]) -> Optional[str]:
+    """Why this manifest is not one this service can serve, or ``None``.
+
+    Checked as a *pair* because the served document is two formats layered --
+    ``build_export_manifest`` writes the export half and
+    ``build_archive_manifest`` copies it and adds the archive half -- so its
+    shape is the combination, and the readable pairs are derived from the
+    models that exist rather than listed. A format this service has no model
+    for is refused here rather than served through a model for a different
+    one, which would drop whatever that format added and invent whatever it
+    removed.
+    """
+    found = (
+        manifest.get("export_cache_schema_version"),
+        manifest.get("archive_cache_schema_version"),
+    )
+    readable = readable_manifest_versions()
+    if found not in readable:
+        return (
+            f"(export, archive) schema {found!r} is not one this service "
+            f"serves; it serves {sorted(readable)!r}"
+        )
+    return None
+
+
 def _manifest_for_alias(
     snapshot_id: str, alias: Dict[str, Any], manifest: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -354,6 +385,14 @@ def _manifest_for_alias(
     enforce archive consistency against the alias and overlay the requested
     snapshot_id before returning the manifest to download clients.
     """
+    unreadable = _unreadable_schema_reason(manifest)
+    if unreadable:
+        logger.warning(
+            "snapshot manifest schema is not one this service serves: snapshot_id=%s %s",
+            snapshot_id, unreadable,
+        )
+        raise HTTPException(status_code=409, detail=unreadable)
+
     archive = manifest.get("archive")
     if not isinstance(archive, dict):
         logger.warning("snapshot manifest missing archive block: snapshot_id=%s", snapshot_id)
@@ -387,6 +426,7 @@ def _manifest_for_alias(
 
 @router.get(
     "/latest",
+    response_model=SnapshotPointer,
     dependencies=[Depends(require_snapshot_token("read"))],
     responses={
         401: {"description": "No usable machine credential was presented."},
@@ -404,9 +444,15 @@ def get_latest_snapshot() -> Dict[str, Any]:
 
 @router.get(
     "/{snapshot_id}",
+    response_model=ArchiveManifestResponse,
     dependencies=[Depends(require_snapshot_token("read"))],
     responses={
         400: {"description": "The snapshot id is not a well-formed identifier."},
+        409: {
+            "description": (
+                "The stored manifest declares a schema version this service does not serve."
+            )
+        },
         401: {"description": "No usable machine credential was presented."},
         403: {"description": "The credential does not grant the scope this route needs."},
         404: {"description": "No snapshot with that id."},
@@ -430,6 +476,7 @@ def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
 
 @router.get(
     "/{snapshot_id}/download",
+    response_class=StreamingResponse,
     dependencies=[Depends(require_snapshot_token("read"))],
     responses={
         400: {"description": "The snapshot id is not a well-formed identifier."},

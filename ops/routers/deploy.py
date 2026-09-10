@@ -8,6 +8,7 @@ from typing import Any, Dict, NamedTuple
 
 from fastapi import APIRouter, Body, HTTPException
 
+from ops.api_models import IntentStatusResponse
 from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES, expand_targets
 from ops.queries import (
     ACQUIRE_COORDINATION_LOCK,
@@ -225,7 +226,7 @@ def _intent_release() -> IntentResult:
         return IntentResult("error", db_failure_cause(exc))
 
 
-@router.get("/deploy/status")
+@router.get("/deploy/status", response_model=IntentStatusResponse)
 def get_current_intent() -> Dict[str, Any]:
     """Returns current intent status and count of running executions."""
     return _intent_status()
@@ -233,6 +234,7 @@ def get_current_intent() -> Dict[str, Any]:
 
 @router.post(
     "/deploy/start",
+    response_model=bool,
     responses={
         409: {"description": "Deploy intent is already held."},
         422: {"description": "The request is not a valid coordination request."},
@@ -273,6 +275,7 @@ def start_deploy_intent(payload: dict = Body(default={})) -> bool:
 
 @router.post(
     "/deploy/complete",
+    response_model=bool,
     responses={
         409: {"description": "Deploy intent is already held."},
         500: {"description": "Postgres refused the write; the detail names why."},

@@ -65,12 +65,18 @@ def mock_logger_error(mocker):
 
 @pytest.fixture
 def mock_requests(mocker):
-    """Mock requests.get, requests.post, requests.delete for API tests"""
-    post = mocker.patch("requests.post")
-    get = mocker.patch("requests.get")
-    delete = mocker.patch("requests.delete")
+    """Replace the HTTP client `ops/routers/admin.py` calls dbt_runner through.
+
+    Plan 162 Stage AA. This patched the *global* `requests.get`, `.post` and
+    `.delete`, which is two problems. It silences an outbound call from any
+    module a test happens to touch, not just the one under test. And it names
+    no caller, so a rule reading the seam cannot tell which service the
+    fabricated responses behind it belong to -- the fabrications were invisible
+    to `test_no_mock_invents_a_service_response` for exactly that reason.
+
+    `delete` is gone with the `/dbt/intents/{name}` call it existed for.
+    """
     return {
-        "post": post,
-        "get": get,
-        "delete": delete,
+        "get": mocker.patch("ops.routers.admin.http_requests.get"),
+        "post": mocker.patch("ops.routers.admin.http_requests.post"),
     }

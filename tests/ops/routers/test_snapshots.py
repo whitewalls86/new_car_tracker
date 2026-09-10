@@ -4,8 +4,10 @@ from contextlib import contextmanager
 
 import pytest
 
+from ops.api_models import readable_manifest_versions
 from ops.queries import SELECT_MACHINE_TOKEN, TOUCH_MACHINE_TOKEN_LAST_USED
 from ops.routers import snapshots
+from scripts.generate_lake_snapshot_manifest_contract import manifest_fixture
 
 BASE = "/admin/snapshots/adaptive-refresh"
 AUTH = {"Authorization": "Bearer test-token"}
@@ -444,6 +446,12 @@ class TestLatest:
             "archive_manifest_key": "snapshot_archives/fingerprints/abc123/archive_manifest.json",
             "archive_bytes": 1024,
             "archive_sha256": "deadbeef",
+            # Plan 162 Stage AA: `archiver` writes seven keys into
+            # `latest.json` and this fixture carried six. The seventh is not
+            # decoration -- `SnapshotPointer` declares it, so a fixture short of
+            # what the writer writes is a fixture asserting a body that does
+            # not occur.
+            "created_at": "2026-07-07T17:45:00+00:00",
         }
         mocker.patch.object(snapshots, "read_json", return_value=pointer)
         resp = mock_client.get(f"{BASE}/latest", headers=AUTH)
@@ -473,16 +481,21 @@ ALIAS = {
     "archive_bytes": 1024,
     "archive_sha256": "deadbeef",
 }
-MANIFEST = {
-    "snapshot_id": ALIAS["snapshot_id"],
-    "tier": "edge",
-    "archive": {
+# Built from the record `archiver`'s writers generate, not typed out from
+# reading them. Plan 162 Stage AA: the hand-written version of this fixture had
+# five of the seventeen keys, and every test using it asserted a body the writer
+# has never produced.
+MANIFEST = manifest_fixture(
+    snapshot_id=ALIAS["snapshot_id"],
+    tier="ci",
+    export_fingerprint=ALIAS["export_fingerprint"],
+    archive={
         "path": ALIAS["archive_key"],
         "bytes": 1024,
         "sha256": "deadbeef",
         "file_count": 3,
     },
-}
+)
 
 
 class TestSnapshotManifest:
@@ -542,6 +555,59 @@ class TestSnapshotManifest:
         )
         resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
         assert resp.status_code == 404
+
+    @pytest.mark.parametrize(
+        "field",
+        ["export_cache_schema_version", "archive_cache_schema_version"],
+    )
+    def test_a_manifest_schema_this_service_does_not_serve_is_409(
+        self, mock_client, mocker, field,
+    ):
+        """Plan 162 Stage AA, G32.
+
+        This route hands back a document read out of MinIO, so its response
+        model is a claim about data at rest rather than about code here. Both
+        versions are checked because the served document is two formats
+        layered and either can move on its own.
+
+        409 rather than 404: the snapshot exists and the alias resolved. What
+        failed is this service's ability to vouch for the bytes, and answering
+        "not found" would send a downloader looking for a different id.
+        """
+        bad_manifest = {**MANIFEST, field: 99}
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: ALIAS if "aliases/" in key else bad_manifest,
+        )
+
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+
+        assert resp.status_code == 409
+        # The refusal names the pair it was given and the pairs it serves, so
+        # an operator can see which half moved without opening the object.
+        detail = resp.json()["detail"]
+        assert "99" in detail
+        assert str(sorted(readable_manifest_versions())) in detail
+
+    def test_missing_manifest_is_409_not_a_silent_truncation(self, mock_client, mocker):
+        """A manifest carrying neither version is refused, not served short.
+
+        The failure this guards is not a malformed document -- it is a future
+        one. Without the guard a bumped schema carrying new keys would be
+        filtered to whatever `ArchiveManifest` declares today and handed over
+        looking complete, and the divergence would sit in object storage where
+        no fixture reaches.
+        """
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: ALIAS if "aliases/" in key else {
+                "snapshot_id": ALIAS["snapshot_id"], "archive": MANIFEST["archive"],
+            },
+        )
+
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+
+        assert resp.status_code == 409
 
     def test_missing_manifest_is_404(self, mock_client, mocker):
         mocker.patch.object(

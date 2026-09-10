@@ -1,5 +1,7 @@
 """Unit tests for processing/routers/batch.py internal functions.
 
+
+
 Covers the branches that test_batch_router.py skips by mocking _process_artifact:
   - _process_results_page: MinIO failure, parse failure, write failure, success
   - _process_detail_page:  MinIO failure, block page, unlisted, active, write failure
@@ -12,6 +14,7 @@ from processing.routers.batch import (
     _process_detail_page,
     _process_results_page,
 )
+from tests.response_fixtures import produced_by
 
 
 def _srp_artifact(artifact_id=1):
@@ -100,7 +103,7 @@ class TestProcessResultsPage:
         )
         mocker.patch(
             "processing.routers.batch.write_srp_observations",
-            return_value={"silver_written": 2},
+            return_value=produced_by("write_srp_observations", silver_written=2),
         )
         mock_set = mocker.patch("processing.routers.batch._set_status")
 
@@ -119,7 +122,7 @@ class TestProcessResultsPage:
         )
         mocker.patch(
             "processing.routers.batch.write_srp_observations",
-            return_value={"silver_written": 0},
+            return_value=produced_by("write_srp_observations", silver_written=0),
         )
         mocker.patch("processing.routers.batch._set_status")
 
@@ -170,7 +173,7 @@ class TestProcessDetailPage:
         )
         mock_active = mocker.patch(
             "processing.routers.batch.write_detail_active",
-            return_value={"silver_written": 1},
+            return_value=produced_by("write_detail_active", silver_written=1),
         )
         mocker.patch("processing.routers.batch._set_status")
 
@@ -192,7 +195,7 @@ class TestProcessDetailPage:
         )
         mock_unlisted = mocker.patch(
             "processing.routers.batch.write_detail_unlisted",
-            return_value={"silver_written": 1},
+            return_value=produced_by("write_detail_unlisted", silver_written=1),
         )
         mocker.patch("processing.routers.batch._set_status")
 
@@ -255,7 +258,7 @@ class TestProcessDetailPage:
         )
         mocker.patch(
             "processing.routers.batch.write_detail_active",
-            return_value={"silver_written": 1},
+            return_value=produced_by("write_detail_active", silver_written=1),
         )
         mocker.patch("processing.routers.batch._set_status")
 
@@ -329,7 +332,11 @@ class TestProcessArtifact:
     def test_dispatches_results_page_to_srp_processor(self, mocker):
         mock_srp = mocker.patch(
             "processing.routers.batch._process_results_page",
-            return_value={"status": "complete", "artifact_type": "results_page"},
+            return_value=produced_by(
+                "_process_results_page",
+                status='complete',
+                artifact_type='results_page',
+            ),
         )
 
         _process_artifact(_srp_artifact())
@@ -339,7 +346,11 @@ class TestProcessArtifact:
     def test_dispatches_detail_page_to_detail_processor(self, mocker):
         mock_detail = mocker.patch(
             "processing.routers.batch._process_detail_page",
-            return_value={"status": "complete", "artifact_type": "detail_page"},
+            return_value=produced_by(
+                "_process_detail_page",
+                status='complete',
+                artifact_type='detail_page',
+            ),
         )
 
         _process_artifact(_detail_artifact())

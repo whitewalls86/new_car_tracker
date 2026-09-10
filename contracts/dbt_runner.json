@@ -1,6 +1,317 @@
 {
   "components": {
     "schemas": {
+      "AnalyticsSnapshotResult": {
+        "description": "``AnalyticsSnapshotManager.refresh()``, whose three shapes differ.\n\n``not_attempted`` carries a ``reason`` and no timings; ``ok`` and\n``failed`` carry timings and no reason; only ``failed`` carries ``error``.\nDeclaring the union rather than the happy path is deliberate -- the panel\nrenders whichever arrives.",
+        "properties": {
+          "attempted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempted At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "error": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "status"
+        ],
+        "title": "AnalyticsSnapshotResult",
+        "type": "object"
+      },
+      "BuildFailure": {
+        "description": "The 500: the full build result, nested.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/BuildResult"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "BuildFailure",
+        "type": "object"
+      },
+      "BuildInProgress": {
+        "description": "The 409, whose detail is structured because the panel branches on it.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "BuildInProgress",
+        "type": "object"
+      },
+      "BuildInProgressResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/BuildInProgress"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "BuildInProgressResponse",
+        "type": "object"
+      },
+      "BuildResult": {
+        "description": "``POST /dbt/build``'s body, and its 500's detail unchanged.\n\n``selector`` is a name from ``selectors.yml`` -- dbt's own mechanism for a\nnamed cadence, which this service could not reach until Plan 162 Stage AA\nand which ``selectors.yml``'s own comment recorded as the reason its four\nentries were \"for local/manual use\".\n\n``select`` is ``list[str] | str`` because the handler substitutes the\nliteral ``\"all\"`` when no selection was given. That is a wart, and it is\ndeclared rather than smoothed over: changing it changes what every existing\ncaller parses, which is a decision for whoever needs it and not a side\neffect of writing this model.",
+        "properties": {
+          "analytics_snapshot": {
+            "$ref": "#/components/schemas/AnalyticsSnapshotResult"
+          },
+          "cmd": {
+            "title": "Cmd",
+            "type": "string"
+          },
+          "dbt_ok": {
+            "title": "Dbt Ok",
+            "type": "boolean"
+          },
+          "duckdb_memory_limit": {
+            "title": "Duckdb Memory Limit",
+            "type": "string"
+          },
+          "duckdb_threads": {
+            "title": "Duckdb Threads",
+            "type": "integer"
+          },
+          "duration_seconds": {
+            "title": "Duration Seconds",
+            "type": "number"
+          },
+          "ended_at": {
+            "title": "Ended At",
+            "type": "string"
+          },
+          "exclude": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exclude",
+            "type": "array"
+          },
+          "full_refresh": {
+            "title": "Full Refresh",
+            "type": "boolean"
+          },
+          "invocation_id": {
+            "title": "Invocation Id",
+            "type": "string"
+          },
+          "likely_oom": {
+            "title": "Likely Oom",
+            "type": "boolean"
+          },
+          "model_timings": {
+            "items": {
+              "$ref": "#/components/schemas/ModelTiming"
+            },
+            "title": "Model Timings",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "returncode": {
+            "title": "Returncode",
+            "type": "integer"
+          },
+          "select": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Select"
+          },
+          "selector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selector"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "stderr": {
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stdout": {
+            "title": "Stdout",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "dbt_ok",
+          "returncode",
+          "likely_oom",
+          "invocation_id",
+          "started_at",
+          "ended_at",
+          "duration_seconds",
+          "select",
+          "exclude",
+          "full_refresh",
+          "cmd",
+          "duckdb_threads",
+          "duckdb_memory_limit",
+          "model_timings",
+          "stdout",
+          "stderr",
+          "analytics_snapshot"
+        ],
+        "title": "BuildResult",
+        "type": "object"
+      },
+      "DocsGenerateError": {
+        "description": "The 500, which nests the same body under ``detail``.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/DocsGenerateResult"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "DocsGenerateError",
+        "type": "object"
+      },
+      "DocsGenerateResult": {
+        "description": "``POST /dbt/docs/generate``'s body, and its 500's detail unchanged.\n\n``ok`` is redundant with the status code and is kept because the admin\npanel reads it: dropping a field to tidy the model is the behaviour change\nthis stage exists to make impossible to do by accident.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "returncode": {
+            "title": "Returncode",
+            "type": "integer"
+          },
+          "stderr": {
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stdout": {
+            "title": "Stdout",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "returncode",
+          "stdout",
+          "stderr"
+        ],
+        "title": "DocsGenerateResult",
+        "type": "object"
+      },
+      "DocsStatusResponse": {
+        "description": "``GET /dbt/docs/status`` -- whether ``target/index.html`` exists.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "DocsStatusResponse",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "FastAPI's uniform error body: ``{\"detail\": \"<message>\"}``.\n\nDeclared once and shared by every route whose refusals carry a string. The\nhandful whose ``detail`` is a *structured* dict a caller indexes into\ndeclare their own model instead -- those are the ones where the shape is\nload-bearing.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -12,6 +323,155 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "``GET /health`` everywhere: process liveness, never dependency health.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "ModelTiming": {
+        "description": "One row of dbt's ``run_results.json``, as the build report carries it.\n\nAll three are ``None`` when the artifact holds a result missing them, which\nis why none of them is required.",
+        "properties": {
+          "execution_time": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Time"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "unique_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unique Id"
+          }
+        },
+        "title": "ModelTiming",
+        "type": "object"
+      },
+      "NotReadyDetail": {
+        "description": "The body inside a ``/ready`` 503, which is evidence rather than an error.\n\n``ops/coordination_drain.py:_service_jobs`` reads ``active_jobs`` out of\nthis and counts a 503 as *known positive* evidence -- a draining service\nreporting two jobs in flight is answering the question, not failing. The\nreason a 503 carries a full body here rather than a message is that the\ndrain aggregator is fail-closed: an unreadable body becomes ``unknown``,\nwhich blocks a deploy.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs",
+          "reason"
+        ],
+        "title": "NotReadyDetail",
+        "type": "object"
+      },
+      "NotReadyResponse": {
+        "description": "``/ready``'s 503 as it reaches the wire.\n\n``HTTPException(detail=...)`` nests the payload under ``detail``, which is\nwhy the aggregator unwraps one level before reading the counts. Declared so\nthe contract says so.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotReadyDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotReadyResponse",
+        "type": "object"
+      },
+      "ReadyResponse": {
+        "description": "``GET /ready`` for the services whose evidence is ``job_snapshot()``.\n\n``archiver``, ``processing`` and ``dbt_runner`` return exactly this.\n``scraper`` returns it with two extra per-surface fields and declares its\nown model for that reason.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "active_jobs"
+        ],
+        "title": "ReadyResponse",
+        "type": "object"
+      },
+      "SelectorsResponse": {
+        "description": "``GET /dbt/selectors`` -- the cadences ``/dbt/build`` will accept.\n\nRead from ``selectors.yml`` at request time rather than cached at import,\nso a redeploy that changes the file changes the answer without a restart --\nand so the list a caller sees is the list the very next build validates\nagainst.",
+        "properties": {
+          "selectors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selectors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "selectors"
+        ],
+        "title": "SelectorsResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -83,18 +543,30 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Dbt Build Dbt Build Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BuildResult"
                 }
               }
             },
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
             "description": "The requested selection is not usable."
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildInProgressResponse"
+                }
+              }
+            },
             "description": "A dbt build is already in progress."
           },
           "422": {
@@ -108,6 +580,13 @@
             "description": "Validation Error"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildFailure"
+                }
+              }
+            },
             "description": "dbt exited non-zero; the summary is the detail."
           }
         },
@@ -123,15 +602,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Dbt Docs Generate Dbt Docs Generate Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DocsGenerateResult"
                 }
               }
             },
             "description": "Successful Response"
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocsGenerateError"
+                }
+              }
+            },
             "description": "dbt exited non-zero; the summary is the detail."
           }
         },
@@ -147,9 +631,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Docs Status Dbt Docs Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DocsStatusResponse"
                 }
               }
             },
@@ -157,6 +639,25 @@
           }
         },
         "summary": "Get Docs Status"
+      }
+    },
+    "/dbt/selectors": {
+      "get": {
+        "description": "The cadences this service will accept on ``/dbt/build``.\n\nPlan 162 Stage AA. The admin panel needs this list, and its first version\nread ``dbt/selectors.yml`` off its own disk -- which works, because `ops`\nships the whole tree, and is still wrong. ``/dbt/build`` validates a\nselector against *this* service's copy, and `ops` deploys last and alone,\nso the two can differ for the length of a deploy: the panel would offer a\nname the build then refuses with a 400 nobody could explain.\n\nAsking the service that does the validating is the same principle as the\nrest of this stage -- the owner answers for what it owns.",
+        "operationId": "get_selectors_dbt_selectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectorsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Selectors"
       }
     },
     "/health": {
@@ -167,9 +668,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },
@@ -184,11 +683,6 @@
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -203,15 +697,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ready Ready Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReadyResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotReadyResponse"
+                }
+              }
+            },
             "description": "A dependency this service needs is not reachable."
           }
         },

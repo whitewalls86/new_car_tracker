@@ -14,6 +14,116 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthResponse": {
+        "description": "``GET /health`` -- process liveness, never dependency health.\n\nThe route's own docstring records why it stays shallow: probing Docker from\nhere would make this container's health a function of the proxy's.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "OneoffProcess": {
+        "description": "One running Compose one-off, as drain evidence.\n\nEvery field is read straight off Docker's inspect payload and every one of\nthem can be absent there, which is why all three are optional. The\naggregator that consumes this indexes ``service`` and would raise on a\nmissing key -- that is its fail-closed behaviour and it is intended.",
+        "properties": {
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Id"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          }
+        },
+        "title": "OneoffProcess",
+        "type": "object"
+      },
+      "OneoffProcessesResponse": {
+        "description": "``GET /oneoff-processes`` -- live execution evidence for drain.",
+        "properties": {
+          "active_processes": {
+            "title": "Active Processes",
+            "type": "integer"
+          },
+          "known": {
+            "const": true,
+            "title": "Known",
+            "type": "boolean"
+          },
+          "processes": {
+            "items": {
+              "$ref": "#/components/schemas/OneoffProcess"
+            },
+            "title": "Processes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "known",
+          "active_processes",
+          "processes"
+        ],
+        "title": "OneoffProcessesResponse",
+        "type": "object"
+      },
+      "ProjectStatusResponse": {
+        "description": "``GET /project-status/{project}`` -- sibling-project activity.",
+        "properties": {
+          "known": {
+            "const": true,
+            "title": "Known",
+            "type": "boolean"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "known",
+          "project",
+          "services"
+        ],
+        "title": "ProjectStatusResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -71,9 +181,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },
@@ -88,11 +196,6 @@
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -108,9 +211,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Active Oneoff Processes Oneoff Processes Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/OneoffProcessesResponse"
                 }
               }
             },
@@ -140,9 +241,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Project Status Project Status  Project  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProjectStatusResponse"
                 }
               }
             },

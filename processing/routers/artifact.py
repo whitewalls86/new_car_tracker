@@ -10,8 +10,10 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 
+from processing.api_models import ArtifactResult
 from processing.queries import CLAIM_ARTIFACT, INSERT_ARTIFACT_EVENT
 from processing.routers.batch import _process_artifact
+from shared.api_models import ErrorResponse
 from shared.db import db_cursor
 from shared.job_counter import active_job
 
@@ -21,8 +23,12 @@ router = APIRouter()
 
 @router.post(
     "/process/artifact/{artifact_id}",
+    response_model=ArtifactResult,
     responses={
-        404: {"description": "No artifact with that id is queued."},
+        404: {
+            "description": "No artifact with that id is queued.",
+            "model": ErrorResponse,
+        },
     },
 )
 def process_single_artifact(artifact_id: int) -> Dict[str, Any]:

@@ -265,6 +265,10 @@ def list_users(request: Request):
 @router.post(
     "/users/{user_id}/role",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Role changed; redirect to the user list."},
         400: {"description": "Not a role this service defines."},
@@ -298,6 +302,10 @@ def change_user_role(
 @router.post(
     "/users/{user_id}/revoke",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "User revoked; redirect to the user list."},
         404: {"description": "No user with that id; nobody was revoked."},
@@ -340,6 +348,10 @@ def list_access_requests(request: Request):
 @router.post(
     "/access-requests/{req_id}/approve",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Request approved; redirect to the request list."},
         404: {"description": "No pending request with that id."},
@@ -378,6 +390,10 @@ def approve_access_request(
 @router.post(
     "/access-requests/{req_id}/deny",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Request denied; redirect to the request list."},
         404: {"description": "No pending request with that id."},

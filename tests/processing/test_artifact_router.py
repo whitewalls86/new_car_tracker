@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.response_fixtures import produced_by
+
 
 @contextmanager
 def _fake_cursor(cursor):
@@ -69,7 +71,11 @@ class TestProcessSingleArtifact:
         self._setup_cursors(mocker, fetch_row=row)
         mock_proc = mocker.patch(
             "processing.routers.artifact._process_artifact",
-            return_value={"status": "complete", "artifact_type": "results_page"},
+            return_value=produced_by(
+                "_process_artifact",
+                status='complete',
+                artifact_type='results_page',
+            ),
         )
         resp = client.post("/process/artifact/5")
         assert resp.status_code == 200
@@ -80,7 +86,11 @@ class TestProcessSingleArtifact:
         self._setup_cursors(mocker, fetch_row=row)
         mocker.patch(
             "processing.routers.artifact._process_artifact",
-            return_value={"status": "complete", "artifact_type": "results_page"},
+            return_value=produced_by(
+                "_process_artifact",
+                status='complete',
+                artifact_type='results_page',
+            ),
         )
         resp = client.post("/process/artifact/7")
         body = resp.json()
@@ -92,7 +102,7 @@ class TestProcessSingleArtifact:
         self._setup_cursors(mocker, fetch_row=row)
         mocker.patch(
             "processing.routers.artifact._process_artifact",
-            return_value={"status": "retry", "error": "MinIO down"},
+            return_value=produced_by("_process_artifact", status='retry', error='MinIO down'),
         )
         resp = client.post("/process/artifact/3")
         assert resp.status_code == 200

@@ -6,12 +6,23 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # Imported for its registration side effect: the Plan 136 Stage 2 outcome
 # counters must exist on the default registry before the first /metrics scrape.
 import scraper.metrics  # noqa: F401
+from scraper.api_models import (
+    Job,
+    JobSummary,
+    MarkFetchedResponse,
+    QueuedBatchResponse,
+    QueuedJobResponse,
+    ScrapeDetailResponse,
+    ScraperNotReadyResponse,
+    ScraperReadyResponse,
+)
 from scraper.db import close_pool, get_pool
 from scraper.processors.scrape_detail import (
     DEFAULT_DETAIL_MAX_WORKERS,
@@ -21,6 +32,7 @@ from scraper.processors.scrape_detail import (
     scrape_detail_fetch,
 )
 from scraper.processors.scrape_results import scrape_results
+from shared.api_models import ErrorResponse, HealthResponse
 from shared.job_counter import active_job, job_snapshot
 from shared.logging_setup import configure_logging
 
@@ -124,10 +136,26 @@ app = FastAPI(lifespan=lifespan)
 # processing. scraper.metrics is imported at the top of this module for its
 # registration side effect, so all six outcome series are on the default
 # registry before the first scrape rather than appearing on the first fetch.
-Instrumentator().instrument(app).expose(app)
+Instrumentator().instrument(app)
+
+# Plan 162 Stage AA: `/metrics` is declared here rather than by
+# `Instrumentator.expose()`, which registers a closure from the library. That
+# closure is not a function in this repository, so no rule that resolves a
+# route to its handler could reach this route -- and a rule that cannot reach a
+# route is a rule with a hole in it rather than a rule with an exception.
+#
+# Equivalent to what `expose()` served: its only other branch is the
+# multiprocess registry, and `PROMETHEUS_MULTIPROC_DIR` is set nowhere in this
+# repository and unset in all three running containers. `should_gzip` was left
+# at its default of False. `instrument()` still does the collecting.
+@app.get("/metrics", response_class=Response)
+def metrics() -> Response:
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.post("/scrape_results")
+
+
+@app.post("/scrape_results", response_model=QueuedJobResponse)
 def run_scrape_results(
     run_id: str,
     search_key: str,
@@ -160,7 +188,7 @@ def run_scrape_results(
     return {"job_id": job_id, "status": "queued"}
 
 
-@app.get("/scrape_results/jobs/completed")
+@app.get("/scrape_results/jobs/completed", response_model=List[Job])
 def get_completed_jobs() -> List[Dict[str, Any]]:
     """Returns all completed or failed jobs. Failed jobs have no artifacts but
     are included so the Job Poller can clear them from memory and mark them in DB."""
@@ -173,8 +201,12 @@ def get_completed_jobs() -> List[Dict[str, Any]]:
 
 @app.post(
     "/scrape_results/jobs/{job_id}/fetched",
+    response_model=MarkFetchedResponse,
     responses={
-        404: {"description": "No such job, or it was already fetched."},
+        404: {
+            "description": "No such job, or it was already fetched.",
+            "model": ErrorResponse,
+        },
     },
 )
 def mark_job_fetched(job_id: str) -> Dict[str, Any]:
@@ -186,7 +218,7 @@ def mark_job_fetched(job_id: str) -> Dict[str, Any]:
     return {"job_id": job_id, "status": "fetched"}
 
 
-@app.get("/scrape_results/jobs")
+@app.get("/scrape_results/jobs", response_model=List[JobSummary])
 def list_all_jobs() -> List[Dict[str, Any]]:
     """Lists all in-memory jobs (for debugging/dashboard)."""
     with _jobs_lock:
@@ -196,7 +228,7 @@ def list_all_jobs() -> List[Dict[str, Any]]:
         ]
 
 
-@app.post("/scrape_detail")
+@app.post("/scrape_detail", response_model=ScrapeDetailResponse)
 def scrape_detail(run_id: str, payload: dict = Body(...)) -> Dict[str, Any]:
     with active_job():
         mode = (payload or {}).get("mode") or "fetch"
@@ -216,8 +248,12 @@ def scrape_detail(run_id: str, payload: dict = Body(...)) -> Dict[str, Any]:
 
 @app.post(
     "/scrape_detail/batch",
+    response_model=QueuedBatchResponse,
     responses={
-        400: {"description": "The batch request names no usable listings."},
+        400: {
+            "description": "The batch request names no usable listings.",
+            "model": ErrorResponse,
+        },
     },
 )
 def scrape_detail_batch_endpoint(
@@ -274,15 +310,19 @@ def scrape_detail_batch_endpoint(
     }
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}
 
 
 @app.get(
     "/ready",
+    response_model=ScraperReadyResponse,
     responses={
-        503: {"description": "A dependency this service needs is not reachable."},
+        503: {
+            "description": "A dependency this service needs is not reachable.",
+            "model": ScraperNotReadyResponse,
+        },
     },
 )
 def ready():

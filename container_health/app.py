@@ -12,6 +12,11 @@ from typing import Any, Dict
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 
+from container_health.api_models import (
+    HealthResponse,
+    OneoffProcessesResponse,
+    ProjectStatusResponse,
+)
 from container_health.collector import (
     PROJECT_LABEL,
     SERVICE_LABEL,
@@ -40,7 +45,7 @@ app = FastAPI()
 DOCKER_API = DockerApi(DOCKER_API_URL)
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health() -> Dict[str, Any]:
     """Deliberately shallow: process liveness, never dependency health.
 
@@ -52,12 +57,12 @@ def health() -> Dict[str, Any]:
     return {"ok": True}
 
 
-@app.get("/metrics")
+@app.get("/metrics", response_class=Response)
 def metrics() -> Response:
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/oneoff-processes")
+@app.get("/oneoff-processes", response_model=OneoffProcessesResponse)
 def active_oneoff_processes() -> Dict[str, Any]:
     """Expose read-only live execution evidence for Plan 142 drain aggregation."""
     processes = oneoff_processes(
@@ -66,7 +71,7 @@ def active_oneoff_processes() -> Dict[str, Any]:
     return {"known": True, "active_processes": len(processes), "processes": processes}
 
 
-@app.get("/project-status/{project}")
+@app.get("/project-status/{project}", response_model=ProjectStatusResponse)
 def project_status(project: str) -> Dict[str, Any]:
     """Read sibling-project activity for Plan 142's auxiliary release gate."""
     inspections = DOCKER_API.inspect_project_containers(project)

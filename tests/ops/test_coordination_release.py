@@ -1,6 +1,7 @@
 """Plan 142 Stage 3 stack-release gate behavior."""
 
 from ops import coordination_release
+from tests.service_contracts import service_response
 
 
 def _state(**overrides):
@@ -272,8 +273,11 @@ def test_observability_gate_rejects_promtail_replay_storm(mocker):
 def test_auxiliary_gate_is_keyed_on_sibling_project(mocker):
     response = mocker.Mock()
     response.json.side_effect = [
-        {"known": True, "services": ["lakekeeper"]},
-        {"known": True, "services": []},
+        service_response(
+            "container_health", "GET", "/project-status/{project}",
+            services=["lakekeeper"],
+        ),
+        service_response("container_health", "GET", "/project-status/{project}"),
     ]
     mocker.patch("ops.coordination_release.requests.get", return_value=response)
 
@@ -288,7 +292,9 @@ def test_auxiliary_gate_is_keyed_on_sibling_project(mocker):
 
 def test_auxiliary_gate_passes_when_all_siblings_remain_stopped(mocker):
     response = mocker.Mock()
-    response.json.return_value = {"known": True, "services": []}
+    response.json.return_value = service_response(
+        "container_health", "GET", "/project-status/{project}",
+    )
     mocker.patch("ops.coordination_release.requests.get", return_value=response)
 
     assert coordination_release._auxiliary_still_stopped(_state()) == {
@@ -298,8 +304,22 @@ def test_auxiliary_gate_passes_when_all_siblings_remain_stopped(mocker):
 
 
 def test_auxiliary_gate_fails_closed_when_sibling_evidence_is_unreadable(mocker):
+    """Plan 162 Stage AA, G23: this fabricated a body container-health cannot send.
+
+    It asserted `{"known": False}`, and both of that service's routes hardcode
+    `known: True` -- the model pins the field `Literal[True]` and the contract
+    carries `"const": true`. So the branch this exercises was reached with a
+    response nothing produces, and the test passed for a reason that does not
+    occur.
+
+    What *does* make sibling evidence unreadable is something other than
+    container-health answering on that port: a proxy error page is not JSON, so
+    `.json()` raises and the gate falls closed through the `ValueError` its
+    `except` already names. That is the reachable path, and it needs no
+    invented body at all.
+    """
     response = mocker.Mock()
-    response.json.return_value = {"known": False}
+    response.json.side_effect = ValueError("not JSON: an error page from the proxy")
     mocker.patch("ops.coordination_release.requests.get", return_value=response)
 
     assert coordination_release._auxiliary_still_stopped(_state())["status"] == "unknown"

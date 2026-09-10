@@ -59,8 +59,24 @@ _REDIRECT_TO_LANDING = {
 }
 
 
-@router.get("/info", responses=_REDIRECT_TO_LANDING)
-@router.head("/info", responses=_REDIRECT_TO_LANDING)
+# `status_code=308` because `RedirectResponse` carries a 307 class default that
+# FastAPI declares as this route's success code -- so `contracts/ops.json` told
+# every reader `/info` may answer 307 while the handler below argues, in its own
+# docstring, for 308 and returns nothing else. Found 2026-09-09 by Plan 162
+# Stage AA's artifact rule; the prose and the artifact had disagreed since the
+# route was written.
+@router.get(
+    "/info",
+    response_class=RedirectResponse,
+    status_code=308,
+    responses=_REDIRECT_TO_LANDING,
+)
+@router.head(
+    "/info",
+    response_class=RedirectResponse,
+    status_code=308,
+    responses=_REDIRECT_TO_LANDING,
+)
 def info_redirect() -> RedirectResponse:
     """The pre-Stage-2 landing URL, forwarded to its canonical replacement.
 

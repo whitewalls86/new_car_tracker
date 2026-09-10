@@ -25,6 +25,7 @@ def _hash_email(email: str) -> str:
 
 @router.get(
     "/auth/check",
+    response_class=Response,
     responses={
         403: {"description": "The caller is not an authorised user."},
         503: {"description": "Database unavailable."},

@@ -14,6 +14,7 @@ import pytest
 from archiver.processors import pack_bronze_html as packer
 from shared.compression import compress_frame, decompress_frame
 from shared.packfile import read_index_parquet
+from tests.response_fixtures import produced_by
 
 _YEAR, _MONTH = 2026, 5
 _TYPE = "detail_page"
@@ -223,8 +224,13 @@ def test_dry_run_below_the_free_space_floor_still_reports(store, duckdb, mocker)
     duckdb(_metadata(keys))
     mocker.patch.object(
         packer, "free_space",
-        return_value={"path": "/", "free_bytes": 1024, "total_bytes": 10 * 1024 ** 3,
-                      "free_inodes": 10},
+        return_value=produced_by(
+            "free_space",
+            path='/',
+            free_bytes=1024,
+            total_bytes=10 * 1024 ** 3,
+            free_inodes=10,
+        ),
     )
 
     result = _run(apply=False, min_free_bytes=5 * 1024 ** 3)
@@ -656,8 +662,13 @@ def test_apply_refuses_below_the_free_space_floor(store, duckdb, mocker):
     before = dict(store.objects)
     mocker.patch.object(
         packer, "free_space",
-        return_value={"path": "/", "free_bytes": 3 * 1024 ** 3,
-                      "total_bytes": 200 * 1024 ** 3, "free_inodes": 1000},
+        return_value=produced_by(
+            "free_space",
+            path='/',
+            free_bytes=3 * 1024 ** 3,
+            total_bytes=200 * 1024 ** 3,
+            free_inodes=1000,
+        ),
     )
 
     result = _run(min_free_bytes=5 * 1024 ** 3)

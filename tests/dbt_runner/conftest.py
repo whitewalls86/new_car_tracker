@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dbt_runner.app import app
+from tests.response_fixtures import produced_by
 
 
 @pytest.fixture
@@ -23,12 +24,13 @@ def mock_dbt_build_happy_path(mocker):
         "subprocess_run": mocker.patch("subprocess.run"),
         "snapshot_refresh": mocker.patch(
             "dbt_runner.app.snapshot_manager.refresh",
-            return_value={
-                "ok": True,
-                "status": "ok",
-                "attempted_at": "2026-08-18T18:00:00Z",
-                "last_success_at": "2026-08-18T18:00:00Z",
-                "duration_seconds": 0.1,
-            },
+            return_value=produced_by(
+                "refresh",
+                ok=True,
+                status='ok',
+                attempted_at='2026-08-18T18:00:00Z',
+                last_success_at='2026-08-18T18:00:00Z',
+                duration_seconds=0.1,
+            ),
         ),
     }

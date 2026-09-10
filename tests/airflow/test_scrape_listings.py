@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tests.service_contracts import service_response
+
 # Ensure airflow/dags/ is importable so the DAG module loads cleanly.
 DAGS_DIR = Path(__file__).parents[2] / "airflow" / "dags"
 if str(DAGS_DIR) not in sys.path:
@@ -63,12 +65,24 @@ def _mock_context(rotation):
 
 
 def _completed_job(job_id, artifact_count=5):
-    return {
-        "job_id": job_id,
-        "status": "completed",
-        "artifact_count": artifact_count,
-        "page_1_blocked": False,
-    }
+    """One completed job as `scraper` sends it, built from its contract.
+
+    Plan 162 Stage AA. This was four keys written by hand against a `Job` the
+    scraper declares fifteen fields for, handed to this seam at four sites --
+    and invisible to the rule that exists to catch exactly that, because the
+    rule read dict literals at the assignment and this is a helper call inside
+    a list. The keys these tests actually assert on stay here as overrides; the
+    rest come from the contract and change when it does.
+    """
+    return service_response(
+        "scraper",
+        "GET",
+        "/scrape_results/jobs/completed",
+        job_id=job_id,
+        status="completed",
+        artifact_count=artifact_count,
+        page_1_blocked=False,
+    )[0]
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +107,9 @@ class TestRunScrapesPayloadContract:
 
         job_id = "job-aaa"
         submit_resp = MagicMock(status_code=200)
-        submit_resp.json.return_value = {"job_id": job_id, "status": "queued"}
+        submit_resp.json.return_value = service_response(
+            "scraper", "POST", "/scrape_results", job_id=job_id, status="queued",
+        )
         submit_resp.raise_for_status = MagicMock()
 
         poll_resp = MagicMock(status_code=200)
@@ -137,7 +153,9 @@ class TestRunScrapesPayloadContract:
 
         job_id = "job-bbb"
         submit_resp = MagicMock()
-        submit_resp.json.return_value = {"job_id": job_id, "status": "queued"}
+        submit_resp.json.return_value = service_response(
+            "scraper", "POST", "/scrape_results", job_id=job_id, status="queued",
+        )
         submit_resp.raise_for_status = MagicMock()
 
         poll_resp = MagicMock()
@@ -213,7 +231,9 @@ class TestRunScrapesPayloadContract:
 
         job_id = "job-scope"
         submit_resp = MagicMock()
-        submit_resp.json.return_value = {"job_id": job_id, "status": "queued"}
+        submit_resp.json.return_value = service_response(
+            "scraper", "POST", "/scrape_results", job_id=job_id, status="queued",
+        )
         submit_resp.raise_for_status = MagicMock()
 
         poll_resp = MagicMock()

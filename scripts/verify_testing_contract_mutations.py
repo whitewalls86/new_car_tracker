@@ -467,11 +467,19 @@ MUTATIONS = [
     (
         "test_every_route_is_reached_through_the_apps_routing_table",
         "a new route is added to ops with no test requesting it",
+        # Anchored on the *body* of an existing route rather than on a
+        # decorator. Plan 162 Stage AA gave `/health`'s decorator a
+        # `response_model=`, which broke the previous anchor, and every route
+        # here is now liable to grow one -- so anchoring on any decorator text
+        # is anchoring on the thing most likely to move. Appending after a
+        # return statement is also safe in a way that prepending to a `def` is
+        # not: inserting before `def health():` would land between that
+        # function and its decorator and silently rebind it.
         lambda: _edit(
             "ops/app.py",
-            '@app.get("/health")',
-            '@app.get("/widgets")\ndef list_widgets():\n    return []\n\n\n'
-            '@app.get("/health")',
+            '    return RedirectResponse(url="/admin/searches/")',
+            '    return RedirectResponse(url="/admin/searches/")\n\n\n'
+            '@app.get("/widgets")\ndef list_widgets():\n    return []',
         ),
         ["ops/app.py"],
         [],
@@ -748,10 +756,14 @@ MUTATIONS = [
     (
         "test_every_pytest_step_runs_under_the_declared_skip_gate",
         "the plugin registration is dropped, leaving the gate set and unread",
+        # Anchored on this one registration rather than on the whole `addopts`
+        # line, which Plan 162 Stage AA broke by appending a third plugin to it.
+        # Deleting the registration alone is also the more faithful mutation:
+        # it leaves the other plugins loaded and the file valid, so what goes
+        # red is the gate being unread rather than pytest failing to start.
         lambda: _edit(
             "pyproject.toml",
-            'addopts = "-p tests.plugins.declared_skips'
-            ' -p tests.plugins.sql_execution_recorder"\n',
+            "-p tests.plugins.declared_skips ",
             "",
         ),
         ["pyproject.toml"],
@@ -2698,6 +2710,234 @@ MUTATIONS = [
         ["scripts/audit_plan_state_history.py"],
         [],
     ),
+    # ------------------------------------------------------------------
+    # Plan 162 Stage AA, G32. The snapshot manifest is the one document two
+    # services exchange through object storage rather than over HTTP, so no
+    # OpenAPI schema describes it and the contract gate cannot see it.
+    # ------------------------------------------------------------------
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_writer_matches_the_record_for_the_version_it_stamps",
+        "archiver's manifest writer gains a key and the record does not move",
+        lambda: _edit(
+            "archiver/processors/lake_snapshot_archive.py",
+            '    manifest["archived_at"] = datetime.now(timezone.utc).isoformat()',
+            '    manifest["archived_at"] = datetime.now(timezone.utc).isoformat()\n'
+            '    manifest["harness_added_key"] = "x"',
+        ),
+        ["archiver/processors/lake_snapshot_archive.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_every_ops_model_declares_exactly_the_recorded_fields",
+        "the reader's model loses a field the record still names -- the silent "
+        "deletion this gap exists for, since FastAPI filters the response to the "
+        "model and the key stops reaching callers with nothing else red",
+        lambda: _edit(
+            "ops/api_models.py",
+            "    archived_at: str | None = None",
+            "",
+        ),
+        ["ops/api_models.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_ops_has_a_model_for_every_recorded_version",
+        "a recorded format loses its reader model, so every snapshot written in "
+        "it answers 409 -- the case a pinned ML rehearsal depends on",
+        # Re-pins the model at a format nothing recorded rather than emptying
+        # `ARCHIVE_MANIFEST_MODELS`, which was the first attempt: an empty tuple
+        # makes `Union[()]` raise at import, so pytest exited 4, the rule never
+        # ran, and the harness reported NO RUN rather than CAUGHT. A mutation
+        # has to leave the tree importable or it tests the collector.
+        lambda: _edit(
+            "ops/api_models.py",
+            "    archive_cache_schema_version: Literal[1]",
+            "    archive_cache_schema_version: Literal[7]",
+        ),
+        ["ops/api_models.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_fixture_builder_produces_exactly_the_recorded_shape",
+        "the builder every test manifest comes from starts returning a subset, "
+        "putting the hand-written fixture's defect back with a derivation's "
+        "reputation",
+        lambda: _edit(
+            "scripts/generate_lake_snapshot_manifest_contract.py",
+            '    manifest = build(records[pair]["shape"])',
+            '    manifest = build(records[pair]["shape"])\n'
+            '    manifest.pop("tier", None)',
+        ),
+        ["scripts/generate_lake_snapshot_manifest_contract.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_generator_check_passes_as_a_subprocess",
+        "the generator stops working outside an interpreter that has already "
+        "imported archiver, so CI's step fails while these in-process imports pass",
+        lambda: _edit(
+            "scripts/generate_lake_snapshot_manifest_contract.py",
+            "if str(REPO_ROOT) not in sys.path:\n    sys.path.insert(0, str(REPO_ROOT))",
+            "",
+        ),
+        ["scripts/generate_lake_snapshot_manifest_contract.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_every_record_is_valid_json_and_names_its_own_version",
+        "a retired record is edited to declare a version its filename does not, "
+        "which nothing can settle -- the writer is gone and the archives cannot "
+        "be re-read",
+        lambda: _edit(
+            "contracts/lake_snapshot_manifest/export3-archive1.json",
+            '"archive_cache_schema_version": 1,',
+            '"archive_cache_schema_version": 9,',
+        ),
+        ["contracts/lake_snapshot_manifest/export3-archive1.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_registry_is_not_empty",
+        "the registry directory empties and every rule above it loops over "
+        "nothing and passes",
+        lambda: _delete("contracts/lake_snapshot_manifest/export3-archive1.json"),
+        ["contracts/lake_snapshot_manifest/export3-archive1.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_lake_snapshot_manifest_registry.py"
+        "::test_the_response_fidelity_plugin_is_registered",
+        "the plugin registration is dropped, so a response model short of its "
+        "handler goes back to deleting keys in production with the suite green",
+        lambda: _edit(
+            "pyproject.toml",
+            " -p tests.plugins.response_model_fidelity",
+            "",
+        ),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "tests/rules/test_response_models_match_their_producers.py"
+        "::test_no_response_model_is_short_of_its_producer",
+        "a processor grows a key its endpoint's response model does not declare, "
+        "so FastAPI deletes it on the way out -- invisible to the runtime plugin "
+        "because the endpoint's tests mock that processor, and to the contract "
+        "gate because the artifact is built from the model",
+        lambda: _edit(
+            "archiver/processors/pack_bronze_html.py",
+            '        "buckets": [],\n    }',
+            '        "buckets": [],\n        "harness_added_key": 1,\n    }',
+        ),
+        ["archiver/processors/pack_bronze_html.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_response_models_match_their_producers.py"
+        "::test_the_producer_corpus_is_not_empty",
+        "the decorator keyword this rule reads is renamed, so no route resolves "
+        "to a producer and the rule above compares nothing over an empty corpus",
+        # Plan 162 Stage AA moved the route reader into tests/response_fixtures.py
+        # so the fixture builder and the rules could share one resolver; the
+        # anchor followed it.
+        lambda: _edit(
+            "tests/response_fixtures.py",
+            'if keyword.arg == "response_model":',
+            'if keyword.arg == "response_model_renamed":',
+        ),
+        ["tests/response_fixtures.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_shape.py"
+        "::test_no_mock_invents_a_shape_production_defines",
+        "a mock goes back to restating a producer's shape as a literal, which "
+        "is the transcription this stage drained 57 of -- correct on the day "
+        "and free to drift the next, with the suite green either way",
+        lambda: _edit(
+            "tests/ops/routers/test_maintenance.py",
+            'produced_by("_reap_stuck_processing", stuck=0, retried=0, skipped=0)',
+            '{"stuck": 0, "retried": 0, "skipped": 0}',
+        ),
+        ["tests/ops/routers/test_maintenance.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_shape.py"
+        "::test_the_mock_site_corpus_is_not_empty",
+        "the producer reader stops resolving, so the rule above walks an empty "
+        "corpus and accuses nobody rather than failing",
+        lambda: _edit(
+            "tests/response_fixtures.py",
+            "            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):",
+            "            if isinstance(node, ast.ClassDef):",
+        ),
+        ["tests/response_fixtures.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_shape.py"
+        "::test_every_waiver_names_a_site_that_still_exists",
+        "a waiver names a mock site that no longer fabricates, so it "
+        "grandfathers nothing and hides whichever site takes that line next",
+        lambda: _edit(
+            "tests/rules/test_no_mock_invents_a_shape.py",
+            "FABRICATED_PRODUCER_WAIVERS: tuple[str, ...] = ()",
+            'FABRICATED_PRODUCER_WAIVERS: tuple[str, ...] = ("tests/nowhere.py:1",)',
+        ),
+        ["tests/rules/test_no_mock_invents_a_shape.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_no_mock_invents_a_service_response",
+        "a caller's test goes back to writing another service's response down "
+        "by hand, which passes for whatever its author typed and keeps passing "
+        "when that service changes",
+        lambda: _edit(
+            "tests/ops/test_coordination_release.py",
+            'response.json.return_value = service_response(\n'
+            '        "container_health", "GET", "/project-status/{project}",\n'
+            "    )",
+            'response.json.return_value = {"known": False}',
+        ),
+        ["tests/ops/test_coordination_release.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_the_service_seam_corpus_is_not_empty",
+        "a caller stops resolving to the service it calls -- here by the compose "
+        "file no longer naming the dockerfile that says which package answers "
+        "-- so every fabrication behind that seam goes unreported",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      dockerfile: container_health/Dockerfile",
+            "      dockerfile: Dockerfile",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_every_waiver_names_a_fabrication_that_still_exists",
+        "a waiver names a fabrication that has been repaired, so it "
+        "grandfathers nothing and hides whichever one lands on that line next",
+        lambda: _edit(
+            "tests/rules/test_no_mock_invents_a_service_response.py",
+            "FABRICATED_RESPONSE_WAIVERS: tuple[str, ...] = ()",
+            'FABRICATED_RESPONSE_WAIVERS: tuple[str, ...] = ("tests/nowhere.py:1",)',
+        ),
+        ["tests/rules/test_no_mock_invents_a_service_response.py"],
+        [],
+    ),
     # Plan 162 Stage AB. These rules stand between the suite and every system
     # this repository does not build, and each of them is a set difference --
     # the shape that reads green by matching nothing. So the mutations here
@@ -2919,6 +3159,130 @@ MUTATIONS = [
             "curl_cffi>=0.16.3",
         ),
         ["scraper/requirements.txt"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_artifact_declares_what_the_handler_returns.py"
+        "::test_the_artifact_declares_no_code_its_handler_cannot_return",
+        "a handler stops producing a code its committed contract declares, so "
+        "the artifact describes a response nothing sends -- which no other rule "
+        "reads, because they check the decorator and the AST rather than the "
+        "generated file",
+        lambda: _edit(
+            "ops/routers/admin.py",
+            "status_code=409, context=context,",
+            "status_code=418, context=context,",
+        ),
+        ["ops/routers/admin.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_artifact_declares_what_the_handler_returns.py"
+        "::test_the_artifact_declaration_corpus_is_not_empty",
+        "a route stops resolving to a handler in its own service, so the rule "
+        "above measures less than the whole surface while still passing",
+        lambda: _edit(
+            "tests/rules/test_the_artifact_declares_what_the_handler_returns.py",
+            "    suffix = f\"_{slug.lstrip('_')}_{verb}\"",
+            '    suffix = "_" + "_".join(p for p in f"{slug}_{verb}".split("_") if p)',
+        ),
+        ["tests/rules/test_the_artifact_declares_what_the_handler_returns.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_no_rule_guards_itself_with_a_guessed_number",
+        "a floor is loosened from a derived equality back to a chosen number, "
+        "which is the exact edit this stage made and then had to undo",
+        lambda: _edit(
+            "tests/rules/test_no_mock_invents_a_shape.py",
+            "    assert expected and not missing, (",
+            "    assert len(shapes) > 50 and not missing, (",
+        ),
+        ["tests/rules/test_no_mock_invents_a_shape.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_every_waiver_names_a_bound_that_still_exists",
+        "a waiver names a floor that is no longer a guess, so it grandfathers "
+        "nothing and hides whichever bound is written next",
+        lambda: _edit(
+            "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py",
+            'GUESSED_BOUND_WAIVERS: tuple[str, ...] = (\n',
+            'GUESSED_BOUND_WAIVERS: tuple[str, ...] = (\n'
+            '    "tests/rules/nowhere.py: len(x) >= 99",\n',
+        ),
+        ["tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_every_rule_file_is_read",
+        "a rule module stops parsing, so its floors go unexamined and the rule "
+        "above reports on a directory it only partly read",
+        lambda: _write(
+            "tests/rules/test_harness_unparseable.py",
+            "def test_x(:\n",
+        ),
+        # `created`, not `snapshot`: the harness restores a snapshot by writing
+        # its content back, which would leave this file in the tree. A file the
+        # mutation brings into existence has to be named as one so it is
+        # removed again.
+        [],
+        ["tests/rules/test_harness_unparseable.py"],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_no_mock_invents_a_code_the_service_cannot_answer",
+        "a caller's test writes down a status its callee does not declare, "
+        "which is the body defect one field over and just as silent: the test "
+        "goes on agreeing with itself whatever the service answers",
+        # Anchored with the enclosing `def`, because the assignment alone
+        # appears three times in that module and an ambiguous anchor mutates a
+        # site nobody chose.
+        lambda: _edit(
+            "tests/ops/routers/test_admin.py",
+            "def test_dbt_docs_generate_ok(mock_client, mock_requests, "
+            "mock_dbt_context, mock_templates):\n"
+            '    mock_requests["post"].return_value.status_code = 200',
+            "def test_dbt_docs_generate_ok(mock_client, mock_requests, "
+            "mock_dbt_context, mock_templates):\n"
+            '    mock_requests["post"].return_value.status_code = 599',
+        ),
+        ["tests/ops/routers/test_admin.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_the_fabricated_code_reader_is_not_blind",
+        "the shared fixture goes back to patching the global `requests`, which "
+        "is the defect this stage found: the seam then names no service, so "
+        "the rule above reads nothing and reports nothing",
+        lambda: _edit(
+            "tests/conftest.py",
+            '"get": mocker.patch("ops.routers.admin.http_requests.get"),',
+            '"get": mocker.patch("requests.get"),',
+        ),
+        ["tests/conftest.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_mock_invents_a_service_response.py"
+        "::test_no_mock_invents_a_service_response",
+        "a body goes back to being written by hand inside a `side_effect` "
+        "list -- the shape that was invisible to this reader until it learned "
+        "to follow sequences, and the one that hid two invented "
+        "`ops/coordination_release.py` bodies while the rule reported zero",
+        lambda: _edit(
+            "tests/ops/test_coordination_release.py",
+            '        service_response(\n'
+            '            "container_health", "GET", "/project-status/{project}",\n'
+            '            services=["lakekeeper"],\n'
+            '        ),',
+            '        {"known": True, "services": ["lakekeeper"]},',
+        ),
+        ["tests/ops/test_coordination_release.py"],
         [],
     ),
 ]

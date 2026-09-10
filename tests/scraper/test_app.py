@@ -1,5 +1,6 @@
 """Unit tests for scraper/app.py HTTP endpoints."""
 import scraper.app as scraper_app
+from tests.response_fixtures import produced_by
 
 ARTIFACT_KEYS = {
     "source", "artifact_type", "search_key", "search_scope", "page_num",
@@ -241,7 +242,12 @@ class TestScrapeDetail:
     def test_mode_dummy_calls_dummy_fn(self, mock_scraper_client, mocker):
         mock_dummy = mocker.patch(
             "scraper.app.scrape_detail_dummy",
-            return_value={"error": None, "artifacts": [], "meta": {"listing_id": "x"}},
+            return_value=produced_by(
+                "scrape_detail_dummy",
+                error=None,
+                artifacts=[],
+                meta={'listing_id': 'x'},
+            ),
         )
         mock_scraper_client.post(
             "/scrape_detail?run_id=r1",
@@ -252,7 +258,12 @@ class TestScrapeDetail:
     def test_mode_fetch_calls_fetch_fn(self, mock_scraper_client, mocker):
         mock_fetch = mocker.patch(
             "scraper.app.scrape_detail_fetch",
-            return_value={"error": None, "artifacts": [], "meta": {"listing_id": "x"}},
+            return_value=produced_by(
+                "scrape_detail_fetch",
+                error=None,
+                artifacts=[],
+                meta={'listing_id': 'x'},
+            ),
         )
         mock_scraper_client.post(
             "/scrape_detail?run_id=r1",
@@ -289,7 +300,12 @@ class TestScrapeDetail:
     def test_response_has_artifacts_and_meta(self, mock_scraper_client, mocker):
         mocker.patch(
             "scraper.app.scrape_detail_dummy",
-            return_value={"error": None, "artifacts": [], "meta": {"listing_id": "x"}},
+            return_value=produced_by(
+                "scrape_detail_dummy",
+                error=None,
+                artifacts=[],
+                meta={'listing_id': 'x'},
+            ),
         )
         resp = mock_scraper_client.post(
             "/scrape_detail?run_id=r1",

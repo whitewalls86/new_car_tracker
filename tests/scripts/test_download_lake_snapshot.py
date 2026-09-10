@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from scripts.download_lake_snapshot import download_api, download_local, main
+from scripts.generate_lake_snapshot_manifest_contract import manifest_fixture
 from scripts.lake_snapshot_common import ChecksumMismatchError, LakeSnapshotError, sha256_file
 from tests.scripts.conftest import make_tar_zst
 
@@ -17,14 +18,18 @@ def _build_snapshot(tmp_path, snapshot_id="adaptive-refresh-2026-07-07-000000"):
     archive = make_tar_zst(
         build_dir / "snapshot.tar.zst", files={"expected/feature_audit_summary.json": b"{}"},
     )
-    manifest = {
-        "snapshot_id": snapshot_id,
-        "archive": {
+    # Built from the record the writers generate. Plan 162 Stage AA: this
+    # helper feeds `TestDownloadApiAgainstOpsRouter`, whose value is running
+    # the real client against the real router -- so a manifest typed out here
+    # would let writer and reader drift while the round trip kept passing.
+    manifest = manifest_fixture(
+        snapshot_id=snapshot_id,
+        archive={
             "sha256": sha256_file(archive),
             "bytes": archive.stat().st_size,
             "path": "snapshot.tar.zst",
         },
-    }
+    )
     manifest_path = build_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path, archive, manifest

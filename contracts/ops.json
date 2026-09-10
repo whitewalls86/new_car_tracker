@@ -1,6 +1,268 @@
 {
   "components": {
     "schemas": {
+      "AffectedResponse": {
+        "description": "``POST /maintenance/expire-orphan-detail-claims`` -- rows the statement touched.",
+        "properties": {
+          "affected": {
+            "title": "Affected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "affected"
+        ],
+        "title": "AffectedResponse",
+        "type": "object"
+      },
+      "ArchiveBlock": {
+        "description": "The archive's own identity, added when the export was packaged.\n\nThe in-archive ``manifest.json`` deliberately omits this: an archive cannot\ncarry its own checksum, because the checksum is not known until after it\nhas been packaged.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Count"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "title": "ArchiveBlock",
+        "type": "object"
+      },
+      "ArchiveManifestV1": {
+        "description": "The manifest at export format 3, archive format 1.\n\nThe Gate D export manifest plus archive metadata -- the document CI and\nlocal downloaders read. ``snapshot_id`` is overlaid by the route rather\nthan taken from the stored object: a Gate E archive is keyed by\n``export_fingerprint`` and can be reused by several snapshot ids, so the\npersisted copy legitimately carries whichever id packaged it first.\n\n**The two versions are pinned as literals, which is what makes this a model\nof a format rather than of a moment.** A stored manifest is served through\nthe model whose literals match the versions it declares, so an archive\nwritten last year is served by the model for the format it was written in.\nA snapshot pinned by an ML rehearsal does not change shape because CI's\nwriter moved on.\n\nA format bump is therefore a new class beside this one and a new entry in\n:data:`ARCHIVE_MANIFEST_MODELS` -- never a widened set of version numbers,\nwhich would let this service claim it can read a format while having no\ndescription of it.\n\nChecked field-for-field against\n``contracts/lake_snapshot_manifest/export3-archive1.json``, which is\ngenerated from ``archiver``'s writers. Neither service defines this shape;\nboth are measured against the record.",
+        "properties": {
+          "archive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArchiveBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "archive_cache_schema_version": {
+            "const": 1,
+            "title": "Archive Cache Schema Version",
+            "type": "integer"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "counts": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counts"
+          },
+          "coverage": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "data_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Path"
+          },
+          "export_cache_schema_version": {
+            "const": 3,
+            "title": "Export Cache Schema Version",
+            "type": "integer"
+          },
+          "export_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint"
+          },
+          "export_fingerprint_payload": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint Payload"
+          },
+          "generation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Id"
+          },
+          "planning_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Fingerprint"
+          },
+          "postgres_tables": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postgres Tables"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "source_window": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Window"
+          },
+          "tables": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tables"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "export_cache_schema_version",
+          "archive_cache_schema_version"
+        ],
+        "title": "ArchiveManifestV1",
+        "type": "object"
+      },
+      "AuthorizeResponse": {
+        "description": "``POST /coordination/authorize`` -- the phase, and the drain that justified it.",
+        "properties": {
+          "drain": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrainStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "AuthorizeResponse",
+        "type": "object"
+      },
       "Body_change_user_role_admin_users__user_id__role_post": {
         "properties": {
           "role": {
@@ -91,24 +353,6 @@
         "title": "Body_create_search_admin_searches__post",
         "type": "object"
       },
-      "Body_dbt_intent_upsert_admin_dbt_intents_post": {
-        "properties": {
-          "intent_name": {
-            "title": "Intent Name",
-            "type": "string"
-          },
-          "select_args": {
-            "title": "Select Args",
-            "type": "string"
-          }
-        },
-        "required": [
-          "intent_name",
-          "select_args"
-        ],
-        "title": "Body_dbt_intent_upsert_admin_dbt_intents_post",
-        "type": "object"
-      },
       "Body_dbt_trigger_admin_dbt_trigger_post": {
         "properties": {
           "fail_fast": {
@@ -121,13 +365,13 @@
             "title": "Full Refresh",
             "type": "boolean"
           },
-          "intent": {
-            "title": "Intent",
-            "type": "string"
-          },
           "select_override": {
             "default": "",
             "title": "Select Override",
+            "type": "string"
+          },
+          "selector": {
+            "title": "Selector",
             "type": "string"
           }
         },
@@ -226,6 +470,54 @@
           "zip"
         ],
         "title": "Body_update_search_admin_searches__search_key__post",
+        "type": "object"
+      },
+      "ClaimBatchResponse": {
+        "description": "``POST /scrape/claims/claim-batch``.\n\n``listings`` is built from the claim statement's own column list, so its\nelement shape belongs to that SQL rather than to this file and stays\nfree-form.",
+        "properties": {
+          "listings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Listings",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "listings"
+        ],
+        "title": "ClaimBatchResponse",
+        "type": "object"
+      },
+      "CompletedResponse": {
+        "description": "``POST /coordination/complete`` -- the phase it landed in, and which generation.",
+        "properties": {
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "CompletedResponse",
         "type": "object"
       },
       "CompletionRequest": {
@@ -331,6 +623,250 @@
         "title": "CoordinationRequest",
         "type": "object"
       },
+      "CoordinationState": {
+        "description": "``GET /coordination/status`` -- the authoritative record.\n\nThe operator-facing view, wider than the metrics query beside it: every\nphase timestamp and the request's own narrative. Timestamps are ISO strings\nrather than datetimes because ``_iso`` has already converted them.",
+        "properties": {
+          "active_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "draining_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draining At"
+          },
+          "expected_work": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Work"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "manifest_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Location"
+          },
+          "operator_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Notes"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "scope": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "targets": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "validating_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validating At"
+          }
+        },
+        "title": "CoordinationState",
+        "type": "object"
+      },
+      "DrainStatusResponse": {
+        "description": "``GET /coordination/drain-status`` -- fail-closed drain aggregation.\n\n``sources`` carries one entry per evidence source, each of which reports\n``known`` or ``unknown`` rather than guessing a zero -- an unreadable\nsource blocks the deploy, which is the whole design.",
+        "properties": {
+          "blockers": {
+            "default": [],
+            "items": {},
+            "title": "Blockers",
+            "type": "array"
+          },
+          "drained": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drained"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "scope": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "sources": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sources"
+          }
+        },
+        "title": "DrainStatusResponse",
+        "type": "object"
+      },
+      "EvictCooldownsResponse": {
+        "description": "``POST /maintenance/evict-delisted-cooldowns``.",
+        "properties": {
+          "evicted": {
+            "title": "Evicted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evicted"
+        ],
+        "title": "EvictCooldownsResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -342,6 +878,20 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "``GET /health`` everywhere: process liveness, never dependency health.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
       "HostEvidenceRequest": {
@@ -373,6 +923,275 @@
           "evidence_digests"
         ],
         "title": "HostEvidenceRequest",
+        "type": "object"
+      },
+      "HostEvidenceResponse": {
+        "description": "``POST /coordination/host-evidence`` -- the receipt for a submission.\n\n``gates`` and ``evidence_digests`` are echoed from the request so the\ncaller can see exactly what was stored under ``evidence_id``.",
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "evidence_digests": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Digests"
+          },
+          "evidence_id": {
+            "title": "Evidence Id"
+          },
+          "gates": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gates"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          }
+        },
+        "required": [
+          "evidence_id"
+        ],
+        "title": "HostEvidenceResponse",
+        "type": "object"
+      },
+      "IntentStatusResponse": {
+        "description": "``GET /deploy/status``.\n\n``number_running`` and ``min_started_at`` come from the joined in-flight\ncount and are absent from the no-row and read-failed shapes, which is why\nthey are optional and the other four are not. ``pause_long_jobs`` is the\ncolumn default when there is no intent -- shape, not a claim about a\ndeploy, as ``_no_intent`` says.",
+        "properties": {
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "min_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Started At"
+          },
+          "number_running": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number Running"
+          },
+          "pause_long_jobs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Long Jobs"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "title": "IntentStatusResponse",
+        "type": "object"
+      },
+      "LocalDrainResponse": {
+        "description": "``GET /coordination/local-drain`` -- this process's own job evidence.\n\n``ops`` cannot ask itself over HTTP for the reason every other service is\nasked that way, so it reports ``job_snapshot()`` directly and labels the\nsource. ``known`` is always ``True`` here: an in-process count cannot be\nunavailable the way a service across the network can.",
+        "properties": {
+          "active_jobs": {
+            "title": "Active Jobs",
+            "type": "integer"
+          },
+          "known": {
+            "title": "Known",
+            "type": "boolean"
+          },
+          "oldest_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "known",
+          "active_jobs"
+        ],
+        "title": "LocalDrainResponse",
+        "type": "object"
+      },
+      "PhaseResponse": {
+        "description": "The phase transitions that answer with the phase they reached.\n\n``/coordination/begin-drain``, ``/coordination/cancel`` and\n``/coordination/begin-validation``.",
+        "properties": {
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "PhaseResponse",
+        "type": "object"
+      },
+      "ReapStuckResponse": {
+        "description": "``POST /maintenance/reap-stuck-processing``.",
+        "properties": {
+          "retried": {
+            "title": "Retried",
+            "type": "integer"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "stuck": {
+            "title": "Stuck",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stuck",
+          "retried",
+          "skipped"
+        ],
+        "title": "ReapStuckResponse",
+        "type": "object"
+      },
+      "ReconcileCohortsResponse": {
+        "description": "``POST /maintenance/reconcile-cooldown-cohorts``.",
+        "properties": {
+          "cleared": {
+            "title": "Cleared",
+            "type": "integer"
+          },
+          "counted": {
+            "title": "Counted",
+            "type": "integer"
+          },
+          "live": {
+            "title": "Live",
+            "type": "integer"
+          },
+          "pending_cleared": {
+            "title": "Pending Cleared",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "counted",
+          "live",
+          "pending_cleared",
+          "cleared"
+        ],
+        "title": "ReconcileCohortsResponse",
+        "type": "object"
+      },
+      "ReleaseClaimsResponse": {
+        "description": "``POST /scrape/claims/release`` -- and there is no ``status`` key.\n\nStated plainly because a caller has been reading one for months.\n``airflow/dags/scrape_detail_pages.py`` logs ``result.get(\"status\")`` from\nthis endpoint and has logged ``status=None`` every run since the DAG was\nwritten. The repair is not to add the field -- it is this model, which\nmakes the absence checkable instead of leaving it to be discovered.",
+        "properties": {
+          "claims_released": {
+            "title": "Claims Released",
+            "type": "integer"
+          },
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "fetches_recorded": {
+            "title": "Fetches Recorded",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "total",
+          "errors",
+          "claims_released",
+          "fetches_recorded"
+        ],
+        "title": "ReleaseClaimsResponse",
         "type": "object"
       },
       "ReleaseRequest": {
@@ -412,6 +1231,236 @@
           "status"
         ],
         "title": "ReleaseResult",
+        "type": "object"
+      },
+      "ReleaseStatusResponse": {
+        "description": "``GET /coordination/release-status`` -- the post-deploy gates.",
+        "properties": {
+          "blockers": {
+            "default": [],
+            "items": {},
+            "title": "Blockers",
+            "type": "array"
+          },
+          "gates": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gates"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "release_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Ready"
+          }
+        },
+        "title": "ReleaseStatusResponse",
+        "type": "object"
+      },
+      "RequestedResponse": {
+        "description": "``POST /coordination/request`` -- what was recorded, echoed back.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "targets": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          }
+        },
+        "required": [
+          "kind",
+          "phase"
+        ],
+        "title": "RequestedResponse",
+        "type": "object"
+      },
+      "RotationResponse": {
+        "description": "``POST /scrape/rotation/advance`` -- three exits, one shape.\n\nA slot that is due answers ``slot``, ``run_id`` and ``configs``; a request\nthat arrived too soon answers ``reason`` and ``last_run_minutes_ago``\nalongside empty versions of the first three; an empty queue answers the\nfirst three with nothing in them. The two refusal fields are optional\nbecause only one exit sets them, and declaring them here is what makes\n\"why did I get no configs\" answerable from the contract.",
+        "properties": {
+          "configs": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Configs",
+            "type": "array"
+          },
+          "last_run_minutes_ago": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Minutes Ago"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "slot": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          }
+        },
+        "title": "RotationResponse",
+        "type": "object"
+      },
+      "SnapshotPointer": {
+        "description": "``GET /admin/snapshots/adaptive-refresh/latest`` -- ``latest.json``.\n\nWritten in exactly one place,\n``archiver/processors/lake_snapshot_archive.py``, and carries no schema\nversion of its own -- it is a flat pointer whose fields are the identity\nand integrity of one archive, not a document format.",
+        "properties": {
+          "archive_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Bytes"
+          },
+          "archive_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Key"
+          },
+          "archive_manifest_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Manifest Key"
+          },
+          "archive_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Sha256"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "export_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Fingerprint"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id"
+        ],
+        "title": "SnapshotPointer",
         "type": "object"
       },
       "ValidationError": {
@@ -500,14 +1549,6 @@
       "get": {
         "operationId": "root_admin_get",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
           "307": {
             "description": "Redirect to the admin landing page."
           }
@@ -548,7 +1589,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -556,9 +1597,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Request approved; redirect to the request list."
           },
           "404": {
@@ -596,7 +1634,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -604,9 +1642,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Request denied; redirect to the request list."
           },
           "404": {
@@ -665,90 +1700,6 @@
         "summary": "Dbt Docs Generate"
       }
     },
-    "/admin/dbt/intents": {
-      "post": {
-        "description": "Create or update an intent via the admin UI.",
-        "operationId": "dbt_intent_upsert_admin_dbt_intents_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_dbt_intent_upsert_admin_dbt_intents_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "303": {
-            "description": "Intent submitted; redirect to the dbt panel."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Dbt Intent Upsert"
-      }
-    },
-    "/admin/dbt/intents/{intent_name}/delete": {
-      "post": {
-        "operationId": "dbt_intent_delete_admin_dbt_intents__intent_name__delete_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "intent_name",
-            "required": true,
-            "schema": {
-              "title": "Intent Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "303": {
-            "description": "Delete submitted; redirect to the dbt panel."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Dbt Intent Delete"
-      }
-    },
     "/admin/dbt/trigger": {
       "post": {
         "operationId": "dbt_trigger_admin_dbt_trigger_post",
@@ -804,11 +1755,12 @@
         "summary": "Deploy Panel"
       }
     },
-    "/admin/deploy/complete": {
+    "/admin/deploy/release": {
       "post": {
-        "operationId": "deploy_complete_admin_deploy_complete_post",
+        "description": "Release the intent, and say what happened.\n\nThe quieter of the two failures, and the one `_intent_release`'s own\ndocstring records: a release that fails leaves every gated DAG parked, and\nuntil now the button reported that exactly as it reported success.",
+        "operationId": "deploy_complete_admin_deploy_release_post",
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -816,20 +1768,27 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intent released; redirect to the deploy panel."
           },
-          "303": {
-            "description": "Release requested; redirect to the deploy panel."
+          "409": {
+            "description": "Another coordination holds the record."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
           }
         },
         "summary": "Deploy Complete"
       }
     },
-    "/admin/deploy/start": {
+    "/admin/deploy/request": {
       "post": {
-        "operationId": "deploy_start_admin_deploy_start_post",
+        "description": "Ask for deploy intent, and say what happened.\n\nPlan 162 Stage AA, G27. This called `_set_intent(\"Admin UI\")` and discarded\nthe answer, then redirected 303 unconditionally -- so an operator who\nclicked the button saw the same page whether the intent was recorded,\nanother coordination held the row, or Postgres refused the write. Stage K\nwidened `IntentResult` to carry a `detail` for exactly this distinction and\nthe panel never read it.\n\nThe five outcomes map as the API pair maps them, because they are the same\nfive from the same helper and an operator should not have to learn a second\nvocabulary for them.",
+        "operationId": "deploy_start_admin_deploy_request_post",
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -837,10 +1796,16 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intent recorded; redirect to the deploy panel."
           },
-          "303": {
-            "description": "Intent requested; redirect to the deploy panel."
+          "409": {
+            "description": "Another coordination holds the record."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
           }
         },
         "summary": "Deploy Start"
@@ -848,6 +1813,7 @@
     },
     "/admin/logs": {
       "get": {
+        "description": "This service's own log. The other two are read in Grafana.\n\nPlan 162 Stage AA. This fetched `GET /logs` from `scraper` and from\n`dbt_runner`, and neither route has existed since `d88a41e` standardised\nlogging in May; both calls were wrapped in `except Exception: pass`, so the\npage rendered two empty panes and looked like two quiet services. Plan 104\nput every container's logs in Loki, which is where a reader should be\nsent -- a log viewer that silently shows nothing is worse than one that\nsays where to look.",
         "operationId": "view_logs_admin_logs_get",
         "parameters": [
           {
@@ -919,7 +1885,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -927,9 +1893,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Created; redirect to the search list."
           },
           "422": {
@@ -985,7 +1948,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -993,9 +1956,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Change applied; redirect to the search list."
           },
           "404": {
@@ -1026,15 +1986,14 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Change applied; redirect to the search list."
           },
           "404": {
@@ -1117,15 +2076,14 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Change applied; redirect to the search list."
           },
           "404": {
@@ -1174,9 +2132,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Latest Snapshot Admin Snapshots Adaptive Refresh Latest Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SnapshotPointer"
                 }
               }
             },
@@ -1246,9 +2202,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Snapshot Manifest Admin Snapshots Adaptive Refresh  Snapshot Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ArchiveManifestV1"
                 }
               }
             },
@@ -1265,6 +2219,9 @@
           },
           "404": {
             "description": "No snapshot with that id."
+          },
+          "409": {
+            "description": "The stored manifest declares a schema version this service does not serve."
           },
           "422": {
             "content": {
@@ -1318,11 +2275,6 @@
         ],
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           },
           "400": {
@@ -1390,7 +2342,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1398,9 +2350,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "User revoked; redirect to the user list."
           },
           "404": {
@@ -1448,7 +2397,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1456,9 +2405,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Role changed; redirect to the user list."
           },
           "400": {
@@ -1524,11 +2470,6 @@
         ],
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           },
           "403": {
@@ -1559,9 +2500,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Authorize Coordination Coordination Authorize Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuthorizeResponse"
                 }
               }
             },
@@ -1585,11 +2524,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Begin Coordination Drain Coordination Begin Drain Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PhaseResponse"
                 }
               }
             },
@@ -1613,11 +2548,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Begin Coordination Validation Coordination Begin Validation Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PhaseResponse"
                 }
               }
             },
@@ -1641,11 +2572,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Cancel Coordination Coordination Cancel Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PhaseResponse"
                 }
               }
             },
@@ -1680,9 +2607,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Complete Coordination Coordination Complete Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CompletedResponse"
                 }
               }
             },
@@ -1716,9 +2641,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Coordination Drain Status Coordination Drain Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DrainStatusResponse"
                 }
               }
             },
@@ -1750,9 +2673,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Submit Host Evidence Coordination Host Evidence Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HostEvidenceResponse"
                 }
               }
             },
@@ -1780,9 +2701,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Local Drain Status Coordination Local Drain Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LocalDrainResponse"
                 }
               }
             },
@@ -1801,9 +2720,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Coordination Release Status Coordination Release Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReleaseStatusResponse"
                 }
               }
             },
@@ -1834,9 +2751,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Request Coordination Coordination Request Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RequestedResponse"
                 }
               }
             },
@@ -1866,9 +2781,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Coordination Status Coordination Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CoordinationState"
                 }
               }
             },
@@ -1963,9 +2876,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Current Intent Deploy Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IntentStatusResponse"
                 }
               }
             },
@@ -1982,7 +2893,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1996,14 +2909,6 @@
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
         "operationId": "info_redirect_info_get",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
           "308": {
             "description": "Permanent redirect to the landing page at /."
           }
@@ -2014,14 +2919,6 @@
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
         "operationId": "info_redirect_info_head",
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
           "308": {
             "description": "Permanent redirect to the landing page at /."
           }
@@ -2037,9 +2934,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Evict Delisted Cooldowns Maintenance Evict Delisted Cooldowns Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EvictCooldownsResponse"
                 }
               }
             },
@@ -2057,9 +2952,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Expire Orphan Detail Claims Maintenance Expire Orphan Detail Claims Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AffectedResponse"
                 }
               }
             },
@@ -2077,9 +2970,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reap Stuck Processing Maintenance Reap Stuck Processing Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReapStuckResponse"
                 }
               }
             },
@@ -2097,9 +2988,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reconcile Cooldown Cohorts Maintenance Reconcile Cooldown Cohorts Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReconcileCohortsResponse"
                 }
               }
             },
@@ -2111,15 +3000,9 @@
     },
     "/metrics": {
       "get": {
-        "description": "Endpoint that serves Prometheus metrics.",
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -2341,9 +3224,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Claim Batch Scrape Claims Claim Batch Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ClaimBatchResponse"
                 }
               }
             },
@@ -2385,9 +3266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Release Claims Scrape Claims Release Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReleaseClaimsResponse"
                 }
               }
             },
@@ -2441,9 +3320,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Advance Rotation Scrape Rotation Advance Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RotationResponse"
                 }
               }
             },
@@ -2471,11 +3348,6 @@
         "operationId": "sitemap_sitemap_xml_get",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },
@@ -2485,11 +3357,6 @@
         "operationId": "sitemap_sitemap_xml_head",
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           }
         },

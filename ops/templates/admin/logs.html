@@ -57,33 +57,7 @@
     </form>
 </div>
 
-<div class="tab-nav">
-    <button class="active" onclick="switchTab('scraper', this)">Scraper</button>
-    <button onclick="switchTab('dbt', this)">dbt Runner</button>
-    <button onclick="switchTab('ops', this)">Ops</button>
-</div>
-
-<div id="tab-scraper" class="tab-panel active">
-    <div class="log-box" id="scraper-log">
-        {% if scraper_lines %}
-            {% for line in scraper_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
-        {% else %}
-            <span class="log-empty">No log entries yet — or scraper is unreachable.</span>
-        {% endif %}
-    </div>
-</div>
-
-<div id="tab-dbt" class="tab-panel">
-    <div class="log-box" id="dbt-log">
-        {% if dbt_lines %}
-            {% for line in dbt_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
-        {% else %}
-            <span class="log-empty">No log entries yet — or dbt Runner is unreachable.</span>
-        {% endif %}
-    </div>
-</div>
-
-<div id="tab-ops" class="tab-panel">
+<div id="tab-ops" class="tab-panel active">
     <div class="log-box" id="ops-log">
         {% if ops_lines %}
             {% for line in ops_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
@@ -92,6 +66,20 @@
         {% endif %}
     </div>
 </div>
+
+{# Plan 162 Stage AA. Two more panes stood here, fed by `GET /logs` on scraper
+   and dbt_runner -- routes neither service has served since May, behind an
+   `except: pass`, so both rendered "unreachable" whether the service was down
+   or perfectly healthy. Plan 104 put every container's logs in Loki, and
+   sending a reader there beats showing them an empty box. #}
+<article class="config-card" style="margin-top: 1rem;">
+    <p style="margin: 0; font-size: 0.9rem;">
+        Logs for every other container are in
+        <a href="{{ grafana_url }}" target="_blank" rel="noopener">Grafana → Explore</a>,
+        queryable by service and level. This page shows only the ops container's
+        own file, which it reads from disk.
+    </p>
+</article>
 
 <script>
 function switchTab(name, btn) {

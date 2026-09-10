@@ -117,8 +117,8 @@ def robots() -> PlainTextResponse:
     return PlainTextResponse("\n".join(lines))
 
 
-@router.get("/sitemap.xml")
-@router.head("/sitemap.xml")
+@router.get("/sitemap.xml", response_class=Response)
+@router.head("/sitemap.xml", response_class=Response)
 def sitemap() -> Response:
     paths = ["/", "/recaps"] + [f"/recaps/{slug}" for slug in published_slugs()]
     urls = "".join(

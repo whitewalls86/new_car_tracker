@@ -2934,6 +2934,284 @@ column that drifts, which is the defect the whole plan is named for.
 agent comply with it; a rule with no skill fails; the skills that do not yet
 exist are written; demonstrated by a rule losing its skill reference failing.
 
+### Stage AJ: a parser of a response we do not own, that no test executes
+
+**Issue:** unassigned · **State:** `—` · **Gap:** —
+
+**Found while closing Stage AB, and it is that stage's defect with the sign
+flipped.** Stage AB is about a test that *fabricates* a response from a system
+this repository does not build — the fabrication can be wrong, and the remedy
+is to check it against what the real thing sends. This is about a production
+function that *parses* such a response where **no test executes the parsing at
+all**. There is nothing to check, because nothing ran.
+
+**The population, and how it was measured on 2026-09-10.** A function in
+production code that calls an HTTP client this repository does not own and
+reads structure out of the response — `.json()` and a subscript of it. Derived
+by AST over the production directories, then cross-referenced against
+`coverage.xml` from a full `-m "not integration"` run.
+
+| | |
+|---|---|
+| functions matching the population | **23** |
+| parsing never executed (0 or 1 statement, the 1 being the `def`) | **14** |
+| parsing executed | **9** |
+
+The 9 are genuine passes rather than artefacts, and the difference between the
+two groups is exactly the thing this stage is about.
+`ops/coordination_release.py::_auxiliary_still_stopped` reads 16 of 16 because
+its three tests patch `requests.get`, the transport. Its three siblings in the
+same file read 1 of 12, 1 of 16 and 1 of 10 because their tests patch
+`_prometheus_scalar`, `_container_health_values` and
+`_loki_has_recent_ingestion` — the functions themselves.
+
+**Patching the helper is not the error.** A test of a *caller* legitimately
+wants to control what its helper returns, and eleven such patches in that file
+are correct tests of correct things. The error is that after those eleven, the
+helpers themselves are executed by nothing, and no instrument says so.
+
+### Why it was green
+
+Three layers, and only the third is the defect.
+
+**Coverage measured it the whole time.** `ops/coordination_release.py` has
+reported 72% with `86-101`, `105-124` and `192-205` in its missing list on every
+run. Those ranges are the three helpers. Nothing was hidden.
+
+**The floor is a global average.** `--cov-fail-under=75` is asserted against a
+repository-wide 78%, so a file at 72% with its entire parsing layer dead rides
+inside it. The one number the contract asserts is the one that cannot see a
+file-shaped hole.
+
+**And coverage cannot say *why*.** It reports zero hits. It cannot report that
+the zero is caused by eleven tests replacing the function, which is the fact
+that distinguishes this from an ordinary uncovered branch.
+
+### What is at stake in the parsing nobody runs
+
+**The shapes are one character apart and both are typed out from
+documentation.** Prometheus answers `result[0]["value"]` — singular, one
+`[timestamp, value]` pair. Loki answers `result[0]["values"]` — plural, a
+*list* of pairs, so the timestamp is `values[0]["values"][0][0]`.
+`coordination_release.py` contains both, three lines apart, and neither
+executes.
+
+**The severity is mostly bounded, and the exception is the interesting part.**
+Every caller of the two Prometheus parsers wraps it in `except (...,
+KeyError, TypeError, ValueError, ...)` and returns `_unknown`, which blocks a
+release. So a wrong parse jams a deploy gate shut rather than opening one, which
+is the good direction and is why this survived unnoticed.
+`_loki_has_recent_ingestion` is the exception: it returns a bare `bool`, and its
+`False` on a malformed envelope is indistinguishable from the condition it
+exists to detect — logs genuinely not landing.
+
+**The class predicts where a known bug already was.** Stage AA found
+`airflow/dags/scrape_detail_pages.py:143` logging `result.get("status")` from an
+endpoint that has never returned a `status` key, so every run has logged
+`status=None` since April. That function, `_scrape_detail`, measures **0 of 28
+statements covered**. The bug was found by reading, and it sits in the largest
+member of a population derived without knowing about it.
+
+### Examples, with their numbers
+
+| Function | Executed | Note |
+|---|---|---|
+| `airflow/dags/scrape_detail_pages.py::_scrape_detail` | 0/28 | holds Stage AA's `status=None` defect |
+| `airflow/dags/scrape_detail_pages.py::_release_claims` | 0/13 | |
+| `airflow/dags/sensors.py::post_json` | 1/13 | the shared POST helper every DAG uses |
+| `airflow/dags/orphan_checker.py` — three functions | 0/4 each | reap, expire, evict |
+| `ops/coordination_release.py::_container_health_values` | 1/16 | |
+| `ops/coordination_release.py::_prometheus_scalar` | 1/12 | |
+| `ops/coordination_release.py::_loki_has_recent_ingestion` | 1/10 | the one that cannot announce its own failure |
+
+### What this stage must establish before it can size itself
+
+**Eleven of the fourteen are in `airflow/dags/`, and the measurement above
+cannot tell whether they are dead or merely invisible.** The coverage read comes
+from the unit job. `tests/integration/airflow/` runs in the isolated
+`apache-airflow==3.2.0` venv as a separate job with its own coverage, and this
+reading did not union the two. A function exercised only there would appear in
+the table above and does not belong in it. **Re-measure across every job that
+runs pytest before seeding anything** — the same correction Stage AB had to
+make four times over, and the same one `check_sql_execution_coverage.py` already
+solves for SQL by reading every uploaded record together.
+
+**No gap entry is written here, deliberately.** The gap list's second column
+states how a hole is to be checked, and writing it would be choosing this
+stage's remedy before the stage has been scoped. Whether this earns a `G`
+number, and what that column says, belongs to whoever picks it up.
+
+**Nothing about the mechanism is decided here either** — not where the rule
+lives, not how execution evidence reaches it, not what the population predicate
+should key on. The predicate above is how the *measurement* was taken, not a
+proposal for how the rule should read; a different predicate that finds the same
+class is a better answer, not a deviation.
+
+**Exit:** every production function that parses a response from a system this
+repository does not own is exercised by a test or waived with its reason; the
+ledger seeded from a re-measurement at this stage's start, taken across every
+job that runs pytest rather than from the 14 above, and drained to 0;
+demonstrated by a parser whose only exercising test is removed failing.
+
+
+### Stage AK: a floor may assert nothing, or everything, never a number between
+
+**Issue:** unassigned · **State:** `—` · **Gap:** —
+
+**Every rule in `tests/rules/` is a set difference, and a set difference over
+an empty corpus is empty.** That is why each carries a floor — a second
+assertion that the reader found anything at all. The floor exists because the
+rule itself *passes* when its reader breaks, which
+`test_the_route_code_corpus_is_not_empty` already states about its own
+construction: *"Every bug this rule had while it was being written moved the
+same number in the same direction — fewer routes examined, more codes credited,
+a healthier looking result. None of those made a test go red."*
+
+**The floors are guesses.** Twenty-four of them assert a count against a number
+somebody picked to sit below whatever the corpus was that day — `>= 80`,
+`> 250`, `>= 150`, `<= 8`, and `len(reason) > 40`, which is a prose-length
+heuristic. A guessed bound catches the corpus *collapsing* and misses it
+*eroding*, and the gap between those widens every time the repository grows.
+
+**Measured, on this stage's own work, in a single sitting.** Stage AA wrote a
+floor at `>= 80` for a corpus of 93, and it caught a real defect at 73 — an
+operation-id reader that collapsed the double underscores FastAPI writes where
+`/{` meets, silently excluding every path-parameter route. The repair replaced
+it with `>= len(rows) - 5`, which would have waved the same defect through.
+Both forms were written by the same hand within twenty minutes, which is the
+argument: the number is not a judgement anybody is making carefully, it is a
+number chosen to make a green run stay green.
+
+**Exactness is not tidiness — it is the only setting at which a floor reports
+anything.** Converting Stage AA's four floors from bounds to derived equalities
+found four reader defects that no threshold had surfaced: three `/metrics`
+routes registered by a library closure rather than by any function in this
+repository, eight DAG modules reached through `sensors.post_json` rather than
+`requests.post`, a URL passed as the second positional argument rather than the
+first, and a docstring filter comparing `ast.get_docstring`'s cleaned text
+against `Constant.value`'s raw text so that every docstring read as code. Each
+was a reader quietly measuring less than it claimed.
+
+**One of the four was fixed in the code rather than in the rule**, and that is
+the shape this stage takes wherever it can. `/metrics` on `ops`, `processing`
+and `scraper` was registered by `Instrumentator.expose()`, so no rule that
+resolves a route to its handler could reach it. Those three services now
+declare the route themselves, as `dbt_runner` and `container_health` already
+did — behaviour-identical, since `expose()`'s only other branch is the
+multiprocess registry and `PROMETHEUS_MULTIPROC_DIR` is set nowhere in this
+repository and unset in all three running containers. A rule that cannot reach
+a route is a rule with a hole in it, not a rule with an exception.
+
+**What a floor may say.** That the corpus is non-empty — a claim that names no
+size, so no growth makes it stale. Or that it equals something *derived*: every
+service with a committed contract is represented, every declaration resolves to
+a handler, every producer the sibling rule found is present. Anything between
+those two is a number that was true the day it was written.
+
+**Some of the twenty-four are exact invariants nobody has written down yet.**
+`len(_compose_files()) >= 2` means "both compose files are present", and the
+repository can name them. Others have no exact form and should say so rather
+than pick a number. Telling those apart is the work, and it is one rule at a
+time rather than a sweep.
+
+**Exit:** no assertion in `tests/rules/` bounds a count by a chosen number;
+`GUESSED_BOUND_WAIVERS` seeded at 24 by `test_no_rule_guards_itself_with_a_
+guessed_number` and drained to 0, each entry either replaced by a derived
+equality or by a non-emptiness check with the reason an exact form does not
+exist; demonstrated by a floor loosened back to a bound failing, and by a
+reader narrowed so that it resolves less than the whole corpus failing.
+
+### Stage AL: the services agree on what they send, and on what a code means
+
+**Issue:** unassigned · **State:** `—` · **Gap:** —
+
+**A stub, written 2026-09-10 from Stage AA's own friction. The measurements
+below are real; the design is not decided.**
+
+**`contracts/*.json` is descriptive and there is nothing for it to be wrong
+against.** Stage Z generates it *from* the running apps, so it faithfully
+records whatever they do — which is why it carried a phantom 307 on `/info`, a
+phantom 422, eight phantom 200s and six routes whose callers had been deleted
+in April. Each of those was found by reading the artifact against the code by
+hand. A generated artifact cannot fail a standard that does not exist.
+
+**Measured across all six contracts on 2026-09-10**, by declared response:
+
+| | typed (`$ref`) | no schema | other |
+|---|---|---|---|
+| 2xx | 53 | 29 | 2 array, 2 boolean |
+| 3xx | — | 16 | — |
+| 4xx | 47 | 42 | — |
+| 5xx | 12 | 34 | — |
+
+**105 declared responses carry a status code and no shape at all**, setting
+aside the 16 redirects that correctly have no body -- **and 29 of those 105 are
+not a gap.** Splitting them by declared content type, which is the measurement
+this stage owed before its own number could be trusted:
+
+| | count | |
+|---|---|---|
+| 2xx `text/html` | 14 | `ops` admin pages and templates |
+| 2xx `text/plain` | 2 | `robots.txt` |
+| 2xx no content declared | 13 | five `/metrics`, `sitemap.xml`, `/recaps` GET+HEAD, `/auth/check`, a file download |
+| 4xx no content declared | 42 | |
+| 5xx no content declared | 34 | |
+
+Not one of the 29 unshaped 2xx is a JSON route with an undeclared body. They
+are HTML, plain text, XML, Prometheus exposition and a file stream, where a
+JSON schema would be the wrong answer -- though several could still declare the
+content type they do serve.
+
+**So the real population is 76, and every one is an error response.** The cause
+is exact rather than general: Stage Y closed G21 by making every route declare
+the *statuses* it can return, which is where 400, 401, 403, 404, 409, 500 and
+503 came from. Declaring a code and declaring that code's body were two
+obligations and only the first was ever asked for. 59 of the 135 error
+responses do carry a `$ref`; `shared/api_models.py` already holds the
+`ErrorResponse` the other 76 are not using.
+
+**This is what bounds Stage AA's rules rather than a separate concern.** Where a
+response declares no shape, `service_response()` has nothing to build from and
+`body_violations()` has nothing to compare against, so a test may fabricate
+anything there and no rule can contradict it. Stage AA's "0 fabrications" is
+therefore a measurement over the 116 of 221 non-redirect responses that
+carry a shape, not over all of them, and that limit is stated in its record rather than glossed.
+
+**The load-bearing half is what a code *means*, not what the body looks like.**
+Every live defect Stage AA found was a meaning defect. `dbt_runner` answers 503
+on `/ready` to mean *busy*, and `ops` read it as *failure*, so the admin dbt
+panel showed an idle runner as healthy and a running build as down. The `/info`
+307 contradicted its own docstring. Six deleted endpoints kept returning an
+unconditional 303 to callers that had nothing to call. A shape standard catches
+none of these; a standard that says *"a 503 from `/ready` is a declared refusal
+and not an error"* catches all of them.
+
+**The precedent is in this plan already.**
+[`shared/db_vocabularies.py`](../../shared/db_vocabularies.py) (Stage W)
+declares the database's closed vocabularies once in Python while the migration
+stays the owner, and is guarded by a *pair* of rules comparing in both
+directions — with stated reasoning for why neither works alone. The API case
+maps onto it: a declaration module, the running app still the owner, one rule
+that every generated contract conforms and one that no route hand-rolls a code
+or shape it could take from the declaration.
+
+**One constraint to design in rather than discover.** `container_health` cannot
+import `shared/` — the Docker-socket grant isolates it, which is why Stage AA
+gave it a local `api_models.py` instead. So the standard must tolerate exactly
+one service that copies rather than imports, and the rule must assert the copy
+matches. `db_vocabularies` solved that same problem, but only because it was
+designed for it.
+
+**Sequence this before Stage AH.** AH writes a skill per rule so an agent meets
+a rule before CI does. Skills written now would teach conventions this stage is
+about to change.
+
+**Exit:** every response every service declares has a declared shape or a stated
+reason it cannot; every status code a route declares is one the standard names,
+with a meaning a caller can rely on; the declaration and the generated contracts
+are compared in both directions; demonstrated by a route declaring a code the
+standard does not name, failing.
+
 ## Success criteria
 
 **1. The waiver list is empty.** All 120 entries deleted, each by the repair it
@@ -3091,126 +3369,6 @@ is Stage P's.
 
 Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
 question cannot close from inside a CI job.
-
-### Stage AJ: a parser of a response we do not own, that no test executes
-
-**Issue:** unassigned · **State:** `—` · **Gap:** —
-
-**Found while closing Stage AB, and it is that stage's defect with the sign
-flipped.** Stage AB is about a test that *fabricates* a response from a system
-this repository does not build — the fabrication can be wrong, and the remedy
-is to check it against what the real thing sends. This is about a production
-function that *parses* such a response where **no test executes the parsing at
-all**. There is nothing to check, because nothing ran.
-
-**The population, and how it was measured on 2026-09-10.** A function in
-production code that calls an HTTP client this repository does not own and
-reads structure out of the response — `.json()` and a subscript of it. Derived
-by AST over the production directories, then cross-referenced against
-`coverage.xml` from a full `-m "not integration"` run.
-
-| | |
-|---|---|
-| functions matching the population | **23** |
-| parsing never executed (0 or 1 statement, the 1 being the `def`) | **14** |
-| parsing executed | **9** |
-
-The 9 are genuine passes rather than artefacts, and the difference between the
-two groups is exactly the thing this stage is about.
-`ops/coordination_release.py::_auxiliary_still_stopped` reads 16 of 16 because
-its three tests patch `requests.get`, the transport. Its three siblings in the
-same file read 1 of 12, 1 of 16 and 1 of 10 because their tests patch
-`_prometheus_scalar`, `_container_health_values` and
-`_loki_has_recent_ingestion` — the functions themselves.
-
-**Patching the helper is not the error.** A test of a *caller* legitimately
-wants to control what its helper returns, and eleven such patches in that file
-are correct tests of correct things. The error is that after those eleven, the
-helpers themselves are executed by nothing, and no instrument says so.
-
-### Why it was green
-
-Three layers, and only the third is the defect.
-
-**Coverage measured it the whole time.** `ops/coordination_release.py` has
-reported 72% with `86-101`, `105-124` and `192-205` in its missing list on every
-run. Those ranges are the three helpers. Nothing was hidden.
-
-**The floor is a global average.** `--cov-fail-under=75` is asserted against a
-repository-wide 78%, so a file at 72% with its entire parsing layer dead rides
-inside it. The one number the contract asserts is the one that cannot see a
-file-shaped hole.
-
-**And coverage cannot say *why*.** It reports zero hits. It cannot report that
-the zero is caused by eleven tests replacing the function, which is the fact
-that distinguishes this from an ordinary uncovered branch.
-
-### What is at stake in the parsing nobody runs
-
-**The shapes are one character apart and both are typed out from
-documentation.** Prometheus answers `result[0]["value"]` — singular, one
-`[timestamp, value]` pair. Loki answers `result[0]["values"]` — plural, a
-*list* of pairs, so the timestamp is `values[0]["values"][0][0]`.
-`coordination_release.py` contains both, three lines apart, and neither
-executes.
-
-**The severity is mostly bounded, and the exception is the interesting part.**
-Every caller of the two Prometheus parsers wraps it in `except (...,
-KeyError, TypeError, ValueError, ...)` and returns `_unknown`, which blocks a
-release. So a wrong parse jams a deploy gate shut rather than opening one, which
-is the good direction and is why this survived unnoticed.
-`_loki_has_recent_ingestion` is the exception: it returns a bare `bool`, and its
-`False` on a malformed envelope is indistinguishable from the condition it
-exists to detect — logs genuinely not landing.
-
-**The class predicts where a known bug already was.** Stage AA found
-`airflow/dags/scrape_detail_pages.py:143` logging `result.get("status")` from an
-endpoint that has never returned a `status` key, so every run has logged
-`status=None` since April. That function, `_scrape_detail`, measures **0 of 28
-statements covered**. The bug was found by reading, and it sits in the largest
-member of a population derived without knowing about it.
-
-### Examples, with their numbers
-
-| Function | Executed | Note |
-|---|---|---|
-| `airflow/dags/scrape_detail_pages.py::_scrape_detail` | 0/28 | holds Stage AA's `status=None` defect |
-| `airflow/dags/scrape_detail_pages.py::_release_claims` | 0/13 | |
-| `airflow/dags/sensors.py::post_json` | 1/13 | the shared POST helper every DAG uses |
-| `airflow/dags/orphan_checker.py` — three functions | 0/4 each | reap, expire, evict |
-| `ops/coordination_release.py::_container_health_values` | 1/16 | |
-| `ops/coordination_release.py::_prometheus_scalar` | 1/12 | |
-| `ops/coordination_release.py::_loki_has_recent_ingestion` | 1/10 | the one that cannot announce its own failure |
-
-### What this stage must establish before it can size itself
-
-**Eleven of the fourteen are in `airflow/dags/`, and the measurement above
-cannot tell whether they are dead or merely invisible.** The coverage read comes
-from the unit job. `tests/integration/airflow/` runs in the isolated
-`apache-airflow==3.2.0` venv as a separate job with its own coverage, and this
-reading did not union the two. A function exercised only there would appear in
-the table above and does not belong in it. **Re-measure across every job that
-runs pytest before seeding anything** — the same correction Stage AB had to
-make four times over, and the same one `check_sql_execution_coverage.py` already
-solves for SQL by reading every uploaded record together.
-
-**No gap entry is written here, deliberately.** The gap list's second column
-states how a hole is to be checked, and writing it would be choosing this
-stage's remedy before the stage has been scoped. Whether this earns a `G`
-number, and what that column says, belongs to whoever picks it up.
-
-**Nothing about the mechanism is decided here either** — not where the rule
-lives, not how execution evidence reaches it, not what the population predicate
-should key on. The predicate above is how the *measurement* was taken, not a
-proposal for how the rule should read; a different predicate that finds the same
-class is a better answer, not a deviation.
-
-**Exit:** every production function that parses a response from a system this
-repository does not own is exercised by a test or waived with its reason; the
-ledger seeded from a re-measurement at this stage's start, taken across every
-job that runs pytest rather than from the 14 above, and drained to 0;
-demonstrated by a parser whose only exercising test is removed failing.
-
 
 ## Record
 

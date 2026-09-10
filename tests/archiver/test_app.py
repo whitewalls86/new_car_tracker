@@ -4,6 +4,15 @@ import logging
 
 import pytest
 
+from archiver.api_models import (
+    CompactSilverResponse,
+    DiskUsageResponse,
+    PackBronzeResponse,
+    PrunePackedResponse,
+    VerifyPackResponse,
+)
+from tests.response_fixtures import fixture_for, produced_by
+
 
 @pytest.fixture(scope="module", autouse=True)
 def allow_pack_jobs_in_endpoint_tests():
@@ -20,6 +29,74 @@ def allow_pack_jobs_in_endpoint_tests():
     archiver_app._ALLOW_PACK_JOBS = True
     yield
     archiver_app._ALLOW_PACK_JOBS = previous
+
+
+# ---------------------------------------------------------------------------
+# Processor result factories -- Plan 162 Stage AA, G32.
+#
+# Each returns the complete summary its producer returns, built from the
+# response model that serialises it and overridden only where a test cares.
+#
+# Before this stage these were dicts written key by key from reading the
+# producer -- one was `{}`, several were a single key -- and the endpoints
+# passed them straight through, so a test could assert on a body its own
+# production code cannot return. 31 did. Completing them by hand was the
+# first repair and left them transcriptions, free to drift the moment a
+# producer gained a key: that mutation passed 592 tests.
+#
+# Building them from the model is what removes the copy. The model is held
+# against the producer by `test_no_response_model_is_short_of_its_producer`
+# and against the handler by `tests/plugins/response_model_fidelity.py`, so
+# a fixture built from it inherits both checks rather than needing its own.
+# ---------------------------------------------------------------------------
+
+def _pack_result(**over):
+    """``pack_bronze_html``'s summary, built from the model that serialises it."""
+    return fixture_for(PackBronzeResponse, **over)
+
+
+def _prune_result(**over):
+    """``delete_packed_source_html``'s summary."""
+    return fixture_for(PrunePackedResponse, **over)
+
+
+def _verify_result(**over):
+    """``verify_pack_read_path``'s summary."""
+    return fixture_for(VerifyPackResponse, **over)
+
+
+def _compact_result(**over):
+    """``compact_silver``'s summary. ``incremental`` is a count, not a flag."""
+    return fixture_for(CompactSilverResponse, **over)
+
+
+def _disk_result(**over):
+    """``run_disk_usage``'s summary. ``unpublished`` is target names, not a count."""
+    return fixture_for(DiskUsageResponse, **over)
+
+
+def _snapshot_result(**over):
+    """``SnapshotResult.to_dict()``'s 28 keys, derived from the dataclass.
+
+    Built from the dataclass rather than typed out, so this factory cannot
+    drift from it the way the hand-written version of the response model did.
+    """
+    import dataclasses
+
+    from archiver.processors.export_ci_lake_snapshot import SnapshotResult
+
+    defaults = {
+        f.name: (
+            f.default_factory() if f.default_factory is not dataclasses.MISSING
+            else (None if f.default is dataclasses.MISSING else f.default)
+        )
+        for f in dataclasses.fields(SnapshotResult)
+    }
+    defaults["snapshot_id"] = "adaptive-refresh-2026-07-07-000000"
+    defaults["tier"] = "ci"
+    defaults["status"] = "planned"
+    return {**defaults, **over}
+
 
 # ---------------------------------------------------------------------------
 # GET /health
@@ -91,7 +168,7 @@ class TestCleanupQueueEndpoint:
 
 class TestCleanupQueueRunEndpoint:
     def test_delegates_to_run_cleanup_queue(self, mock_archiver_client, mocker):
-        fake = {"total": 3, "deleted": 3, "failed": 0, "results": []}
+        fake = {"total": 3, "deleted": 3, "failed": 0, "results": [], "error": None}
         mocker.patch("archiver.app._run_cleanup_queue", return_value=fake)
         resp = mock_archiver_client.post("/cleanup/queue/run")
         assert resp.status_code == 200
@@ -100,7 +177,13 @@ class TestCleanupQueueRunEndpoint:
     def test_no_work_returns_zeros(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._run_cleanup_queue",
-            return_value={"total": 0, "deleted": 0, "failed": 0, "results": []},
+            return_value=produced_by(
+                "_run_cleanup_queue",
+                total=0,
+                deleted=0,
+                failed=0,
+                results=[],
+            ),
         )
         resp = mock_archiver_client.post("/cleanup/queue/run")
         assert resp.json()["total"] == 0
@@ -121,7 +204,12 @@ class TestFlushStagingRunEndpoint:
     def test_no_work_returns_zero_total(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_staging_events",
-            return_value={"total_flushed": 0, "tables": [], "error": None},
+            return_value=produced_by(
+                "_flush_staging_events",
+                total_flushed=0,
+                tables=[],
+                error=None,
+            ),
         )
         resp = mock_archiver_client.post("/flush/staging/run")
         assert resp.json()["total_flushed"] == 0
@@ -129,7 +217,12 @@ class TestFlushStagingRunEndpoint:
     def test_error_propagated_in_response(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_staging_events",
-            return_value={"total_flushed": 0, "tables": [], "error": "db down"},
+            return_value=produced_by(
+                "_flush_staging_events",
+                total_flushed=0,
+                tables=[],
+                error='db down',
+            ),
         )
         resp = mock_archiver_client.post("/flush/staging/run")
         assert resp.status_code == 200
@@ -151,7 +244,7 @@ class TestFlushSilverRunEndpoint:
     def test_no_work_returns_zero(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": None},
+            return_value=produced_by("_flush_silver_observations", flushed=0, error=None),
         )
         resp = mock_archiver_client.post("/flush/silver/run")
         assert resp.json()["flushed"] == 0
@@ -159,7 +252,11 @@ class TestFlushSilverRunEndpoint:
     def test_error_propagated_in_response(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": "minio unreachable"},
+            return_value=produced_by(
+                "_flush_silver_observations",
+                flushed=0,
+                error='minio unreachable',
+            ),
         )
         resp = mock_archiver_client.post("/flush/silver/run")
         assert resp.status_code == 200
@@ -229,7 +326,7 @@ def test_an_unusable_payload_is_400_not_a_crash(
 
 class TestPackBronzeRunEndpoint:
     def test_defaults_to_a_dry_run(self, mock_archiver_client, mocker):
-        fake = {"mode": "dry_run", "packs_written": 0, "error": None, "buckets": []}
+        fake = _pack_result()
         mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
         resp = mock_archiver_client.post("/pack/bronze/run")
         assert resp.status_code == 200
@@ -238,7 +335,7 @@ class TestPackBronzeRunEndpoint:
 
     def test_passes_through_the_documented_options(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch(
-            "archiver.app._pack_bronze_html", return_value={"mode": "apply"}
+            "archiver.app._pack_bronze_html", return_value=_pack_result(mode="apply")
         )
         resp = mock_archiver_client.post(
             "/pack/bronze/run",
@@ -250,7 +347,7 @@ class TestPackBronzeRunEndpoint:
         }
 
     def test_unknown_payload_keys_are_ignored(self, mock_archiver_client, mocker):
-        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value={})
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value=_pack_result())
         resp = mock_archiver_client.post(
             "/pack/bronze/run", json={"apply": True, "delete_sources": True}
         )
@@ -356,7 +453,7 @@ class TestPackEndpointsSignalFailure:
     def test_pack_error_returns_500_carrying_the_summary(
         self, mock_archiver_client, mocker
     ):
-        fake = {"mode": "apply", "error": "no free space", "read_failures": 0}
+        fake = _pack_result(mode="apply", error="no free space")
         mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
 
         resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
@@ -369,7 +466,7 @@ class TestPackEndpointsSignalFailure:
         assert "no free space" in detail["failure_reason"]
 
     def test_pack_read_failures_still_return_200(self, mock_archiver_client, mocker):
-        fake = {"mode": "apply", "error": None, "read_failures": 2, "packs_written": 31}
+        fake = _pack_result(mode="apply", read_failures=2, packs_written=31)
         mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
 
         resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
@@ -382,11 +479,10 @@ class TestPackEndpointsSignalFailure:
     def test_prune_refusals_return_500_carrying_the_summary(
         self, mock_archiver_client, mocker
     ):
-        fake = {
-            "mode": "apply", "error": None, "objects_refused": 7,
-            "objects_deleted": 93,
-            "failures": [{"source_key": "html/...", "error": "sha256 mismatch"}],
-        }
+        fake = _prune_result(
+            mode="apply", objects_refused=7, objects_deleted=93,
+            failures=[{"source_key": "html/...", "error": "sha256 mismatch"}],
+        )
         mocker.patch("archiver.app._delete_packed_source_html", return_value=fake)
 
         resp = mock_archiver_client.post(
@@ -402,7 +498,7 @@ class TestPackEndpointsSignalFailure:
     def test_prune_error_returns_500(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._delete_packed_source_html",
-            return_value={"error": "listing failed", "objects_refused": 0},
+            return_value=_prune_result(error="listing failed"),
         )
 
         resp = mock_archiver_client.post(
@@ -416,10 +512,7 @@ class TestPackEndpointsSignalFailure:
     ):
         # The drained-month case. It must stay green, or the Stage 5 DAG fails
         # every month after the first one it packs.
-        fake = {
-            "mode": "apply", "error": None, "objects_refused": 0,
-            "objects_deleted": 0, "objects_surviving_before": 0, "capped": False,
-        }
+        fake = _prune_result(mode="apply")
         mocker.patch("archiver.app._delete_packed_source_html", return_value=fake)
 
         resp = mock_archiver_client.post(
@@ -430,10 +523,7 @@ class TestPackEndpointsSignalFailure:
         assert resp.json() == fake
 
     def test_a_clean_pack_run_is_unchanged(self, mock_archiver_client, mocker):
-        fake = {
-            "mode": "apply", "error": None, "read_failures": 0,
-            "packs_written": 32, "orphan_packs": [], "stopped_at_max_packs": False,
-        }
+        fake = _pack_result(mode="apply", packs_written=32)
         mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
 
         resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
@@ -458,7 +548,7 @@ class TestPackSingleFlight:
     ):
         from shared.job_counter import single_flight
 
-        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value={})
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value=_pack_result())
 
         with single_flight("pack_bronze"):
             resp = mock_archiver_client.post("/pack/bronze/run")
@@ -474,7 +564,9 @@ class TestPackSingleFlight:
     ):
         from shared.job_counter import single_flight
 
-        mock_fn = mocker.patch("archiver.app._delete_packed_source_html", return_value={})
+        mock_fn = mocker.patch(
+            "archiver.app._delete_packed_source_html", return_value=_prune_result()
+        )
 
         with single_flight("pack_prune"):
             resp = mock_archiver_client.post(
@@ -491,7 +583,7 @@ class TestPackSingleFlight:
 
         mocker.patch(
             "archiver.app._delete_packed_source_html",
-            return_value={"error": None, "objects_refused": 0},
+            return_value=_prune_result(),
         )
 
         # Keyed per job. A pack and a prune on different months are a normal
@@ -507,7 +599,7 @@ class TestPackSingleFlight:
     def test_the_slot_is_released_after_a_run(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._pack_bronze_html",
-            return_value={"error": None, "read_failures": 0},
+            return_value=_pack_result(),
         )
 
         assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
@@ -520,13 +612,13 @@ class TestPackSingleFlight:
         # restarts.
         mocker.patch(
             "archiver.app._pack_bronze_html",
-            return_value={"error": "boom", "read_failures": 0},
+            return_value=_pack_result(error="boom"),
         )
         assert mock_archiver_client.post("/pack/bronze/run").status_code == 500
 
         mocker.patch(
             "archiver.app._pack_bronze_html",
-            return_value={"error": None, "read_failures": 0},
+            return_value=_pack_result(),
         )
         assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
 
@@ -537,7 +629,7 @@ class TestPackSingleFlight:
 
 class TestVerifyEndpoint:
     def test_clean_run_returns_200(self, mock_archiver_client, mocker):
-        fake = {"verified": 5, "failed": 0, "sampled": 5}
+        fake = _verify_result(verified=5, sampled=5)
         mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
 
         resp = mock_archiver_client.post(
@@ -552,7 +644,7 @@ class TestVerifyEndpoint:
 
         mock_fn = mocker.patch(
             "archiver.app._verify_pack_read_path",
-            return_value={"verified": 1, "failed": 0},
+            return_value=_verify_result(verified=1),
         )
 
         resp = mock_archiver_client.post(
@@ -590,11 +682,10 @@ class TestVerifyEndpoint:
     def test_failed_members_return_500_with_the_summary(
         self, mock_archiver_client, mocker
     ):
-        fake = {
-            "verified": 4,
-            "failed": 1,
-            "failures": [{"source_key": "html/bad", "error": "hash mismatch"}],
-        }
+        fake = _verify_result(
+            verified=4, failed=1,
+            failures=[{"source_key": "html/bad", "error": "hash mismatch"}],
+        )
         mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
 
         resp = mock_archiver_client.post(
@@ -610,7 +701,7 @@ class TestVerifyEndpoint:
     def test_nothing_verified_returns_500(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._verify_pack_read_path",
-            return_value={"verified": 0, "failed": 0, "sidecars": 0},
+            return_value=_verify_result(),
         )
 
         resp = mock_archiver_client.post(
@@ -627,7 +718,7 @@ class TestVerifyEndpoint:
 
         mocker.patch(
             "archiver.app._verify_pack_read_path",
-            return_value={"verified": 1, "failed": 0},
+            return_value=_verify_result(verified=1),
         )
 
         with single_flight("pack_bronze"), single_flight("pack_prune"):
@@ -682,12 +773,12 @@ class TestPackJobsGuard:
         mocker.patch.object(
             archiver_app,
             "_pack_bronze_html",
-            return_value={"error": None, "read_failures": 0},
+            return_value=_pack_result(),
         )
         mocker.patch.object(
             archiver_app,
             "_delete_packed_source_html",
-            return_value={"error": None, "objects_refused": 0},
+            return_value=_prune_result(),
         )
 
         assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
@@ -702,7 +793,7 @@ class TestPackJobsGuard:
         mocker.patch.object(
             archiver_app,
             "_verify_pack_read_path",
-            return_value={"verified": 1, "failed": 0},
+            return_value=_verify_result(verified=1),
         )
 
         resp = mock_archiver_client.post(
@@ -718,21 +809,9 @@ class TestPackJobsGuard:
 
 class TestSnapshotExportRunEndpoint:
     def test_dry_run_calls_processor_and_returns_json(self, mock_archiver_client, mocker):
-        fake_result = {
-            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
-            "tier": "ci",
-            "status": "planned",
-            "source_window_start": None,
-            "source_window_end": None,
-            "seed_vin_count": None,
-            "closed_vin_count": None,
-            "listing_count": None,
-            "artifact_count": None,
-            "archive_bytes": None,
-            "manifest_key": None,
-            "archive_key": None,
-            "coverage_failures": [],
-        }
+        fake_result = _snapshot_result(
+            snapshot_id="adaptive-refresh-2026-07-07-000000", tier="ci",
+        )
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
         mock_fn.return_value.to_dict.return_value = fake_result
         resp = mock_archiver_client.post(
@@ -744,7 +823,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_missing_body_defaults_to_empty_payload(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         # dry_run=True: this test is about payload defaulting, not the
         # non-dry-run sync-cohort guard.
         resp = mock_archiver_client.post(
@@ -774,7 +853,7 @@ class TestSnapshotExportRunEndpoint:
     def test_non_dry_run_allowed_when_override_enabled(self, mock_archiver_client, mocker):
         mocker.patch("archiver.app._ALLOW_SYNC_SNAPSHOT_COHORT", True)
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "exported"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="exported")
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": False}
         )
@@ -806,13 +885,12 @@ class TestSnapshotExportRunEndpoint:
 
     def test_audit_sources_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
         mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
-        fake_result = {
-            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
-            "tier": "ci",
-            "status": "audited",
-            "source_audit": {"tables": {}, "window": {"start": None, "end": None},
-                              "errors": [], "ok": True},
-        }
+        fake_result = _snapshot_result(
+            snapshot_id="adaptive-refresh-2026-07-07-000000",
+            status="audited",
+            source_audit={"tables": {}, "window": {"start": None, "end": None},
+                          "errors": [], "ok": True},
+        )
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
         mock_fn.return_value.to_dict.return_value = fake_result
         resp = mock_archiver_client.post(
@@ -830,7 +908,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_audit_sources_defaults_to_false(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
         )
@@ -840,7 +918,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_run_selectors_defaults_to_false(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
         )
@@ -849,12 +927,10 @@ class TestSnapshotExportRunEndpoint:
 
     def test_run_selectors_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
         mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
-        fake_result = {
-            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
-            "tier": "ci",
-            "status": "planned",
-            "selector_diagnostics": {"selectors": {}, "errors": [], "ok": True},
-        }
+        fake_result = _snapshot_result(
+            snapshot_id="adaptive-refresh-2026-07-07-000000",
+            selector_diagnostics={"selectors": {}, "errors": [], "ok": True},
+        )
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
         mock_fn.return_value.to_dict.return_value = fake_result
         resp = mock_archiver_client.post(
@@ -884,7 +960,7 @@ class TestSnapshotExportRunEndpoint:
     def test_source_base_path_allowed_when_flag_enabled(self, mock_archiver_client, mocker):
         mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run",
             json={"tier": "ci", "dry_run": True, "source_base_path": "/tmp/lake"},
@@ -919,7 +995,7 @@ class TestSnapshotExportRunEndpoint:
     def test_build_cohort_allowed_when_override_enabled(self, mock_archiver_client, mocker):
         mocker.patch("archiver.app._ALLOW_SYNC_SNAPSHOT_COHORT", True)
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run",
             json={
@@ -934,7 +1010,7 @@ class TestSnapshotExportRunEndpoint:
         self, mock_archiver_client, mocker
     ):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "edge", "dry_run": True}
         )
@@ -943,7 +1019,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_audit_sources_still_allowed_by_default(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "audited"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="audited")
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "edge", "audit_sources": True}
         )
@@ -952,7 +1028,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_build_cohort_false_not_blocked_by_default(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run",
             json={"tier": "edge", "dry_run": True, "build_cohort": False},
@@ -966,7 +1042,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_planning_cache_fields_default(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
         )
@@ -978,7 +1054,7 @@ class TestSnapshotExportRunEndpoint:
 
     def test_planning_cache_fields_forwarded(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
-        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_fn.return_value.to_dict.return_value = _snapshot_result(status="planned")
         mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run",
             json={
@@ -1077,7 +1153,7 @@ class TestDiskUsageEndpoint:
         )
         processor = mocker.patch.object(
             archiver_app, "_run_disk_usage",
-            return_value={"failed": 0, "measured": 10, "unpublished": []},
+            return_value=_disk_result(measured=10),
         )
 
         resp = mock_archiver_client.post("/disk-usage/run", json={})
@@ -1093,7 +1169,7 @@ class TestDiskUsageEndpoint:
         )
         processor = mocker.patch.object(
             archiver_app, "_run_disk_usage",
-            return_value={"failed": 0, "measured": 11, "unpublished": []},
+            return_value=_disk_result(measured=11),
         )
 
         resp = mock_archiver_client.post("/disk-usage/run", json={"include_slow": True})
@@ -1113,7 +1189,7 @@ class TestDiskUsageEndpoint:
         )
         mocker.patch.object(
             archiver_app, "_run_disk_usage",
-            return_value={"failed": 2, "measured": 8, "unpublished": ["/usr", "/tmp"]},
+            return_value=_disk_result(failed=2, measured=8, unpublished=["/usr", "/tmp"]),
         )
 
         resp = mock_archiver_client.post("/disk-usage/run", json={})
@@ -1370,7 +1446,7 @@ class TestTheUnflippedEndpointsAreStillWarningOnly:
         """
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": "boom"},
+            return_value=produced_by("_flush_silver_observations", flushed=0, error='boom'),
         )
 
         with caplog.at_level(logging.WARNING, logger="archiver"):
@@ -1384,7 +1460,7 @@ class TestTheUnflippedEndpointsAreStillWarningOnly:
         # A quiet hour must be silent, or the window's own signal is noise.
         mocker.patch(
             "archiver.app._flush_silver_observations",
-            return_value={"flushed": 0, "error": None},
+            return_value=produced_by("_flush_silver_observations", flushed=0, error=None),
         )
 
         with caplog.at_level(logging.WARNING, logger="archiver"):
@@ -1429,10 +1505,16 @@ class TestCompactSignalsFailure:
     def test_a_minio_error_returns_500(self, mock_archiver_client, mocker):
         mocker.patch(
             "archiver.app._compact_silver",
-            return_value={
-                "scanned": 0, "compacted": 0, "incremental": 0, "skipped": 0,
-                "failed": 0, "error": "connection refused", "partitions": [],
-            },
+            return_value=produced_by(
+                "_compact_silver",
+                scanned=0,
+                compacted=0,
+                incremental=0,
+                skipped=0,
+                failed=0,
+                error='connection refused',
+                partitions=[],
+            ),
         )
 
         resp = mock_archiver_client.post("/compact/silver/run")
@@ -1441,10 +1523,7 @@ class TestCompactSignalsFailure:
         assert "connection refused" in resp.json()["detail"]["failure_reason"]
 
     def test_a_clean_run_is_unchanged(self, mock_archiver_client, mocker):
-        fake = {
-            "scanned": 7, "compacted": 3, "incremental": 4, "skipped": 0,
-            "failed": 0, "error": None, "partitions": [],
-        }
+        fake = _compact_result(scanned=7, compacted=3, incremental=4)
         mocker.patch("archiver.app._compact_silver", return_value=fake)
 
         resp = mock_archiver_client.post("/compact/silver/run")
@@ -1458,10 +1537,7 @@ class TestCompactSignalsFailure:
     ):
         # A day whose partitions are all already compacted. Failing on this
         # would page every morning on a system that is working.
-        fake = {
-            "scanned": 7, "compacted": 0, "incremental": 0, "skipped": 7,
-            "failed": 0, "error": None, "partitions": [],
-        }
+        fake = _compact_result(scanned=7, skipped=7)
         mocker.patch("archiver.app._compact_silver", return_value=fake)
 
         resp = mock_archiver_client.post("/compact/silver/run")
@@ -1480,10 +1556,16 @@ class TestCompactSignalsFailure:
         """
         mocker.patch(
             "archiver.app._compact_silver",
-            return_value={
-                "scanned": 1, "compacted": 0, "incremental": 0, "skipped": 0,
-                "failed": 1, "error": None, "partitions": [],
-            },
+            return_value=produced_by(
+                "_compact_silver",
+                scanned=1,
+                compacted=0,
+                incremental=0,
+                skipped=0,
+                failed=1,
+                error=None,
+                partitions=[],
+            ),
         )
 
         with caplog.at_level(logging.WARNING, logger="archiver"):

@@ -11,6 +11,7 @@ from ops.queries import (
     INSERT_COORDINATION_STATE_EVENT,
 )
 from ops.routers import coordination
+from tests.response_fixtures import produced_by
 
 
 def test_status_serializes_timestamps(mock_cursor_context):
@@ -163,13 +164,20 @@ def test_status_route_is_registered(mock_client, mocker):
     the route `scripts/host_maintenance.py` polls as `GET /coordination/status`
     before it will proceed, so a rename here strands the host maintenance
     workflow rather than failing anything in this suite.
+
+    Plan 162 Stage AA: this asserted `== {"phase": "none"}`, which is a body
+    `_status` cannot return -- it answers `dict(row)` over the sixteen columns
+    `select_coordination_state.sql` names, so a one-key record is not a small
+    version of the real one, it is a shape that does not occur. The route being
+    registered is what this test is for, so it asserts the phase reaching the
+    caller and leaves the full record to `test_status_serializes_timestamps`.
     """
     mocker.patch("ops.routers.coordination._status", return_value={"phase": "none"})
 
     response = mock_client.get("/coordination/status")
 
     assert response.status_code == 200
-    assert response.json() == {"phase": "none"}
+    assert response.json()["phase"] == "none"
 
 
 @pytest.mark.parametrize(
@@ -262,7 +270,12 @@ def test_drain_status_aggregates_authoritative_state_without_transition(mock_cli
     mocker.patch("ops.routers.coordination._status", return_value=state)
     collect = mocker.patch(
         "ops.routers.coordination.collect_drain_status",
-        return_value={"phase": "draining", "scope": ["processing"], "drained": True},
+        return_value=produced_by(
+            "collect_drain_status",
+            phase='draining',
+            scope=['processing'],
+            drained=True,
+        ),
     )
     transition = mocker.patch("ops.routers.coordination._transition")
 
@@ -279,7 +292,12 @@ def test_release_status_returns_full_gate_evidence_without_transition(mock_clien
     mocker.patch("ops.routers.coordination._status", return_value=state)
     collect = mocker.patch(
         "ops.routers.coordination.collect_release_status",
-        return_value={"release_ready": False, "blockers": ["container_health"], "gates": []},
+        return_value=produced_by(
+            "collect_release_status",
+            release_ready=False,
+            blockers=['container_health'],
+            gates=[],
+        ),
     )
     transition = mocker.patch("ops.routers.coordination._transition")
 
@@ -357,7 +375,7 @@ def test_complete_refuses_failing_stack_gate(mock_cursor_context, mocker):
     cursor.fetchone.return_value = _complete_state()
     mocker.patch(
         "ops.routers.coordination.collect_release_status",
-        return_value={"blockers": ["container_health"], "gates": []},
+        return_value=produced_by("collect_release_status", blockers=['container_health'], gates=[]),
     )
 
     result, evidence = coordination._complete(
@@ -376,7 +394,7 @@ def test_complete_refuses_without_passing_host_evidence(mock_cursor_context, moc
     cursor.fetchall.return_value = []
     mocker.patch(
         "ops.routers.coordination.collect_release_status",
-        return_value={"blockers": [], "gates": []},
+        return_value=produced_by("collect_release_status", blockers=[], gates=[]),
     )
 
     result, evidence = coordination._complete(
@@ -393,7 +411,7 @@ def test_complete_succeeds_with_both_validation_halves(mock_cursor_context, mock
     cursor.fetchall.return_value = [{"gate_results": _host_evidence_payload()["gates"]}]
     mocker.patch(
         "ops.routers.coordination.collect_release_status",
-        return_value={"blockers": [], "gates": []},
+        return_value=produced_by("collect_release_status", blockers=[], gates=[]),
     )
 
     result, completed = coordination._complete(

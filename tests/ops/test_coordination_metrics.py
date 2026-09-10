@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from ops.coordination_metrics import CoordinationCollector
+from tests.response_fixtures import produced_by
 
 
 def _samples(families):
@@ -41,7 +42,11 @@ def test_active_state_exports_age_and_current_generation_gate_evidence(
     }
     gate = mocker.patch(
         "ops.coordination_metrics._airflow_gate_observations",
-        return_value={"status": "known", "count": 2},
+        return_value=produced_by(
+            "ops.coordination_metrics._airflow_gate_observations",
+            status='known',
+            count=2,
+        ),
     )
 
     samples = _samples(list(CoordinationCollector().collect()))
@@ -96,7 +101,11 @@ def test_unknown_gate_evidence_is_explicit(mock_cursor_context, mocker):
     }
     mocker.patch(
         "ops.coordination_metrics._airflow_gate_observations",
-        return_value={"status": "unknown", "count": None},
+        return_value=produced_by(
+            "ops.coordination_metrics._airflow_gate_observations",
+            status='unknown',
+            count=None,
+        ),
     )
 
     samples = _samples(list(CoordinationCollector().collect()))

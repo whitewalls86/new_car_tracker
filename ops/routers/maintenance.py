@@ -6,6 +6,12 @@ from typing import Any, Dict
 
 from fastapi import APIRouter
 
+from ops.api_models import (
+    AffectedResponse,
+    EvictCooldownsResponse,
+    ReapStuckResponse,
+    ReconcileCohortsResponse,
+)
 from ops.queries import (
     COUNT_BLOCKED_COOLDOWN_LISTINGS,
     EVICT_DELISTED_COOLDOWNS,
@@ -40,7 +46,7 @@ def _run_maintenance_query(sql: str, params: tuple) -> Dict[str, Any]:
     return {"affected": len(rows)}
 
 
-@router.post("/expire-orphan-detail-claims")
+@router.post("/expire-orphan-detail-claims", response_model=AffectedResponse)
 def expire_orphan_detail_claims() -> Dict[str, Any]:
     with active_job():
         return _run_maintenance_query(EXPIRE_ORPHAN_DETAIL_CLAIMS, ())
@@ -78,7 +84,7 @@ def _reap_stuck_processing() -> Dict[str, Any]:
     return {"stuck": len(rows), "retried": retried, "skipped": skipped}
 
 
-@router.post("/reap-stuck-processing")
+@router.post("/reap-stuck-processing", response_model=ReapStuckResponse)
 def reap_stuck_processing() -> Dict[str, Any]:
     with active_job():
         return _reap_stuck_processing()
@@ -99,7 +105,7 @@ def _evict_delisted_cooldowns() -> Dict[str, Any]:
     return {"evicted": len(removed)}
 
 
-@router.post("/evict-delisted-cooldowns")
+@router.post("/evict-delisted-cooldowns", response_model=EvictCooldownsResponse)
 def evict_delisted_cooldowns() -> Dict[str, Any]:
     with active_job():
         return _evict_delisted_cooldowns()
@@ -156,7 +162,7 @@ def _reconcile_cooldown_cohorts() -> Dict[str, Any]:
     }
 
 
-@router.post("/reconcile-cooldown-cohorts")
+@router.post("/reconcile-cooldown-cohorts", response_model=ReconcileCohortsResponse)
 def reconcile_cooldown_cohorts() -> Dict[str, Any]:
     with active_job():
         return _reconcile_cooldown_cohorts()

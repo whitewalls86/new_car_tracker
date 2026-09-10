@@ -9,9 +9,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from prometheus_client import REGISTRY
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from shared.api_models import HealthResponse
 from shared.db_vocabularies import UserRole
 from shared.logging_setup import configure_logging
 
@@ -52,7 +53,23 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 REGISTRY.register(COORDINATION_COLLECTOR)
-Instrumentator().instrument(app).expose(app)
+Instrumentator().instrument(app)
+
+# Plan 162 Stage AA: `/metrics` is declared here rather than by
+# `Instrumentator.expose()`, which registers a closure from the library. That
+# closure is not a function in this repository, so no rule that resolves a
+# route to its handler could reach this route -- and a rule that cannot reach a
+# route is a rule with a hole in it rather than a rule with an exception.
+#
+# Equivalent to what `expose()` served: its only other branch is the
+# multiprocess registry, and `PROMETHEUS_MULTIPROC_DIR` is set nowhere in this
+# repository and unset in all three running containers. `should_gzip` was left
+# at its default of False. `instrument()` still does the collecting.
+@app.get("/metrics", response_class=Response)
+def metrics() -> Response:
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
 app.mount(
     "/static_ops",
     StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static_ops")),
@@ -94,6 +111,7 @@ async def observer_readonly(request: Request, call_next) -> Response:
 # was relying on the old behaviour. ``/admin`` keeps it.
 @app.get(
     "/admin",
+    response_class=RedirectResponse,
     responses={
         307: {"description": "Redirect to the admin landing page."},
     },
@@ -102,6 +120,6 @@ def root():
     return RedirectResponse(url="/admin/searches/")
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True}

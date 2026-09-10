@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import zstandard
 
+from shared.lake_snapshot_schema import ARCHIVE_CACHE_SCHEMA_VERSION
 from shared.minio import (
     BUCKET,
     get_s3fs,
@@ -51,7 +52,6 @@ from shared.minio import (
 
 logger = logging.getLogger("archiver")
 
-ARCHIVE_CACHE_SCHEMA_VERSION = 1
 DEFAULT_ARCHIVE_PREFIX = "snapshot_archives"
 DEFAULT_ALIAS_PREFIX = "ci_snapshots/adaptive_refresh"
 ARCHIVE_OBJECT_NAME = "snapshot.tar.zst"

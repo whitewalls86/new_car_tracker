@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from processing.api_models import BatchResponse
 from processing.processors import (
     parse_cars_detail_page_html_v1,
     parse_cars_results_page_html_v3,
@@ -24,6 +25,7 @@ from processing.writers.detail_writer import (
     write_detail_unlisted,
 )
 from processing.writers.srp_writer import write_srp_observations
+from shared.api_models import ErrorResponse
 from shared.db import db_cursor
 from shared.db_vocabularies import ArtifactStatus, ArtifactType
 from shared.job_counter import active_job
@@ -243,8 +245,12 @@ def _process_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.post(
     "/process/batch",
+    response_model=BatchResponse,
     responses={
-        503: {"description": "The queue could not be read; no artifacts were claimed."},
+        503: {
+            "description": "The queue could not be read; no artifacts were claimed.",
+            "model": ErrorResponse,
+        },
     },
 )
 def process_batch(

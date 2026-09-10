@@ -11,6 +11,7 @@ from scraper.processors.scrape_detail import (
     scrape_detail_dummy,
     scrape_detail_fetch,
 )
+from tests.response_fixtures import produced_by
 
 
 @pytest.fixture(autouse=True)
@@ -617,7 +618,7 @@ class TestScrapeDetailBatch:
     def test_batch_forwards_timeout_to_each_fetch(self, mocker):
         mock_fetch = mocker.patch(
             "scraper.processors.scrape_detail.scrape_detail_fetch",
-            return_value={"error": None, "artifacts": []},
+            return_value=produced_by("scrape_detail_fetch", error=None, artifacts=[]),
         )
 
         scrape_detail_batch(

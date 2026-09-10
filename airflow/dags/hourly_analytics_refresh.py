@@ -52,7 +52,13 @@ def _run_reconcile_cooldowns(**context):
     )
 
 
-DEFAULT_DBT_SELECT = ["tag:hourly_core"]
+# Plan 162 Stage AA: the cadence is named, not spelled out. This was
+# `["tag:hourly_core"]`, a second copy of what `dbt/selectors.yml` already
+# defines as the `hourly_core` selector -- and that file's own comment recorded
+# why the copy existed: dbt_runner's /dbt/build "only forwards raw
+# --select/--exclude tokens". It forwards `--selector` now, so the DAG names
+# the cadence and dbt resolves it from the file.
+DEFAULT_DBT_SELECTOR = "hourly_core"
 
 
 def _run_dbt_build(**context):
@@ -60,12 +66,16 @@ def _run_dbt_build(**context):
 
     # Plan 123 Phase 1: default to the hourly_core cadence so this scheduled
     # run no longer rebuilds the complete dbt graph every hour. Pass
-    # dag_run.conf={"select": [...]} to override — e.g. {"select": []} to
+    # dag_run.conf={"selector": "<name>"} to pick another cadence, or
+    # {"select": [...]} to override with raw tokens — e.g. {"select": []} to
     # build everything (dbt_runner omits --select when the list is empty;
     # "*" fails its SAFE_TOKEN validation) — or trigger the dbt_build DAG
     # directly for a manual full-graph run.
-    payload = {"select": DEFAULT_DBT_SELECT}
+    payload = {"selector": DEFAULT_DBT_SELECTOR}
+    if "selector" in conf:
+        payload["selector"] = conf["selector"]
     if "select" in conf:
+        payload.pop("selector", None)
         payload["select"] = conf["select"]
     if "full_refresh" in conf:
         payload["full_refresh"] = conf["full_refresh"]
