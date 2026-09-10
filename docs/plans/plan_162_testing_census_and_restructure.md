@@ -5485,3 +5485,19 @@ The real response raises in `raise_for_status()` and the bare mock does not,
 which is why `test_service_503_body_is_still_known_positive_evidence` passes
 while production returns `unknown` — the measurement Step 1's third rule (no
 test fabricates a response object's behaviour) exists to make impossible.
+
+**The caller corpus reproduces: 17 modules resolve calls to 35 distinct
+endpoints.** Recipe: `caller_endpoints()` from `tests/service_contracts.py`
+over every `.py` under the compose-derived service roots plus `scripts/` and
+`shared/`, 2026-09-10, same worktree. The 58 declarations left over split
+into: 6 `/health` covered by compose healthchecks, 5 `/metrics` covered by
+Prometheus's scrape config, 1 `/auth/check` covered by the Caddyfile's
+`forward_auth`, 35 ops routes a browser reaches through Caddy's blocks, and
+**17 with no machine-readable caller** — 10 called by `scripts/redeploy.sh` /
+`scripts/host_maintenance.py` over `localhost:8060`, and 7 with no caller
+anywhere in the tree (`/coordination/cancel`, `/coordination/local-drain`,
+`/coordination/release-status`, `/deploy/status`,
+`POST /process/artifact/{artifact_id}`, `POST /scrape_detail`,
+`GET /scrape_results/jobs`). Those 17 seed
+`UNCALLED_ENDPOINT_LEDGER` in `tests/rules/test_every_endpoint_has_a_caller.py`,
+which is statement 3's rule.

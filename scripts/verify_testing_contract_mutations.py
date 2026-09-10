@@ -3315,6 +3315,35 @@ MUTATIONS = [
         ["docker-compose.yml"],
         [],
     ),
+    (
+        "tests/rules/test_every_endpoint_has_a_caller.py"
+        "::test_every_endpoint_has_a_caller_or_is_declared_externally_reachable",
+        "the one caller of container_health's /oneoff-processes moves to a "
+        "path no contract declares, and the endpoint keeps answering with "
+        "nobody left to notice -- the dbt_runner deletion shape, before the "
+        "deletion",
+        lambda: _edit(
+            "ops/coordination_drain.py",
+            '}/oneoff-processes"',
+            '}/oneoff-processes-moved"',
+        ),
+        ["ops/coordination_drain.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_endpoint_has_a_caller.py"
+        "::test_the_endpoint_coverage_readers_are_not_blind",
+        "Prometheus stops scraping the scraper while its contract still "
+        "declares GET /metrics -- dead observability, and the coverage set "
+        "quietly shrinking under the caller rule",
+        lambda: _edit(
+            "prometheus/prometheus.yml",
+            "      - targets: ['scraper:8000']",
+            "      - targets: []",
+        ),
+        ["prometheus/prometheus.yml"],
+        [],
+    ),
 ]
 
 
