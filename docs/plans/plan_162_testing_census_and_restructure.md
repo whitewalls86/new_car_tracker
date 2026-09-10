@@ -3123,94 +3123,286 @@ reader narrowed so that it resolves less than the whole corpus failing.
 
 ### Stage AL: the services agree on what they send, and on what a code means
 
-**Issue:** unassigned · **State:** `—` · **Gap:** —
-
-**A stub, written 2026-09-10 from Stage AA's own friction. The measurements
-below are real; the design is not decided.**
+**Issue:** CAR-119 · **State:** `—` · **Gap:** G33
 
 **`contracts/*.json` is descriptive and there is nothing for it to be wrong
 against.** Stage Z generates it *from* the running apps, so it faithfully
 records whatever they do — which is why it carried a phantom 307 on `/info`, a
-phantom 422, eight phantom 200s and six routes whose callers had been deleted
-in April. Each of those was found by reading the artifact against the code by
-hand. A generated artifact cannot fail a standard that does not exist.
+phantom 422, eight phantom 200s and six routes whose callers had been deleted in
+April. Each was found by reading the artifact against the code by hand. A
+generated artifact cannot fail a standard that does not exist.
 
-**Measured across all six contracts on 2026-09-10**, by declared response:
+#### The shape half is smaller and more specific than it first measured
 
-| | typed (`$ref`) | no schema | other |
-|---|---|---|---|
-| 2xx | 53 | 29 | 2 array, 2 boolean |
-| 3xx | — | 16 | — |
-| 4xx | 47 | 42 | — |
-| 5xx | 12 | 34 | — |
+**Re-measured 2026-09-10 across all six contracts.** 237 declared responses; 16
+redirects that correctly have no body; **116 of the remaining 221 carry a
+shape**. Of the 105 that do not, 29 are HTML, plain text, XML, Prometheus
+exposition or a file stream, where a JSON schema would be the wrong answer. **So
+the population is 76, every one an error response — and every one of them is in
+`ops`.** Outside `ops` the only unshaped non-redirect responses in the corpus
+are four `/metrics` 200s.
 
-**105 declared responses carry a status code and no shape at all**, setting
-aside the 16 redirects that correctly have no body -- **and 29 of those 105 are
-not a gap.** Splitting them by declared content type, which is the measurement
-this stage owed before its own number could be trusted:
+The cause is exact rather than general: Stage Y closed G21 by making every route
+declare the *statuses* it can return. Declaring a code and declaring that code's
+body were two obligations and only the first was asked for.
 
-| | count | |
+**Not one of the 76 closes by declaring `ErrorResponse`**, which is why the exit
+clause "or a stated reason it cannot" is load-bearing rather than an escape:
+
+| family | n | what the handler actually sends |
 |---|---|---|
-| 2xx `text/html` | 14 | `ops` admin pages and templates |
-| 2xx `text/plain` | 2 | `robots.txt` |
-| 2xx no content declared | 13 | five `/metrics`, `sitemap.xml`, `/recaps` GET+HEAD, `/auth/check`, a file download |
-| 4xx no content declared | 42 | |
-| 5xx no content declared | 34 | |
+| JSON routes (coordination, snapshots) | 37 | `HTTPException(detail=...)` — `ErrorResponse` is right |
+| redirect-only admin mutations | 24 | `_db_error_response()` / `_not_found_response()` → `admin/error.html` |
+| HTML routes | 4 | the same template |
+| other | 11 | a file stream, `/recaps`, and `/auth/check`'s 403, which is `Response(status_code=403)` with no body at all |
 
-Not one of the 29 unshaped 2xx is a JSON route with an undeclared body. They
-are HTML, plain text, XML, Prometheus exposition and a file stream, where a
-JSON schema would be the wrong answer -- though several could still declare the
-content type they do serve.
+Declaring `model=ErrorResponse` on the 28 template routes would not change the
+response and *would* change the artifact, after which `service_response()` would
+hand a caller a fabricated `{"detail": ""}` the service never sends — this
+plan's defect rebuilt inside its remedy. Hence a declared **kind**, not a schema
+for everything.
 
-**So the real population is 76, and every one is an error response.** The cause
-is exact rather than general: Stage Y closed G21 by making every route declare
-the *statuses* it can return, which is where 400, 401, 403, 404, 409, 500 and
-503 came from. Declaring a code and declaring that code's body were two
-obligations and only the first was ever asked for. 59 of the 135 error
-responses do carry a `$ref`; `shared/api_models.py` already holds the
-`ErrorResponse` the other 76 are not using.
+**G32's "0 untyped" is not wrong, and its denominator omits exactly this.** That
+count was taken over responses that already declared a content type, which is
+the one population the gap cannot be in.
 
-**This is what bounds Stage AA's rules rather than a separate concern.** Where a
-response declares no shape, `service_response()` has nothing to build from and
-`body_violations()` has nothing to compare against, so a test may fabricate
-anything there and no rule can contradict it. Stage AA's "0 fabrications" is
-therefore a measurement over the 116 of 221 non-redirect responses that
-carry a shape, not over all of them, and that limit is stated in its record rather than glossed.
+#### The load-bearing half is what a code means, and it is wrong on master now
 
-**The load-bearing half is what a code *means*, not what the body looks like.**
-Every live defect Stage AA found was a meaning defect. `dbt_runner` answers 503
-on `/ready` to mean *busy*, and `ops` read it as *failure*, so the admin dbt
-panel showed an idle runner as healthy and a running build as down. The `/info`
-307 contradicted its own docstring. Six deleted endpoints kept returning an
-unconditional 303 to callers that had nothing to call. A shape standard catches
-none of these; a standard that says *"a 503 from `/ready` is a declared refusal
-and not an error"* catches all of them.
+**Every `/ready` 503 declares the wrong meaning, on four services, verbatim.**
+The decorator says `"A dependency this service needs is not reachable."` The
+handler raises `HTTPException(503, detail={**result, "reason": "jobs in
+flight"})`. It means *busy*, and `shared/api_models.py:NotReadyDetail` says so
+in prose two files away.
 
-**The precedent is in this plan already.**
-[`shared/db_vocabularies.py`](../../shared/db_vocabularies.py) (Stage W)
-declares the database's closed vocabularies once in Python while the migration
-stays the owner, and is guarded by a *pair* of rules comparing in both
-directions — with stated reasoning for why neither works alone. The API case
-maps onto it: a declaration module, the running app still the owner, one rule
-that every generated contract conforms and one that no route hand-rolls a code
-or shape it could take from the declaration.
+**Three artifacts agree with each other and disagree with the code.** Measured
+2026-09-10 by calling `_service_jobs` with a real `requests.Response` beside the
+mock its test uses:
 
-**One constraint to design in rather than discover.** `container_health` cannot
-import `shared/` — the Docker-socket grant isolates it, which is why Stage AA
-gave it a local `api_models.py` instead. So the standard must tolerate exactly
-one service that copies rather than imports, and the rule must assert the copy
-matches. `db_vocabularies` solved that same problem, but only because it was
-designed for it.
+```
+real 503 Response  -> {'status': 'unknown', 'count': None,
+                       'reason': 'service evidence unavailable or malformed'}
+mocker.Mock()      -> {'status': 'known',   'count': 2}
+```
 
-**Sequence this before Stage AH.** AH writes a skill per rule so an agent meets
-a rule before CI does. Skills written now would teach conventions this stage is
-about to change.
+`_service_jobs` calls `response.raise_for_status()` before reading the body —
+Stage Y, G27, *"the status, before the body"* — so a real 503 raises, is caught,
+and returns `_unknown`. A bare `Mock`'s `raise_for_status()` does not raise, so
+`test_service_503_body_is_still_known_positive_evidence` never reaches the branch
+it is named for and passes. `_unknown` lands in `blockers`
+(`coordination_drain.py:262`), so **a busy service blocks a drain with "service
+evidence unavailable or malformed" instead of "2 jobs in flight."**
 
-**Exit:** every response every service declares has a declared shape or a stated
-reason it cannot; every status code a route declares is one the standard names,
-with a meaning a caller can rely on; the declaration and the generated contracts
-are compared in both directions; demonstrated by a route declaring a code the
-standard does not name, failing.
+Stage AA's rules do not see it. The body is built by `service_response()` from
+the contract and is correct. What the mock fabricates is the response object's
+*behaviour*, which no rule reads.
+
+**`ops` declares one 503 meaning against five real ones.** 29 responses declare
+`"Database unavailable."` while `ops/routers/coordination.py` raises 503 with
+`Database unavailable.`, `Coordination state is missing.`, `Host evidence could
+not be recorded.`, `Coordination could not be completed.` and `Authorization
+evidence unavailable.` Four of the five are not a database outage, and one of
+them is the recorded case where an empty-scope deploy trips
+`coordination_state_check` and is told the database is down.
+
+#### Why the readers cannot be sharpened instead
+
+**Every rule about the seam keys on a shape, and there is more than one shape.**
+That is `_SQL_CALL_NAMES` one layer up — the inventory Stage N deleted rather
+than lengthened. `caller_endpoints()` unions every host a module names because
+it cannot tell which one a call reaches; `_codes_at_call_sites` follows a
+`status_code=` literal at the call site, and **128 codes are typed out across
+five packages** (`ops` 94, `archiver` 18, `dbt_runner` 9, `shared` 4, `scraper`
+3).
+
+**The cost is not the enumeration. It is that such a reader measures what it
+recognises and passes.** Measured 2026-09-10:
+`test_the_artifact_declares_no_code_its_handler_cannot_return` **judges 12 of 93
+declarations.** `archiver` 12/12 skipped, `container_health` 4/4, `dbt_runner`
+7/7, `processing` 5/5, `scraper` 9/9; only `ops` is judged at all, 12 of 56. Its
+floor asserts `==` and passes, because it asks whether a declaration *resolves*
+to a handler and never whether that handler can be *read*. **A floor can be
+derived, unguessed, fully AK-compliant, and still measure nothing**, which is a
+sharper statement of AK's thesis than AK makes.
+
+The 81 skipped handlers split cleanly: **71 return a bare JSON value**, 25 return
+a non-JSON framework response, 1 other.
+
+#### Proved by construction rather than argued
+
+A probe on 2026-09-10 sketched a declaration module and converted `processing` —
+five handlers returning their declared model instance and raising named
+refusals:
+
+* `processing` went from **0 of 5 readable to 5 of 5**, every resolved code
+  matching what the contract declares, **0 phantoms**;
+* `199 tests passed` and `generate_service_contracts.py --check` exited 0 with
+  the artifact **byte-identical**.
+
+**So the exit shape is free of any change on the wire**, which splits the work
+in two and only one half touches production behaviour: *returning a declared
+model and raising a named refusal* costs nothing outward, while a uniform
+payload envelope is a wire change reaching 17 caller modules. The first is where
+the rule-surface gain is.
+
+**And it broke the rule beside it, which is the finding.**
+`test_every_route_declares_the_statuses_it_can_return` reported three routes
+declaring codes nothing produces, because its reader follows the `status_code=`
+literal *at the call site* and a declaration module moves that literal out of the
+call site by design. Its docstring already refuses the obvious repair: *"An
+inventory of class names is escapable by using a class the inventory has not
+heard of."* The resolution is Stage W's — read the **member**, not the literal —
+and it was verified to close all three, with the reverse direction (a bare
+literal retyping a declared refusal) available as the pair's other half.
+
+#### Design
+
+**One channel gains its one mechanism.** Two of the three already have theirs —
+Stage W for the shared database, Stage AA for the object-storage manifest — and
+HTTP is the last unstandardized channel. The rule set, the declaration module and
+the statements are in
+[`docs/TESTING.md` §*How a service reaches another service*](../TESTING.md#how-a-service-reaches-another-service);
+this section holds only what that document is not the place for.
+
+**The `container_health` constraint is one known constraint, not three.** It
+cannot import `shared/`, which is why Stage AA gave it a local `api_models.py`.
+The same applies to the declaration module, and to `ops/coordination_release.py`
+reading `container_health.expected` — closed not by an endpoint but by `ops`
+reading `maintenance-running-set.txt`, one file and two readers, the shape
+`healthcheck-exemptions.txt` already runs.
+
+**A ledger entry does not have to be a violation; it can be "not yet
+converted."** This is what lets every rule be written and seeded before any
+conversion, instead of phasing the code ahead of the rules. Statement 4's rule is
+*"every handler's exits are readable"*, seeded at **81**. The retyping rule seeds
+at **128**. The client rule seeds at **17**. Draining those ledgers *is* the
+conversion. Key every entry on file-plus-handler or file-plus-expression and
+never on a line number, for `GUESSED_BOUND_WAIVERS`'s stated reason.
+
+**Two ordering constraints, and only two.** The declaration module must exist as
+a file before the rule that reads meanings out of it — that is data entry, not a
+refactor. And the two readers for statements 4 and 5 change in **one commit**:
+the probe went red only because one reader changed while the other did not. Both
+land before any conversion, when every handler still looks the way both readers
+expect, so the suite is green from seed to drain.
+
+**Airflow is not a third party we cannot ask.** The distinction that decides the
+mechanism is not ownership but whether the dependency can be interrogated.
+`contracts/*.json` is tier one. Airflow, Postgres and the Docker proxy are tier
+two — we cannot change them and we *can* ask them, so they are generated like
+ours, from a different producer. Only cars.com is tier three, where nothing
+publishes anything and a recorded corpus replayed against the live site is the
+honest instrument. Measured 2026-09-10, our Airflow surface is **20 DAG modules
+that are our own code**, **one outbound HTTP call**
+(`/api/v2/monitor/health`) and **two SQL files** reading their schema out of our
+own Postgres. The one difference worth writing down is not the mechanism but the
+audience: a diff in our contract says *fix the service*; a diff in theirs says
+*they changed, fix our caller*.
+
+**This stage carries its own skills, and Stage AH keeps the rest.** AH's exit is
+that every rule in the `Asserted by` column names a skill, so rules landing
+without one would enlarge its backlog. Skills map to **tasks, not to rules** —
+`add-sql` carries several SQL rules because "add a SQL statement" is one thing a
+person does — so this is about three: serving an endpoint, calling another
+service, and testing across the seam.
+
+#### Rejected
+
+**RFC 9457 `application/problem+json`**, the standard error body. Every consumer
+is in this repository, `{"detail": ...}` is what FastAPI produces for free and
+what `ops` already unwraps, and changing the wire format rewrites every caller
+and every fixture for no reader's benefit. Its discipline — one declared,
+uniform error body — is adopted; its media type is not.
+
+**A uniform payload envelope, in this stage.** It is the stronger form and it is
+a wire change across 17 caller modules, where the exit shape costs nothing
+outward. Separating them is what makes the rule-surface gain available without
+the deploy.
+
+**`202`, `429` and `Retry-After`.** Conventional, and all three change what
+production sends to live callers. They are a different kind of change from
+declaring what it already sends, and they carry no rule-surface payoff, so they
+do not ride in this deploy.
+
+**Sequence this before Stage AH.** AH writes a skill per rule so an agent meets a
+rule before CI does. Skills written now would teach conventions this stage is
+about to change — a skill written today would teach 128 call-site status literals
+as normal practice.
+
+**Exit:** every response every service declares has a declared shape or a
+declared kind; every status code a route declares is one the standard names, with
+a meaning a caller can rely on; the declaration and the generated contracts are
+compared in both directions; the one service that copies rather than imports has
+its copy asserted equal; every rule this stage adds carries a floor that is a
+derived equality or a bare non-emptiness, a mutation, and a skill; demonstrated
+by a route declaring a code the standard does not name, failing, and by the four
+`/ready` descriptions and `ops`'s 29 `"Database unavailable."` declarations
+repaired rather than waived.
+
+
+### Stage AM: the object store is a seam, and one artifact in it has a contract
+
+**Issue:** unassigned · **State:** `—` · **Gap:** G34
+
+**A stub, written 2026-09-10 from Stage AL's own overreach. The measurements
+below are real; the design is not decided.**
+
+**Stage AL's first draft called this channel solved and it is not.** The
+contract's channel table read *"object storage — `contracts/lake_snapshot_manifest/`,
+Stage AA"*, which is true of one artifact and false of the channel. That is the
+same move this plan is named for — a description accurate about the part
+somebody looked at, standing in for a claim about the whole — and it happened
+inside the document being written to prevent it.
+
+**Measured 2026-09-10: 20 modules across five services and `scripts/` reach
+object storage.** Four distinct exchanges travel through it and one has a
+record:
+
+| Exchange | Writer | Reader | Governed by |
+|---|---|---|---|
+| lake snapshot manifest | `archiver` | `ops` | `contracts/lake_snapshot_manifest/`, four rules |
+| bronze HTML | `scraper` | `processing` | — |
+| packfiles | `archiver` | `processing`, via `read_html()` | — |
+| silver Parquet | `processing`, `archiver` | dbt / DuckDB | — |
+
+**The addresses are retyped literals, which is Stage W's defect in the channel
+next door.** `silver_normalized/observations` is written out in
+`flush_silver_observations.py`, `compact_silver.py`, `pack_bronze_html.py`,
+`lake_snapshot_export.py`, `lake_source_audit.py` and
+`.github/scripts/seed_ci_bronze_schemas.py`, with no declared constant behind any
+of them. `shared/db_vocabularies.py` exists because the same shape in the
+database was worth one declaration and a pair of rules; nothing decided that
+object keys were different, and the question was never asked.
+
+**The bronze HTML exchange has three parties and no artifact says so.**
+`scraper` writes an object at a key from `make_key()`; the key reaches
+`processing` through *Postgres*, as `artifacts_queue.minio_path`, not through
+the object store at all; and `read_html()` may resolve it through a packfile
+sidecar index rather than at that key, because `archiver` rewrote it underneath
+with `PACK_READ_FALLBACK` covering the difference. So the address the writer
+chose is not necessarily where the object is, the reader tolerates both, and the
+one that would notice a genuine loss is the fallback that exists to hide a
+rewrite. Three services, one object, nothing comparing them.
+
+**Two channels beyond this one are named in the contract and owned by nobody.**
+Metrics — a service emits a name, a dashboard or alert rule queries a name, and
+nothing compares the two — and logs, which Plans 141 and 160 covered partly.
+They are one-directional and observational, which is why Stage AL's statements
+do not reach them, but the `cartracker_*` gauges have already gone stale through
+an eight-hour outage with the alert silent. Whether they belong here or in their
+own plan is this stage's first question rather than an assumption it should make.
+
+**Do not copy Stage AL's HTTP answer across.** The HTTP seam had a generated
+artifact to compare against before it had a standard, because `openapi()`
+exists. Object storage has no equivalent: nothing enumerates what a bucket is
+supposed to contain, so the artifact this stage needs is one somebody has to
+design rather than generate. That difference is the reason this is a separate
+stage and not a widening of AL's scope.
+
+**Exit:** undecided. What is settled is the exit's shape — every exchange
+through object storage is named, every address it uses comes from one
+declaration, and the writer and reader of each are compared in both directions,
+with the `container_health`-style exception stated rather than discovered.
+
 
 ## Success criteria
 
