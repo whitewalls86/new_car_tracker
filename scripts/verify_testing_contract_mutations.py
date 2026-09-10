@@ -3376,6 +3376,34 @@ MUTATIONS = [
         ["tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"],
         [],
     ),
+    (
+        "tests/rules/test_the_refusal_envelope_is_one_declaration.py"
+        "::test_the_refusal_envelope_is_one_declaration",
+        "the container_health copy of the envelope quietly changes what its "
+        "database 503 means, and the two files answer differently for the "
+        "same class -- the drift a copy nothing compares always reaches",
+        lambda: _edit(
+            "container_health/api_envelope.py",
+            '    meaning = "Database unavailable."',
+            '    meaning = "The database is briefly busy."',
+        ),
+        ["container_health/api_envelope.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_refusal_envelope_is_one_declaration.py"
+        "::test_the_envelope_declares_what_a_refusal_needs",
+        "a refusal class leaves the DECLARED_REFUSALS registry while its "
+        "class body stays -- resolvable by name to nothing, so every lookup "
+        "rule reads one member fewer with nothing going red",
+        lambda: _edit(
+            "shared/api_envelope.py",
+            "        Busy,\n        DatabaseUnavailable,",
+            "        DatabaseUnavailable,",
+        ),
+        ["shared/api_envelope.py"],
+        [],
+    ),
 ]
 
 
