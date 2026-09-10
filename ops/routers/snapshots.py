@@ -52,6 +52,10 @@ from ops.queries import (
 )
 from shared.db import db_cursor
 from shared.db_vocabularies import MachineTokenScope
+from shared.lake_snapshot_schema import (
+    READABLE_ARCHIVE_CACHE_SCHEMAS,
+    READABLE_EXPORT_CACHE_SCHEMAS,
+)
 from shared.minio import object_size, open_stream, read_json
 
 logger = logging.getLogger("pipeline_ops")
@@ -61,23 +65,6 @@ router = APIRouter(prefix="/admin/snapshots/adaptive-refresh", tags=["snapshots"
 ALIAS_PREFIX = "ci_snapshots/adaptive_refresh"
 LATEST_KEY = f"{ALIAS_PREFIX}/latest.json"
 
-# The archive-manifest formats this service knows how to serve.
-#
-# Declared here rather than imported from `archiver`, which writes them.
-# The two services share an artifact, not a module: nothing in `ops`
-# imports `archiver` and nothing in `archiver` imports `ops`, and coupling
-# them at the source to avoid restating two integers would trade a checkable
-# disagreement for a shared deploy. `test_ops_serves_the_manifest_versions_
-# archiver_writes` is what keeps the two honest.
-#
-# Plan 162 Stage AA: the guard exists because this route hands back a
-# document read out of MinIO rather than one composed here, so its response
-# model is a claim about data at rest. Without the guard, a bumped schema
-# carrying new keys would be truncated on the way out and nothing would
-# say so -- the divergence would live in object storage, where no test
-# reaches.
-READABLE_EXPORT_CACHE_SCHEMA = 3
-READABLE_ARCHIVE_CACHE_SCHEMA = 1
 
 # How stale `last_used_at` may get before a request refreshes it. Bound as a
 # parameter into touch_machine_token_last_used.sql, which names no window of its
@@ -370,13 +357,14 @@ def _unreadable_schema_reason(manifest: Dict[str, Any]) -> Optional[str]:
     either can move independently.
     """
     for field, readable in (
-        ("export_cache_schema_version", READABLE_EXPORT_CACHE_SCHEMA),
-        ("archive_cache_schema_version", READABLE_ARCHIVE_CACHE_SCHEMA),
+        ("export_cache_schema_version", READABLE_EXPORT_CACHE_SCHEMAS),
+        ("archive_cache_schema_version", READABLE_ARCHIVE_CACHE_SCHEMAS),
     ):
         found = manifest.get(field)
-        if found != readable:
+        if found not in readable:
             return (
-                f"{field} is {found!r}; this service serves {readable!r}"
+                f"{field} is {found!r}; this service serves "
+                f"{sorted(readable)!r}"
             )
     return None
 

@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from shared.lake_snapshot_postgres import POSTGRES_SNAPSHOT_TABLES
+from shared.lake_snapshot_schema import EXPORT_CACHE_SCHEMA_VERSION
 from shared.minio import read_json, write_json
 
 logger = logging.getLogger("archiver")
@@ -32,7 +33,6 @@ logger = logging.getLogger("archiver")
 # dimension tables, so a manifest written before that describes an archive a
 # dbt build cannot use. Bumping the schema version is what makes every one of
 # them a cache miss rather than a silently short archive.
-EXPORT_CACHE_SCHEMA_VERSION = 3
 EXPORT_ALGORITHM_VERSION = 1
 OUTPUT_SCHEMA_VERSION = 1
 PARTITION_LAYOUT_VERSION = 1

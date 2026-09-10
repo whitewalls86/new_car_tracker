@@ -6,10 +6,12 @@ import json
 import httpx
 import pytest
 
-from archiver.processors.lake_snapshot_archive import ARCHIVE_CACHE_SCHEMA_VERSION
-from archiver.processors.lake_snapshot_export_cache import EXPORT_CACHE_SCHEMA_VERSION
 from scripts.download_lake_snapshot import download_api, download_local, main
 from scripts.lake_snapshot_common import ChecksumMismatchError, LakeSnapshotError, sha256_file
+from shared.lake_snapshot_schema import (
+    ARCHIVE_CACHE_SCHEMA_VERSION,
+    EXPORT_CACHE_SCHEMA_VERSION,
+)
 from tests.scripts.conftest import make_tar_zst
 
 

@@ -6,6 +6,10 @@ import pytest
 
 from ops.queries import SELECT_MACHINE_TOKEN, TOUCH_MACHINE_TOKEN_LAST_USED
 from ops.routers import snapshots
+from shared.lake_snapshot_schema import (
+    ARCHIVE_CACHE_SCHEMA_VERSION,
+    EXPORT_CACHE_SCHEMA_VERSION,
+)
 
 BASE = "/admin/snapshots/adaptive-refresh"
 AUTH = {"Authorization": "Bearer test-token"}
@@ -484,8 +488,8 @@ MANIFEST = {
     # two formats layered and `ops` now refuses one it cannot vouch for. A
     # fixture without them is not a smaller manifest, it is one `archiver` has
     # never written.
-    "export_cache_schema_version": snapshots.READABLE_EXPORT_CACHE_SCHEMA,
-    "archive_cache_schema_version": snapshots.READABLE_ARCHIVE_CACHE_SCHEMA,
+    "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
+    "archive_cache_schema_version": ARCHIVE_CACHE_SCHEMA_VERSION,
     "export_fingerprint": ALIAS["export_fingerprint"],
     "planning_fingerprint": "plan-abc123",
     "export_fingerprint_payload": {},
@@ -756,53 +760,3 @@ class TestDownload:
         # The bad key must never reach object_size or open_stream.
         object_size_mock.assert_not_called()
         open_stream_mock.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# The two services agree on the document format, without importing each other
-# ---------------------------------------------------------------------------
-
-class TestManifestSchemaAgreement:
-    """Plan 162 Stage AA, G31.
-
-    `ops` refuses a manifest whose schema version it does not recognise, and
-    the versions it recognises are two integers restated in
-    `ops/routers/snapshots.py` rather than imported from `archiver`, which
-    writes them. Nothing in `ops` imports `archiver` and nothing in `archiver`
-    imports `ops`; the two share an artifact, not a module, and coupling them
-    at the source to avoid restating two integers would trade a checkable
-    disagreement for a shared deploy.
-
-    So the restatement has to be checked, and this is where. A test may import
-    both -- that is the *"one corpus, two consumers, neither importing the
-    other"* shape this repository already uses for the Promtail and Docker
-    contracts, with the corpus being a constant instead of a recording.
-
-    Without this, bumping `ARCHIVE_CACHE_SCHEMA_VERSION` in `archiver` would
-    make `ops` answer 409 to every snapshot download the moment the first
-    manifest under the new version was written -- a total outage of the CI
-    snapshot path, produced by a change that looked local to one service.
-    """
-
-    def test_ops_serves_the_manifest_versions_archiver_writes(self):
-        from archiver.processors.lake_snapshot_archive import (
-            ARCHIVE_CACHE_SCHEMA_VERSION,
-        )
-        from archiver.processors.lake_snapshot_export_cache import (
-            EXPORT_CACHE_SCHEMA_VERSION,
-        )
-
-        assert snapshots.READABLE_ARCHIVE_CACHE_SCHEMA == ARCHIVE_CACHE_SCHEMA_VERSION, (
-            "archiver writes archive_cache_schema_version="
-            f"{ARCHIVE_CACHE_SCHEMA_VERSION} and ops serves "
-            f"{snapshots.READABLE_ARCHIVE_CACHE_SCHEMA}. Every snapshot manifest "
-            "written under the new version would be refused with 409 until ops "
-            "is taught the version and its response model is checked against "
-            "whatever fields the bump added."
-        )
-        assert snapshots.READABLE_EXPORT_CACHE_SCHEMA == EXPORT_CACHE_SCHEMA_VERSION, (
-            "archiver writes export_cache_schema_version="
-            f"{EXPORT_CACHE_SCHEMA_VERSION} and ops serves "
-            f"{snapshots.READABLE_EXPORT_CACHE_SCHEMA}. Same failure as above: "
-            "the export half of the manifest moved and the reader did not."
-        )
