@@ -297,7 +297,6 @@ def _read_assert(
 # the tree grows past them.
 GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     "tests/rules/test_external_vocabularies.py: len(observed) >= 2",
-    "tests/rules/test_maintenance_running_set.py: len(reason) > 40",
     "tests/rules/test_planning_docs.py: len(found) > 50",
     "tests/rules/test_planning_docs.py: len(gap_claims()) >= 10",
     "tests/rules/test_planning_docs.py: len(gap_entries()) >= 10",

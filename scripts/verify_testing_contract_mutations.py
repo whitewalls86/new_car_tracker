@@ -1764,10 +1764,19 @@ MUTATIONS = [
         "tests/rules/test_maintenance_running_set.py"
         "::TestRegistryShape::test_every_entry_carries_a_reason",
         "an entry loses the written reason somebody has to re-evaluate at 2am",
+        # Stage AK narrowed this mutation, and the narrowing is the honest
+        # record of what the stage cost here. It used to thin the reason to
+        # "same as dbt." -- 12 characters, caught by `len(reason) > 40`. That
+        # floor was a guess (the shortest real reason is 51, so 40 was picked to
+        # sit under the corpus of the day) and it is gone, and with it the only
+        # mechanical objection to a reason too thin to act on. Nothing exact
+        # replaces it: no length is evidence that prose means something. So the
+        # mutation now removes the reason outright, which is what the rule still
+        # claims, rather than asserting a catch the rule no longer makes.
         lambda: _edit(
             "maintenance-running-set.txt",
             "dbt_test on-demand Profile-gated (`tools`) tools image, same as `dbt`.",
-            "dbt_test on-demand same as dbt.",
+            "dbt_test on-demand",
         ),
         ["maintenance-running-set.txt"],
         [],
