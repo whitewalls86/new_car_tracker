@@ -1181,7 +1181,7 @@ old numbers. So Stages Q and R, as with G, J and K.
 
 ### Stage Q: CI's services are production's, in definition and in contents
 
-**Legacy:** Stage 10b · **Issue:** CAR-78 · **State:** `—`
+**Legacy:** Stage 10b · **Issue:** CAR-78 · **State:** `done`
 
 **What it is.** Three questions with one thesis — CI's services are not
 production's — approached from the definition, the contents and one named
@@ -2658,7 +2658,9 @@ demonstrated by a recorded corpus that has drifted failing.
 
 ### Stage AC: the database makes a stale read loud
 
-**Issue:** CAR-105 · **State:** `—` · **Gap:** G25
+**Issue:** CAR-105 · **State:** `canceled` · **Gap:** G25
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stage H (CAR-123).**
 
 **The hole this closes is live and was measured, not inferred.** On 2026-09-07
 the Layer 2 suite was run against a Flyway-migrated Postgres with
@@ -2705,7 +2707,9 @@ passed.
 
 ### Stage AD: a fixture cannot fabricate a row the database would reject
 
-**Issue:** CAR-108 · **State:** `—` · **Gap:** G26
+**Issue:** CAR-108 · **State:** `canceled` · **Gap:** G26
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stage J (CAR-124).**
 
 **481 test-side copies of a database-owned value, and the split is the
 finding**: **183 (38%)** are in `tests/integration/`, and they are **already
@@ -2743,7 +2747,9 @@ demonstrated by a fabricated row failing at construction.
 
 ### Stage AE: configuration is what Compose delivers, and everything else is a constant
 
-**Issue:** CAR-109 · **State:** `—`
+**Issue:** CAR-109 · **State:** `canceled`
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stage K (CAR-124).**
 
 **Found 2026-09-08, closing Stage V.** That stage asserts `.env.example`
 against `docker-compose*.yml` in both directions, and its corpus is those two
@@ -2907,7 +2913,9 @@ rules; demonstrated by an unregistered rule failing, not asserted.
 
 ### Stage AH: every rule has a skill that helps an agent obey it
 
-**Issue:** CAR-116 · **State:** `—` · **Gap:** G31
+**Issue:** CAR-116 · **State:** `canceled` · **Gap:** G31
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stage C (CAR-120).**
 
 **A rule with no skill is a rule an agent discovers by failing CI.** Stage AG
 makes the rule set complete and provable; this makes it *reachable* from inside
@@ -2939,7 +2947,9 @@ exist are written; demonstrated by a rule losing its skill reference failing.
 
 ### Stage AJ: a parser of a response we do not own, that no test executes
 
-**Issue:** CAR-117 · **State:** `—` · **Gap:** —
+**Issue:** CAR-117 · **State:** `canceled` · **Gap:** —
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stage L (CAR-124).**
 
 **Found while closing Stage AB, and it is that stage's defect with the sign
 flipped.** Stage AB is about a test that *fabricates* a response from a system
@@ -3059,7 +3069,7 @@ demonstrated by a parser whose only exercising test is removed failing.
 
 ### Stage AK: a floor may assert nothing, or everything, never a number between
 
-**Issue:** CAR-118 · **State:** `—` · **Gap:** —
+**Issue:** CAR-118 · **State:** `next` · **Gap:** —
 
 **Every rule in `tests/rules/` is a set difference, and a set difference over
 an empty corpus is empty.** That is why each carries a floor — a second
@@ -3126,7 +3136,9 @@ reader narrowed so that it resolves less than the whole corpus failing.
 
 ### Stage AL: the services agree on what they send, and on what a code means
 
-**Issue:** CAR-119 · **State:** `next` · **Gap:** G33
+**Issue:** CAR-119 · **State:** `canceled` · **Gap:** G33
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stages A–D (CAR-120, CAR-121).** The rules half landed — see §Record; the conversion tail, repairs and skills are Plan 180's.
 
 **`contracts/*.json` is descriptive and there is nothing for it to be wrong
 against.** Stage Z generates it *from* the running apps, so it faithfully
@@ -3344,7 +3356,9 @@ repaired rather than waived.
 
 ### Stage AM: the object store is a seam, and one artifact in it has a contract
 
-**Issue:** unassigned · **State:** `—` · **Gap:** G34
+**Issue:** unassigned · **State:** `canceled` · **Gap:** G34
+
+**Superseded 2026-09-10 by [Plan 180](plan_180_seam_program.md) Stage F (CAR-125).**
 
 **A stub, written 2026-09-10 from Stage AL's own overreach. The measurements
 below are real; the design is not decided.**
@@ -5619,3 +5633,19 @@ of §*How a service reaches another service* except the request-body half
 of statement 2 has a comparator; that half is now stated alone in
 *Specified here*, draining together with the 17-module ledger when the
 client seam lands.
+**Stage AL closed as superseded, 2026-09-10, with its rules half landed.**
+What shipped, on the `car-119-plan-162-stage-al-rules` branch: ten new rules
+across eight modules with floors, mutations and `Asserted by` rows; the
+refusal envelope and its asserted `container_health` copy; the rewritten
+`_exit_codes`/`_codes_at_call_sites` pair; seven seeded shrink-only ledgers
+plus the `/admin 307` finding; every measurement above with its recipe;
+verified by 291 rules tests, 4,072 full suite, contract gate exit 0, and a
+full mutation-harness run with every entry CAUGHT. The exit as written is
+deliberately not met — the shape/kind, meaning and repair clauses are the
+conversion, which with the skills obligation is Plan 180 Stages A–D
+(CAR-120, CAR-121). Three interim skills were drafted, paused before
+approval, and discarded in favour of Stage C writing them against the
+ideal corpus — the sequencing this stage's own design note required. Cost:
+estimate 2 → actual 2 (0). Public surfaces: no mechanism, name or quantity
+either surface states was changed by this work — the README's only suite
+quantity is the rounded "more than 3,000 tests", still true at 4,072.

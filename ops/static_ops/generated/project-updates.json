@@ -3,9 +3,19 @@
   "as_of": "2026-08-30",
   "planned": [
     {
+      "plan": "180",
+      "title": "The seam program",
+      "order": 1,
+      "priority": 85,
+      "effort": "XL",
+      "state": "planned",
+      "summary": "Gives every boundary in the system — service-to-service HTTP, the database, the object store, the metrics stack — one declared way across it, with rules that make silent drift fail loudly and ledgers that measure the conversion until every ad-hoc path is gone.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_180_seam_program.md"
+    },
+    {
       "plan": "162",
       "title": "Testing census and CI restructure",
-      "order": 1,
+      "order": 2,
       "priority": 75,
       "effort": "L",
       "state": "planned",
@@ -15,7 +25,7 @@
     {
       "plan": "134",
       "title": "Archiver endpoint failure contract",
-      "order": 2,
+      "order": 3,
       "priority": 88,
       "effort": "S",
       "state": "planned",
@@ -25,22 +35,12 @@
     {
       "plan": "125",
       "title": "DuckDB-to-Iceberg analytics migration",
-      "order": 3,
+      "order": 4,
       "priority": 81,
       "effort": "XL",
       "state": "planned",
       "summary": "The project's analytics tables live in one embedded database file that is also the only way to read them, so every dashboard and backtest is tied to a single engine and a single copy. Makes an open, versioned table format the canonical layer and reduces that file to a local cache.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_125_duckdb_to_iceberg_migration.md"
-    },
-    {
-      "plan": "177",
-      "title": "Service log emission",
-      "order": 4,
-      "priority": 80,
-      "effort": "M",
-      "state": "planned",
-      "summary": "Fixes what four services write to their logs, so the record answers the questions asked of it. The edge records no user-facing errors, the database no slow queries or lock waits, the health producer only its own web traffic — while a fourth floods 45 MB a day of routine proxy noise.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_177_service_log_emission.md"
     }
   ],
   "completed": [

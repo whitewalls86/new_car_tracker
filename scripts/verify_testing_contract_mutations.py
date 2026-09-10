@@ -2485,7 +2485,7 @@ MUTATIONS = [
         "146 Stage 5's mutation C",
         lambda: _edit(
             "docs/PLANS.md",
-            "| 5 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+            "| 6 | [168](plans/plan_168_generated_knowledge_substrate.md)",
             "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
         ),
         ["docs/PLANS.md"],
@@ -2501,8 +2501,8 @@ MUTATIONS = [
         "check nor coverage can see",
         lambda: _edit(
             "docs/PLANS.md",
-            "| 6 | [179](plans/plan_179_derived_service_call_graph.md)",
-            "| 6 | [179](plans/plan_178_role_grant_scoping.md)",
+            "| 7 | [179](plans/plan_179_derived_service_call_graph.md)",
+            "| 7 | [179](plans/plan_178_role_grant_scoping.md)",
         ),
         ["docs/PLANS.md"],
         [],
