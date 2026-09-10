@@ -214,19 +214,10 @@ class TestFlushStagingRunEndpoint:
         resp = mock_archiver_client.post("/flush/staging/run")
         assert resp.json()["total_flushed"] == 0
 
-    def test_error_propagated_in_response(self, mock_archiver_client, mocker):
-        mocker.patch(
-            "archiver.app._flush_staging_events",
-            return_value=produced_by(
-                "_flush_staging_events",
-                total_flushed=0,
-                tables=[],
-                error='db down',
-            ),
-        )
-        resp = mock_archiver_client.post("/flush/staging/run")
-        assert resp.status_code == 200
-        assert resp.json()["error"] == "db down"
+    # A run that sets `error` is no longer a 200 with the error in the body:
+    # Plan 134 Stage C deploy 2 made it a 500 whose detail carries the summary.
+    # That case is TestFlushStagingSignalsFailure's, so it is not duplicated
+    # here asserting the status it used to have.
 
 
 # ---------------------------------------------------------------------------
@@ -1394,12 +1385,13 @@ class TestCompactFailureReason:
 
 
 class TestTheUnflippedEndpointsAreStillWarningOnly:
-    """Both flushes still return 200. That is Stage C in progress, not an oversight.
+    """``/flush/silver/run`` still returns 200. Stage C in progress, not an oversight.
 
     Stage C flips one endpoint per deploy, 48 hours apart. Each deploy moves
     one case out of this class and into ``TestCompactSignalsFailure`` and its
-    successors — deliberately, one at a time. Compaction went first and has
-    already left; the two flushes are still here.
+    successors — deliberately, one at a time. Compaction went on deploy 1 and
+    the staging flush on deploy 2; the silver flush is the last one here, and
+    the ``would fail`` window is now read out of it alone.
     """
 
     def test_a_failed_silver_flush_warns_and_returns_200(
@@ -1415,25 +1407,6 @@ class TestTheUnflippedEndpointsAreStillWarningOnly:
         assert resp.json() == fake
         assert "flush_silver: would fail" in caplog.text
         assert "XMinioStorageFull" in caplog.text
-
-    def test_a_failed_staging_flush_warns_and_returns_200(
-        self, mock_archiver_client, mocker, caplog
-    ):
-        fake = {
-            "total_flushed": 0,
-            "tables": [{"table": "staging.coordination_state_events", "flushed": 0,
-                        "error": "relation does not exist"}],
-            "error": "one or more tables failed",
-        }
-        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
-
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            resp = mock_archiver_client.post("/flush/staging/run")
-
-        assert resp.status_code == 200
-        assert resp.json() == fake
-        assert "flush_staging: would fail" in caplog.text
-        assert "staging.coordination_state_events" in caplog.text
 
     def test_every_stage_1_warning_carries_the_window_query_string(
         self, mock_archiver_client, mocker, caplog
@@ -1474,8 +1447,8 @@ class TestCompactSignalsFailure:
     """Plan 134 Stage C, deploy 1 of 3: ``/compact/silver/run`` raises.
 
     The mirror of ``TestPackEndpointsSignalFailure`` for the first of the three
-    endpoints Stage C flips. The two flushes are not here yet; each arrives on
-    its own deploy.
+    endpoints Stage C flips. The staging flush followed on deploy 2, in
+    ``TestFlushStagingSignalsFailure``; the silver flush arrives on deploy 3.
     """
 
     def test_failed_partitions_return_500_carrying_the_summary(
@@ -1570,5 +1543,123 @@ class TestCompactSignalsFailure:
 
         with caplog.at_level(logging.WARNING, logger="archiver"):
             mock_archiver_client.post("/compact/silver/run")
+
+        assert "would fail" not in caplog.text
+
+
+class TestFlushStagingSignalsFailure:
+    """Plan 134 Stage C, deploy 2 of 3: ``/flush/staging/run`` raises.
+
+    The staging flush's half of what ``TestCompactSignalsFailure`` asserts for
+    compaction. The case that matters here is the one Stage A's Incident 2 was:
+    tables failing while the others flushed, which the top-level ``error``
+    reports only as ``one or more tables failed``. The 500 has to name them,
+    because a page that cannot sends a human to read six tables.
+    """
+
+    def test_failed_tables_return_500_carrying_the_summary(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        # Incident 2's shape: rows landed for the tables that exist, and the
+        # one whose image shipped ahead of its migration is missing. A 200
+        # until this deploy.
+        fake = produced_by(
+            "_flush_staging_events",
+            total_flushed=4210,
+            tables=[
+                {"table": "staging.price_observation_events",
+                 "flushed": 4210, "error": None},
+                {"table": "staging.coordination_state_events", "flushed": 0,
+                 "error": 'relation "staging.coordination_state_events" does not exist'},
+            ],
+            error='one or more tables failed',
+        )
+        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
+
+        with caplog.at_level(logging.ERROR, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/staging/run")
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        # The whole summary survives, so the page can quote the table.
+        assert detail["total_flushed"] == 4210
+        assert detail["tables"][1]["error"].startswith("relation ")
+        assert "staging.coordination_state_events" in detail["failure_reason"]
+        # And it names only what broke.
+        assert "price_observation_events" not in detail["failure_reason"]
+        assert "flush_staging: run failed" in caplog.text
+
+    def test_a_connection_failure_returns_500(self, mock_archiver_client, mocker):
+        # Both connection paths return the error with an empty tables list, so
+        # there is nothing per-table to name and the top-level error carries it.
+        mocker.patch(
+            "archiver.app._flush_staging_events",
+            return_value=produced_by(
+                "_flush_staging_events",
+                total_flushed=0,
+                tables=[],
+                error='MinIO unreachable',
+            ),
+        )
+
+        resp = mock_archiver_client.post("/flush/staging/run")
+
+        assert resp.status_code == 500
+        assert "MinIO unreachable" in resp.json()["detail"]["failure_reason"]
+
+    def test_a_clean_run_is_unchanged(self, mock_archiver_client, mocker):
+        fake = produced_by(
+            "_flush_staging_events",
+            total_flushed=1204,
+            tables=[{"table": "staging.price_observation_events",
+                     "flushed": 1204, "error": None}],
+            error=None,
+        )
+        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
+
+        resp = mock_archiver_client.post("/flush/staging/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "failure_reason" not in resp.json()
+
+    def test_a_quiet_hour_is_not_a_failure(self, mock_archiver_client, mocker):
+        # Nothing staged. Hourly, so failing on this would page all night on a
+        # system that is working.
+        fake = produced_by(
+            "_flush_staging_events",
+            total_flushed=0,
+            tables=[{"table": "staging.price_observation_events",
+                     "flushed": 0, "error": None}],
+            error=None,
+        )
+        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
+
+        resp = mock_archiver_client.post("/flush/staging/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_the_staging_flush_no_longer_emits_the_window_warning(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        """This endpoint has left ``|~ "would fail"``. The silver flush has not.
+
+        Deploy 3 is still read out of that window, and it is now the only
+        endpoint left in it -- so a stray ``would fail`` from here would not
+        merely add noise, it would be the whole signal.
+        """
+        mocker.patch(
+            "archiver.app._flush_staging_events",
+            return_value=produced_by(
+                "_flush_staging_events",
+                total_flushed=0,
+                tables=[],
+                error='db down',
+            ),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            mock_archiver_client.post("/flush/staging/run")
 
         assert "would fail" not in caplog.text

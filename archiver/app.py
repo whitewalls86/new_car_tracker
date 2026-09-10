@@ -103,9 +103,9 @@ _ALLOW_PACK_JOBS = (
 # warnings over 376 evaluations — so Stage C is flipping them to a 500, one
 # endpoint per deploy and 48 hours apart, in ascending order of blast radius.
 #
-# **Where that has got to: /compact/silver/run raises; both flushes still
-# warn.** Read each endpoint's own docstring rather than this block, which
-# will be stale between deploys by design.
+# **Where that has got to: /compact/silver/run and /flush/staging/run raise;
+# /flush/silver/run still warns.** Read each endpoint's own docstring rather
+# than this block, which will be stale between deploys by design.
 #
 # The shape is _pack_failure_reason's, below: a pure function on the summary
 # dict, mirroring that job's own CLI exit code, unit-tested directly against
@@ -598,19 +598,41 @@ def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str,
         return result
 
 
-@app.post("/flush/staging/run", response_model=FlushStagingResponse)
+@app.post(
+    "/flush/staging/run",
+    response_model=FlushStagingResponse,
+    responses={
+        500: {
+            "description": "The flush failed; the summary is the detail.",
+            "model": ErrorResponse,
+        },
+    },
+)
 def trigger_flush_staging() -> Dict[str, Any]:
     """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).
 
-    **Still warning-only.** A run failing ``_flush_staging_failure_reason``
-    logs a ``would fail`` warning naming the tables and returns 200. Stage C
-    deploy 2 of 3 turns that into a 500 carrying the summary and a
-    ``failure_reason`` — second of the three, since the dbt build does not
-    read staging events.
+    **Enforced.** A run failing ``_flush_staging_failure_reason`` returns 500
+    with the summary and a ``failure_reason`` as ``detail`` naming the tables
+    that did not land; both callers go through ``sensors.post_json``, which
+    raises ``JsonPostError`` carrying that body, so the task goes red and
+    ``hourly_analytics_refresh``'s ``notify`` can quote the reason.
+
+    Plan 134 Stage C, deploy 2 of 3. Second because the dbt build does not read
+    staging events, so the hour dbt skips here is an hour it would have built
+    from unchanged inputs anyway — which is *not* the same as the build being
+    unaffected: ``flush_staging_events`` sits upstream of ``dbt_build`` in the
+    DAG, so a red task here skips it. ``/flush/silver/run`` is last because
+    there the skipped build would also have been building on stale data. It is
+    still warning-only and leaves the observation window on deploy 3.
     """
     with active_job():
         result = _flush_staging_events()
-        _warn_would_fail("flush_staging", _flush_staging_failure_reason(result))
+        reason = _flush_staging_failure_reason(result)
+        if reason:
+            logger.error("flush_staging: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
         return result
 
 

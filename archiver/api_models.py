@@ -99,7 +99,7 @@ class FlushedTable(BaseModel):
 
 
 class FlushStagingResponse(BaseModel):
-    """``POST /flush/staging/run``."""
+    """``POST /flush/staging/run`` -- enforced, so a failing run is a 500."""
 
     tables: List[FlushedTable]
     total_flushed: int
