@@ -395,6 +395,56 @@ def test_no_chrome_target_curl_cffi_offers_is_missing_from_the_scraper():
     )
 
 
+def test_the_curl_cffi_version_is_pinned_exactly():
+    """The pair of rules above is only meaningful against a fixed version.
+
+    **They point in opposite directions**: one says every target the census
+    declares is real, the other says every real desktop Chrome target is
+    declared. Together they require the list to *equal* whatever curl_cffi
+    happens to be installed -- so with the version unpinned, the pair asserts
+    something different on every machine and fails on an unrelated PR the day
+    curl_cffi ships a new target.
+
+    **That is not hypothetical and it is how this pin arrived.** Measured
+    2026-09-10: the development venv had 0.15.0 with 16 desktop Chrome
+    targets, production ran 0.16.3 with 17, and CI resolved something newer
+    again. The list matched 0.15.0 exactly, which is why the first reading of
+    this census called it clean -- and production had `chrome150` available
+    the whole time, unreachable, so a user-agent reporting Chrome 150 fell
+    back to a `chrome146` fingerprint. A TLS fingerprint that does not match
+    the user-agent it is paired with is the shape of the 2026-08-14 outage.
+
+    Exact rather than merely present, for the reason
+    ``test_every_version_that_decides_the_schema_is_pinned_exactly`` gives one
+    file over: ``>=`` is how the repository got here.
+
+    Pinned in ``scraper/requirements.txt`` rather than ``constraints.txt``,
+    which says of itself that it holds the versions deciding what
+    ``app.openapi()`` emits and *"nothing else is"*. This decides what the
+    scraper puts on the wire, which is the one service's own business -- and
+    ``scraper/Dockerfile`` installs that file with ``-c constraints.txt``, so
+    the pin reaches production's image either way.
+    """
+    requirements = (REPO_ROOT / "scraper" / "requirements.txt").read_text(encoding="utf-8")
+    lines = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    curl = [line for line in lines if line.lower().replace("-", "_").startswith("curl_cffi")]
+    assert curl, (
+        "scraper/requirements.txt no longer installs curl_cffi, so the two "
+        "rules above are asserting against a library the scraper does not use."
+    )
+    loose = [line for line in curl if "==" not in line]
+    assert not loose, (
+        f"curl_cffi is not pinned exactly in scraper/requirements.txt: {loose}. "
+        "Unpinned, the impersonation-target rules compare the scraper's list "
+        "against whatever each machine resolved, so they pass locally and fail "
+        "in CI on a PR that touched neither."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cloudflare -- the interstitial markers
 # ---------------------------------------------------------------------------

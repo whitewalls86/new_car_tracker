@@ -2909,6 +2909,18 @@ MUTATIONS = [
         ["shared/challenge.py"],
         [],
     ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_curl_cffi_version_is_pinned_exactly",
+        "curl_cffi loosens to a floor, and the target rules stop having a referent",
+        lambda: _edit(
+            "scraper/requirements.txt",
+            "curl_cffi==0.16.3",
+            "curl_cffi>=0.16.3",
+        ),
+        ["scraper/requirements.txt"],
+        [],
+    ),
 ]
 
 

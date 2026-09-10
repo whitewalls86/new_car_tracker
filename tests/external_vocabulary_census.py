@@ -163,7 +163,7 @@ CENSUS = (
             "chrome99", "chrome100", "chrome101", "chrome104", "chrome107",
             "chrome110", "chrome116", "chrome119", "chrome120", "chrome123",
             "chrome124", "chrome131", "chrome136", "chrome142", "chrome145",
-            "chrome146",
+            "chrome146", "chrome150",
         ),
         "verdict": REPLAYED,
         "checked": (

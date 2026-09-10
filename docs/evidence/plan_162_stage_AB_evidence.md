@@ -82,8 +82,9 @@ of which resolves to `200`. Production has returned **seven**.
 
 **The scope was one system too narrow.** `curl_cffi` is a third instance nobody
 had named: `scraper/processors/cf_session.py` restates 16 impersonation targets.
-All 16 were correct on 2026-09-09 and the real set is exactly those 16, so this
-is a hole rather than a defect — but it is the *silent* kind, and in the
+All 16 were correct on 2026-09-09 against the development venv's curl_cffi, so
+this looked like a hole rather than a defect — **and that reading was wrong; see
+§2b** — but it is the *silent* kind, and in the
 direction nobody would look. `cffi_target_for_ua` falls back to the nearest
 *lower* entry, so a target curl_cffi drops raises at the session; a target
 curl_cffi **adds** and the list does not simply never gets picked, and the
@@ -103,6 +104,55 @@ reporting that curl_cffi had none of its own targets. `_real_browser_types()`
 lifts the stub, reads the package, asserts what it got is not empty, and puts
 the stub back — and that emptiness assertion is the load-bearing line.
 
+
+---
+
+## 2b. The rule found a live production defect on its first CI run
+
+`test_no_chrome_target_curl_cffi_offers_is_missing_from_the_scraper` failed in
+CI on PR #408 with `curl_cffi offers desktop Chrome targets the scraper does
+not know about: ['chrome150']`.
+
+**It was right, and the first reading of §2 was wrong.** That reading said all
+16 targets matched and the entry was a hole rather than a defect. It matched
+because it was taken against the *development venv*:
+
+| Where | curl_cffi | Desktop Chrome targets |
+|---|---|---|
+| development venv | 0.15.0 | 16, ending `chrome146` |
+| **production** (`docker compose exec scraper`) | **0.16.3** | **17, including `chrome150`** |
+| CI | whatever resolved that day | ≥17 |
+
+`scraper/requirements.txt` said `curl_cffi` with no version, so each install
+site resolved its own. The restated list matched 0.15.0 exactly, which is what
+made the census look clean — while production had `chrome150` available and
+unreachable the entire time. A FlareSolverr user-agent reporting Chrome 150
+makes `cffi_target_for_ua` fall through to the nearest *lower* entry and
+present a `chrome146` fingerprint. **A TLS fingerprint that does not match the
+user-agent it is paired with is the shape of the 2026-08-14 outage**, which is
+precisely the failure the entry was written to describe — happening, in
+production, while the entry said it was not.
+
+**The repair is three things, and the third is what stops it recurring.**
+`chrome150` was added to `_CHROME_CFFI_TARGETS` and the census. `curl_cffi` was
+pinned to production's `0.16.3`. And
+`test_the_curl_cffi_version_is_pinned_exactly` now guards the pin, because the
+two target rules point in opposite directions — one says the declared set is a
+subset of the real one, the other says the real one is a subset of the
+declared — so together they require *equality* with the installed library.
+Unpinned, that is a different assertion on every machine, green locally and red
+in CI on a pull request that touched neither.
+
+**Pinned in `scraper/requirements.txt`, not `constraints.txt`.** That file says
+of itself that it holds the versions deciding what `app.openapi()` emits and
+that *"nothing else is"* there; this decides what one service puts on the wire.
+`scraper/Dockerfile` installs requirements under `-c constraints.txt` either
+way, so the pin reaches production's image.
+
+**What this says about the census as a whole.** Nine entries are replayed, and
+this one was replayed against a library version nobody had fixed. The lesson
+generalises past curl_cffi: *a replay is only as good as the identity of the
+thing it replays against*, and for a library that identity is its version.
 ---
 
 ## 3. The production recording, and the asymmetry it forces

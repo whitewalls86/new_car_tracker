@@ -1,7 +1,17 @@
 fastapi
 uvicorn
 requests
-curl_cffi
+# Pinned, and the pin is load-bearing rather than tidiness. This library
+# decides which TLS fingerprints the scraper can present, and
+# `cf_session._CHROME_CFFI_TARGETS` restates its target list so
+# `cffi_target_for_ua` can match the Chrome major version FlareSolverr
+# reports. Unpinned, that set was whatever each image build resolved: the
+# development venv had 0.15.0 with 16 targets while production ran 0.16.3
+# with 17, and the missing `chrome150` meant a UA reporting Chrome 150
+# silently fell back to a chrome146 fingerprint. Found by Plan 162 Stage
+# AB's rule on its first CI run. Upgrading is a deliberate change: bump
+# this, add the new targets, and let the rule confirm the two agree.
+curl_cffi==0.16.3
 bs4
 lxml
 asyncpg
