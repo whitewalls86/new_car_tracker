@@ -117,6 +117,7 @@ import pytest
 from fastapi.responses import HTMLResponse
 
 from ops.routers import admin
+from ops.routers.deploy import IntentResult
 from tests.response_fixtures import produced_by
 from tests.service_contracts import service_response
 
@@ -164,10 +165,10 @@ def mock_deploy_functions(mocker):
             return_value=produced_by("_intent_status", intent='none'),
         ),
         "set_intent": mocker.patch(
-            "ops.routers.admin._set_intent", return_value=True
+            "ops.routers.admin._set_intent", return_value=IntentResult("ok")
         ),
         "intent_release": mocker.patch(
-            "ops.routers.admin._intent_release", return_value=True
+            "ops.routers.admin._intent_release", return_value=IntentResult("ok")
         ),
     }
 
@@ -498,10 +499,34 @@ def test_deploy_panel_ok(mock_client, mock_deploy_functions, mock_templates):
 # ---------------------------------------------------------------------------
 
 def test_deploy_start_ok(mock_client, mock_deploy_functions):
-    response = mock_client.post("/admin/deploy/start", follow_redirects=False)
+    mock_deploy_functions["set_intent"].return_value = IntentResult("ok")
+
+    response = mock_client.post("/admin/deploy/request", follow_redirects=False)
 
     assert response.status_code == 303
     mock_deploy_functions["set_intent"].assert_called_once_with("Admin UI")
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status_code"),
+    [("locked", 409), ("invalid", 409), ("unavailable", 503), ("error", 500)],
+)
+def test_deploy_request_reports_every_refusal(
+    mock_client, mock_deploy_functions, mock_templates, outcome, status_code
+):
+    """Plan 162 Stage AA, G27. All five outcomes rendered as one 303 before this.
+
+    `_set_intent` answers ok/locked/invalid/unavailable/error and the button
+    discarded it, so an operator saw the same page whether the intent was
+    recorded or Postgres refused the write. The codes match what the API pair
+    answers for the same status, so the two surfaces cannot disagree about what
+    `locked` means.
+    """
+    mock_deploy_functions["set_intent"].return_value = IntentResult(outcome, "because")
+
+    response = mock_client.post("/admin/deploy/request", follow_redirects=False)
+
+    assert response.status_code == status_code
 
 
 # ---------------------------------------------------------------------------
@@ -509,10 +534,30 @@ def test_deploy_start_ok(mock_client, mock_deploy_functions):
 # ---------------------------------------------------------------------------
 
 def test_deploy_complete_ok(mock_client, mock_deploy_functions):
-    response = mock_client.post("/admin/deploy/complete", follow_redirects=False)
+    mock_deploy_functions["intent_release"].return_value = IntentResult("ok")
+
+    response = mock_client.post("/admin/deploy/release", follow_redirects=False)
 
     assert response.status_code == 303
-    mock_deploy_functions["intent_release"].assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status_code"),
+    [("locked", 409), ("unavailable", 503), ("error", 500)],
+)
+def test_deploy_release_reports_every_refusal(
+    mock_client, mock_deploy_functions, mock_templates, outcome, status_code
+):
+    """The quieter failure of the two, per `_intent_release`'s own docstring.
+
+    A release that fails leaves every gated DAG parked, and until Plan 162
+    Stage AA the button reported that exactly as it reported success.
+    """
+    mock_deploy_functions["intent_release"].return_value = IntentResult(outcome, "because")
+
+    response = mock_client.post("/admin/deploy/release", follow_redirects=False)
+
+    assert response.status_code == status_code
 
 
 # ---------------------------------------------------------------------------

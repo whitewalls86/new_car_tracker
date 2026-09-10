@@ -307,37 +307,124 @@ def view_logs(request: Request, lines: int = 200):
 # Deploy panel
 # ---------------------------------------------------------------------------
 
+def _deploy_refusal(request: Request, result, headline: str) -> HTMLResponse:
+    """Render a non-ok intent outcome on the deploy panel, with its own status.
+
+    The codes are literals in three branches rather than a lookup, and that is
+    not style. `test_every_route_declares_the_statuses_it_can_return` resolves
+    one level into a same-module helper and reads the codes it can *see*; a
+    `dict.get(...)` is opaque to it, and it was opaque to a reader too. The
+    same three codes the API pair answers for the same `IntentResult` status,
+    so the two surfaces cannot disagree about what `locked` means.
+    """
+    context = {
+        "request": request,
+        "status": _intent_status(),
+        "refusal": {
+            "headline": headline,
+            "outcome": result.status,
+            "detail": result.detail,
+        },
+    }
+    if result.status in {"locked", "invalid"}:
+        return templates.TemplateResponse(
+            request=request, name="admin/deploy.html", status_code=409, context=context,
+        )
+    if result.status == "unavailable":
+        return templates.TemplateResponse(
+            request=request, name="admin/deploy.html", status_code=503, context=context,
+        )
+    return templates.TemplateResponse(
+        request=request, name="admin/deploy.html", status_code=500, context=context,
+    )
+
+
 @router.get("/deploy", response_class=HTMLResponse)
 def deploy_panel(request: Request):
     status = _intent_status()
     return templates.TemplateResponse(request=request, name="admin/deploy.html", context={
         "request": request,
         "status": status,
+        "refusal": None,
     })
 
 
+# The admin buttons are `/deploy/request` and `/deploy/release` rather than
+# `/deploy/start` and `/deploy/complete`, and the rename is the repair rather
+# than cosmetics. `ops` mounts `ops/routers/deploy.py` bare and this router
+# under `/admin`, so the two pairs carried **identical decorator strings** --
+# `@router.post("/deploy/start")` in both files -- and no request could be
+# attributed to one handler or the other. Four waivers stood on that: these two
+# and, because the collision taints both sides, the two API handlers that
+# `scripts/redeploy.sh` actually drives.
+#
+# The names are also the truer ones. The API *starts a deploy*; the button asks
+# the coordination record for the intent, which is a request that can be
+# refused.
+
 @router.post(
-    "/deploy/start",
+    "/deploy/request",
     response_class=HTMLResponse,
+    # The success path redirects, so 303 is the default rather than the 200
+    # FastAPI would otherwise declare. These two routes were invisible to
+    # `test_every_status_code_a_route_can_produce_is_asserted` while they
+    # shared a decorator path with the API pair and were waived as
+    # ambiguous; disambiguating them surfaced a 200 neither can produce.
+    status_code=303,
     responses={
-        303: {"description": "Intent requested; redirect to the deploy panel."},
+        303: {"description": "Intent recorded; redirect to the deploy panel."},
+        409: {"description": "Another coordination holds the record."},
+        500: {"description": "Postgres refused the write; the detail names why."},
+        503: {"description": "Database unavailable."},
     },
 )
 def deploy_start(request: Request):
-    _set_intent("Admin UI")
-    return RedirectResponse(url="/admin/deploy", status_code=303)
+    """Ask for deploy intent, and say what happened.
+
+    Plan 162 Stage AA, G27. This called `_set_intent("Admin UI")` and discarded
+    the answer, then redirected 303 unconditionally -- so an operator who
+    clicked the button saw the same page whether the intent was recorded,
+    another coordination held the row, or Postgres refused the write. Stage K
+    widened `IntentResult` to carry a `detail` for exactly this distinction and
+    the panel never read it.
+
+    The five outcomes map as the API pair maps them, because they are the same
+    five from the same helper and an operator should not have to learn a second
+    vocabulary for them.
+    """
+    result = _set_intent("Admin UI")
+    if result.status == "ok":
+        return RedirectResponse(url="/admin/deploy", status_code=303)
+    return _deploy_refusal(request, result, "Deploy intent could not be recorded")
 
 
 @router.post(
-    "/deploy/complete",
+    "/deploy/release",
     response_class=HTMLResponse,
+    # The success path redirects, so 303 is the default rather than the 200
+    # FastAPI would otherwise declare. These two routes were invisible to
+    # `test_every_status_code_a_route_can_produce_is_asserted` while they
+    # shared a decorator path with the API pair and were waived as
+    # ambiguous; disambiguating them surfaced a 200 neither can produce.
+    status_code=303,
     responses={
-        303: {"description": "Release requested; redirect to the deploy panel."},
+        303: {"description": "Intent released; redirect to the deploy panel."},
+        409: {"description": "Another coordination holds the record."},
+        500: {"description": "Postgres refused the write; the detail names why."},
+        503: {"description": "Database unavailable."},
     },
 )
 def deploy_complete(request: Request):
-    _intent_release()
-    return RedirectResponse(url="/admin/deploy", status_code=303)
+    """Release the intent, and say what happened.
+
+    The quieter of the two failures, and the one `_intent_release`'s own
+    docstring records: a release that fails leaves every gated DAG parked, and
+    until now the button reported that exactly as it reported success.
+    """
+    result = _intent_release()
+    if result.status == "ok":
+        return RedirectResponse(url="/admin/deploy", status_code=303)
+    return _deploy_refusal(request, result, "Deploy intent could not be released")
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +472,10 @@ def edit_search_form(request: Request, search_key: str):
 @router.post(
     "/searches/",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Created; redirect to the search list."},
         422: {"description": "The submitted form is not a valid search config."},
@@ -481,6 +572,10 @@ def create_search(
 @router.post(
     "/searches/{search_key}",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Change applied; redirect to the search list."},
         404: {"description": "No search config with that key; nothing was changed."},
@@ -569,6 +664,10 @@ def update_search(
 @router.post(
     "/searches/{search_key}/toggle",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Change applied; redirect to the search list."},
         404: {"description": "No search config with that key; nothing was changed."},
@@ -600,6 +699,10 @@ def toggle_search(request: Request, search_key: str):
 @router.post(
     "/searches/{search_key}/delete",
     response_class=HTMLResponse,
+    # Plan 162 Stage AA: the success path redirects, so 303 is the
+    # declared default rather than the 200 FastAPI would otherwise put in
+    # the contract -- a code no exit of this handler produces.
+    status_code=303,
     responses={
         303: {"description": "Change applied; redirect to the search list."},
         404: {"description": "No search config with that key; nothing was changed."},

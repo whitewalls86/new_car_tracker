@@ -34,7 +34,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests.service_contracts import body_violations, caller_endpoints
+from tests.service_contracts import (
+    body_violations,
+    caller_endpoints,
+    owned_hosts,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = REPO_ROOT / "tests"
@@ -158,19 +162,84 @@ def test_the_service_seam_corpus_is_not_empty():
     attribute, a ``<NAME>_URL`` constant, a compose service's dockerfile --
     empties this and leaves the rule below passing over nothing.
     """
-    resolvable = [
-        module for module in (
-            "ops/coordination_drain.py",
-            "ops/coordination_release.py",
-            "airflow/dags/scrape_listings.py",
-        )
-        if caller_endpoints(module)
-    ]
-    assert len(resolvable) == 3, (
-        f"only {resolvable} resolved to a service this repository owns. Either "
-        f"the URL constants moved, docker-compose.yml stopped naming the "
-        f"dockerfile, or a contract left contracts/ -- and with nothing "
-        f"resolved the rule below reports no fabrication however many there are."
+    # Not a curated list. Every production module that names a host this
+    # repository builds must resolve to at least one endpoint of that host --
+    # so the set is derived from `docker-compose.yml` and the tree, and a
+    # module that stops resolving fails here rather than quietly leaving the
+    # rule below with less to read.
+    # Every package with a committed contract is reachable by name. Removing a
+    # service's `build.dockerfile` from docker-compose.yml drops it from
+    # `owned_hosts`, and a floor that only counted callers did not notice: the
+    # modules naming that host stopped being examined rather than started
+    # failing, so every fabrication behind that seam went unreported and the
+    # rule stayed green. The harness recorded exactly that as unnoticed.
+    owned = set(owned_hosts())
+    answered = set(owned_hosts().values())
+    committed = {path.stem for path in (REPO_ROOT / "contracts").glob("*.json")}
+    assert committed <= answered, (
+        f"contracts exist for {sorted(committed - answered)} and no compose "
+        f"service builds them. A package this repository ships a contract for "
+        f"but no host answers for is a service whose callers this rule stops "
+        f"examining -- silently, because a caller of an unowned host is out of "
+        f"scope rather than in violation."
+    )
+
+    callers, blind = [], []
+    for package in ("ops", "airflow/dags", "scraper", "archiver", "processing"):
+        root = REPO_ROOT / package
+        if not root.is_dir():
+            continue
+        for module in sorted(root.rglob("*.py")):
+            if "__pycache__" in module.parts:
+                continue
+            # A host named in a docstring is prose, not a call. `sensors.py`
+            # documents `http_health_sensor("archiver", "http://archiver:8001")`
+            # in its own module docstring and reaches every service through a
+            # parameter, so a text search demanded it resolve to an endpoint it
+            # never names in code.
+            source = module.read_text(encoding="utf-8")
+            if not any(f"//{host}:" in source for host in owned):
+                continue
+            tree = ast.parse(source, filename=str(module))
+            # Identified by node, not by text: `ast.get_docstring` returns the
+            # cleaned string and `Constant.value` the raw one, so comparing the
+            # two matches nothing and every docstring reads as code.
+            docstrings = {
+                id(node.body[0].value)
+                for node in ast.walk(tree)
+                if isinstance(
+                    node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
+                and node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            }
+            in_code = any(
+                any(f"//{host}:" in node.value for host in owned)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+            )
+            if not in_code:
+                continue
+            relative = module.relative_to(REPO_ROOT).as_posix()
+            callers.append(relative)
+            if not caller_endpoints(relative):
+                blind.append(relative)
+
+    assert callers, (
+        "no production module names a host this repository builds. Either the "
+        "URL constants moved or docker-compose.yml stopped naming the "
+        "dockerfiles that say which package answers for a host."
+    )
+    assert not blind, (
+        f"these modules name a service this repository owns and resolve to none "
+        f"of its endpoints: {blind}. The path they build no longer matches any "
+        f"route in that service's contract -- which is either a dead call or a "
+        f"reader that has stopped following, and both leave every fabrication "
+        f"behind that seam unreported."
     )
 
 

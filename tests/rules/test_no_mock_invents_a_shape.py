@@ -35,7 +35,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests.response_fixtures import producer_shapes, resolve_producer
+from tests.response_fixtures import (
+    _delegating_routes,
+    producer_shapes,
+    resolve_producer,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS = REPO_ROOT / "tests"
@@ -118,12 +122,23 @@ def test_the_mock_site_corpus_is_not_empty():
     can stop matching without anyone editing this file, and a rule that finds
     no sites is indistinguishable from a repository with no fabrications.
     """
+    # Not a threshold. Every producer the route rules already resolved must be
+    # present here, because both read the same index -- so this asks whether
+    # the reader still answers for a set something else derived, rather than
+    # guessing a number below today's count.
     shapes = producer_shapes()
-    assert len(shapes) > 50, (
-        f"only {len(shapes)} producers resolved out of this repository. The "
-        f"reader in tests/response_fixtures.py is looking for a shape the tree "
-        f"no longer has, and with an empty corpus the rule below accuses "
-        f"nobody rather than failing."
+    expected = {
+        name
+        for row in _delegating_routes()
+        for name in row[5]
+    }
+    missing = sorted(expected - set(shapes))
+    assert expected and not missing, (
+        f"the producer index answers for {len(shapes)} functions and is missing "
+        f"{missing}, which `_delegating_routes` resolved from the same tree. "
+        f"The two readers share `_producers`, so a disagreement means it has "
+        f"stopped seeing part of the repository -- and with a short index the "
+        f"rule below accuses nobody rather than failing."
     )
 
 

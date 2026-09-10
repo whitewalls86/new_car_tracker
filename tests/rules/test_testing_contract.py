@@ -4791,19 +4791,14 @@ def _discarded_outcomes(path: Path) -> list[str]:
     return sorted(found)
 
 
-DISCARDED_OUTCOME_WAIVERS: tuple[Waiver, ...] = (
-    # Both are the legacy deploy buttons, and both predate the redeploy work
-    # that made them redundant: `scripts/redeploy.sh` drives drain,
-    # authorization and release through the coordination API, and these two
-    # never moved with it. They are the same neglected-surface class as the
-    # `dbt_intent_*` handlers beside them, and Stage AA owns what replaces them
-    # -- so they are waived here rather than repaired into a shape nobody wants
-    # to keep.
-    Waiver("ops/routers/admin.py:deploy_start -> _set_intent()",
-           "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:deploy_complete -> _intent_release()",
-           "G27", 162, date(2026, 9, 8)),
-)
+# Empty since 2026-09-09. Two entries stood here, both the legacy deploy
+# buttons, waived on the reasoning that Stage AA owned what replaced them. It
+# kept them and taught them to read their answer: `_set_intent` and
+# `_intent_release` return five outcomes and the handlers rendered all five as
+# one 303, so an operator saw the same page whether the intent was recorded or
+# Postgres refused the write. They now map the same five statuses to the same
+# codes the API pair maps them to.
+DISCARDED_OUTCOME_WAIVERS: tuple[Waiver, ...] = ()
 
 
 def test_no_caller_discards_an_outcome_it_asked_for():
@@ -5384,25 +5379,18 @@ def _coverage(real_engine_only: bool = False) -> tuple[dict[str, set[int]], set[
     return covered, ambiguous
 
 
-AMBIGUOUS_ROUTE_WAIVERS: tuple[Waiver, ...] = (
-    # `ops` serves both `/deploy/start` and `/admin/deploy/start` from two
-    # handlers whose decorator strings are **identical** -- one mounted bare, one
-    # under `include_router(admin_router, prefix="/admin")` -- so a tail match
-    # cannot separate them and neither can be credited. Declared rather than
-    # skipped: a handler quietly dropped from a coverage rule is the vacuity this
-    # plan is about, and 38 of 89 were being dropped before the wildcard clause
-    # was tightened, with the rule reporting four gaps and looking healthy.
-    #
-    # The admin pair are legacy buttons from before `scripts/redeploy.sh` drove
-    # drain, authorization and release through the coordination API, and they
-    # never moved with it. Stage AA owns what replaces them, and removing them
-    # removes the ambiguity for the two API handlers as well -- one decision
-    # drains all four.
-    Waiver("ops/routers/admin.py:deploy_start", "G28", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:deploy_complete", "G28", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/deploy.py:start_deploy_intent", "G28", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/deploy.py:complete_deployment", "G28", 162, date(2026, 9, 8)),
-)
+# Empty since 2026-09-09. Four entries stood here: `ops` mounted
+# `ops/routers/deploy.py` bare and the admin router under `/admin`, and both
+# declared `@router.post("/deploy/start")`, so a tail match could attribute a
+# request to neither -- and the collision waived the two API handlers
+# `scripts/redeploy.sh` actually drives, not just the two buttons.
+#
+# The note here said removing the buttons would drain all four. Stage AA kept
+# them and renamed them instead: `/deploy/request` and `/deploy/release`, which
+# are also the truer names. The API *starts a deploy*; the button asks the
+# coordination record for the intent, and that is a request which can be
+# refused.
+AMBIGUOUS_ROUTE_WAIVERS: tuple[Waiver, ...] = ()
 
 #: Seeded at 11 on 2026-09-08 and drained to nothing the same day. The eleven
 #: were real: `recap_index`'s 404 is the whole of what `/recaps` does before the

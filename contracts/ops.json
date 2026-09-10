@@ -1589,7 +1589,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1597,9 +1597,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Request approved; redirect to the request list."
           },
           "404": {
@@ -1637,7 +1634,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1645,9 +1642,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Request denied; redirect to the request list."
           },
           "404": {
@@ -1761,11 +1755,12 @@
         "summary": "Deploy Panel"
       }
     },
-    "/admin/deploy/complete": {
+    "/admin/deploy/release": {
       "post": {
-        "operationId": "deploy_complete_admin_deploy_complete_post",
+        "description": "Release the intent, and say what happened.\n\nThe quieter of the two failures, and the one `_intent_release`'s own\ndocstring records: a release that fails leaves every gated DAG parked, and\nuntil now the button reported that exactly as it reported success.",
+        "operationId": "deploy_complete_admin_deploy_release_post",
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1773,20 +1768,27 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intent released; redirect to the deploy panel."
           },
-          "303": {
-            "description": "Release requested; redirect to the deploy panel."
+          "409": {
+            "description": "Another coordination holds the record."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
           }
         },
         "summary": "Deploy Complete"
       }
     },
-    "/admin/deploy/start": {
+    "/admin/deploy/request": {
       "post": {
-        "operationId": "deploy_start_admin_deploy_start_post",
+        "description": "Ask for deploy intent, and say what happened.\n\nPlan 162 Stage AA, G27. This called `_set_intent(\"Admin UI\")` and discarded\nthe answer, then redirected 303 unconditionally -- so an operator who\nclicked the button saw the same page whether the intent was recorded,\nanother coordination held the row, or Postgres refused the write. Stage K\nwidened `IntentResult` to carry a `detail` for exactly this distinction and\nthe panel never read it.\n\nThe five outcomes map as the API pair maps them, because they are the same\nfive from the same helper and an operator should not have to learn a second\nvocabulary for them.",
+        "operationId": "deploy_start_admin_deploy_request_post",
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1794,10 +1796,16 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Intent recorded; redirect to the deploy panel."
           },
-          "303": {
-            "description": "Intent requested; redirect to the deploy panel."
+          "409": {
+            "description": "Another coordination holds the record."
+          },
+          "500": {
+            "description": "Postgres refused the write; the detail names why."
+          },
+          "503": {
+            "description": "Database unavailable."
           }
         },
         "summary": "Deploy Start"
@@ -1877,7 +1885,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1885,9 +1893,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Created; redirect to the search list."
           },
           "422": {
@@ -1943,7 +1948,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1951,9 +1956,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Change applied; redirect to the search list."
           },
           "404": {
@@ -1984,7 +1986,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -1992,9 +1994,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Change applied; redirect to the search list."
           },
           "404": {
@@ -2077,7 +2076,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -2085,9 +2084,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Change applied; redirect to the search list."
           },
           "404": {
@@ -2346,7 +2342,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -2354,9 +2350,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "User revoked; redirect to the user list."
           },
           "404": {
@@ -2404,7 +2397,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "303": {
             "content": {
               "text/html": {
                 "schema": {
@@ -2412,9 +2405,6 @@
                 }
               }
             },
-            "description": "Successful Response"
-          },
-          "303": {
             "description": "Role changed; redirect to the user list."
           },
           "400": {
@@ -2919,9 +2909,6 @@
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
         "operationId": "info_redirect_info_get",
         "responses": {
-          "307": {
-            "description": "Successful Response"
-          },
           "308": {
             "description": "Permanent redirect to the landing page at /."
           }
@@ -2932,9 +2919,6 @@
         "description": "The pre-Stage-2 landing URL, forwarded to its canonical replacement.\n\n308 rather than 301: it preserves the method, and unlike 302 it tells a\ncrawler to move the indexed URL rather than to keep asking. The landing page\nalso carries a canonical link to ``/``, so the two agree.",
         "operationId": "info_redirect_info_head",
         "responses": {
-          "307": {
-            "description": "Successful Response"
-          },
           "308": {
             "description": "Permanent redirect to the landing page at /."
           }
@@ -3016,7 +3000,6 @@
     },
     "/metrics": {
       "get": {
-        "description": "Endpoint that serves Prometheus metrics.",
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {

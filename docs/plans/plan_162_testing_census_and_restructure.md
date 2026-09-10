@@ -3212,6 +3212,74 @@ job that runs pytest rather than from the 14 above, and drained to 0;
 demonstrated by a parser whose only exercising test is removed failing.
 
 
+### Stage AK: a floor may assert nothing, or everything, never a number between
+
+**Issue:** unassigned · **State:** `—` · **Gap:** —
+
+**Every rule in `tests/rules/` is a set difference, and a set difference over
+an empty corpus is empty.** That is why each carries a floor — a second
+assertion that the reader found anything at all. The floor exists because the
+rule itself *passes* when its reader breaks, which
+`test_the_route_code_corpus_is_not_empty` already states about its own
+construction: *"Every bug this rule had while it was being written moved the
+same number in the same direction — fewer routes examined, more codes credited,
+a healthier looking result. None of those made a test go red."*
+
+**The floors are guesses.** Twenty-four of them assert a count against a number
+somebody picked to sit below whatever the corpus was that day — `>= 80`,
+`> 250`, `>= 150`, `<= 8`, and `len(reason) > 40`, which is a prose-length
+heuristic. A guessed bound catches the corpus *collapsing* and misses it
+*eroding*, and the gap between those widens every time the repository grows.
+
+**Measured, on this stage's own work, in a single sitting.** Stage AA wrote a
+floor at `>= 80` for a corpus of 93, and it caught a real defect at 73 — an
+operation-id reader that collapsed the double underscores FastAPI writes where
+`/{` meets, silently excluding every path-parameter route. The repair replaced
+it with `>= len(rows) - 5`, which would have waved the same defect through.
+Both forms were written by the same hand within twenty minutes, which is the
+argument: the number is not a judgement anybody is making carefully, it is a
+number chosen to make a green run stay green.
+
+**Exactness is not tidiness — it is the only setting at which a floor reports
+anything.** Converting Stage AA's four floors from bounds to derived equalities
+found four reader defects that no threshold had surfaced: three `/metrics`
+routes registered by a library closure rather than by any function in this
+repository, eight DAG modules reached through `sensors.post_json` rather than
+`requests.post`, a URL passed as the second positional argument rather than the
+first, and a docstring filter comparing `ast.get_docstring`'s cleaned text
+against `Constant.value`'s raw text so that every docstring read as code. Each
+was a reader quietly measuring less than it claimed.
+
+**One of the four was fixed in the code rather than in the rule**, and that is
+the shape this stage takes wherever it can. `/metrics` on `ops`, `processing`
+and `scraper` was registered by `Instrumentator.expose()`, so no rule that
+resolves a route to its handler could reach it. Those three services now
+declare the route themselves, as `dbt_runner` and `container_health` already
+did — behaviour-identical, since `expose()`'s only other branch is the
+multiprocess registry and `PROMETHEUS_MULTIPROC_DIR` is set nowhere in this
+repository and unset in all three running containers. A rule that cannot reach
+a route is a rule with a hole in it, not a rule with an exception.
+
+**What a floor may say.** That the corpus is non-empty — a claim that names no
+size, so no growth makes it stale. Or that it equals something *derived*: every
+service with a committed contract is represented, every declaration resolves to
+a handler, every producer the sibling rule found is present. Anything between
+those two is a number that was true the day it was written.
+
+**Some of the twenty-four are exact invariants nobody has written down yet.**
+`len(_compose_files()) >= 2` means "both compose files are present", and the
+repository can name them. Others have no exact form and should say so rather
+than pick a number. Telling those apart is the work, and it is one rule at a
+time rather than a sweep.
+
+**Exit:** no assertion in `tests/rules/` bounds a count by a chosen number;
+`GUESSED_BOUND_WAIVERS` seeded at 24 by `test_no_rule_guards_itself_with_a_
+guessed_number` and drained to 0, each entry either replaced by a derived
+equality or by a non-emptiness check with the reason an exact form does not
+exist; demonstrated by a floor loosened back to a bound failing, and by a
+reader narrowed so that it resolves less than the whole corpus failing.
+
+
 ## Record
 
 One entry per closed stage, oldest first. **Legacy** names the stage's old

@@ -5,6 +5,7 @@ Slim entrypoint: health/ready endpoints plus router includes.
 All processing logic lives in routers/ and writers/.
 """
 from fastapi import FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from processing.routers.artifact import router as artifact_router
@@ -16,7 +17,23 @@ from shared.logging_setup import configure_logging
 configure_logging()
 
 app = FastAPI()
-Instrumentator().instrument(app).expose(app, response_class=Response)
+Instrumentator().instrument(app)
+
+# Plan 162 Stage AA: `/metrics` is declared here rather than by
+# `Instrumentator.expose()`, which registers a closure from the library. That
+# closure is not a function in this repository, so no rule that resolves a
+# route to its handler could reach this route -- and a rule that cannot reach a
+# route is a rule with a hole in it rather than a rule with an exception.
+#
+# Equivalent to what `expose()` served: its only other branch is the
+# multiprocess registry, and `PROMETHEUS_MULTIPROC_DIR` is set nowhere in this
+# repository and unset in all three running containers. `should_gzip` was left
+# at its default of False. `instrument()` still does the collecting.
+@app.get("/metrics", response_class=Response)
+def metrics() -> Response:
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
 
 app.include_router(batch_router)
 app.include_router(artifact_router)

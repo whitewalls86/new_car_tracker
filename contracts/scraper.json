@@ -547,7 +547,6 @@
     },
     "/metrics": {
       "get": {
-        "description": "Endpoint that serves Prometheus metrics.",
         "operationId": "metrics_metrics_get",
         "responses": {
           "200": {

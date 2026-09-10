@@ -3161,6 +3161,77 @@ MUTATIONS = [
         ["scraper/requirements.txt"],
         [],
     ),
+    (
+        "tests/rules/test_the_artifact_declares_what_the_handler_returns.py"
+        "::test_the_artifact_declares_no_code_its_handler_cannot_return",
+        "a handler stops producing a code its committed contract declares, so "
+        "the artifact describes a response nothing sends -- which no other rule "
+        "reads, because they check the decorator and the AST rather than the "
+        "generated file",
+        lambda: _edit(
+            "ops/routers/admin.py",
+            "status_code=409, context=context,",
+            "status_code=418, context=context,",
+        ),
+        ["ops/routers/admin.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_artifact_declares_what_the_handler_returns.py"
+        "::test_the_artifact_declaration_corpus_is_not_empty",
+        "a route stops resolving to a handler in its own service, so the rule "
+        "above measures less than the whole surface while still passing",
+        lambda: _edit(
+            "tests/rules/test_the_artifact_declares_what_the_handler_returns.py",
+            "    suffix = f\"_{slug.lstrip('_')}_{verb}\"",
+            '    suffix = "_" + "_".join(p for p in f"{slug}_{verb}".split("_") if p)',
+        ),
+        ["tests/rules/test_the_artifact_declares_what_the_handler_returns.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_no_rule_guards_itself_with_a_guessed_number",
+        "a floor is loosened from a derived equality back to a chosen number, "
+        "which is the exact edit this stage made and then had to undo",
+        lambda: _edit(
+            "tests/rules/test_no_mock_invents_a_shape.py",
+            "    assert expected and not missing, (",
+            "    assert len(shapes) > 50 and not missing, (",
+        ),
+        ["tests/rules/test_no_mock_invents_a_shape.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_every_waiver_names_a_bound_that_still_exists",
+        "a waiver names a floor that is no longer a guess, so it grandfathers "
+        "nothing and hides whichever bound is written next",
+        lambda: _edit(
+            "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py",
+            'GUESSED_BOUND_WAIVERS: tuple[str, ...] = (\n',
+            'GUESSED_BOUND_WAIVERS: tuple[str, ...] = (\n'
+            '    "tests/rules/nowhere.py: len(x) >= 99",\n',
+        ),
+        ["tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_every_rule_file_is_read",
+        "a rule module stops parsing, so its floors go unexamined and the rule "
+        "above reports on a directory it only partly read",
+        lambda: _write(
+            "tests/rules/test_harness_unparseable.py",
+            "def test_x(:\n",
+        ),
+        # `created`, not `snapshot`: the harness restores a snapshot by writing
+        # its content back, which would leave this file in the tree. A file the
+        # mutation brings into existence has to be named as one so it is
+        # removed again.
+        [],
+        ["tests/rules/test_harness_unparseable.py"],
+    ),
 ]
 
 

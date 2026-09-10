@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # Imported for its registration side effect: the Plan 136 Stage 2 outcome
@@ -135,7 +136,23 @@ app = FastAPI(lifespan=lifespan)
 # processing. scraper.metrics is imported at the top of this module for its
 # registration side effect, so all six outcome series are on the default
 # registry before the first scrape rather than appearing on the first fetch.
-Instrumentator().instrument(app).expose(app, response_class=Response)
+Instrumentator().instrument(app)
+
+# Plan 162 Stage AA: `/metrics` is declared here rather than by
+# `Instrumentator.expose()`, which registers a closure from the library. That
+# closure is not a function in this repository, so no rule that resolves a
+# route to its handler could reach this route -- and a rule that cannot reach a
+# route is a rule with a hole in it rather than a rule with an exception.
+#
+# Equivalent to what `expose()` served: its only other branch is the
+# multiprocess registry, and `PROMETHEUS_MULTIPROC_DIR` is set nowhere in this
+# repository and unset in all three running containers. `should_gzip` was left
+# at its default of False. `instrument()` still does the collecting.
+@app.get("/metrics", response_class=Response)
+def metrics() -> Response:
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
 
 
 @app.post("/scrape_results", response_model=QueuedJobResponse)

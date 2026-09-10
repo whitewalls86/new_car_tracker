@@ -2,6 +2,18 @@
 {% block title %}Deploy — Cartracker Admin{% endblock %}
 
 {% block content %}
+
+{# Plan 162 Stage AA: until this stage both buttons redirected 303 whatever
+   happened, so a refused intent and a recorded one looked identical. #}
+{% if refusal %}
+<article class="config-card" style="margin-bottom: 1rem; border: 1px solid #e74c3c; background: #fdecea;">
+    <strong>{{ refusal.headline }}</strong>
+    <div style="font-size: 0.9rem; margin-top: 0.25rem;">
+        Outcome: <code>{{ refusal.outcome }}</code>
+        {% if refusal.detail %}<br>{{ refusal.detail }}{% endif %}
+    </div>
+</article>
+{% endif %}
 <h2>Deploy Coordination</h2>
 
 {# ── Current Status ──────────────────────────────────────────────── #}
@@ -55,14 +67,14 @@
     <h4 style="margin-top: 0;">Actions</h4>
     <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
         {% if status.intent == 'none' %}
-        <form method="post" action="/admin/deploy/start" style="margin: 0;">
+        <form method="post" action="/admin/deploy/request" style="margin: 0;">
             <button type="submit"
                     onclick="return confirm('This will block all n8n workflows from starting new executions. Continue?')">
                 Initiate Deploy
             </button>
         </form>
         {% else %}
-        <form method="post" action="/admin/deploy/complete" style="margin: 0;">
+        <form method="post" action="/admin/deploy/release" style="margin: 0;">
             <button type="submit" class="outline"
                     onclick="return confirm('This will release the deploy lock and allow workflows to resume. Continue?')">
                 Release Lock

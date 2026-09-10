@@ -130,25 +130,45 @@ def caller_endpoints(module: str) -> tuple[tuple[str, str, str], ...]:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
 
-    hosts = {host for host in _URL_HOST.findall(source)}
+    hosts = {host for host in _URL_HOST.findall(source) if host in owned_hosts()}
     packages = {owned_hosts()[host] for host in hosts if host in owned_hosts()}
     if not packages:
         return ()
 
     found: set[tuple[str, str, str]] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        # Any call whose first argument builds a URL, not only
+        # `requests.post(...)`. The DAGs reach every service through
+        # `sensors.post_json`, so a reader keyed on the client's own verb
+        # methods resolved eight DAG modules to nothing and reported them as
+        # calling no endpoint at all -- found by this rule's own floor, which
+        # asks that every module naming an owned host resolve to one.
+        if not isinstance(node, ast.Call) or not node.args:
             continue
-        verb = node.func.attr
-        if verb not in _VERBS or not node.args:
+        # Every positional argument, not the first. `pack_bronze_html` reaches
+        # pack-worker through `_post_result(context, url, payload, timeout)`,
+        # so a reader keyed on `args[0]` saw a DAG context object and resolved
+        # the module to nothing. A path only counts if it equals one a contract
+        # declares, so widening the search cannot invent a match.
+        routes = {
+            candidate for candidate in (
+                _path_of(ast.unparse(argument)) for argument in node.args
+            ) if candidate is not None
+        }
+        if not routes:
             continue
-        route = _path_of(ast.unparse(node.args[0]))
-        if route is None:
-            continue
+        # The verb comes from the callee's name where it says one -- `.post`,
+        # `post_json` -- and is otherwise left open, because a helper that does
+        # not name its method still names its path, and this set is consumed as
+        # a union of candidates rather than as a single answer.
+        called = getattr(node.func, "attr", None) or getattr(node.func, "id", "") or ""
+        named = {verb for verb in _VERBS if verb in called.lower().split("_")}
         for package in packages:
             for (declared_verb, declared_path) in responses(package):
+                if named and declared_verb.lower() not in named:
+                    continue
                 normalised = re.sub(r"\{[^}]+\}", "{}", declared_path)
-                if declared_verb == verb.upper() and normalised == route:
+                if normalised in routes:
                     found.add((package, declared_verb, declared_path))
     return tuple(sorted(found))
 

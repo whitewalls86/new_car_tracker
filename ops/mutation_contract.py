@@ -211,8 +211,8 @@ MUTATION_ROUTES = {
     "ops/routers/admin.py:POST:/dbt/docs/generate": _tracked(
         "delegated", "dbt_runner_jobs", "analytics"
     ),
-    "ops/routers/admin.py:POST:/deploy/start": _short(_ATOMIC_STATE, "database"),
-    "ops/routers/admin.py:POST:/deploy/complete": _short(_ATOMIC_STATE, "database"),
+    "ops/routers/admin.py:POST:/deploy/request": _short(_ATOMIC_STATE, "database"),
+    "ops/routers/admin.py:POST:/deploy/release": _short(_ATOMIC_STATE, "database"),
     "ops/routers/admin.py:POST:/searches/": _short(_ATOMIC_DB, "listing_fetch", "detail_fetch"),
     "ops/routers/admin.py:POST:/searches/{search_key}": _short(
         _ATOMIC_DB, "listing_fetch", "detail_fetch"
