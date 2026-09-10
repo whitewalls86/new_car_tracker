@@ -461,6 +461,131 @@ class TestScrapeDetailBatch:
         scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l4"}])
         assert cf_session._cf_credentials_expires_at == 0.0
 
+    # --- Plan 162 Stage AB -------------------------------------------------
+    # Every status below is in tests/fixtures/external/cars_com_responses.json,
+    # recorded from production. Before this stage each of them took the same
+    # arm as a 200: the delay recovered and the body was enqueued for parsing.
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    def test_a_server_error_backs_the_delay_off_instead_of_recovering_it(
+        self, status, mock_cf_session, mocker
+    ):
+        """A 5xx is the origin asking for less. It used to get more.
+
+        1,911 of these in 91 days, 1,600 in one outage on 2026-08-20, and each
+        one multiplied the adaptive delay by 0.85.
+        """
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(fetchone=MagicMock(return_value=(1,)))
+        )
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = status
+        mock_resp.content = b"<html>origin error</html>"
+        mock_resp.url = "https://www.cars.com/vehicledetail/l9/"
+        mock_resp.headers = {}
+
+        sd._detail_adaptive_delay = 0.0
+        scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l9"}])
+        assert sd._detail_adaptive_delay > 0, (
+            f"HTTP {status} recovered the adaptive delay instead of backing off"
+        )
+
+    def test_a_redirect_does_not_back_the_delay_off(self, mock_cf_session, mocker):
+        """A 302 is a prompt, correct answer about somewhere else.
+
+        The listing has gone; the site is fine. Backing off here would slow the
+        whole scrape down because some listings were removed.
+        """
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(fetchone=MagicMock(return_value=(1,)))
+        )
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 302
+        mock_resp.content = b"<html>somewhere else</html>"
+        mock_resp.url = "https://www.cars.com/vehicledetail/l10/"
+        mock_resp.headers = {}
+
+        sd._detail_adaptive_delay = 4.0
+        scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l10"}])
+        assert sd._detail_adaptive_delay < 4.0
+
+    @pytest.mark.parametrize("status", [302, 500, 502, 503, 504])
+    def test_an_error_or_redirect_body_is_stored_but_not_enqueued(
+        self, status, mocker
+    ):
+        """The body reaches MinIO and does not reach the parser.
+
+        ``ops.artifacts_queue`` carries no status, so a body that is enqueued
+        is a body ``processing.parse_detail_page`` must classify blind — and
+        its ``listing_state`` default is ``'active'``. Every one of the 1,172
+        measured 302s was a *redirect target's* page stored against a removed
+        listing, and it published as active.
+        """
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        write_html = mocker.patch("shared.minio.write_html", return_value="s3://bronze/x.html")
+        mocker.patch("shared.minio.make_key", return_value="x.html")
+        cur = MagicMock(fetchone=MagicMock(return_value=(1,)))
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        mocker.patch("scraper.processors.scrape_detail.get_cf_credentials",
+                     return_value=({"cookies": {}, "user_agent": "ua"}, None, None))
+        session = MagicMock()
+        resp = MagicMock(status_code=status, content=b"<html>not this listing</html>",
+                         headers={}, url="https://www.cars.com/vehicledetail/l11/")
+        session.get.return_value = resp
+        mocker.patch("scraper.processors.scrape_detail.make_cf_session", return_value=session)
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": "l11"})
+
+        assert write_html.called, "the body must still be stored — it is the only copy"
+        executed = " ".join(str(call) for call in cur.execute.call_args_list)
+        assert "artifacts_queue" not in executed.lower(), (
+            f"HTTP {status} was enqueued for parsing"
+        )
+        assert result["artifacts"][0]["queue_artifact_id"] is None
+
+    def test_a_403_is_still_enqueued(self, mocker):
+        """The one failure that must keep reaching the parser.
+
+        A challenge page is a fact about availability, recorded as
+        ``listing_state='blocked'``. Plan 128 exists because those pages were
+        once counted as successful scrapes; refusing to enqueue them now would
+        lose the signal it built.
+        """
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch("shared.minio.write_html", return_value="s3://bronze/x.html")
+        mocker.patch("shared.minio.make_key", return_value="x.html")
+        cur = MagicMock(fetchone=MagicMock(return_value=(7,)))
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        mocker.patch("scraper.processors.scrape_detail.get_cf_credentials",
+                     return_value=({"cookies": {}, "user_agent": "ua"}, None, None))
+        session = MagicMock()
+        resp = MagicMock(status_code=403, content=b"<html>Just a moment</html>",
+                         headers={}, url="https://www.cars.com/vehicledetail/l12/")
+        session.get.return_value = resp
+        mocker.patch("scraper.processors.scrape_detail.make_cf_session", return_value=session)
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": "l12"})
+
+        assert result["artifacts"][0]["queue_artifact_id"] == 7
+
     def test_meta_has_required_keys(self, mock_cf_session, mocker):
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200

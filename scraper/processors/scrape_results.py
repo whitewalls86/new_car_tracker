@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from fastapi import Body
 
+from scraper.fetch_outcomes import FetchOutcome, classify, should_back_off
 from scraper.processors.cf_session import (
     get_cf_credentials,
     invalidate_cf_credentials,
@@ -67,18 +68,29 @@ _srp_penalty_lock = threading.Lock()
 _srp_adaptive_penalty: float = 0.0
 
 
-def _update_srp_penalty(is_403: bool) -> float:
-    """Update and return the process-wide SRP adaptive penalty."""
+def _update_srp_penalty(outcome: FetchOutcome) -> float:
+    """Update and return the process-wide SRP adaptive penalty.
+
+    **Took a bare ``is_403`` boolean until Plan 162 Stage AB**, and every other
+    outcome took the recovery arm -- including the transport-failure path,
+    where the previous line had just logged that the fetch raised twice. A
+    scraper that speeds up after failing to reach the site at all is the
+    opposite of adaptive. ``should_back_off`` is shared with the detail
+    scraper so the two cannot drift.
+    """
     global _srp_adaptive_penalty
+    backing_off = should_back_off(outcome)
     with _srp_penalty_lock:
         old = _srp_adaptive_penalty
-        if is_403:
+        if backing_off:
             _srp_adaptive_penalty = min(max(_srp_adaptive_penalty * 2, 45.0), 120.0)
         else:
             _srp_adaptive_penalty = max(_srp_adaptive_penalty * 0.90, 0.0)
         new = _srp_adaptive_penalty
-    if is_403:
-        logger.warning("SRP adaptive penalty backed off: %.1fs → %.1fs (403)", old, new)
+    if backing_off:
+        logger.warning(
+            "SRP adaptive penalty backed off: %.1fs → %.1fs (%s)", old, new, outcome.value
+        )
     elif old > 0:
         logger.info("SRP adaptive penalty recovering: %.1fs → %.1fs (success)", old, new)
     return new
@@ -281,7 +293,8 @@ def _fetch_page(url: str,
         try:
             content, status, content_type = _do_fetch()
         except Exception as e2:
-            _update_srp_penalty(is_403=False)
+            # The fetch raised twice. That is UNKNOWN, not success.
+            _update_srp_penalty(FetchOutcome.UNKNOWN)
             return _error_artifact(f"{type(e2).__name__}: {e2}")
 
     # --- 403 handling: invalidate + one retry ---
@@ -289,7 +302,7 @@ def _fetch_page(url: str,
         logger.warning("page %d got 403 (attempt 1) — invalidating CF credentials and retrying",
                        page_num)
         invalidate_cf_credentials()
-        _update_srp_penalty(is_403=True)
+        _update_srp_penalty(FetchOutcome.BLOCKED)
         try:
             content, status, content_type = _do_fetch()
         except Exception as e:
@@ -299,7 +312,10 @@ def _fetch_page(url: str,
             return _error_artifact("HTTP 403")
 
     # --- Success path ---
-    _update_srp_penalty(is_403=False)
+    # Classified rather than assumed: this line is reached for a 502 and a
+    # 504 too, which used to recover the penalty as though the page had
+    # been served.
+    _update_srp_penalty(classify(status))
 
     html_text = content.decode("utf-8", errors="replace")
     size = len(content)

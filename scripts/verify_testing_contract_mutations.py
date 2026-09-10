@@ -2938,6 +2938,229 @@ MUTATIONS = [
         ["tests/rules/test_no_mock_invents_a_service_response.py"],
         [],
     ),
+    # Plan 162 Stage AB. These rules stand between the suite and every system
+    # this repository does not build, and each of them is a set difference --
+    # the shape that reads green by matching nothing. So the mutations here
+    # lean toward emptying a reader rather than only toward breaking a value:
+    # an anchor that quietly stopped matching would disarm the census in
+    # silence, which is the failure the census exists to name.
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_census_entry_is_replayed_or_carries_a_reason",
+        "a census entry is left with neither a replay nor a reason",
+        lambda: _edit(
+            "tests/external_vocabulary_census.py",
+            '"verdict": OUT_OF_SCOPE,\n        "why": (\n'
+            '            "Replaying it means sending a message.',
+            '"verdict": "pending",\n        "why": (\n'
+            '            "Replaying it means sending a message.',
+        ),
+        ["tests/external_vocabulary_census.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_replayed_census_entry_names_something_that_exists",
+        "a census entry names a replay whose file has been renamed away",
+        lambda: _edit(
+            "tests/external_vocabulary_census.py",
+            '            "tests/rules/test_external_vocabularies.py"\n'
+            '            "::test_every_restated_curl_cffi_target_is_a_real_browser_type"',
+            '            "tests/rules/test_external_vocabularies_renamed.py"\n'
+            '            "::test_every_restated_curl_cffi_target_is_a_real_browser_type"',
+        ),
+        ["tests/external_vocabulary_census.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_census_site_still_exists",
+        "a census entry goes on naming a site that has moved",
+        lambda: _edit(
+            "tests/external_vocabulary_census.py",
+            '"sites": ("shared/challenge.py",),',
+            '"sites": ("shared/challenge_markers.py",),',
+        ),
+        ["tests/external_vocabulary_census.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_declared_vocabulary_is_empty",
+        "a members tuple is emptied, which turns every rule keyed on it green",
+        lambda: _edit(
+            "tests/external_vocabulary_census.py",
+            '"members": ("failed",),',
+            '"members": (),',
+        ),
+        ["tests/external_vocabulary_census.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_test_fabricates_a_cars_com_status_production_has_never_seen",
+        "a test fabricates a cars.com status the recorded corpus does not hold",
+        lambda: _edit(
+            "tests/scraper/processors/test_scrape_detail.py",
+            # Six sites in this file assign 403 and four share the whole
+            # `<html>blocked</html>` pair, so the anchor rides the one whose
+            # body is bare `b"blocked"` -- unique today and loud when it
+            # stops being.
+            '        mock_resp.status_code = 403\n'
+            '        mock_resp.content = b"blocked"',
+            '        mock_resp.status_code = 429\n'
+            '        mock_resp.content = b"blocked"',
+        ),
+        ["tests/scraper/processors/test_scrape_detail.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_test_fabricates_a_cars_com_status_production_has_never_seen",
+        "the recorded corpus drifts away from what the suite fabricates",
+        lambda: _edit("tests/fixtures/external/cars_com_responses.json", "    403,\n", ""),
+        ["tests/fixtures/external/cars_com_responses.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_cars_com_corpus_is_not_empty",
+        "the corpus is emptied, which would make the rule above vacuous",
+        # **This entry was a false CAUGHT until Stage AG landed.** Its node
+        # name was bare, so it resolved into `test_testing_contract.py` where
+        # no such test exists, and pytest's exit 4 read as a failure under the
+        # old `code != 0`. The payload was wrong too: it dropped two statuses
+        # from a list of seven against a floor of two, so even correctly
+        # addressed it would not have tripped the rule. Both halves are fixed
+        # here, and the second was only visible once the first was.
+        lambda: _edit(
+            "tests/fixtures/external/cars_com_responses.json",
+            '"statuses_observed": [\n    200,\n    302,\n    403,\n'
+            '    500,\n    502,\n    503,\n    504\n  ],',
+            '"statuses_observed": [],',
+        ),
+        ["tests/fixtures/external/cars_com_responses.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_corpus_records_which_instrument_saw_each_status",
+        "an observation loses the instrument that produced it",
+        lambda: _edit(
+            "tests/fixtures/external/cars_com_responses.json",
+            '"instrument": "prometheus",',
+            '"instrument": "",',
+        ),
+        ["tests/fixtures/external/cars_com_responses.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_restated_curl_cffi_target_is_a_real_browser_type",
+        "the census names an impersonation target curl_cffi does not have",
+        lambda: _edit(
+            "tests/external_vocabulary_census.py",
+            '"chrome146",',
+            '"chrome146", "chrome999",',
+        ),
+        ["tests/external_vocabulary_census.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_declared_curl_cffi_targets_are_the_ones_the_scraper_holds",
+        "the scraper's target list drifts away from the census",
+        lambda: _edit("scraper/processors/cf_session.py", '    (146, "chrome146"),\n', ""),
+        ["scraper/processors/cf_session.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_no_chrome_target_curl_cffi_offers_is_missing_from_the_scraper",
+        "curl_cffi offers a target the scraper never added -- the silent direction",
+        lambda: _edit("scraper/processors/cf_session.py", '    (145, "chrome145"),\n', ""),
+        ["scraper/processors/cf_session.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_airflow_state_the_dags_compare_against_is_declared",
+        "a DAG compares a task state against a word the census does not declare",
+        lambda: _edit(
+            "airflow/dags/notifications.py",
+            'state)) == "failed" and task_id',
+            'state)) == "upstream_failed" and task_id',
+        ),
+        ["airflow/dags/notifications.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_every_observed_cars_com_status_is_handled",
+        "a status the corpus has observed loses its handling and takes the catchall",
+        lambda: _edit(
+            "scraper/fetch_outcomes.py",
+            "    503: FetchOutcome.TRANSIENT,\n",
+            "",
+        ),
+        ["scraper/fetch_outcomes.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_unknown_catchall_is_reachable",
+        "the catchall stops being conservative and lets an unknown body reach the parser",
+        lambda: _edit(
+            "scraper/fetch_outcomes.py",
+            "    return outcome in (FetchOutcome.OK, FetchOutcome.BLOCKED)",
+            "    return outcome is not FetchOutcome.REDIRECTED",
+        ),
+        ["scraper/fetch_outcomes.py"],
+        [],
+    ),
+    # The Cloudflare marker set, and the two directions that make it a
+    # discriminator rather than a string search. Plan 128's outage was eight
+    # hours of interstitials counted as successful scrapes; the fix that was
+    # tried first keyed on `cdn-cgi/challenge-platform`, which Cloudflare
+    # injects into *every* cars.com page including the good ones. So the
+    # positive case alone is not evidence, and both mutations below exist
+    # because either one alone would leave the other direction unproved.
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_challenge_marker_set_still_classifies_the_recorded_interstitial",
+        "the marker set narrows and stops recognising a captured interstitial",
+        lambda: _edit(
+            "shared/challenge.py",
+            r'r"just a moment|attention required|checking your browser"',
+            r'r"attention required|checking your browser"',
+        ),
+        ["shared/challenge.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_a_real_detail_page_is_not_classified_as_an_interstitial",
+        "the marker set widens until it matches a real detail page too",
+        lambda: _edit(
+            "shared/challenge.py",
+            r'r"just a moment|attention required|checking your browser"',
+            r'r"just a moment|attention required|checking your browser|cars"',
+        ),
+        ["shared/challenge.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_curl_cffi_version_is_pinned_exactly",
+        "curl_cffi loosens to a floor, and the target rules stop having a referent",
+        lambda: _edit(
+            "scraper/requirements.txt",
+            "curl_cffi==0.16.3",
+            "curl_cffi>=0.16.3",
+        ),
+        ["scraper/requirements.txt"],
+        [],
+    ),
 ]
 
 

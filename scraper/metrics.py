@@ -42,8 +42,19 @@ from __future__ import annotations
 
 from prometheus_client import Counter
 
+from scraper.fetch_outcomes import METRIC_LABELS, classify
+
 SOLVER_OUTCOMES = ("ok", "challenge", "error")
-DETAIL_FETCH_OUTCOMES = ("ok", "403", "error")
+# Derived from the one classification rather than restated, and **wider than
+# it was**: Plan 162 Stage AB split the old catch-all `error`. `ok` and `403`
+# keep exactly their previous meanings because `ct-detail-fetch-failing` keys
+# on `outcome="ok"` and the block-rate rule keys on `outcome="403"`; what
+# was one `error` bucket is now `transient` (a 5xx from the origin),
+# `redirected` (a 3xx, which for cars.com means the listing has gone) and a
+# residual `error` for a raised exception or a status nobody has classified.
+# That bucket's own alert told an operator "mixed `error` points at the
+# fetch path or the site" and gave them no way to tell which.
+DETAIL_FETCH_OUTCOMES = tuple(dict.fromkeys(METRIC_LABELS.values()))
 
 solver_requests_total = Counter(
     "cartracker_solver_requests_total",
@@ -79,15 +90,14 @@ def record_detail_fetch(status: int | None, errored: bool = False) -> None:
     """Count one detail fetch, mapping HTTP status to an outcome label.
 
     `errored=True` covers a raised exception, where there is no status at all.
+
+    The mapping is `scraper.fetch_outcomes` and not a second copy of it. This
+    function used to hold its own two-status opinion -- 200, 403, and an
+    `else` for everything -- while `_update_detail_delay` held a different
+    one, and the 3,103 responses that fell through both are what Plan 162
+    Stage AB found.
     """
-    if errored or status is None:
-        outcome = "error"
-    elif status == 200:
-        outcome = "ok"
-    elif status == 403:
-        outcome = "403"
-    else:
-        outcome = "error"
+    outcome = METRIC_LABELS[classify(None if errored else status)]
     try:
         detail_fetch_total.labels(outcome=outcome).inc()
     except Exception:  # pragma: no cover - defensive

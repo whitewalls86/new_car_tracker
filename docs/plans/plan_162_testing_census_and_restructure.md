@@ -389,14 +389,15 @@ moved it to the end without making it a different stage.
 | 22 | [**AF**](#stage-af-the-harness-that-proves-the-rules-is-proved-by-nothing) | — | The harness that proves the rules is proved by nothing | G29 | `done` | CAR-114 |
 | 23 | [**Q**](#stage-q-cis-services-are-productions-in-definition-and-in-contents) | 10b | CI's services are production's, in definition and in contents | — | `done` | CAR-78 |
 | 24 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
-| 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `next` | CAR-106 |
+| 25 | [**AB**](#stage-ab-what-we-do-not-own-is-recorded-and-replayed) | — | What we do not own is recorded and replayed | G24 | `done` | CAR-106 |
 | 26 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `done` | CAR-107 |
-| 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `—` | CAR-107 |
+| 27 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `next` | CAR-107 |
 | 28 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
 | 29 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
 | 30 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
 | 31 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `done` | CAR-115 |
 | 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
+| 33 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `—` | — |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -3091,6 +3092,126 @@ is Stage P's.
 Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
 question cannot close from inside a CI job.
 
+### Stage AJ: a parser of a response we do not own, that no test executes
+
+**Issue:** unassigned · **State:** `—` · **Gap:** —
+
+**Found while closing Stage AB, and it is that stage's defect with the sign
+flipped.** Stage AB is about a test that *fabricates* a response from a system
+this repository does not build — the fabrication can be wrong, and the remedy
+is to check it against what the real thing sends. This is about a production
+function that *parses* such a response where **no test executes the parsing at
+all**. There is nothing to check, because nothing ran.
+
+**The population, and how it was measured on 2026-09-10.** A function in
+production code that calls an HTTP client this repository does not own and
+reads structure out of the response — `.json()` and a subscript of it. Derived
+by AST over the production directories, then cross-referenced against
+`coverage.xml` from a full `-m "not integration"` run.
+
+| | |
+|---|---|
+| functions matching the population | **23** |
+| parsing never executed (0 or 1 statement, the 1 being the `def`) | **14** |
+| parsing executed | **9** |
+
+The 9 are genuine passes rather than artefacts, and the difference between the
+two groups is exactly the thing this stage is about.
+`ops/coordination_release.py::_auxiliary_still_stopped` reads 16 of 16 because
+its three tests patch `requests.get`, the transport. Its three siblings in the
+same file read 1 of 12, 1 of 16 and 1 of 10 because their tests patch
+`_prometheus_scalar`, `_container_health_values` and
+`_loki_has_recent_ingestion` — the functions themselves.
+
+**Patching the helper is not the error.** A test of a *caller* legitimately
+wants to control what its helper returns, and eleven such patches in that file
+are correct tests of correct things. The error is that after those eleven, the
+helpers themselves are executed by nothing, and no instrument says so.
+
+### Why it was green
+
+Three layers, and only the third is the defect.
+
+**Coverage measured it the whole time.** `ops/coordination_release.py` has
+reported 72% with `86-101`, `105-124` and `192-205` in its missing list on every
+run. Those ranges are the three helpers. Nothing was hidden.
+
+**The floor is a global average.** `--cov-fail-under=75` is asserted against a
+repository-wide 78%, so a file at 72% with its entire parsing layer dead rides
+inside it. The one number the contract asserts is the one that cannot see a
+file-shaped hole.
+
+**And coverage cannot say *why*.** It reports zero hits. It cannot report that
+the zero is caused by eleven tests replacing the function, which is the fact
+that distinguishes this from an ordinary uncovered branch.
+
+### What is at stake in the parsing nobody runs
+
+**The shapes are one character apart and both are typed out from
+documentation.** Prometheus answers `result[0]["value"]` — singular, one
+`[timestamp, value]` pair. Loki answers `result[0]["values"]` — plural, a
+*list* of pairs, so the timestamp is `values[0]["values"][0][0]`.
+`coordination_release.py` contains both, three lines apart, and neither
+executes.
+
+**The severity is mostly bounded, and the exception is the interesting part.**
+Every caller of the two Prometheus parsers wraps it in `except (...,
+KeyError, TypeError, ValueError, ...)` and returns `_unknown`, which blocks a
+release. So a wrong parse jams a deploy gate shut rather than opening one, which
+is the good direction and is why this survived unnoticed.
+`_loki_has_recent_ingestion` is the exception: it returns a bare `bool`, and its
+`False` on a malformed envelope is indistinguishable from the condition it
+exists to detect — logs genuinely not landing.
+
+**The class predicts where a known bug already was.** Stage AA found
+`airflow/dags/scrape_detail_pages.py:143` logging `result.get("status")` from an
+endpoint that has never returned a `status` key, so every run has logged
+`status=None` since April. That function, `_scrape_detail`, measures **0 of 28
+statements covered**. The bug was found by reading, and it sits in the largest
+member of a population derived without knowing about it.
+
+### Examples, with their numbers
+
+| Function | Executed | Note |
+|---|---|---|
+| `airflow/dags/scrape_detail_pages.py::_scrape_detail` | 0/28 | holds Stage AA's `status=None` defect |
+| `airflow/dags/scrape_detail_pages.py::_release_claims` | 0/13 | |
+| `airflow/dags/sensors.py::post_json` | 1/13 | the shared POST helper every DAG uses |
+| `airflow/dags/orphan_checker.py` — three functions | 0/4 each | reap, expire, evict |
+| `ops/coordination_release.py::_container_health_values` | 1/16 | |
+| `ops/coordination_release.py::_prometheus_scalar` | 1/12 | |
+| `ops/coordination_release.py::_loki_has_recent_ingestion` | 1/10 | the one that cannot announce its own failure |
+
+### What this stage must establish before it can size itself
+
+**Eleven of the fourteen are in `airflow/dags/`, and the measurement above
+cannot tell whether they are dead or merely invisible.** The coverage read comes
+from the unit job. `tests/integration/airflow/` runs in the isolated
+`apache-airflow==3.2.0` venv as a separate job with its own coverage, and this
+reading did not union the two. A function exercised only there would appear in
+the table above and does not belong in it. **Re-measure across every job that
+runs pytest before seeding anything** — the same correction Stage AB had to
+make four times over, and the same one `check_sql_execution_coverage.py` already
+solves for SQL by reading every uploaded record together.
+
+**No gap entry is written here, deliberately.** The gap list's second column
+states how a hole is to be checked, and writing it would be choosing this
+stage's remedy before the stage has been scoped. Whether this earns a `G`
+number, and what that column says, belongs to whoever picks it up.
+
+**Nothing about the mechanism is decided here either** — not where the rule
+lives, not how execution evidence reaches it, not what the population predicate
+should key on. The predicate above is how the *measurement* was taken, not a
+proposal for how the rule should read; a different predicate that finds the same
+class is a better answer, not a deviation.
+
+**Exit:** every production function that parses a response from a system this
+repository does not own is exercised by a test or waived with its reason; the
+ledger seeded from a re-measurement at this stage's start, taken across every
+job that runs pytest rather than from the 14 above, and drained to 0;
+demonstrated by a parser whose only exercising test is removed failing.
+
+
 ## Record
 
 One entry per closed stage, oldest first. **Legacy** names the stage's old
@@ -4842,3 +4963,82 @@ changed by this work. `README.md:317` and `info.html:855` both say *"More than
 `55e3d6b`..`331b340`. The estimate was argued down from a proposal to seed the
 backlog and drain it later, on the reasoning that 80 mutations against a settled
 pattern is not half a day of prompting -- which held.
+### Stage AB — what we do not own is recorded and replayed
+
+**14 external vocabularies registered in
+[`tests/external_vocabulary_census.py`](../../tests/external_vocabulary_census.py):
+9 replayed against the real thing, 5 declared out of scope with the reason.**
+Nine replays across four jobs and only one of them new — cars.com's statuses,
+the Cloudflare interstitial markers and curl_cffi's targets in `unit-tests`,
+Airflow in the existing venv step, MinIO in the existing shared step, and
+`flaresolverr-contract` added because nothing else in CI starts that image.
+
+**cars.com cannot be reached from CI at any price, so the corpus is recorded
+from production.** `scripts/record_cars_com_status_corpus.py --record` reads 90
+days of Loki and 30 of Prometheus. That splits the pattern this stage copied:
+`verify_promtail_contract.py` records *and* verifies on the runner, while here
+the recording runs off it, because the runner cannot see the subject. Counts
+travel with the instrument that produced them and are deliberately not
+reconciled — Loki counts log lines and one fetch logs twice. Only membership is
+asserted.
+
+**Every number this stage inherited was wrong.** "9 fabricated cars.com
+responses" was **28 fabrication sites across 3 modules**, and the number that
+matters is **2 distinct statuses fabricated against 7 production has returned**.
+curl_cffi was a third instance nobody had named. markdown-it's exclusion stands
+and its stated reason does not: a stale token type there exits 0 with a broken
+page, and a rendered-output assertion is what actually saves it. And the
+census's own prose said 10 replayed and 4 declared while its own table said 9
+and 5 — the fourth instance of this plan's recurring defect, caught the way the
+other three were, by importing the tuple instead of reading the paragraph.
+
+**Reading the corpus against the code found three live defects, which is the
+stage's real yield.** Every non-403 recovered the adaptive delay, so 1,911
+measured 5xx — 1,600 of them in one outage on 2026-08-20 — made the scraper
+press harder on an origin that was failing. Every non-200 body was enqueued for
+parsing, and `processing.parse_detail_page` defaults `listing_state` to
+`"active"`, so cars.com error pages published as active listings that
+`mart_vehicle_snapshot` then trusted over every other signal. And all 1,172
+302s came through the FlareSolverr bootstrap landing on a redirect target —
+established by exact equality, 1,172 detail fetches and 1,172 bootstraps — so
+the body stored against a removed listing was some other page entirely.
+[`scraper/fetch_outcomes.py`](../../scraper/fetch_outcomes.py) is now one
+classification read by the metric, the adaptive delay and the enqueue.
+
+**The rule found a live production defect on its first CI run, and corrected
+this record's own earlier reading.** `chrome150` was missing from the
+impersonation list. The first reading called curl_cffi clean because it was
+taken against the development venv's 0.15.0; production ran 0.16.3, which has
+`chrome150`, so a user-agent reporting Chrome 150 fell back to a `chrome146`
+fingerprint — the 2026-08-14 shape, live, while the census entry said it was
+not. `curl_cffi` is now pinned to production's version with
+`test_the_curl_cffi_version_is_pinned_exactly` guarding it, because the two
+target rules point in opposite directions and together require equality with
+the installed library.
+
+**One finding is recorded rather than absorbed.**
+`ops/coordination_release.py`'s Prometheus and Loki seam has no fabrications
+because it has no coverage — the tests patch `_prometheus_scalar`,
+`_container_health_values` and `_loki_has_recent_ingestion` one level above
+`requests.get`, so the response parsing is asserted by nothing at all. That is
+first coverage owed rather than coverage corrected, and it is declared out of
+scope with that as its reason instead of being counted as a replay.
+
+**What this does not claim.** Replay proves shape, not meaning: cars.com can
+keep returning 403 and start meaning something else by it. And "every external
+vocabulary" is asserted over the census's own membership — the census is
+hand-assembled, so a vocabulary nobody thought of is invisible to it. Stage AA's
+compose-derived resolver bounds the ownership question, not the completeness
+one.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
+
+Evidence: [`plan_162_stage_AB_evidence.md`](../evidence/plan_162_stage_AB_evidence.md).
+
+**Cost: estimate 2, actual 1 (-1).** Four commits and a merge,
+`03a49df`..`43e165e`, 21 files. The estimate was sized for building a
+corpus/replay mechanism; the mechanism was already here twice and the work was
+mostly copying it, so the expensive half turned out to be measurement rather
+than construction — three of the four commits are things the measurements
+found.
