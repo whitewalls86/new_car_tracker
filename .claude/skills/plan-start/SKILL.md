@@ -121,7 +121,7 @@ Only after approval, and only what was approved.
      build order.
    - **Fresh-draft entry:** operation 6, inserting the new row — no source row
      exists to move. Let operation 6 run its own preflight; do not run
-     `tests/test_planning_docs.py` yourself first, the same reason
+     `tests/rules/test_planning_docs.py` yourself first, the same reason
      `plan-draft` does not duplicate it before a backlog insert.
 3. **The Linear project**, only if Phase 1 found none — named `Plan NNN —
    Title`.

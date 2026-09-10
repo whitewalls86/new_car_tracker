@@ -61,7 +61,7 @@ from typing import Any, Dict
 import pytest
 import yaml
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 #: Pinned rather than inherited. Compose derives the project name from the

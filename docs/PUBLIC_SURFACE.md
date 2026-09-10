@@ -69,7 +69,7 @@ Three notes, each of which was learned rather than assumed:
   thing a git hook cannot do for itself: refuse until `core.hooksPath` is
   installed, since git does not track hooks and an uninstalled one is silent.
 
-**Presence is enforced in CI; content is not.** `tests/test_planning_docs.py`
+**Presence is enforced in CI; content is not.** `tests/rules/test_planning_docs.py`
 holds both published windows to their sections with **no waiver permitted**, and
 `test_no_waiver_covers_a_published_plan` fails when a plan on a waiver list
 enters the published window — telling the author to write the section and drop
@@ -347,7 +347,7 @@ destination a reader lands on and reads, the same test D1 applied to
 ## Specified here, not yet asserted
 
 - **No CI job asserts any rule in this document.** `docs/TESTING.md` has
-  `tests/test_testing_contract.py`; this contract has no equivalent.
+  `tests/rules/test_testing_contract.py`; this contract has no equivalent.
 - **The commit gate is a Claude Code hook on the Bash tool, not a git hook.** A
   commit typed in a terminal is unaffected. It also enforces a *stop*, not the
   check: it blocks and names the skill, and something must still choose to run

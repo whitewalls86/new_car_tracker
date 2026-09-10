@@ -27,7 +27,7 @@ means: this should be healthy and is not. Gone is a strict case of not healthy.
 
 **Plan 142 owns the manifest.** ``maintenance-running-set.txt`` already records
 which services are expected running, exceptions-only, with a class and a written
-reason per entry; ``tests/test_maintenance_running_set.py`` checks it against
+reason per entry; ``tests/rules/test_maintenance_running_set.py`` checks it against
 the Compose sources. Plan 140 owns making absence visible, and Plan 142 Stage 3
 consumes that as its resume gate ("neither unhealthy nor unconfigured services
 hidden as absence"). So this file holds the *resolved* set and no rule of its
@@ -54,7 +54,7 @@ duplication is real; what makes it safe is that it cannot drift silently, which
 is the same bargain ``ct-service-down``'s job set and Promtail's job set already
 make in that file. Regenerate with:
 
-    python -c "from tests.test_maintenance_running_set import \
+    python -c "from tests.rules.test_maintenance_running_set import \
 expected_running_services as e; print(chr(10).join(sorted(e())))"
 """
 from __future__ import annotations

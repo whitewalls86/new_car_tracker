@@ -11,7 +11,7 @@ three forms and they are the same contract:
 | Form | Where | What it can do |
 |---|---|---|
 | For a person | `docs/TESTING.md` | say what is right |
-| For CI | `tests/test_testing_contract.py` | fail on the mechanical rules |
+| For CI | `tests/rules/test_testing_contract.py` | fail on the mechanical rules |
 | For a coding agent | this skill | the mechanical set, plus the three nobody can mechanise |
 
 The reason there are three is written into the plan that produced them:
@@ -29,7 +29,7 @@ would produce a second implementation that drifts from the first, and the first
 is the one CI runs — so a disagreement between them would be resolved in favour
 of the copy nobody reads.
 
-Most live in `tests/test_testing_contract.py`; one does not, because Plan 162
+Most live in `tests/rules/test_testing_contract.py`; one does not, because Plan 162
 Stage X put `PREPARE`-ing every `tests/sql/` statement in a Layer 2 suite that
 needs an engine. The number of files is not the number of rules.
 
@@ -65,7 +65,7 @@ route is the obvious one, and it looks like a pure deletion in the diff.
 ## Phase 2 — Run the mechanical half
 
 ```
-pytest tests/test_testing_contract.py -q
+pytest tests/rules/test_testing_contract.py -q
 ```
 
 Report its output as-is. Three outcomes and they mean different things:
@@ -159,7 +159,7 @@ constraint from an accident.
 
 ### And a fifth, half-mechanical: the harness must not decide the outcome
 
-`tests/test_testing_contract.py` checks the one part of this that is
+`tests/rules/test_testing_contract.py` checks the one part of this that is
 mechanical — every pytest step in CI sets `PYTHONPATH`. The rest is yours.
 
 **An unexplained mock of a filesystem, clock, platform or path primitive is a
@@ -176,7 +176,7 @@ Both directions have bitten this repository:
 - **Fails where it should pass** — a real symlink needs elevated privileges on
   Windows, so the test failed on a developer machine for a reason unrelated to
   pruning.
-- **Passes where it should fail** — `tests/test_planning_docs.py` gave 35
+- **Passes where it should fail** — `tests/rules/test_planning_docs.py` gave 35
   passed in a checkout named `cartracker-scraper` and 2 failed in one named
   `new_car_tracker`, same commit, same machine. Nothing about the code
   differed.

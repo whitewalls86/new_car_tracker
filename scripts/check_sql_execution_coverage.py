@@ -76,7 +76,7 @@ EXECUTION_ROUTES = frozenset({
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tests.test_testing_contract import production_sql_files  # noqa: E402
+from tests.rules.test_testing_contract import production_sql_files  # noqa: E402
 
 
 def _normalise(text: str) -> str:

@@ -48,7 +48,7 @@ from pathlib import Path
 
 import yaml
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: ``$${VAR}`` -- Compose emits a literal ``${VAR}`` and interpolates nothing.
 _ESCAPED = re.compile(r"\$\$\{[A-Za-z_][A-Za-z0-9_]*\}")

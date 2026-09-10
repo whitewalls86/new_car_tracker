@@ -7,7 +7,7 @@ in what order to work them. For system design see [ARCHITECTURE.md](ARCHITECTURE
 **Line budget: 250 lines.** If this file exceeds it, something has become
 narrative and belongs in [plans_decision_log.md](planning/plans_decision_log.md).
 [Plan 146](plans/plan_146_planning_system.md) sets the budget and
-`tests/test_planning_docs.py` enforces it.
+`tests/rules/test_planning_docs.py` enforces it.
 
 ### One fact, one owner
 

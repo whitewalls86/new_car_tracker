@@ -416,7 +416,7 @@ A plan belongs to exactly one of closeout, build order, backlog, superseded, or 
 - superseded names what replaced it;
 - archive records the completed result and provenance.
 
-[`tests/test_planning_docs.py`](../tests/test_planning_docs.py) enforces these rules. It also checks sequential build-order numbering, valid dates, archive ordering, link integrity, the index's line budget, agreement with the reconciled plan census, recap structure, and the validity of commit hashes cited as evidence.
+[`tests/rules/test_planning_docs.py`](../tests/rules/test_planning_docs.py) enforces these rules. It also checks sequential build-order numbering, valid dates, archive ordering, link integrity, the index's line budget, agreement with the reconciled plan census, recap structure, and the validity of commit hashes cited as evidence.
 
 This makes documentation executable without pretending prose can be fully machine-verified. The tests cannot prove that a plan's conclusion is wise. They can prove that it did not vanish, occupy two states, lose its trigger, cite a nonexistent commit, or turn the live index into an unbounded changelog.
 
