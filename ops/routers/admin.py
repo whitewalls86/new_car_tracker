@@ -28,7 +28,15 @@ from ..routers.deploy import _intent_release, _intent_status, _set_intent
 
 DBT_RUNNER_URL = os.environ.get("DBT_RUNNER_URL", "http://dbt_runner:8080")
 DBT_DOCS_URL = os.environ.get("DBT_DOCS_URL", "http://localhost:8081/dbt-docs/")
-SCRAPER_URL = os.environ.get("SCRAPER_URL", "http://scraper:8000")
+
+# Plan 162 Stage AA: `SCRAPER_URL` lived here for one caller, the `GET
+# /logs` fetch that route stopped serving in May. Plan 104 put every
+# container's logs in Loki, so the panel links there instead of showing an
+# empty pane.
+GRAFANA_LOGS_URL = os.environ.get(
+    "GRAFANA_LOGS_URL", "https://cartracker.info/grafana/explore"
+)
+
 
 router = APIRouter()
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -132,30 +140,63 @@ def new_search_form(request: Request):
 # ---------------------------------------------------------------------------
 
 def _fetch_dbt_context() -> dict:
-    """Fetch lock status, intents, and docs availability from dbt_runner."""
-    lock = {"locked": False, "locked_at": None, "locked_by": None}
-    intents = {}
+    """What the dbt panel can actually learn from dbt_runner.
+
+    Plan 162 Stage AA. This asked for three things and two of them had not
+    existed since April: ``GET /dbt/lock`` and ``GET /dbt/intents`` were removed
+    by `9f08336` while the dbt layer was rebuilt, and every call here was
+    wrapped in `except Exception: pass`, so the panel rendered an empty lock and
+    an empty intent list and looked like it was working. `caller_endpoints`
+    resolves this module to three endpoints; those two matched no contract path
+    at all.
+
+    **The cadence list comes from dbt_runner, not from this service's disk.**
+    An earlier version of this read ``dbt/selectors.yml`` directly -- which
+    works, because `ops` ships the whole tree -- and was still wrong:
+    ``/dbt/build`` validates a selector against *dbt_runner's* copy, and `ops`
+    deploys last and alone, so for the length of a deploy the panel could offer
+    a name the build would then refuse.
+
+    **``/ready`` is the lock, and it always was.** It answers
+    ``{ready, active_jobs, oldest_started_at}`` and 503 while a build is
+    running -- the same evidence the deploy drain reads through
+    ``dbt_runner_jobs``. A 503 here means *busy*, not *error*: it is a code that
+    endpoint declares, and treating a declared refusal as a failure is the
+    defect this stage is named for, one level up.
+    """
+    busy = None
     docs_available = False
+    selectors: list[str] = []
 
     try:
-        resp = http_requests.get(f"{DBT_RUNNER_URL}/dbt/lock", timeout=2)
-        lock = resp.json()
+        resp = http_requests.get(f"{DBT_RUNNER_URL}/ready", timeout=2)
+        if resp.status_code == 503:
+            busy = (resp.json().get("detail") or {})
+        else:
+            resp.raise_for_status()
+            busy = resp.json()
     except Exception:
-        pass
+        busy = None
 
     try:
-        resp = http_requests.get(f"{DBT_RUNNER_URL}/dbt/intents", timeout=2)
-        intents = resp.json().get("intents", {})
+        resp = http_requests.get(f"{DBT_RUNNER_URL}/dbt/selectors", timeout=2)
+        resp.raise_for_status()
+        selectors = resp.json().get("selectors", [])
     except Exception:
         pass
 
     try:
         resp = http_requests.get(f"{DBT_RUNNER_URL}/dbt/docs/status", timeout=2)
+        resp.raise_for_status()
         docs_available = resp.json().get("available", False)
     except Exception:
         pass
 
-    return {"lock": lock, "intents": intents, "docs_available": docs_available}
+    return {
+        "build_state": busy,
+        "selectors": selectors,
+        "docs_available": docs_available,
+    }
 
 
 @router.get("/dbt", response_class=HTMLResponse)
@@ -173,7 +214,7 @@ def dbt_dashboard(request: Request):
 @router.post("/dbt/trigger", response_class=HTMLResponse)
 def dbt_trigger(
     request: Request,
-    intent: str = Form(None),
+    selector: str = Form(None),
     select_override: str = Form(""),
     full_refresh: bool = Form(False),
     fail_fast: bool = Form(False),
@@ -181,8 +222,10 @@ def dbt_trigger(
     payload: dict = {"full_refresh": full_refresh, "fail_fast": fail_fast}
     if select_override.strip():
         payload["select"] = [t.strip() for t in select_override.split() if t.strip()]
-    elif intent:
-        payload["intent"] = intent
+    elif selector:
+        # `intent` until Plan 162 Stage AA, and dead at both ends: this set it
+        # and `dbt_build` read only select/exclude/full_refresh/fail_fast.
+        payload["selector"] = selector
 
     trigger_result = None
     trigger_ok = False
@@ -202,47 +245,6 @@ def dbt_trigger(
         "trigger_ok": trigger_ok,
         "docs_result": None,
     })
-
-
-@router.post(
-    "/dbt/intents",
-    response_class=HTMLResponse,
-    responses={
-        303: {"description": "Intent submitted; redirect to the dbt panel."},
-    },
-)
-def dbt_intent_upsert(
-    request: Request,
-    intent_name: str = Form(...),
-    select_args: str = Form(...),
-):
-    """Create or update an intent via the admin UI."""
-    tokens = [t.strip() for t in select_args.split() if t.strip()]
-    try:
-        resp = http_requests.post(
-            f"{DBT_RUNNER_URL}/dbt/intents",
-            json={"intent_name": intent_name.strip(), "select_args": tokens},
-            timeout=5,
-        )
-        resp.raise_for_status()
-    except Exception:
-        pass
-    return RedirectResponse(url="/admin/dbt", status_code=303)
-
-
-@router.post(
-    "/dbt/intents/{intent_name}/delete",
-    response_class=HTMLResponse,
-    responses={
-        303: {"description": "Delete submitted; redirect to the dbt panel."},
-    },
-)
-def dbt_intent_delete(request: Request, intent_name: str):
-    try:
-        http_requests.delete(f"{DBT_RUNNER_URL}/dbt/intents/{intent_name}", timeout=5)
-    except Exception:
-        pass
-    return RedirectResponse(url="/admin/dbt", status_code=303)
 
 
 @router.post("/dbt/docs/generate", response_class=HTMLResponse)
@@ -276,22 +278,17 @@ _OPS_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
 
 @router.get("/logs", response_class=HTMLResponse)
 def view_logs(request: Request, lines: int = 200):
-    scraper_lines: list[str] = []
-    dbt_lines: list[str] = []
+    """This service's own log. The other two are read in Grafana.
+
+    Plan 162 Stage AA. This fetched `GET /logs` from `scraper` and from
+    `dbt_runner`, and neither route has existed since `d88a41e` standardised
+    logging in May; both calls were wrapped in `except Exception: pass`, so the
+    page rendered two empty panes and looked like two quiet services. Plan 104
+    put every container's logs in Loki, which is where a reader should be
+    sent -- a log viewer that silently shows nothing is worse than one that
+    says where to look.
+    """
     ops_lines: list[str] = []
-
-    try:
-        resp = http_requests.get(f"{SCRAPER_URL}/logs?lines={lines}", timeout=5)
-        scraper_lines = resp.json().get("lines", [])
-    except Exception:
-        pass
-
-    try:
-        resp = http_requests.get(f"{DBT_RUNNER_URL}/logs?lines={lines}", timeout=5)
-        dbt_lines = resp.json().get("lines", [])
-    except Exception:
-        pass
-
     try:
         with open(_OPS_LOG_PATH, encoding="utf-8") as f:
             ops_lines = f.readlines()[-lines:]
@@ -300,10 +297,9 @@ def view_logs(request: Request, lines: int = 200):
 
     return templates.TemplateResponse(request=request, name="admin/logs.html", context={
         "request": request,
-        "scraper_lines": scraper_lines,
-        "dbt_lines": dbt_lines,
         "ops_lines": ops_lines,
         "lines": lines,
+        "grafana_url": GRAFANA_LOGS_URL,
     })
 
 

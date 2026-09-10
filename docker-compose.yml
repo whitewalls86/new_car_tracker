@@ -158,7 +158,6 @@ services:
       DBT_RUNNER_URL: http://dbt_runner:8080
       ANALYTICS_SNAPSHOT_PATH: /data/analytics_snapshot/analytics_snapshot.json
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
-      SCRAPER_URL: http://scraper:8000
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}

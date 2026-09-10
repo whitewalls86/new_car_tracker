@@ -12,13 +12,12 @@
 # test_row_to_dict_dict_params      - dict params passed through unchanged
 # test_stringify_uuids              - UUID values converted to strings
 #
-# _fetch_dbt_context
+# _fetch_dbt_context   (Plan 162 Stage AA: was lock/intents/docs, two of which
+#                       dbt_runner stopped serving in April)
 # ------------------
-# test_fetch_dbt_context_all_ok         - all three requests succeed, returns lock/intents/docs
-# test_fetch_dbt_context_lock_fails     - lock request fails, defaults used
-# test_fetch_dbt_context_intents_fails  - intents request fails, defaults used
-# test_fetch_dbt_context_docs_fails     - docs request fails, defaults used
-# test_fetch_dbt_context_all_fail       - all requests fail, full defaults returned
+# test_fetch_dbt_context_reads_ready_and_docs        - /ready, /dbt/selectors, /dbt/docs/status
+# test_fetch_dbt_context_reads_a_503_as_busy_not_broken - a declared refusal is evidence
+# test_fetch_dbt_context_unreachable_is_unknown_not_idle - None, so the panel can say so
 #
 # GET /searches/
 # --------------
@@ -67,24 +66,20 @@
 #
 # GET /dbt
 # --------
-# test_dbt_dashboard_ok             - 200, context includes lock/intents/docs
+# test_dbt_dashboard_ok             - 200, context includes build state/selectors/docs
 #
 # POST /dbt/trigger
 # -----------------
-# test_dbt_trigger_with_intent      - posts intent to dbt_runner, renders result
-# test_dbt_trigger_with_select      - select_override takes precedence over intent
-# test_dbt_trigger_dbt_runner_fails - dbt_runner error → trigger_ok=False
+# test_dbt_trigger_sends_a_selector - posts a named cadence dbt_runner will accept
+# test_dbt_trigger_with_select_override - raw tokens take precedence over the cadence
 # test_dbt_trigger_request_fails    - network error → error dict in trigger_result
 #
-# POST /dbt/intents
-# -----------------
-# test_dbt_intent_upsert_ok         - posts to dbt_runner, redirects to /admin/dbt
-# test_dbt_intent_upsert_fails      - request fails, still redirects (silent fail)
-#
-# POST /dbt/intents/{name}/delete
-# --------------------------------
-# test_dbt_intent_delete_ok         - deletes from dbt_runner, redirects
-# test_dbt_intent_delete_fails      - request fails, still redirects (silent fail)
+# POST /dbt/intents, POST /dbt/intents/{name}/delete
+# --------------------------------------------------
+# Deleted by Plan 162 Stage AA. dbt_runner removed the endpoints behind them in
+# April (`9f08336`) and both callers swallowed the failure, so the panel had
+# managed nothing since. dbt's own `selectors.yml` is the replacement, reached
+# through `/dbt/selectors` and `--selector`.
 #
 # POST /dbt/docs/generate
 # -----------------------
@@ -94,10 +89,12 @@
 #
 # GET /logs
 # ---------
-# test_view_logs_ok                 - all sources return lines
-# test_view_logs_scraper_fails      - scraper unreachable → scraper_lines=[]
-# test_view_logs_dbt_fails          - dbt_runner unreachable → dbt_lines=[]
+# test_view_logs_shows_this_services_own_file - the ops log, read from disk
 # test_view_logs_file_not_found     - ops log missing → ops_lines=[]
+# The scraper and dbt_runner panes were removed by Plan 162 Stage AA: neither
+# service has served `GET /logs` since May and both fetches were swallowed, so
+# each pane read "unreachable" whether the service was down or healthy. Plan
+# 104's Loki holds those logs and the page links there.
 #
 # GET /deploy
 # -----------
@@ -121,6 +118,7 @@ from fastapi.responses import HTMLResponse
 
 from ops.routers import admin
 from tests.response_fixtures import produced_by
+from tests.service_contracts import service_response
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -152,7 +150,9 @@ def mock_dbt_context(mocker):
     """Mock _fetch_dbt_context to avoid HTTP calls in endpoint tests."""
     return mocker.patch(
         "ops.routers.admin._fetch_dbt_context",
-        return_value=produced_by("_fetch_dbt_context", lock={}, intents={}, docs_available=False),
+        return_value=produced_by(
+            "_fetch_dbt_context", build_state=None, selectors=[], docs_available=False,
+        ),
     )
 
 
@@ -216,41 +216,67 @@ def test_stringify_uuids():
 # _fetch_dbt_context
 # ---------------------------------------------------------------------------
 
-def test_fetch_dbt_context_all_ok(mock_requests):
-    mock_requests["get"].return_value.json.side_effect = [
-        {"locked": True, "locked_at": None, "locked_by": "test"},
-        {"intents": {"after_srp": {"select": ["model_a"]}}},
-        {"available": True},
-    ]
+def test_fetch_dbt_context_reads_ready_and_docs(mock_requests):
+    """Plan 162 Stage AA: two of the three calls this made did not exist.
+
+    `GET /dbt/lock` and `GET /dbt/intents` were removed in April and every call
+    here was wrapped in `except: pass`, so this test asserted a lock shape and
+    an intent map that dbt_runner had not sent for months. `/ready` is what
+    carries build state, and it is a route the contract declares.
+    """
     mock_requests["get"].return_value.status_code = 200
+    mock_requests["get"].return_value.json.side_effect = [
+        service_response("dbt_runner", "GET", "/ready", ready=False, active_jobs=2),
+        service_response(
+            "dbt_runner", "GET", "/dbt/selectors", selectors=["hourly_core"],
+        ),
+        service_response("dbt_runner", "GET", "/dbt/docs/status", available=True),
+    ]
 
     result = admin._fetch_dbt_context()
 
-    assert result["lock"] == {"locked": True, "locked_at": None, "locked_by": "test"}
-    assert result["intents"] == {"after_srp": {"select": ["model_a"]}}
+    assert result["build_state"]["active_jobs"] == 2
     assert result["docs_available"] is True
+    assert result["selectors"] == ["hourly_core"]
 
 
-def test_fetch_dbt_context_all_fail(mock_requests):
+def test_fetch_dbt_context_reads_a_503_as_busy_not_broken(mock_requests):
+    """A declared refusal is evidence, not a failure.
+
+    `/ready` answers 503 while a build runs and carries the counts in `detail`
+    -- the same body `ops/coordination_drain.py` reads as *known* positive
+    evidence. A panel that rendered that as "unreachable" would report a
+    working build as a broken service.
+    """
+    not_ready = service_response("dbt_runner", "GET", "/ready", "503")
+    not_ready["detail"].update(active_jobs=1, reason="jobs in flight")
+
+    busy = mock_requests["get"].return_value
+    busy.status_code = 503
+    busy.json.side_effect = [
+        not_ready,
+        service_response("dbt_runner", "GET", "/dbt/selectors"),
+        service_response("dbt_runner", "GET", "/dbt/docs/status"),
+    ]
+
+    result = admin._fetch_dbt_context()
+
+    assert result["build_state"]["active_jobs"] == 1
+
+
+def test_fetch_dbt_context_unreachable_is_unknown_not_idle(mock_requests):
+    """`None` rather than a zeroed build state, so the panel can say so.
+
+    The old code substituted `{"locked": False}` on any failure, which renders
+    identically to a healthy idle runner -- the service being down and the
+    service being free looked the same.
+    """
     mock_requests["get"].side_effect = Exception("Connection refused")
 
     result = admin._fetch_dbt_context()
 
-    assert result["lock"] == {"locked": False, "locked_at": None, "locked_by": None}
-    assert result["intents"] == {}
+    assert result["build_state"] is None
     assert result["docs_available"] is False
-
-
-def test_fetch_dbt_context_lock_fails(mock_requests):
-    mock_requests["get"].side_effect = [
-        Exception("timeout"),
-        MagicMock(**{"json.return_value": {"intents": {}}}),
-        MagicMock(**{"json.return_value": {"available": False}}),
-    ]
-
-    result = admin._fetch_dbt_context()
-
-    assert result["lock"] == {"locked": False, "locked_at": None, "locked_by": None}
 
 
 # ---------------------------------------------------------------------------
@@ -341,15 +367,21 @@ def test_dbt_dashboard_ok(mock_client, mock_dbt_context, mock_templates):
 # POST /dbt/trigger
 # ---------------------------------------------------------------------------
 
-def test_dbt_trigger_with_intent(mock_client, mock_requests, mock_dbt_context, mock_templates):
+def test_dbt_trigger_sends_a_selector(mock_client, mock_requests, mock_dbt_context, mock_templates):
+    """Plan 162 Stage AA: this sent `intent`, which nothing read.
+
+    `dbt_build` reads select/exclude/full_refresh/fail_fast and never read
+    `intent`, so the panel's dropdown had no effect at either end. It now sends
+    `selector`, a name from the same `selectors.yml` dbt itself reads.
+    """
     mock_requests["post"].return_value.status_code = 200
     mock_requests["post"].return_value.json.return_value = {"ok": True}
 
-    response = mock_client.post("/admin/dbt/trigger", data={"intent": "after_srp"})
+    response = mock_client.post("/admin/dbt/trigger", data={"selector": "hourly_core"})
 
     assert response.status_code == 200
     payload = mock_requests["post"].call_args.kwargs["json"]
-    assert payload["intent"] == "after_srp"
+    assert payload["selector"] == "hourly_core"
 
 
 def test_dbt_trigger_with_select_override(
@@ -381,54 +413,6 @@ def test_dbt_trigger_request_fails(mock_client, mock_requests, mock_dbt_context,
 
 # ---------------------------------------------------------------------------
 # POST /dbt/intents
-# ---------------------------------------------------------------------------
-
-def test_dbt_intent_upsert_ok(mock_client, mock_requests):
-    mock_requests["post"].return_value.status_code = 200
-
-    response = mock_client.post("/admin/dbt/intents", data={
-        "intent_name": "after_srp",
-        "select_args": "model_a model_b",
-    }, follow_redirects=False)
-
-    assert response.status_code == 303
-    assert response.headers["location"] == "/admin/dbt"
-
-
-def test_dbt_intent_upsert_fails(mock_client, mock_requests):
-    mock_requests["post"].side_effect = Exception("timeout")
-
-    response = mock_client.post("/admin/dbt/intents", data={
-        "intent_name": "after_srp",
-        "select_args": "model_a",
-    }, follow_redirects=False)
-
-    assert response.status_code == 303
-
-
-# ---------------------------------------------------------------------------
-# POST /dbt/intents/{name}/delete
-# ---------------------------------------------------------------------------
-
-def test_dbt_intent_delete_ok(mock_client, mock_requests):
-    mock_requests["delete"].return_value.status_code = 200
-
-    response = mock_client.post("/admin/dbt/intents/after_srp/delete", follow_redirects=False)
-
-    assert response.status_code == 303
-    assert response.headers["location"] == "/admin/dbt"
-
-
-def test_dbt_intent_delete_fails(mock_client, mock_requests):
-    mock_requests["delete"].side_effect = Exception("timeout")
-
-    response = mock_client.post("/admin/dbt/intents/after_srp/delete", follow_redirects=False)
-
-    assert response.status_code == 303
-
-
-# ---------------------------------------------------------------------------
-# POST /dbt/docs/generate
 # ---------------------------------------------------------------------------
 
 def test_dbt_docs_generate_ok(mock_client, mock_requests, mock_dbt_context, mock_templates):
@@ -467,28 +451,28 @@ def test_dbt_docs_generate_error(mock_client, mock_requests, mock_dbt_context, m
 # GET /logs
 # ---------------------------------------------------------------------------
 
-def test_view_logs_ok(mock_client, mock_requests, mock_templates, mocker):
-    mock_requests["get"].return_value.json.return_value = {"lines": ["line1\n"]}
-    mocker.patch("builtins.open", mocker.mock_open(read_data="ops line\n"))
+LOG_LINE = "ops line\n"
+
+
+def test_view_logs_shows_this_services_own_file(mock_client, mock_templates, mocker):
+    """Plan 162 Stage AA: two of the three panes were fed by dead routes.
+
+    `GET /logs` on scraper and on dbt_runner stopped existing in May, and both
+    fetches were wrapped in `except: pass`, so the page rendered "unreachable"
+    whether the service was down or healthy. Plan 104's Loki is where those
+    logs are, and the page links there instead.
+    """
+    mocker.patch("builtins.open", mocker.mock_open(read_data=LOG_LINE))
 
     response = mock_client.get("/admin/logs")
 
     assert response.status_code == 200
+    context = mock_templates.call_args.kwargs["context"]
+    assert context["ops_lines"] == [LOG_LINE]
+    assert context["grafana_url"]
 
 
-def test_view_logs_scraper_fails(mock_client, mock_requests, mock_templates, mocker):
-    mock_requests["get"].side_effect = Exception("timeout")
-    mocker.patch("builtins.open", side_effect=FileNotFoundError)
-
-    response = mock_client.get("/admin/logs")
-
-    assert response.status_code == 200
-    call_kwargs = mock_templates.call_args.kwargs
-    assert call_kwargs["context"]["scraper_lines"] == []
-
-
-def test_view_logs_file_not_found(mock_client, mock_requests, mock_templates, mocker):
-    mock_requests["get"].return_value.json.return_value = {"lines": []}
+def test_view_logs_file_not_found(mock_client, mock_templates, mocker):
     mocker.patch("builtins.open", side_effect=FileNotFoundError)
 
     response = mock_client.get("/admin/logs")

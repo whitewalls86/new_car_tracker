@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+import yaml
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -24,6 +25,7 @@ from dbt_runner.api_models import (
     DocsGenerateError,
     DocsGenerateResult,
     DocsStatusResponse,
+    SelectorsResponse,
 )
 from dbt_runner.metrics import REGISTRY, publish_snapshot
 from shared.api_models import (
@@ -78,6 +80,30 @@ def _model_timings_from_run_results() -> List[Dict[str, Any]]:
     ]
 
 
+def declared_selectors() -> set[str]:
+    """The selector names ``selectors.yml`` declares, read from the file.
+
+    Plan 162 Stage AA. Read rather than restated: a list of names here would be
+    a second copy of the same four strings, free to drift from the file dbt
+    actually reads -- and the panel offering a selector dbt does not have is
+    exactly the class of defect this plan exists for.
+
+    ``selectors.yml`` sits beside this service at runtime because
+    ``dbt_runner/Dockerfile`` copies ``dbt/`` to the working directory, which is
+    the same reason ``dbt build`` finds it.
+    """
+    path = os.path.join(os.getcwd(), "selectors.yml")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            declared = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        return set()
+    return {
+        entry["name"] for entry in (declared.get("selectors") or [])
+        if isinstance(entry, dict) and entry.get("name")
+    }
+
+
 def _validate_tokens(tokens: List[str], field: str) -> None:
     for t in tokens:
         if not t or not SAFE_TOKEN.match(t):
@@ -120,6 +146,23 @@ def ready() -> Dict[str, Any]:
 @app.get("/metrics", response_class=Response)
 def metrics() -> Response:
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/dbt/selectors", response_model=SelectorsResponse)
+def get_selectors() -> Dict[str, Any]:
+    """The cadences this service will accept on ``/dbt/build``.
+
+    Plan 162 Stage AA. The admin panel needs this list, and its first version
+    read ``dbt/selectors.yml`` off its own disk -- which works, because `ops`
+    ships the whole tree, and is still wrong. ``/dbt/build`` validates a
+    selector against *this* service's copy, and `ops` deploys last and alone,
+    so the two can differ for the length of a deploy: the panel would offer a
+    name the build then refuses with a 400 nobody could explain.
+
+    Asking the service that does the validating is the same principle as the
+    rest of this stage -- the owner answers for what it owns.
+    """
+    return {"selectors": sorted(declared_selectors())}
 
 
 @app.get("/dbt/docs/status", response_model=DocsStatusResponse)
@@ -226,6 +269,18 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
 
             select = payload.get("select")
             exclude = payload.get("exclude")
+            selector = payload.get("selector")
+
+            if selector is not None:
+                available = declared_selectors()
+                if selector not in available:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Unknown selector {selector!r}; selectors.yml "
+                            f"declares {sorted(available)}"
+                        ),
+                    )
 
             if isinstance(select, str):
                 select = [select]
@@ -238,6 +293,8 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
                 _validate_tokens(exclude, "exclude")
 
             cmd: List[str] = ["dbt", "build", "--target", "duckdb"]
+            if selector:
+                cmd += ["--selector", selector]
             if fail_fast:
                 cmd.append("--fail-fast")
             if full_refresh:
@@ -268,6 +325,7 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
                 "ended_at": ended_at,
                 "duration_seconds": duration_seconds,
                 "select": select or "all",
+                "selector": selector,
                 "exclude": exclude or [],
                 "full_refresh": full_refresh,
                 "cmd": cmd_str,

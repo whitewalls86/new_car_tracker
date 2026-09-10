@@ -118,7 +118,7 @@
         "type": "object"
       },
       "BuildResult": {
-        "description": "``POST /dbt/build``'s body, and its 500's detail unchanged.\n\n``select`` is ``list[str] | str`` because the handler substitutes the\nliteral ``\"all\"`` when no selection was given. That is a wart, and it is\ndeclared rather than smoothed over: changing it changes what every existing\ncaller parses, which is a decision for whoever needs it and not a side\neffect of writing this model.",
+        "description": "``POST /dbt/build``'s body, and its 500's detail unchanged.\n\n``selector`` is a name from ``selectors.yml`` -- dbt's own mechanism for a\nnamed cadence, which this service could not reach until Plan 162 Stage AA\nand which ``selectors.yml``'s own comment recorded as the reason its four\nentries were \"for local/manual use\".\n\n``select`` is ``list[str] | str`` because the handler substitutes the\nliteral ``\"all\"`` when no selection was given. That is a wart, and it is\ndeclared rather than smoothed over: changing it changes what every existing\ncaller parses, which is a decision for whoever needs it and not a side\neffect of writing this model.",
         "properties": {
           "analytics_snapshot": {
             "$ref": "#/components/schemas/AnalyticsSnapshotResult"
@@ -194,6 +194,17 @@
               }
             ],
             "title": "Select"
+          },
+          "selector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selector"
           },
           "started_at": {
             "title": "Started At",
@@ -446,6 +457,23 @@
         "title": "ReadyResponse",
         "type": "object"
       },
+      "SelectorsResponse": {
+        "description": "``GET /dbt/selectors`` -- the cadences ``/dbt/build`` will accept.\n\nRead from ``selectors.yml`` at request time rather than cached at import,\nso a redeploy that changes the file changes the answer without a restart --\nand so the list a caller sees is the list the very next build validates\nagainst.",
+        "properties": {
+          "selectors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selectors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "selectors"
+        ],
+        "title": "SelectorsResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -611,6 +639,25 @@
           }
         },
         "summary": "Get Docs Status"
+      }
+    },
+    "/dbt/selectors": {
+      "get": {
+        "description": "The cadences this service will accept on ``/dbt/build``.\n\nPlan 162 Stage AA. The admin panel needs this list, and its first version\nread ``dbt/selectors.yml`` off its own disk -- which works, because `ops`\nships the whole tree, and is still wrong. ``/dbt/build`` validates a\nselector against *this* service's copy, and `ops` deploys last and alone,\nso the two can differ for the length of a deploy: the panel would offer a\nname the build then refuses with a 400 nobody could explain.\n\nAsking the service that does the validating is the same principle as the\nrest of this stage -- the owner answers for what it owns.",
+        "operationId": "get_selectors_dbt_selectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectorsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Selectors"
       }
     },
     "/health": {

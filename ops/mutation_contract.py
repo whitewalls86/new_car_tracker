@@ -208,10 +208,6 @@ MUTATION_ROUTES = {
     # Admin routes either delegate to a tracked long job or perform bounded
     # metadata/coordination transactions.
     "ops/routers/admin.py:POST:/dbt/trigger": _tracked("delegated", "dbt_runner_jobs", "analytics"),
-    "ops/routers/admin.py:POST:/dbt/intents": _short(_DELEGATED_SHORT, "analytics"),
-    "ops/routers/admin.py:POST:/dbt/intents/{intent_name}/delete": _short(
-        _DELEGATED_SHORT, "analytics"
-    ),
     "ops/routers/admin.py:POST:/dbt/docs/generate": _tracked(
         "delegated", "dbt_runner_jobs", "analytics"
     ),

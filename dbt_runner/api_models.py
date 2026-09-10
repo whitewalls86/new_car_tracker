@@ -23,6 +23,18 @@ class DocsStatusResponse(BaseModel):
     available: bool
 
 
+class SelectorsResponse(BaseModel):
+    """``GET /dbt/selectors`` -- the cadences ``/dbt/build`` will accept.
+
+    Read from ``selectors.yml`` at request time rather than cached at import,
+    so a redeploy that changes the file changes the answer without a restart --
+    and so the list a caller sees is the list the very next build validates
+    against.
+    """
+
+    selectors: List[str]
+
+
 class DocsGenerateResult(BaseModel):
     """``POST /dbt/docs/generate``'s body, and its 500's detail unchanged.
 
@@ -76,6 +88,11 @@ class AnalyticsSnapshotResult(BaseModel):
 class BuildResult(BaseModel):
     """``POST /dbt/build``'s body, and its 500's detail unchanged.
 
+    ``selector`` is a name from ``selectors.yml`` -- dbt's own mechanism for a
+    named cadence, which this service could not reach until Plan 162 Stage AA
+    and which ``selectors.yml``'s own comment recorded as the reason its four
+    entries were "for local/manual use".
+
     ``select`` is ``list[str] | str`` because the handler substitutes the
     literal ``"all"`` when no selection was given. That is a wart, and it is
     declared rather than smoothed over: changing it changes what every existing
@@ -92,6 +109,7 @@ class BuildResult(BaseModel):
     ended_at: str
     duration_seconds: float
     select: List[str] | str
+    selector: str | None = None
     exclude: List[str]
     full_refresh: bool
     cmd: str

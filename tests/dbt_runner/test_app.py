@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi import HTTPException
 
@@ -109,6 +111,64 @@ def test_get_ready_when_busy(mock_client, mocker):
     assert response.json()["detail"]["ready"] is False
     assert response.json()["detail"]["active_jobs"] == 1
     assert response.json()["detail"]["reason"] == "jobs in flight"
+
+
+# ---------------------------------------------------------------------------
+# /dbt/selectors
+# ---------------------------------------------------------------------------
+
+def test_selectors_are_read_from_the_file_dbt_reads(mock_client, mocker):
+    """The panel's dropdown is this list, and `/dbt/build` validates against it.
+
+    Plan 162 Stage AA. Both halves come from `selectors.yml`, so a cadence the
+    panel offers is a cadence the build accepts -- the admin UI cannot present
+    a name that then 400s.
+    """
+    mocker.patch(
+        "dbt_runner.app.declared_selectors",
+        return_value={"hourly_core", "feature_daily"},
+    )
+
+    response = mock_client.get("/dbt/selectors")
+
+    assert response.status_code == 200
+    assert response.json() == {"selectors": ["feature_daily", "hourly_core"]}
+
+
+def test_selectors_is_empty_when_the_file_is_missing(mock_client, mocker):
+    """An empty list rather than a 500: the panel disables its dropdown.
+
+    A build with no selector is still legal -- it builds everything -- so a
+    missing `selectors.yml` costs the named cadences and nothing else.
+    """
+    mocker.patch("dbt_runner.app.declared_selectors", return_value=set())
+
+    response = mock_client.get("/dbt/selectors")
+
+    assert response.status_code == 200
+    assert response.json() == {"selectors": []}
+
+
+def test_declared_selectors_reads_the_real_file():
+    """Not a mock: the four cadences `dbt/selectors.yml` actually declares.
+
+    The mocked tests above say the route serialises what the reader returns;
+    this says the reader can read the file that ships beside this service, and
+    it is the only place those two facts meet.
+    """
+    import os
+
+    from dbt_runner.app import declared_selectors
+
+    repo_root = Path(__file__).resolve().parents[2]
+    previous = os.getcwd()
+    os.chdir(repo_root / "dbt")
+    try:
+        assert declared_selectors() == {
+            "hourly_core", "feature_daily", "backtest", "full_validation",
+        }
+    finally:
+        os.chdir(previous)
 
 
 # ---------------------------------------------------------------------------

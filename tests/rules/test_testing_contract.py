@@ -4577,8 +4577,6 @@ SWALLOWED_WRITE_WAIVERS: tuple[Waiver, ...] = (
     # `dbt_runner` regains the endpoints is the same decision as what the
     # repaired test asserts, and Stage AA owns it. A waiver with a named owner
     # is exactly the object for that, and it dies when Plan 162 archives.
-    Waiver("ops/routers/admin.py:dbt_intent_upsert", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
 )
 
 _HTTP_WRITE_VERBS = frozenset({"post", "put", "patch", "delete"})
@@ -4919,16 +4917,13 @@ def _uninspected_responses(path: Path) -> list[str]:
     return sorted(set(found))
 
 
-UNINSPECTED_RESPONSE_WAIVERS: tuple[Waiver, ...] = (
-    # All five call `dbt_runner` endpoints that no longer exist -- `/dbt/lock`,
-    # `/dbt/intents` and `/logs`, deleted by 9f08336 and d88a41e -- so there is
-    # no status worth reading and no repair that is not first a decision about
-    # whether the admin dbt panel and log viewer survive at all. Stage AA owns
-    # that decision, and these leave with whichever answer it takes.
-    Waiver("ops/routers/admin.py:_fetch_dbt_context", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:view_logs", "G27", 162, date(2026, 9, 8)),
-    Waiver("ops/routers/admin.py:dbt_intent_delete", "G27", 162, date(2026, 9, 8)),
-)
+# Empty since 2026-09-09. Five entries stood here, all calling `dbt_runner`
+# endpoints that no longer existed -- `/dbt/lock`, `/dbt/intents` and `/logs`,
+# deleted by 9f08336 and d88a41e -- and the note said they would leave with
+# whichever answer Stage AA took about the panel. It took deletion: the calls
+# are gone, the intent subsystem with them, and what the panel needed is now
+# asked of routes that exist and whose statuses it reads.
+UNINSPECTED_RESPONSE_WAIVERS: tuple[Waiver, ...] = ()
 
 
 def test_every_response_we_ask_for_has_its_status_read():
@@ -5658,7 +5653,6 @@ PHANTOM_422_WAIVERS: tuple[Waiver, ...] = (
     # admin routes Stage AA resolves; the other two guard their parameter in the
     # handler the way `/recaps/{slug}` does, and follow whatever that stage
     # decides for the panel around them.
-    Waiver("POST /admin/dbt/intents/{intent_name}/delete", "G21", 162, date(2026, 9, 8)),
     Waiver("GET /admin/searches/{search_key}/edit", "G21", 162, date(2026, 9, 8)),
     Waiver("POST /admin/searches/{search_key}/toggle", "G21", 162, date(2026, 9, 8)),
     Waiver("POST /admin/searches/{search_key}/delete", "G21", 162, date(2026, 9, 8)),

@@ -353,24 +353,6 @@
         "title": "Body_create_search_admin_searches__post",
         "type": "object"
       },
-      "Body_dbt_intent_upsert_admin_dbt_intents_post": {
-        "properties": {
-          "intent_name": {
-            "title": "Intent Name",
-            "type": "string"
-          },
-          "select_args": {
-            "title": "Select Args",
-            "type": "string"
-          }
-        },
-        "required": [
-          "intent_name",
-          "select_args"
-        ],
-        "title": "Body_dbt_intent_upsert_admin_dbt_intents_post",
-        "type": "object"
-      },
       "Body_dbt_trigger_admin_dbt_trigger_post": {
         "properties": {
           "fail_fast": {
@@ -383,13 +365,13 @@
             "title": "Full Refresh",
             "type": "boolean"
           },
-          "intent": {
-            "title": "Intent",
-            "type": "string"
-          },
           "select_override": {
             "default": "",
             "title": "Select Override",
+            "type": "string"
+          },
+          "selector": {
+            "title": "Selector",
             "type": "string"
           }
         },
@@ -1724,90 +1706,6 @@
         "summary": "Dbt Docs Generate"
       }
     },
-    "/admin/dbt/intents": {
-      "post": {
-        "description": "Create or update an intent via the admin UI.",
-        "operationId": "dbt_intent_upsert_admin_dbt_intents_post",
-        "requestBody": {
-          "content": {
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_dbt_intent_upsert_admin_dbt_intents_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "303": {
-            "description": "Intent submitted; redirect to the dbt panel."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Dbt Intent Upsert"
-      }
-    },
-    "/admin/dbt/intents/{intent_name}/delete": {
-      "post": {
-        "operationId": "dbt_intent_delete_admin_dbt_intents__intent_name__delete_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "intent_name",
-            "required": true,
-            "schema": {
-              "title": "Intent Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "303": {
-            "description": "Delete submitted; redirect to the dbt panel."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Dbt Intent Delete"
-      }
-    },
     "/admin/dbt/trigger": {
       "post": {
         "operationId": "dbt_trigger_admin_dbt_trigger_post",
@@ -1907,6 +1805,7 @@
     },
     "/admin/logs": {
       "get": {
+        "description": "This service's own log. The other two are read in Grafana.\n\nPlan 162 Stage AA. This fetched `GET /logs` from `scraper` and from\n`dbt_runner`, and neither route has existed since `d88a41e` standardised\nlogging in May; both calls were wrapped in `except Exception: pass`, so the\npage rendered two empty panes and looked like two quiet services. Plan 104\nput every container's logs in Loki, which is where a reader should be\nsent -- a log viewer that silently shows nothing is worse than one that\nsays where to look.",
         "operationId": "view_logs_admin_logs_get",
         "parameters": [
           {

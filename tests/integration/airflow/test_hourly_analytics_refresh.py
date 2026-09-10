@@ -21,7 +21,8 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
+REPO_ROOT = Path(__file__).parents[3]
+DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 
 
 @pytest.fixture
@@ -40,16 +41,42 @@ def _mock_context(conf=None):
 
 
 class TestHourlyDbtBuildPayload:
-    def test_default_payload_selects_hourly_core(self, dbt_build_module, mocker):
-        """No dag_run.conf → payload must select the hourly_core tag, not the full graph."""
+    def test_default_payload_names_the_hourly_core_cadence(self, dbt_build_module, mocker):
+        """No dag_run.conf → the payload names the cadence, not its tokens.
+
+        Plan 162 Stage AA. This asserted `{"select": ["tag:hourly_core"]}`, a
+        second copy of what `dbt/selectors.yml` defines as `hourly_core`; the
+        DAG now sends `selector` and dbt resolves it from that file, so the
+        tokens live in one place.
+        """
         mock_post_json = mocker.patch.object(dbt_build_module, "post_json")
         mock_post_json.return_value = {"ok": True}
 
         dbt_build_module._run_dbt_build(**_mock_context())
 
         _, kwargs = mock_post_json.call_args
-        assert kwargs["payload"] == {"select": ["tag:hourly_core"]}
-        assert dbt_build_module.DEFAULT_DBT_SELECT == ["tag:hourly_core"]
+        assert kwargs["payload"] == {"selector": "hourly_core"}
+        assert dbt_build_module.DEFAULT_DBT_SELECTOR == "hourly_core"
+
+    def test_the_named_cadence_is_one_selectors_yml_declares(self, dbt_build_module):
+        """The name the DAG sends has to exist in the file dbt reads.
+
+        Without this the DAG could name a cadence `selectors.yml` does not
+        declare, `/dbt/build` would answer 400, and the hourly refresh would
+        fail on a string nobody had checked against anything.
+        """
+        import sys
+
+        sys.path.insert(0, str(REPO_ROOT))
+        import os
+
+        from dbt_runner.app import declared_selectors
+        previous = os.getcwd()
+        os.chdir(REPO_ROOT / "dbt")
+        try:
+            assert dbt_build_module.DEFAULT_DBT_SELECTOR in declared_selectors()
+        finally:
+            os.chdir(previous)
 
     def test_explicit_select_override_is_honored(self, dbt_build_module, mocker):
         """dag_run.conf={"select": [...]} must override the hourly_core default."""
