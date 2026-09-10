@@ -114,8 +114,31 @@ def _unwrap(annotation: Any) -> Any:
 
 @pytest.fixture(scope="session", autouse=True)
 def _response_model_fidelity() -> Any:
-    """Fail any response whose model would delete a key the handler produced."""
-    import fastapi.routing
+    """Fail any response whose model would delete a key the handler produced.
+
+    **The one session without FastAPI is a real one, and it is not this
+    plugin's to fail.** ``docs-tests`` installs ``pytest``, ``pytest-mock`` and
+    ``markdown-it-py`` and nothing else, on purpose -- it runs
+    ``test_planning_docs.py`` with ``--noconftest`` so a broken service import
+    cannot take the planning assertions down. But ``-p`` in ``addopts`` is
+    exactly the registration that *survives* ``--noconftest``, which is why
+    Stage U used it for the declared-skips gate, so this autouse fixture runs
+    there too and raised ``ModuleNotFoundError`` on every test it collected.
+    The mechanism that gets this plugin into that job is the same one that
+    broke it.
+
+    Yielding unwrapped is the safe direction rather than a hole: a session with
+    no ``fastapi`` has no handler to serialise and no response to filter, so
+    there is nothing this could have checked. The direction that would be
+    unsafe -- a session that *does* exercise handlers running without the wrap
+    -- is closed by ``test_the_response_fidelity_plugin_is_registered``, which
+    runs in the unit job where ``fastapi`` is installed.
+    """
+    try:
+        import fastapi.routing
+    except ModuleNotFoundError:
+        yield
+        return
 
     original = fastapi.routing.serialize_response
 
