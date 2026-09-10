@@ -3344,6 +3344,38 @@ MUTATIONS = [
         ["prometheus/prometheus.yml"],
         [],
     ),
+    (
+        "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"
+        "::test_no_test_fabricates_a_response_objects_behaviour",
+        "the 503-as-busy test rebuilds its bare mock under a fresh name -- a "
+        "fabricated response object the ledger does not key, and the entry it "
+        "abandoned goes stale, so both directions fire at once",
+        lambda: _edit(
+            "tests/ops/test_coordination_drain.py",
+            "def test_service_503_body_is_still_known_positive_evidence(mocker):\n"
+            "    response = mocker.Mock()\n"
+            "    response.json.return_value = service_response(",
+            "def test_service_503_body_is_still_known_positive_evidence(mocker):\n"
+            "    response = mocker.Mock()\n"
+            "    fresh = response\n"
+            "    fresh.json.return_value = service_response(",
+        ),
+        ["tests/ops/test_coordination_drain.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"
+        "::test_the_object_reader_sees_the_shape_a_bare_mock_takes",
+        "the reader's predicate quietly narrows to one of the two shapes, and "
+        "every side_effect fabrication in the suite stops being read",
+        lambda: _edit(
+            "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py",
+            '_SHAPES = (".json.return_value", ".json.side_effect")',
+            '_SHAPES = (".json.return_value",)',
+        ),
+        ["tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"],
+        [],
+    ),
 ]
 
 

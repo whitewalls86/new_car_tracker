@@ -5501,3 +5501,17 @@ anywhere in the tree (`/coordination/cancel`, `/coordination/local-drain`,
 `GET /scrape_results/jobs`). Those 17 seed
 `UNCALLED_ENDPOINT_LEDGER` in `tests/rules/test_every_endpoint_has_a_caller.py`,
 which is statement 3's rule.
+
+**The fabricated-object corpus is 26 assignment sites in 6 files, 25 keys —
+the recorded 24 was two sites short.** Recipe: AST-walk every `.py` under
+`tests/` for `Assign` targets ending `.json.return_value` or
+`.json.side_effect`, keyed `file::function::target`, 2026-09-10, same
+worktree. The recorded measurement's seam-resolving reader missed a mock
+built inside a `side_effect` closure
+(`test_one_post_per_config_scope::resp`) and one handed over in a
+`side_effect` list (`test_post_body_is_wrapped_in_params_key::fetched_resp`),
+which is why the landed rule
+(`test_no_test_fabricates_a_response_objects_behaviour`) keys on the shape
+rather than the seam. All 25 keys seed `FABRICATED_OBJECT_LEDGER`; the two
+extra sites are the same defect in the same files, so the delta is reader
+coverage, not corpus growth.
