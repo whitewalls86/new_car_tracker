@@ -55,9 +55,24 @@ class TestSeriesExistBeforeAnyTraffic:
 
     def test_the_label_sets_are_exactly_what_the_alerts_select(self):
         """ct-solver-not-solving selects outcome!="ok", so a fourth solver
-        outcome added later would silently join the failure side. Pin both."""
+        outcome added later would silently join the failure side. Pin both.
+
+        **The detail set widened on 2026-09-09 and the solver set did not.**
+        Plan 162 Stage AB split the detail metric's catch-all `error` into
+        `transient` (a 5xx from the origin) and `redirected` (a 3xx, which for
+        cars.com means the listing has gone), leaving `error` for a raised
+        exception or an unclassified status. Widening is safe *here* and would
+        not have been on the solver metric: the two detail rules select
+        `outcome="ok"` and `outcome="403"` by name and one sums across all
+        outcomes, whereas ct-solver-not-solving's `!=` puts every new label on
+        the failure side by construction.
+
+        So `ok` and `403` are pinned because alerts name them, and the tuple is
+        pinned in full because a label nobody intended is exactly what this
+        test exists to catch."""
         assert SOLVER_OUTCOMES == ("ok", "challenge", "error")
-        assert DETAIL_FETCH_OUTCOMES == ("ok", "403", "error")
+        assert DETAIL_FETCH_OUTCOMES == ("ok", "403", "transient", "redirected", "error")
+        assert "ok" in DETAIL_FETCH_OUTCOMES and "403" in DETAIL_FETCH_OUTCOMES
 
 
 class TestDetailFetchOutcomeMapping:
@@ -66,7 +81,18 @@ class TestDetailFetchOutcomeMapping:
         [
             (200, False, "ok"),
             (403, False, "403"),
-            (500, False, "error"),
+            # Plan 162 Stage AB: the four 5xx cars.com actually returns are
+            # `transient` rather than a shared `error` bucket, so the alert
+            # description's advice -- "mixed `error` points at the fetch path
+            # or the site" -- is now answerable from the metric.
+            (500, False, "transient"),
+            (502, False, "transient"),
+            (503, False, "transient"),
+            (504, False, "transient"),
+            (302, False, "redirected"),
+            # 404 is not in the recorded corpus, so it takes the UNKNOWN
+            # catchall and keeps the residual `error` label, alongside the two
+            # cases that have no status at all.
             (404, False, "error"),
             (None, False, "error"),
             (200, True, "error"),

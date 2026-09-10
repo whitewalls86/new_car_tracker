@@ -9,6 +9,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
+from scraper.fetch_outcomes import (
+    FetchOutcome,
+    classify,
+    should_back_off,
+    should_enqueue_for_parsing,
+)
 from scraper.metrics import record_detail_fetch
 from scraper.processors.cf_session import (
     FLARESOLVERR_URL,
@@ -25,7 +31,11 @@ from scraper.queries import (
 )
 from shared.challenge import html_title as _html_title
 
-# Adaptive delay for detail fetches: backs off on 403, recovers on success.
+# Adaptive delay for detail fetches: backs off when the site pushes back,
+# recovers on success. What counts as pushing back is
+# `scraper.fetch_outcomes.should_back_off` and used to be `status == 403`,
+# which meant a 503 -- the origin saying slow down in the plainest terms it
+# has -- took the *recovery* arm.
 _detail_delay_lock = threading.Lock()
 _detail_adaptive_delay: float = 0.0
 
@@ -39,23 +49,34 @@ def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def _update_detail_delay(is_403: bool) -> None:
+def _update_detail_delay(outcome: FetchOutcome) -> None:
     """
     Adjust the module-level adaptive delay based on the last fetch outcome.
 
-    403 → back off: delay = min(max(delay * 2, 0.5), 30.0)
-    success → recover: delay = max(delay * 0.85, 0.0)
+    pushes back → back off: delay = min(max(delay * 2, 0.5), 30.0)
+    otherwise   → recover:  delay = max(delay * 0.85, 0.0)
+
+    **This took a bare ``is_403`` boolean until Plan 162 Stage AB**, so every
+    status that was not 403 -- including 1,911 measured 5xx responses in 91
+    days, 1,600 of them in a single outage on 2026-08-20 -- took the recovery
+    arm and made the scraper press harder on an origin that was already
+    failing. ``should_back_off`` is the shared decision; ``REDIRECTED`` is
+    deliberately not one of its members, because a redirect is a prompt,
+    correct answer about somewhere else.
     """
     global _detail_adaptive_delay
+    backing_off = should_back_off(outcome)
     with _detail_delay_lock:
         old = _detail_adaptive_delay
-        if is_403:
+        if backing_off:
             _detail_adaptive_delay = min(max(_detail_adaptive_delay * 2, 0.5), 30.0)
         else:
             _detail_adaptive_delay = max(_detail_adaptive_delay * 0.85, 0.0)
         new = _detail_adaptive_delay
-    if is_403:
-        logger.warning("Adaptive delay backed off: %.2fs → %.2fs (403 received)", old, new)
+    if backing_off:
+        logger.warning(
+            "Adaptive delay backed off: %.2fs → %.2fs (%s)", old, new, outcome.value
+        )
     elif old > 0:
         logger.info("Adaptive delay recovering: %.2fs → %.2fs (success)", old, new)
 
@@ -170,6 +191,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
             record_detail_fetch(None, errored=True)
             raise
         record_detail_fetch(status)
+        outcome = classify(status)
         size = len(content)
 
         minio_path = None
@@ -182,16 +204,40 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
             key = make_key("detail_page", fetched_at)
             minio_path = write_html(key, content)
 
-            with db_cursor(error_context="scrape_detail_fetch: insert artifacts_queue") as cur:
-                cur.execute(
-                    ENQUEUE_DETAIL_ARTIFACT,
-                    (minio_path, str(listing_id), run_id or None, fetched_at),
-                )
-                queue_artifact_id = cur.fetchone()[0]
-                cur.execute(
-                    INSERT_DETAIL_ARTIFACT_EVENT,
-                    (queue_artifact_id, minio_path, fetched_at,
-                     str(listing_id) if listing_id else None, run_id or None),
+            # **The body always reaches MinIO and only some bodies reach the
+            # parser**, which is the split Plan 162 Stage AB introduced. Before
+            # it, every response was enqueued whatever its status, and
+            # `ops.artifacts_queue` carries no status column -- so
+            # `processing.parse_detail_page` could not tell a detail page from
+            # a cars.com 502, and its `listing_state` default is `"active"`.
+            # A 302 was worse than a 5xx: every one of the 1,172 measured came
+            # from the FlareSolverr bootstrap landing on a *redirect target*,
+            # so the artifact stored against a removed listing was some other
+            # page entirely, and it published as active.
+            #
+            # 403 still enqueues, deliberately. A challenge page is a fact
+            # about availability that `_detect_challenge` records as
+            # `listing_state='blocked'`, and Plan 128 exists because those
+            # pages were once counted as successful scrapes.
+            if should_enqueue_for_parsing(outcome):
+                with db_cursor(
+                    error_context="scrape_detail_fetch: insert artifacts_queue"
+                ) as cur:
+                    cur.execute(
+                        ENQUEUE_DETAIL_ARTIFACT,
+                        (minio_path, str(listing_id), run_id or None, fetched_at),
+                    )
+                    queue_artifact_id = cur.fetchone()[0]
+                    cur.execute(
+                        INSERT_DETAIL_ARTIFACT_EVENT,
+                        (queue_artifact_id, minio_path, fetched_at,
+                         str(listing_id) if listing_id else None, run_id or None),
+                    )
+            else:
+                logger.warning(
+                    "detail fetch %s (%s) for listing_id=%s stored at %s but not "
+                    "enqueued: an error or redirect body is not an observation",
+                    status, outcome.value, listing_id, minio_path,
                 )
         except Exception as _minio_err:
             minio_write_error = f"MinIO write failed: {_minio_err}"
@@ -317,9 +363,15 @@ def scrape_detail_batch(
         if timeout_s is not None:
             payload["timeout_s"] = timeout_s
         result = scrape_detail_fetch(run_id=run_id, payload=payload)
-        is_403 = any(a.get("http_status") == 403 for a in result.get("artifacts", []))
-        _update_detail_delay(is_403)
-        if is_403:
+        # One outcome per fetch: `scrape_detail_fetch` returns exactly one
+        # artifact, including on the exception path, where `http_status` is
+        # None. That None now classifies UNKNOWN and therefore backs off; it
+        # used to read as "not 403" and *speed the scraper up* after a fetch
+        # that had failed outright.
+        artifacts = result.get("artifacts") or []
+        outcome = classify(artifacts[0].get("http_status") if artifacts else None)
+        _update_detail_delay(outcome)
+        if outcome is FetchOutcome.BLOCKED:
             invalidate_cf_credentials()
         return result
 

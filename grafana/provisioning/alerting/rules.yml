@@ -569,7 +569,7 @@ groups:
         for: 5m
         annotations:
           summary: "Every detail fetch in the last 20 minutes failed"
-          description: "At least 21 detail-page fetches were attempted and not one returned HTTP 200. This is shape-independent — it catches a solver that lies as readily as one that refuses, which is why it exists alongside ct-solver-not-solving. Every hour in this state costs an hour of detail coverage and pushes the affected listings into a 12-96h exponential cooldown, so check `cartracker_detail_fetch_total` by outcome first: all-403 points at the solver, mixed `error` points at the fetch path or the site."
+          description: "At least 21 detail-page fetches were attempted and not one returned HTTP 200. This is shape-independent — it catches a solver that lies as readily as one that refuses, which is why it exists alongside ct-solver-not-solving. Every hour in this state costs an hour of detail coverage and pushes the affected listings into a 12-96h exponential cooldown, so check `cartracker_detail_fetch_total` by outcome first: all-403 points at the solver, `transient` at cars.com's own origin failing, `redirected` at listings that have gone rather than a fault, and a residual `error` at the fetch path raising before it had a status. Those three were one `error` bucket until Plan 162 Stage AB, which is why this line used to end by telling you to work out which."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus

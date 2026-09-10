@@ -1,0 +1,90 @@
+{
+  "captured_at": "2026-09-09T20:13:34Z",
+  "source": "production Loki (grafana/loki:2.9.8, 90d retention) and Prometheus (30d retention), read through the compose network",
+  "notes": "Recorded by scripts/record_cars_com_status_corpus.py --record. Not hand-written: a status added here by hand is a status nobody observed, which is the fabrication this corpus exists to stop. Counts are per instrument and are NOT reconciled -- Loki counts log lines and one fetch logs twice, Prometheus counts fetches. Only membership is asserted.",
+  "unresolved": {
+    "prometheus_error_bucket": 30,
+    "why": "record_detail_fetch buckets every status that is not 200 or 403 into `error`, together with raised exceptions, so this number cannot name a member. It is recorded because it is the size of what Prometheus alone could not have told us -- Loki is what resolved it into 302, 500, 502, 503 and 504."
+  },
+  "statuses_observed": [
+    200,
+    302,
+    403,
+    500,
+    502,
+    503,
+    504
+  ],
+  "observations": [
+    {
+      "status": 302,
+      "artifact_type": "detail_page",
+      "count": 1172,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 403,
+      "artifact_type": "detail_page",
+      "count": 30981,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 500,
+      "artifact_type": "detail_page",
+      "count": 36,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 502,
+      "artifact_type": "detail_page",
+      "count": 271,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 503,
+      "artifact_type": "detail_page",
+      "count": 1604,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 504,
+      "artifact_type": "detail_page",
+      "count": 12,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 200,
+      "artifact_type": "results_page",
+      "count": 82144,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 502,
+      "artifact_type": "results_page",
+      "count": 4,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 504,
+      "artifact_type": "results_page",
+      "count": 4,
+      "instrument": "loki",
+      "window": "91d"
+    },
+    {
+      "status": 200,
+      "artifact_type": "detail_page",
+      "count": 584995,
+      "instrument": "prometheus",
+      "window": "30d"
+    }
+  ]
+}
