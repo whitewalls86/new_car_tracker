@@ -1280,7 +1280,8 @@ MUTATIONS = [
             # put the new entry after the closing paren, and the module then
             # failed to import -- which the harness reported as CAUGHT, for
             # exactly the wrong reason.
-            "        since=date(2026, 9, 8),\n    ),\n)\n\n#: Ceilings, not counts",
+            "        since=date(2026, 9, 8),\n    ),\n)\n\n"
+            "#: The declared size of each ledger",
             "        since=date(2026, 9, 8),\n"
             "    ),\n"
             "    Undocumented(\n"
@@ -1289,7 +1290,7 @@ MUTATIONS = [
             '        reason="appended without moving the ceiling",\n'
             "        since=date(2026, 9, 9),\n"
             "    ),\n"
-            ")\n\n#: Ceilings, not counts",
+            ")\n\n#: The declared size of each ledger",
         ),
         ["tests/rules/test_env_example_wiring.py"],
         [],
@@ -1301,6 +1302,71 @@ MUTATIONS = [
             "tests/rules/test_env_example_wiring.py",
             'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
             'return sorted(_REPO_ROOT.glob("docker-compose*.yaml"))',
+        ),
+        ["tests/rules/test_env_example_wiring.py"],
+        [],
+    ),
+    # Plan 162 Stage AK. The mutation above collapses the corpus to nothing,
+    # which the `>= 2` that used to stand there caught. This one *erodes* it --
+    # nine Compose files become eight -- and `>= 2` passed that, which is the
+    # whole argument for the stage. It is the exit clause "a reader narrowed so
+    # it resolves less than the whole corpus", and it is asserted in the two
+    # files that read the corpus, because they now check each other.
+    (
+        "tests/rules/test_env_example_wiring.py::test_both_corpora_are_not_empty",
+        "the compose glob loses one file of nine and the rules go quiet over it",
+        lambda: _edit(
+            "tests/rules/test_env_example_wiring.py",
+            'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
+            "return [\n"
+            '        path for path in sorted(_REPO_ROOT.glob("docker-compose*.yml"))\n'
+            '        if path.name != "docker-compose.mlflow.yml"\n'
+            "    ]",
+        ),
+        ["tests/rules/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape"
+        "::test_every_compose_file_is_attributed_to_a_project",
+        "the keep-set's compose glob loses one file of nine and prunes its images",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
+            "return [\n"
+            '        path for path in sorted(_REPO_ROOT.glob("docker-compose*.yml"))\n'
+            '        if path.name != "docker-compose.mlflow.yml"\n'
+            "    ]",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    # The other half of Stage AK's exit: a floor loosened back to a bound. The
+    # rule that forbids the bound has to be the thing that notices, because
+    # `test_both_corpora_are_not_empty` passes perfectly well with `>= 2` in it
+    # -- that is what it did until this stage.
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_no_rule_guards_itself_with_a_guessed_number",
+        "an exact floor is loosened back to a number somebody chose",
+        lambda: _edit(
+            "tests/rules/test_env_example_wiring.py",
+            "assert {path.name for path in _compose_files()} == set(COMPOSE_PROJECTS), (",
+            "assert len(_compose_files()) >= 2, (",
+        ),
+        ["tests/rules/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_no_rule_guards_itself_with_a_guessed_number",
+        "a guessed bound is moved behind a name, where the reader used to lose it",
+        lambda: _edit(
+            "tests/rules/test_env_example_wiring.py",
+            "assert {path.name for path in _compose_files()} == set(COMPOSE_PROJECTS), (",
+            "_COMPOSE_FLOOR = 2\n"
+            "    assert len(_compose_files()) >= _COMPOSE_FLOOR, (",
         ),
         ["tests/rules/test_env_example_wiring.py"],
         [],

@@ -120,6 +120,45 @@ def _constants_in_scope(tree: ast.Module) -> dict[str, int]:
     return found
 
 
+def _local_constants(scope: ast.AST) -> dict[str, int]:
+    """Int literals bound to a name inside one function body.
+
+    ``_COMPOSE_FLOOR = 2`` one line above ``assert len(...) >= _COMPOSE_FLOOR``
+    is the same guess as ``>= 2``, and a local is the easiest place in the file
+    to put it. Found while writing this stage's own mutation for the hiding
+    case: the mutation was recorded UNCAUGHT, because the reader resolved
+    module scope and stopped there.
+
+    A name assigned anything other than an int literal anywhere in the same
+    function is not a constant and is left alone -- ``total = 0`` followed by
+    ``total = len(rows)`` is a derived value that happened to start at zero.
+    """
+    literal: dict[str, int] = {}
+    rebound: set[str] = set()
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        elif isinstance(node, (ast.AugAssign, ast.NamedExpr)):
+            targets, value = [node.target], node.value
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # Handled by `_table_bound_names`, which knows where the value came
+            # from. Here a loop target is only ever a reason not to trust one.
+            targets, value = [node.target], None
+        else:
+            continue
+        for target in targets:
+            for name in ast.walk(target):
+                if not isinstance(name, ast.Name):
+                    continue
+                if value is not None and _is_int(value) and name is target:
+                    literal[name.id] = value.value
+                else:
+                    rebound.add(name.id)
+    return {name: value for name, value in literal.items() if name not in rebound}
+
+
 def _table_bound_names(tree: ast.Module, constants: dict[str, int]) -> set[str]:
     """Loop variables that a literal table unpacks a chosen number into.
 
@@ -165,44 +204,80 @@ def _guessed_bounds() -> list[str]:
             # what it did.
             continue
         relative = path.relative_to(REPO_ROOT).as_posix()
-        constants = _constants_in_scope(tree)
-        table_bound = _table_bound_names(tree, constants)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assert):
-                continue
-            for comparison in ast.walk(node.test):
-                if not isinstance(comparison, ast.Compare):
+        module_constants = _constants_in_scope(tree)
+        table_bound = _table_bound_names(tree, module_constants)
+        # An assert is read against the constants its own scope can see. A
+        # function is walked with its locals folded in; anything left over --
+        # module level, a class body -- sees the module's alone. Nested
+        # functions get visited twice and produce the same string both times,
+        # which the `set()` at the end absorbs.
+        functions = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        # `ast.walk` is breadth-first, so reversing puts the innermost function
+        # first and an assert is claimed by the narrowest scope that holds it.
+        scopes: list[tuple[ast.AST, dict[str, int]]] = [
+            (node, module_constants | _local_constants(node))
+            for node in reversed(functions)
+        ]
+        scopes.append((tree, module_constants))
+        seen: set[int] = set()
+        for scope, constants in scopes:
+            for node in ast.walk(scope):
+                if not isinstance(node, ast.Assert) or id(node) in seen:
                     continue
-                for operator, right in zip(comparison.ops, comparison.comparators):
-                    if not isinstance(operator, _INEQUALITIES + (ast.NotEq,)):
-                        continue
-                    # `x >= len(rows) - 5`: derived, then slackened. The slack
-                    # is the guess, and it is the shape that replaced a working
-                    # floor in this very stage.
-                    if (
-                        isinstance(right, ast.BinOp)
-                        and isinstance(right.op, (ast.Sub, ast.Add))
-                        and _is_int(right.right)
-                    ):
-                        found.append(f"{relative}: {ast.unparse(comparison)}")
-                        continue
-                    # A name that resolves to an int literal is the same guess
-                    # spelled at a distance. The non-empty exemption still
-                    # applies to it: a constant that *is* 0 asserts nothing
-                    # about size, whatever it is called.
-                    if isinstance(right, ast.Name):
-                        if right.id in table_bound or (
-                            right.id in constants
-                            and (type(operator), constants[right.id]) not in _NON_EMPTY
-                        ):
-                            found.append(f"{relative}: {ast.unparse(comparison)}")
-                        continue
-                    if not _is_int(right):
-                        continue
-                    if (type(operator), right.value) in _NON_EMPTY:
-                        continue
-                    found.append(f"{relative}: {ast.unparse(comparison)}")
+                seen.add(id(node))
+                _read_assert(node, relative, constants, table_bound, found)
     return sorted(set(found))
+
+
+def _read_assert(
+    node: ast.Assert,
+    relative: str,
+    constants: dict[str, int],
+    table_bound: set[str],
+    found: list[str],
+) -> None:
+    """Report every guessed bound in one assertion, given what its scope names."""
+    for comparison in ast.walk(node.test):
+        if not isinstance(comparison, ast.Compare):
+            continue
+        for operator, right in zip(comparison.ops, comparison.comparators):
+            if not isinstance(operator, _INEQUALITIES + (ast.NotEq,)):
+                continue
+            # `>= (floor := 2)` binds and compares in one expression, so the
+            # right operand is neither a constant nor a name and the number
+            # went straight through. Unwrap to what is actually compared.
+            if isinstance(right, ast.NamedExpr):
+                right = right.value
+            # `x >= len(rows) - 5`: derived, then slackened. The slack is the
+            # guess, and it is the shape that replaced a working floor in the
+            # stage that wrote this rule.
+            if (
+                isinstance(right, ast.BinOp)
+                and isinstance(right.op, (ast.Sub, ast.Add))
+                and _is_int(right.right)
+            ):
+                found.append(f"{relative}: {ast.unparse(comparison)}")
+                continue
+            # A name that resolves to an int literal is the same guess spelled
+            # at a distance. The non-empty exemption still applies to it: a
+            # constant that *is* 0 asserts nothing about size, whatever it is
+            # called.
+            if isinstance(right, ast.Name):
+                if right.id in table_bound or (
+                    right.id in constants
+                    and (type(operator), constants[right.id]) not in _NON_EMPTY
+                ):
+                    found.append(f"{relative}: {ast.unparse(comparison)}")
+                continue
+            if not _is_int(right):
+                continue
+            if (type(operator), right.value) in _NON_EMPTY:
+                continue
+            found.append(f"{relative}: {ast.unparse(comparison)}")
 
 
 # Keyed on the file and the expression, never the line. A line number is the
@@ -221,11 +296,7 @@ def _guessed_bounds() -> list[str]:
 # whatever the count was that day, and those stop meaning anything the moment
 # the tree grows past them.
 GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
-    "tests/rules/test_env_example_wiring.py: len(_compose_files()) >= 2",
-    "tests/rules/test_env_example_wiring.py: len(documented_keys()) >= 20",
-    "tests/rules/test_env_example_wiring.py: len(interpolated_variables()) >= 20",
     "tests/rules/test_external_vocabularies.py: len(observed) >= 2",
-    "tests/rules/test_image_keep_set.py: len(_compose_files()) >= 2",
     "tests/rules/test_maintenance_running_set.py: len(reason) > 40",
     "tests/rules/test_planning_docs.py: len(found) > 50",
     "tests/rules/test_planning_docs.py: len(gap_claims()) >= 10",
@@ -256,8 +327,6 @@ GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     # literal loop table unpacks into a variable that then reads as derived
     # (`ceiling`, from `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` and
     # `MAX_THE_CHECKS_WAIVERS`).
-    "tests/rules/test_env_example_wiring.py: len(UNDELIVERED) <= UNDELIVERED_CEILING",
-    "tests/rules/test_env_example_wiring.py: len(UNDOCUMENTED) <= UNDOCUMENTED_CEILING",
     "tests/rules/test_planning_docs.py: len(waivers) <= ceiling",
     "tests/rules/test_testing_contract.py: len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING",
     "tests/rules/test_testing_contract.py: len(corpus) > _SQL_CORPUS_FLOOR",
