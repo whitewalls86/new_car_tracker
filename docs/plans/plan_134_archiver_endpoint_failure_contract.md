@@ -886,3 +886,43 @@ curl -sG http://localhost:3100/loki/api/v1/query \
   --data-urlencode 'query=sum(count_over_time({service="archiver", level="WARNING"} |~ "would fail" [48h]))' \
   --data-urlencode 'time=2026-09-09T19:25:00Z'
 ```
+
+**Deploy 2 of 3 — `/flush/staging/run`.** Built 2026-09-10, **not yet live** —
+this paragraph records readings taken while building it, not a gate. The
+endpoint logs at ERROR and raises
+`HTTPException(500, detail=dict(result, failure_reason=reason))` on
+`_flush_staging_failure_reason` rather than warning and returning 200. Checks on
+this machine against the merged tree:
+`python -m pytest -q -m "not integration" -p no:randomly` → **4054 passed, 720
+deselected**; `python -m ruff check .` clean;
+`python scripts/generate_service_contracts.py --check` exit 0.
+
+**A 500 here skips the hour's dbt build, and this stage's own text says it does
+not.** Stage C orders the deploys with *"`/flush/staging/run` — hourly, but the
+dbt build does not read staging events"* against deploy 3's *"its failure now
+skips the dbt build"*. That contrast does not hold. Read from
+`airflow/dags/hourly_analytics_refresh.py:155`:
+
+```
+ready >> archiver_up >> flush_silver >> flush_staging >> dbt_runner_up >> build
+```
+
+`flush_staging_events` is upstream of `dbt_build`, so a red task here skips the
+build exactly as a red `flush_silver_observations` would. What survives is the
+narrower claim, about data rather than about the DAG: the build deploy 2 skips
+would have been building from inputs the staging flush does not feed, and the
+build deploy 3 skips would have been building on stale silver. **The ordering
+holds on that reading; deploy 2's blast radius does not** — it is one skipped
+hourly dbt build per failing run, not zero. As with deploy 1's notifier finding,
+the stage text is left alone; what changed is `trigger_flush_staging`'s
+docstring, which is where a reader meets the claim.
+
+**Unlike deploy 1, this deploy can page.** Same file, line 162:
+`[ready, flush_silver, flush_staging, build, reconcile_cooldowns] >> notify`,
+with `trigger_rule="one_failed"`. So the first run meeting this predicate is the
+notifier's live test — the one deploy 1 structurally could not give, and one
+clause of this stage's exit.
+
+**Its 48-hour gate has not opened.** Nothing is claimed here about the endpoint
+in production. The deploy time and the gate reading append to this entry when
+they exist.
