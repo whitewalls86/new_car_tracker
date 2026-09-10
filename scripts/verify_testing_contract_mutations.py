@@ -3285,6 +3285,344 @@ MUTATIONS = [
         ["tests/ops/test_coordination_release.py"],
         [],
     ),
+    (
+        "tests/rules/test_no_service_imports_another_services_package.py"
+        "::test_no_service_imports_another_services_package",
+        "a service's import into another service moves to a module the ledger "
+        "does not name -- a new cross-service dependency, and the seeded entry "
+        "beside it goes stale, so both directions of the rule fire at once",
+        lambda: _edit(
+            "ops/coordination_release.py",
+            "from container_health.expected import EXPECTED_SERVICES, "
+            "HEALTHCHECK_EXEMPT_SERVICES",
+            "from container_health.collector import EXPECTED_SERVICES, "
+            "HEALTHCHECK_EXEMPT_SERVICES",
+        ),
+        ["ops/coordination_release.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_service_imports_another_services_package.py"
+        "::test_the_service_root_corpus_is_complete",
+        "a service's dockerfile path stops naming its package, and the "
+        "compose derivation loses that whole service's code -- every import "
+        "it makes then goes unread rather than unwaived",
+        lambda: _edit(
+            "docker-compose.yml",
+            "      dockerfile: dashboard/Dockerfile",
+            "      dockerfile: Dockerfile",
+        ),
+        ["docker-compose.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_endpoint_has_a_caller.py"
+        "::test_every_endpoint_has_a_caller_or_is_declared_externally_reachable",
+        "the one caller of container_health's /oneoff-processes moves to a "
+        "path no contract declares, and the endpoint keeps answering with "
+        "nobody left to notice -- the dbt_runner deletion shape, before the "
+        "deletion",
+        lambda: _edit(
+            "ops/coordination_drain.py",
+            '}/oneoff-processes"',
+            '}/oneoff-processes-moved"',
+        ),
+        ["ops/coordination_drain.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_endpoint_has_a_caller.py"
+        "::test_the_endpoint_coverage_readers_are_not_blind",
+        "Prometheus stops scraping the scraper while its contract still "
+        "declares GET /metrics -- dead observability, and the coverage set "
+        "quietly shrinking under the caller rule",
+        lambda: _edit(
+            "prometheus/prometheus.yml",
+            "      - targets: ['scraper:8000']",
+            "      - targets: []",
+        ),
+        ["prometheus/prometheus.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"
+        "::test_no_test_fabricates_a_response_objects_behaviour",
+        "the 503-as-busy test rebuilds its bare mock under a fresh name -- a "
+        "fabricated response object the ledger does not key, and the entry it "
+        "abandoned goes stale, so both directions fire at once",
+        lambda: _edit(
+            "tests/ops/test_coordination_drain.py",
+            "def test_service_503_body_is_still_known_positive_evidence(mocker):\n"
+            "    response = mocker.Mock()\n"
+            "    response.json.return_value = service_response(",
+            "def test_service_503_body_is_still_known_positive_evidence(mocker):\n"
+            "    response = mocker.Mock()\n"
+            "    fresh = response\n"
+            "    fresh.json.return_value = service_response(",
+        ),
+        ["tests/ops/test_coordination_drain.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"
+        "::test_the_object_reader_sees_the_shape_a_bare_mock_takes",
+        "the reader's predicate quietly narrows to one of the two shapes, and "
+        "every side_effect fabrication in the suite stops being read",
+        lambda: _edit(
+            "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py",
+            '_SHAPES = (".json.return_value", ".json.side_effect")',
+            '_SHAPES = (".json.return_value",)',
+        ),
+        ["tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_refusal_envelope_is_one_declaration.py"
+        "::test_the_refusal_envelope_is_one_declaration",
+        "the container_health copy of the envelope quietly changes what its "
+        "database 503 means, and the two files answer differently for the "
+        "same class -- the drift a copy nothing compares always reaches",
+        lambda: _edit(
+            "container_health/api_envelope.py",
+            '    meaning = "Database unavailable."',
+            '    meaning = "The database is briefly busy."',
+        ),
+        ["container_health/api_envelope.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_refusal_envelope_is_one_declaration.py"
+        "::test_the_envelope_declares_what_a_refusal_needs",
+        "a refusal class leaves the DECLARED_REFUSALS registry while its "
+        "class body stays -- resolvable by name to nothing, so every lookup "
+        "rule reads one member fewer with nothing going red",
+        lambda: _edit(
+            "shared/api_envelope.py",
+            "        Busy,\n        DatabaseUnavailable,",
+            "        DatabaseUnavailable,",
+        ),
+        ["shared/api_envelope.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_the_artifact_declares_what_the_handler_returns.py"
+        "::test_every_handlers_exits_are_readable",
+        "a readable handler grows an exit the reader cannot resolve -- a "
+        "bare-dict return -- and slips out of the judged set without joining "
+        "the ledger, which is exactly how 81 of 93 declarations went "
+        "unjudged with everything green",
+        lambda: _edit(
+            "ops/routers/public.py",
+            '    return FileResponse(page, media_type="text/html")',
+            "    outcome = dict(page=str(page))\n    return outcome",
+        ),
+        ["ops/routers/public.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_call_site_retypes_a_declared_status.py"
+        "::test_no_call_site_retypes_a_status_the_envelope_declares",
+        "a handler's retyped 404 becomes a retyped 409 -- a new member "
+        "literal the ledger does not key, and the abandoned entry goes "
+        "stale, so both directions fire at once",
+        lambda: _edit(
+            "processing/routers/artifact.py",
+            "            raise HTTPException(\n"
+            "                status_code=404,",
+            "            raise HTTPException(\n"
+            "                status_code=409,",
+        ),
+        ["processing/routers/artifact.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_call_site_retypes_a_declared_status.py"
+        "::test_the_retyping_reader_sees_every_shape",
+        "the shared walker stops reading the HTTPException positional shape, "
+        "and every raise in five packages goes unread while the ledger "
+        "entries for the two other shapes keep the rule looking alive",
+        lambda: _edit(
+            "tests/rules/test_no_call_site_retypes_a_declared_status.py",
+            '            if (\n'
+            '                name == "HTTPException"\n'
+            "                and node.args",
+            '            if (\n'
+            '                name == "NeverThisException"\n'
+            "                and node.args",
+        ),
+        ["tests/rules/test_no_call_site_retypes_a_declared_status.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_a_status_code_means_the_same_thing_to_both.py"
+        "::test_every_declared_meaning_of_an_ambiguous_code_is_proven",
+        "a handler whose 503 provably means what its route declares starts "
+        "raising a different meaning under the same code -- the declaration "
+        "goes on describing what the handler used to say",
+        lambda: _edit(
+            "ops/routers/coordination.py",
+            '        raise HTTPException(status_code=409, '
+            'detail="Coordination is not requested.")\n'
+            '    raise HTTPException(status_code=503, '
+            'detail="Database unavailable.")',
+            '        raise HTTPException(status_code=409, '
+            'detail="Coordination is not requested.")\n'
+            '    raise HTTPException(status_code=503, '
+            'detail="The database took a holiday.")',
+        ),
+        ["ops/routers/coordination.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_a_status_code_means_the_same_thing_to_both.py"
+        "::test_the_meaning_rule_has_something_to_read",
+        "the ambiguity filter quietly stops matching any code, and the "
+        "meaning rule reads nothing while its 28-entry ledger keeps it "
+        "looking busy",
+        lambda: _edit(
+            "tests/rules/test_a_status_code_means_the_same_thing_to_both.py",
+            "        if len(meanings) > 1",
+            "        if len(meanings) > 99",
+        ),
+        ["tests/rules/test_a_status_code_means_the_same_thing_to_both.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_a_status_code_means_the_same_thing_to_both.py"
+        "::test_every_ambiguous_meaning_is_declared_somewhere",
+        "Busy's meaning text collapses into DependencyUnreachable's, so the "
+        "vocabulary looks fully declared and the entry recording that "
+        "nothing declares busy goes stale",
+        lambda: _edit(
+            "shared/api_envelope.py",
+            '    meaning = "Busy: jobs are in flight, and the body carries '
+            'the evidence."',
+            '    meaning = "A dependency this service needs is not '
+            'reachable."',
+        ),
+        ["shared/api_envelope.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_response_declares_a_shape_or_a_kind.py"
+        "::test_every_response_declares_a_shape_or_a_kind",
+        "a ledgered bodyless response gains its kind declaration and the "
+        "entry stays behind -- the list stops describing the debt, which is "
+        "the direction that rots every ledger that only fails one way",
+        lambda: _edit(
+            "contracts/scraper.json",
+            '        "operationId": "metrics_metrics_get",\n'
+            '        "responses": {\n'
+            '          "200": {\n'
+            '            "description": "Successful Response"\n'
+            "          }",
+            '        "operationId": "metrics_metrics_get",\n'
+            '        "responses": {\n'
+            '          "200": {\n'
+            '            "content": {"text/plain": {}},\n'
+            '            "description": "Successful Response"\n'
+            "          }",
+        ),
+        ["contracts/scraper.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_response_declares_a_shape_or_a_kind.py"
+        "::test_the_body_reader_still_tells_the_three_apart",
+        "the shape classifier keys on a media type that does not exist, "
+        "every JSON body reads as a kind, and the counts the rule beside it "
+        "relies on go wrong with nothing else red",
+        lambda: _edit(
+            "tests/rules/test_every_response_declares_a_shape_or_a_kind.py",
+            '                    if (content.get("application/json") or {})'
+            '.get("schema"):',
+            '                    if (content.get("application/jsonx") or {})'
+            '.get("schema"):',
+        ),
+        ["tests/rules/test_every_response_declares_a_shape_or_a_kind.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_module_calls_a_service_by_hand.py"
+        "::test_no_module_calls_a_service_by_hand",
+        "a ledgered module stops naming its owned host -- converted, or its "
+        "call went dead -- and the entry stays behind, which is the ledger "
+        "no longer describing the callers it exists to watch",
+        lambda: _edit(
+            "airflow/dags/dbt_build.py",
+            'DBT_RUNNER_URL = "http://dbt_runner:8080"',
+            'DBT_RUNNER_URL = "http://dbt-runner-elsewhere:8080"',
+        ),
+        ["airflow/dags/dbt_build.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_module_calls_a_service_by_hand.py"
+        "::test_the_caller_signature_and_the_resolver_agree",
+        "a DAG's call path drifts off its service's contract while the host "
+        "stays named -- the dead-call shape, visible only because two "
+        "independent readers are held equal",
+        lambda: _edit(
+            "airflow/dags/dbt_build.py",
+            'result = post_json(f"{DBT_RUNNER_URL}/dbt/build", '
+            "payload=payload, timeout=600)",
+            'result = post_json(f"{DBT_RUNNER_URL}/dbt/build-all", '
+            "payload=payload, timeout=600)",
+        ),
+        ["airflow/dags/dbt_build.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_declared_code_is_one_the_standard_names.py"
+        "::test_every_declared_code_is_one_the_standard_names",
+        "a route declares a code the standard does not name -- the stage "
+        "exit's own demonstration, and the shape /admin's 307 already has",
+        lambda: _edit(
+            "contracts/processing.json",
+            '          "404": {\n'
+            '            "content": {\n'
+            '              "application/json": {\n'
+            '                "schema": {\n'
+            '                  "$ref": "#/components/schemas/ErrorResponse"',
+            '          "418": {\n'
+            '            "content": {\n'
+            '              "application/json": {\n'
+            '                "schema": {\n'
+            '                  "$ref": "#/components/schemas/ErrorResponse"',
+        ),
+        ["contracts/processing.json"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_declared_code_is_one_the_standard_names.py"
+        "::test_every_standard_code_is_declared_somewhere",
+        "the standard's table grows a row no route declares -- dead "
+        "vocabulary, a meaning nobody can rely on anybody honouring",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| `400` | the request is unusable as sent | a rejection of its "
+            "*content*, which is `422` |",
+            "| `400` | the request is unusable as sent | a rejection of its "
+            "*content*, which is `422` |\n"
+            "| `402` | payment is required | anything this repository "
+            "answers |",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_declared_code_is_one_the_standard_names.py"
+        "::test_the_envelope_stays_inside_the_standard",
+        "the envelope grows a code its owner's table does not have -- the "
+        "copy outgrowing the standard it restates",
+        lambda: _edit(
+            "shared/api_envelope.py",
+            "    status_code = 400",
+            "    status_code = 402",
+        ),
+        ["shared/api_envelope.py"],
+        [],
+    ),
 ]
 
 

@@ -72,23 +72,124 @@ def _handler_index(package: str) -> dict[str, tuple[ast.AST, ast.Module, Path]]:
     return found
 
 
+@lru_cache(maxsize=None)
+def _module_classes(relative: str) -> frozenset[str]:
+    """Top-level class names of one module here, mirroring ``_module_functions``."""
+    path = REPO_ROOT / relative
+    if not path.is_file():
+        return frozenset()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return frozenset()
+    return frozenset(
+        node.name for node in tree.body if isinstance(node, ast.ClassDef)
+    )
+
+
+def _known_classes(module: ast.Module, path: Path) -> set[str]:
+    """Class names resolvable in *module* — local, or imported from this repo.
+
+    What tells ``return ProcessArtifactResult(...)`` — a model instance the
+    framework serialises as the success outcome — from a call into another
+    module this reader cannot follow. Resolution mirrors
+    ``_imported_helpers``, for the reason that docstring gives: the obvious
+    refactor moves these classes between modules, and a name-only convention
+    would go quietly blind to the move.
+    """
+    here = path.relative_to(REPO_ROOT).parent
+    found = {node.name for node in module.body if isinstance(node, ast.ClassDef)}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if node.level:
+            base = here
+            for _ in range(node.level - 1):
+                base = base.parent
+            target = base.joinpath(*node.module.split("."))
+        else:
+            target = Path(*node.module.split("."))
+        for candidate in (f"{target.as_posix()}.py", f"{target.as_posix()}/__init__.py"):
+            classes = _module_classes(candidate)
+            if not classes:
+                continue
+            for alias in node.names:
+                if alias.name in classes:
+                    found.add(alias.asname or alias.name)
+            break
+    return found
+
+
+def _declared_success(function: ast.AST) -> int:
+    """The success code the decorator declares — 200 unless it says otherwise."""
+    for decorator in getattr(function, "decorator_list", []):
+        if not isinstance(decorator, ast.Call):
+            continue
+        for keyword in decorator.keywords:
+            if (
+                keyword.arg == "status_code"
+                and isinstance(keyword.value, ast.Constant)
+                and isinstance(keyword.value.value, int)
+            ):
+                return keyword.value.value
+    return 200
+
+
 def _exit_codes(
-    function: ast.AST, module: ast.Module, path: Path,
+    function: ast.AST, module: ast.Module, path: Path, success: int | None = None,
 ) -> tuple[frozenset[int], bool]:
     """Codes this handler can answer with, and whether every exit was readable.
 
     The second half is what makes the rule safe. A `return` this cannot resolve
     to a status -- a bare dict, a variable, a call into another module -- means
     the handler's success code is reachable after all, and the caller skips it.
+
+    Three exit shapes resolve to the decorator's declared success code (Plan
+    162 Stage AL, and the readable set went from 12 of 93 handlers to
+    measurement at seed time): a returned instance of a class this repository
+    defines, which FastAPI serialises as the success outcome; a kwarg-less
+    framework response, whose ``endswith("Response")`` convention
+    ``_returns_a_bare_value`` already leans on; and, through
+    ``_codes_at_call_sites``, a raised declared refusal resolved from
+    ``shared/api_envelope.py``. The rule that one unreadable exit disqualifies
+    the whole handler is kept exactly -- the direction stays safe.
     """
     helpers = {
         node.name: node for node in module.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     helpers.update(_imported_helpers(module, path))
+    classes = _known_classes(module, path)
+    if success is None:
+        success = _declared_success(function)
 
     codes: set[int] = set(_codes_at_call_sites(function, {}))
     complete = True
+
+    # A dependency is an exit this reader cannot read. `Depends(...)` runs
+    # before the handler and raises its own codes -- `require_snapshot_token`
+    # carries the 401, 403 and 503 that `/download` declares -- so a handler
+    # that has one is unreadable rather than judged on its body alone, which
+    # is the same safe direction as an unresolvable `return`.
+    defaults = list(function.args.defaults) + [
+        default for default in function.args.kw_defaults if default is not None
+    ]
+    if any(
+        keyword.arg == "dependencies"
+        for decorator in getattr(function, "decorator_list", [])
+        if isinstance(decorator, ast.Call)
+        for keyword in decorator.keywords
+    ) or any(
+        isinstance(default, ast.Call)
+        and (
+            getattr(default.func, "id", None)
+            or getattr(default.func, "attr", None)
+        )
+        == "Depends"
+        for default in defaults
+    ):
+        complete = False
+
     for node in ast.walk(function):
         if not isinstance(node, ast.Return) or node.value is None:
             continue
@@ -110,10 +211,21 @@ def _exit_codes(
             # raises 503 and returns a dict, so a caller that hands its result
             # straight back can answer 200 -- and reading only the raise would
             # report that 200 as unproducible on every coordination route.
-            inner_codes, inner_complete = _exit_codes(helpers[name], module, path)
+            # The declared success is passed down, because a helper has no
+            # decorator of its own to read one from.
+            inner_codes, inner_complete = _exit_codes(
+                helpers[name], module, path, success
+            )
             codes |= inner_codes
             if not inner_complete:
                 complete = False
+        elif name == "RedirectResponse":
+            # Kwarg-less: its framework default is already credited by
+            # `_codes_at_call_sites`, and crediting the declared success too
+            # would be the over-crediting direction this rule fears.
+            pass
+        elif name in classes or (name and name.endswith("Response")):
+            codes.add(success)
         else:
             complete = False
     return frozenset(codes), complete
@@ -223,6 +335,132 @@ def test_the_artifact_declaration_corpus_is_not_empty():
         f"nothing means either the operation-id scheme moved underneath this "
         f"reader or a route is being registered by something outside the tree "
         f"-- and both leave the rule below measuring less than it appears to."
+    )
+
+
+def unreadable_handlers() -> set[str]:
+    """Every handler with an exit ``_exit_codes`` cannot resolve to a code."""
+    found: set[str] = set()
+    indexes: dict[str, dict[str, tuple[ast.AST, ast.Module, Path]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for service, route, verb, operation_id, _declared in artifact_declarations():
+        if service not in indexes:
+            indexes[service] = _handler_index(service)
+        name = _handler_name(operation_id, route, verb)
+        handler = indexes[service].get(name)
+        if handler is None or (service, name) in seen:
+            continue
+        seen.add((service, name))
+        codes, complete = _exit_codes(*handler)
+        if not complete or not codes:
+            _function, _module, path = handler
+            found.add(f"{path.relative_to(REPO_ROOT).as_posix()}::{name}")
+    return found
+
+
+# Keyed on file-plus-handler, never a line number. **An entry is "not yet
+# converted", and draining this ledger is the conversion**: a handler leaves
+# it by returning its declared model instance and raising named refusals from
+# `shared/api_envelope.py` -- the shape the 2026-09-10 probe proved free of
+# any change on the wire (`processing` went 0-of-5 readable to 5-of-5 with
+# the artifact byte-identical). While a handler is here, the artifact rule
+# above cannot judge it, so every code it declares is a code checked by
+# nobody -- which is what the seeded size of this list actually measures.
+#
+# Seeded 2026-09-10 at 58 handlers, the same tree Step 0's `12 81` baseline
+# was reproduced on: the old reader judged 12 of 93 declarations, the Stage
+# AL reader (model returns, framework responses and declared refusals credit
+# the decorator's success code; a `Depends` disqualifies) judges 35 of 93
+# handlers and leaves these 58.
+UNREADABLE_EXIT_LEDGER: tuple[str, ...] = (
+    "archiver/app.py::health",
+    "archiver/app.py::ready",
+    "archiver/app.py::run_cleanup_queue_batch",
+    "archiver/app.py::trigger_cleanup_queue",
+    "archiver/app.py::trigger_compact_silver",
+    "archiver/app.py::trigger_disk_usage",
+    "archiver/app.py::trigger_flush_silver",
+    "archiver/app.py::trigger_flush_staging",
+    "archiver/app.py::trigger_pack_bronze_html",
+    "archiver/app.py::trigger_prune_packed_source_html",
+    "archiver/app.py::trigger_snapshot_export",
+    "archiver/app.py::trigger_verify_pack_read_path",
+    "container_health/app.py::active_oneoff_processes",
+    "container_health/app.py::health",
+    "container_health/app.py::project_status",
+    "dbt_runner/app.py::dbt_build",
+    "dbt_runner/app.py::dbt_docs_generate",
+    "dbt_runner/app.py::get_docs_status",
+    "dbt_runner/app.py::get_selectors",
+    "dbt_runner/app.py::health",
+    "dbt_runner/app.py::ready",
+    "ops/app.py::health",
+    "ops/routers/coordination.py::authorize_coordination",
+    "ops/routers/coordination.py::begin_coordination_drain",
+    "ops/routers/coordination.py::begin_coordination_validation",
+    "ops/routers/coordination.py::cancel_coordination",
+    "ops/routers/coordination.py::complete_coordination",
+    "ops/routers/coordination.py::coordination_drain_status",
+    "ops/routers/coordination.py::coordination_release_status",
+    "ops/routers/coordination.py::coordination_status",
+    "ops/routers/coordination.py::local_drain_status",
+    "ops/routers/coordination.py::request_coordination",
+    "ops/routers/coordination.py::submit_host_evidence",
+    "ops/routers/deploy.py::complete_deployment",
+    "ops/routers/deploy.py::get_current_intent",
+    "ops/routers/deploy.py::start_deploy_intent",
+    "ops/routers/maintenance.py::evict_delisted_cooldowns",
+    "ops/routers/maintenance.py::expire_orphan_detail_claims",
+    "ops/routers/maintenance.py::reap_stuck_processing",
+    "ops/routers/maintenance.py::reconcile_cooldown_cohorts",
+    "ops/routers/scrape.py::advance_rotation",
+    "ops/routers/scrape.py::claim_batch",
+    "ops/routers/scrape.py::release_claims",
+    "ops/routers/snapshots.py::download_snapshot_archive",
+    "ops/routers/snapshots.py::get_latest_snapshot",
+    "ops/routers/snapshots.py::get_snapshot_manifest",
+    "processing/app.py::health",
+    "processing/app.py::ready",
+    "processing/routers/artifact.py::process_single_artifact",
+    "processing/routers/batch.py::process_batch",
+    "scraper/app.py::get_completed_jobs",
+    "scraper/app.py::health",
+    "scraper/app.py::list_all_jobs",
+    "scraper/app.py::mark_job_fetched",
+    "scraper/app.py::ready",
+    "scraper/app.py::run_scrape_results",
+    "scraper/app.py::scrape_detail",
+    "scraper/app.py::scrape_detail_batch_endpoint",
+)
+
+
+def test_every_handlers_exits_are_readable():
+    """Statement 4's rule: an unreadable handler is an unjudged one.
+
+    The artifact rule above skips a handler it cannot read -- the safe
+    direction -- and skipping is precisely how 81 of 93 declarations went
+    unjudged while its floor asserted `==` and passed. This ledger is the
+    skip set made loud: both directions, so a handler that becomes readable
+    fails until its entry is deleted, and a new unreadable handler fails on
+    arrival rather than joining the quiet majority.
+    """
+    found = unreadable_handlers()
+    ledgered = set(UNREADABLE_EXIT_LEDGER)
+
+    unwaived = sorted(found - ledgered)
+    assert not unwaived, (
+        "these handlers have an exit the reader cannot resolve to a status "
+        "code, so the artifact rule cannot judge them:\n  "
+        + "\n  ".join(unwaived)
+        + "\n\nReturn the declared model instance and raise named refusals "
+        "from shared/api_envelope.py, or add the exit shape to the reader if "
+        "it is one the repository has legitimately adopted."
+    )
+
+    stale = sorted(ledgered - found)
+    assert not stale, (
+        "these handlers are now fully readable and their ledger entries "
+        "must be deleted:\n  " + "\n  ".join(stale)
     )
 
 

@@ -5452,3 +5452,170 @@ changed by this work.
 101 and 102 series across `ops`, `processing` and `scraper`, `GET
 /dbt/selectors` answering the four names `selectors.yml` declares, and `/info`
 answering 308.
+
+### Stage AL — the seam rules and their ledgers
+
+**The Step 0 baseline reproduces at `0dc736f`: 12 judged, 81 skipped, of 93
+declarations.** Recipe: the handoff's script —
+[`docs/prompts/claude_prompt_plan_162_stage_al_rules.md`](../prompts/claude_prompt_plan_162_stage_al_rules.md)
+§Step 0 — run with `PYTHONPATH=.` from a clean worktree at `0dc736f` on the
+Windows dev machine, 2026-09-10. It imports `_exit_codes`, `_handler_index`,
+`_handler_name` and `artifact_declarations` from
+`tests/rules/test_the_artifact_declares_what_the_handler_returns` and counts
+the handlers whose exits all resolve against those that skip. Printed `12 81`,
+exactly the handoff's expectation, so every number §Stage AL was measured
+against still describes this tree and the seeds below are usable without
+re-measuring.
+
+**The mock-object defect reproduces: a real 503 and a bare `Mock` carrying the
+identical body give `_service_jobs` opposite answers.** Recipe: from the same
+worktree, patch `ops.coordination_drain.requests.get` to return (a) a
+`requests.Response` with `status_code = 503` and the `/ready` detail body as
+`_content`, then (b) a `Mock()` with the same `status_code` and the same dict
+on `.json.return_value`, and call `_service_jobs("archiver_jobs")` under each.
+Result, 2026-09-10:
+
+```
+real 503 Response -> {'status': 'unknown', 'count': None,
+                      'reason': 'service evidence unavailable or malformed'}
+mocker.Mock()     -> {'status': 'known',   'count': 2}
+```
+
+The real response raises in `raise_for_status()` and the bare mock does not,
+which is why `test_service_503_body_is_still_known_positive_evidence` passes
+while production returns `unknown` — the measurement Step 1's third rule (no
+test fabricates a response object's behaviour) exists to make impossible.
+
+**The caller corpus reproduces: 17 modules resolve calls to 35 distinct
+endpoints.** Recipe: `caller_endpoints()` from `tests/service_contracts.py`
+over every `.py` under the compose-derived service roots plus `scripts/` and
+`shared/`, 2026-09-10, same worktree. The 58 declarations left over split
+into: 6 `/health` covered by compose healthchecks, 5 `/metrics` covered by
+Prometheus's scrape config, 1 `/auth/check` covered by the Caddyfile's
+`forward_auth`, 35 ops routes a browser reaches through Caddy's blocks, and
+**17 with no machine-readable caller** — 10 called by `scripts/redeploy.sh` /
+`scripts/host_maintenance.py` over `localhost:8060`, and 7 with no caller
+anywhere in the tree (`/coordination/cancel`, `/coordination/local-drain`,
+`/coordination/release-status`, `/deploy/status`,
+`POST /process/artifact/{artifact_id}`, `POST /scrape_detail`,
+`GET /scrape_results/jobs`). Those 17 seed
+`UNCALLED_ENDPOINT_LEDGER` in `tests/rules/test_every_endpoint_has_a_caller.py`,
+which is statement 3's rule.
+
+**The fabricated-object corpus is 26 assignment sites in 6 files, 25 keys —
+the recorded 24 was two sites short.** Recipe: AST-walk every `.py` under
+`tests/` for `Assign` targets ending `.json.return_value` or
+`.json.side_effect`, keyed `file::function::target`, 2026-09-10, same
+worktree. The recorded measurement's seam-resolving reader missed a mock
+built inside a `side_effect` closure
+(`test_one_post_per_config_scope::resp`) and one handed over in a
+`side_effect` list (`test_post_body_is_wrapped_in_params_key::fetched_resp`),
+which is why the landed rule
+(`test_no_test_fabricates_a_response_objects_behaviour`) keys on the shape
+rather than the seam. All 25 keys seed `FABRICATED_OBJECT_LEDGER`; the two
+extra sites are the same defect in the same files, so the delta is reader
+coverage, not corpus growth.
+
+**The coupled readers landed in one commit, and the judged set went from 12
+of 93 declarations to 35 of 93 handlers with zero phantoms.** Recipe: rerun
+the Step 0 script against the rewritten `_exit_codes` (model returns,
+kwarg-less framework responses and raised declared refusals credit the
+decorator's declared success; a `Depends` disqualifies; one unreadable exit
+still disqualifies the handler), 2026-09-10. The first rewrite draft
+produced exactly one new phantom — `GET
+/admin/snapshots/adaptive-refresh/{snapshot_id}/download` declaring 400,
+401, 403 and 503 its body never raises — and the cause is a reader hole the
+recorded measurements never hit: those codes are raised by
+`Depends(require_snapshot_token("read"))` and by a helper called as a
+statement, neither of which the reader can follow. `Depends` now
+disqualifies (it is an exit the reader cannot read), which removed the
+phantom without teaching the reader to guess. The 58 still-unreadable
+handlers seed `UNREADABLE_EXIT_LEDGER`.
+
+**The retyped-status corpus reconciles to the recorded 128 exactly, and the
+landed ledger is 80 keys over 101 sites.** Recipe: AST-walk the service
+packages for `status_code=<int>` keywords, `HTTPException(<int>, ...)`
+positionals and `.status_code == <int>` comparisons, 2026-09-10. The
+recorded 128 (ops 94, archiver 18, dbt_runner 9, shared 4, scraper 3) counts
+line-grain `status_code=` occurrences including the 12 ops decorator
+declarations, excludes comparisons, counts `shared/minio.py`'s four S3
+*string* codes, and misses `processing`'s three sites. The landed rule
+(`test_no_call_site_retypes_a_declared_status`) scopes by envelope
+membership per Stage W — decorator declarations, non-member success codes
+(14 in ops), S3 string codes and cars.com comparisons are out on the scope
+argument in its docstring; owned-seam caller comparisons (ops 4) and
+processing's three are in. That corpus is 101 literal sites: ops 68,
+archiver 18, dbt_runner 9, scraper 3, processing 3, collapsing to 80
+file-function-code keys in `RETYPED_STATUS_LEDGER`.
+
+**The meaning rule seeds at 28 unproven rows plus one undeclared meaning,
+and the recorded 29-plus-4 reconciles as a sharpening.** Recipe:
+`unproven_meanings()` in
+`tests/rules/test_a_status_code_means_the_same_thing_to_both.py`, 2026-09-10
+— for every declared response at a code the envelope gives more than one
+meaning (today exactly 503), the description must be an envelope meaning and
+every meaning the handler provably raises at that code must equal it. The
+four `/ready` rows are seeded exactly as named (dict detail, unreadable
+meaning, declared as a dependency problem while meaning busy). Of the 29
+`"Database unavailable."` declarations, the routes whose handlers provably
+raise only that text — `begin-drain`, `begin-validation`, `cancel`,
+`request` — are correct and carry no entry; the remainder seed as proven
+mismatches (the coordination handlers raise `Coordination state is
+missing.`, `Host evidence could not be recorded.`, `Coordination could not
+be completed.`, `Authorization evidence unavailable.` against the one
+declared text) or as unreadable (the admin rows answer through a rendered
+template). `processing POST /process/batch` is a 34th declaration the named
+seeds did not include, entering for declaring a text the envelope does not
+carry. `Busy` is declared by no response anywhere and seeds the one-entry
+undeclared-meaning ledger.
+
+**The body-declaration corpus reproduces: 237 declarations, 16 redirects,
+116 shaped, 16 kind-declared, and the 76 bodyless errors — all in `ops` —
+exactly as recorded, plus 13 bodyless 2xx.** Recipe: classify every
+declared response in `contracts/*.json` by media type — `application/json`
+with a schema is a shape, any other media type is a kind (`text/html`
+carries a vestigial `{"type": "string"}` schema FastAPI writes for a
+`response_class`, so schema presence is the wrong key), no content is bare
+— 2026-09-10. The recorded "29 where a JSON schema would be the wrong
+answer" splits into 16 that already declare their media type and 13 that
+declare nothing (`/metrics` ×5, the recap pages, `/sitemap.xml`,
+`/auth/check`'s bodyless 200, the archive download); the 13 ride in the
+ledger with the 76, seeding
+`UNDECLARED_BODY_LEDGER` at 89 in
+`tests/rules/test_every_response_declares_a_shape_or_a_kind.py`.
+
+**Verified at `7501eca`, 2026-09-10, all on the Windows dev machine.**
+`pytest tests/rules -q -m "not integration"`: 286 passed, every ledger
+seeded rather than any violation unwaived. `pytest tests/ -q -m "not
+integration"`: 4067 passed — the 4051 the handoff recorded at `0dc736f`
+plus exactly the 16 tests this stage added. `python
+scripts/generate_service_contracts.py --check` exited 0 with the artifact
+unmoved, so nothing here changed service behaviour. `python
+scripts/verify_testing_contract_mutations.py` (full run, throwaway
+Postgres provisioned): every mutation CAUGHT including all 17 added for
+the ten new tests, no MISSED, no NO RUN, restored suite green — each of
+the 17 had also been watched fail by hand before its entry landed. The
+harness's snapshot-restore writes LF where the checkout had CRLF; the
+five files it touched were restored from git with zero content change.
+
+**The two rules the handoff dropped are landed, and the second found a
+live defect on its first run.** Measured 2026-09-10, same worktree. The
+client rule seeds at exactly the plan's 17 — thirteen DAGs,
+`archiver/app.py`, the two coordination gates and `ops/routers/admin.py` —
+keyed on the one signature no call shape can dodge (an owned host's URL
+named in non-docstring code), with a floor holding that signature and the
+`caller_endpoints()` resolver equal on the same seventeen modules; recipe:
+`hand_written_callers()` in
+`tests/rules/test_no_module_calls_a_service_by_hand.py`. The
+standard-codes rule parses the eleven-code table out of §*What a status
+code means* and compares three directions; its first run found **`ops GET
+/admin` declaring `307`**, the code the table names only to refuse —
+`/info` received the 308 repair in Stage AA and `/admin` never did.
+Changing the answered code is wire behaviour, so it is the rule's one
+ledger entry with the repair named, not a quiet waiver. The reverse
+direction is clean (all eleven standard codes are declared somewhere) and
+the envelope's literals are all members. With these two, every statement
+of §*How a service reaches another service* except the request-body half
+of statement 2 has a comparator; that half is now stated alone in
+*Specified here*, draining together with the 17-module ledger when the
+client seam lands.
