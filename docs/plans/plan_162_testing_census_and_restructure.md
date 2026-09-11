@@ -392,15 +392,15 @@ moved it to the end without making it a different stage.
 | 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `done` | CAR-107 |
 | 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `done` | CAR-107 |
 | 27 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `done` | CAR-115 |
-| 28 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `next` | CAR-119 |
+| 28 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `canceled` | CAR-119 |
 | 29 | [**AK**](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between) | — | A floor may assert nothing, or everything, never a number between | — | `done` | CAR-118 |
-| 30 | [**AM**](#stage-am-the-object-store-is-a-seam-and-one-artifact-in-it-has-a-contract) | — | The object store is a seam, and one artifact in it has a contract | G34 | `—` | — |
-| 31 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `—` | CAR-117 |
-| 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
-| 33 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
-| 34 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
-| 35 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
-| 36 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+| 30 | [**AM**](#stage-am-the-object-store-is-a-seam-and-one-artifact-in-it-has-a-contract) | — | The object store is a seam, and one artifact in it has a contract | G34 | `canceled` | — |
+| 31 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `canceled` | CAR-117 |
+| 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `canceled` | CAR-116 |
+| 33 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `canceled` | CAR-105 |
+| 34 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `canceled` | CAR-108 |
+| 35 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `canceled` | CAR-109 |
+| 36 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `next` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
