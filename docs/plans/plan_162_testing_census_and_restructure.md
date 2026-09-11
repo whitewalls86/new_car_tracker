@@ -2337,7 +2337,7 @@ work. It can. The stages below use it.
 
 ### Stage Y grew: its rule passes a route that reports work it did not do
 
-**Issue:** CAR-104 · **State:** `done` · **Gap:** G21, G27, G28
+**Issue:** CAR-104 · **State:** `done` · **Gap:** G21
 
 **Re-measured 2026-09-08 against `d6e3a6d`: 100 routes across the six importable
 services, 46 of which produce a status code they never declare.** The census
@@ -2461,7 +2461,7 @@ archives and take the reason with it.
 
 ### Stage AF: the harness that proves the rules is proved by nothing
 
-**Issue:** CAR-114 · **State:** `done` · **Gap:** G29
+**Issue:** CAR-114 · **State:** `done` · **Gap:** —
 
 **Every "demonstrated by X failing" exit in this plan rests on
 `scripts/verify_testing_contract_mutations.py`, and nothing guards it.** Its own
@@ -2524,7 +2524,7 @@ the other does not; demonstrated by a stale anchor failing.
 
 ### Stage Z: the contract is generated, committed and gated
 
-**Issue:** CAR-107 · **State:** `done` · **Gap:** G22
+**Issue:** CAR-107 · **State:** `done` · **Gap:** —
 
 **A contract nobody generates is a document, and this plan exists because
 `ARCHITECTURE.md:179` was accurate in April 2026 and quietly false by August.**
@@ -2555,7 +2555,7 @@ what it drops and why; demonstrated by an unreflected route change failing.
 
 ### Stage AA: a test may not invent another service's response
 
-**Issue:** CAR-107 · **State:** `done` · **Gap:** G23, G27
+**Issue:** CAR-107 · **State:** `done` · **Gap:** —
 
 **37 fabricated HTTP status codes across 6 test modules** — `{200: 26, 403: 9,
 400: 1, 500: 1}` — and the seams they replace are `ops.coordination_drain.
@@ -2629,7 +2629,7 @@ serve failing.
 
 ### Stage AB: what we do not own is recorded and replayed
 
-**Issue:** CAR-106 · **State:** `done` · **Gap:** G24
+**Issue:** CAR-106 · **State:** `done` · **Gap:** —
 
 **9 fabricated `cars.com` responses**, mostly the 403 in
 `tests/scraper/processors/test_scrape_detail.py`. There is no code in this
@@ -2854,7 +2854,7 @@ Demonstrated by an inline default failing, not asserted.
 
 ### Stage AG: rules live in a directory, and an unregistered one cannot exist
 
-**Issue:** CAR-115 · **State:** `done` · **Gap:** G30
+**Issue:** CAR-115 · **State:** `done` · **Gap:** —
 
 **Found by Stage Q, in the shape this plan keeps finding things.** That stage
 wrote four rules, ran the suite, and reported **3,899 passed** — with all four

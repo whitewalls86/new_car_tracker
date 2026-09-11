@@ -1778,7 +1778,7 @@ DUPLICATE_SQL_WAIVERS: tuple[Waiver, ...] = (
         "ops/sql/cancel_coordination_state.sql == "
         "ops/sql/release_deploy_coordination.sql",
         gap="G17",
-        owner=162,
+        owner=180,
     ),
 )
 
@@ -1839,7 +1839,7 @@ def test_no_two_production_sql_files_hold_the_same_statement():
 # 125's Iceberg and Spark tooling, which Gates C and D productionize. They
 # were never fixed and never waived; they were out of frame.
 INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G5", owner=162)
+    Waiver(subject, gap="G5", owner=180)
     for subject in (
         "scripts/audit_adaptive_refresh_features.py:123",
         "scripts/audit_adaptive_refresh_features.py:148",
@@ -1911,7 +1911,7 @@ _EXEMPT_VERBS = _SESSION_SETUP_VERBS | _DDL_VERBS
 # Rule 5c -- no production module keeps a SQL statement in a Python literal.
 # ---------------------------------------------------------------------------
 SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G15", owner=162)
+    Waiver(subject, gap="G15", owner=180)
     for subject in (
         "archiver/processors/delete_packed_source_html.py:304",
         "archiver/processors/pack_bronze_html.py:440",
@@ -2326,7 +2326,7 @@ _ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
 # clothes. They are ``now() - (%s || ' hours')::interval`` now, and they
 # PREPARE.
 TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
+    Waiver(subject, gap="G19", owner=180, since=date(2026, 9, 5))
     for subject in (
         "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
     )
@@ -2345,7 +2345,7 @@ TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
     # ``test_no_mutant_failed_to_execute`` exists to catch -- so the schema
     # check ``PREPARE`` would give them is done by execution instead, on every
     # one of the 216.
-    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 7))
+    Waiver(subject, gap="G19", owner=180, since=date(2026, 9, 7))
     for subject in (
         "tests/sql/integration/dbt/test_constraint_mutation/count_failing_rows.sql",
         "tests/sql/integration/dbt/test_constraint_mutation/count_relation_rows.sql",
@@ -5867,15 +5867,31 @@ PERMANENT_PHANTOM_422 = (
 )
 
 PHANTOM_422_WAIVERS: tuple[Waiver, ...] = (
-    # All six take an unconstrained string and nothing else. Four are the dead
-    # admin routes Stage AA resolves; the other two guard their parameter in the
-    # handler the way `/recaps/{slug}` does, and follow whatever that stage
-    # decides for the panel around them.
-    Waiver("GET /admin/searches/{search_key}/edit", "G21", 162, date(2026, 9, 8)),
-    Waiver("POST /admin/searches/{search_key}/toggle", "G21", 162, date(2026, 9, 8)),
-    Waiver("POST /admin/searches/{search_key}/delete", "G21", 162, date(2026, 9, 8)),
-    Waiver("POST /scrape_results/jobs/{job_id}/fetched", "G21", 162, date(2026, 9, 8)),
-    Waiver("GET /project-status/{project}", "G21", 162, date(2026, 9, 8)),
+    # All five take an unconstrained string and nothing else.
+    #
+    # **This comment used to say six, four of them dead admin routes Stage AA
+    # resolves, and all three claims were wrong.** There are five entries, not
+    # six; three are admin routes, not four; and they are live rather than dead
+    # -- `ops/templates/admin/list.html` posts to `edit`, `toggle` and `delete`
+    # from a working panel, and Stage AA edited those very handlers (it set
+    # their 303 default) without removing the phantom 422. So the stated
+    # resolution path completed without resolving them, which is the stale
+    # reason this repository's declaration machinery exists against, sitting
+    # inside the waiver list of the plan that built it. Found 2026-09-11 while
+    # re-homing these waivers, because archiving Plan 162 forced someone to
+    # read them.
+    #
+    # Owner is Plan 180: the declared 422 is a claim about what crosses the
+    # HTTP seam, which is that plan's subject. The alternative considered and
+    # rejected was `PERMANENT_PHANTOM_422` above -- these are not permanent,
+    # because constraining an admin `search_key` and answering 422 for a
+    # malformed one is a defensible end state, unlike `/recaps/{slug}` where
+    # 404 is the right answer for a crawler.
+    Waiver("GET /admin/searches/{search_key}/edit", "G21", 180, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/toggle", "G21", 180, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/delete", "G21", 180, date(2026, 9, 8)),
+    Waiver("POST /scrape_results/jobs/{job_id}/fetched", "G21", 180, date(2026, 9, 8)),
+    Waiver("GET /project-status/{project}", "G21", 180, date(2026, 9, 8)),
 )
 
 

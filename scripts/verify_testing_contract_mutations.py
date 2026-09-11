@@ -569,7 +569,7 @@ MUTATIONS = [
             TEST,
             "CI_INVOCATION_WAIVERS = ()",
             'CI_INVOCATION_WAIVERS = (\n'
-            '    Waiver("tests/integration/ops", gap="G6", owner=162),\n'
+            '    Waiver("tests/integration/ops", gap="G6", owner=180),\n'
             ')',
         ),
         [TEST],
@@ -596,9 +596,9 @@ MUTATIONS = [
         # because no gap will ever have that letter.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G14 | ~~**56 of 76 production `.sql` files",
-            "| G14 | **PLACEHOLDER** | -- | Plan 84 |\n"
-            "| G99 | ~~**56 of 76 production `.sql` files",
+            "| G17 | **One statement filed twice.**",
+            "| G17 | **PLACEHOLDER** | -- | Plan 84 |\n"
+            "| G99 | **One statement filed twice.**",
         ),
         ["docs/TESTING.md"],
         [],
@@ -615,7 +615,7 @@ MUTATIONS = [
         # rather than by intent. Found by Stage AF's anchor rule.
         lambda: _edit(
             TEST,
-            'Waiver(subject, gap="G5", owner=162)\n    for subject in (',
+            'Waiver(subject, gap="G5", owner=180)\n    for subject in (',
             'Waiver(subject, gap="G5", owner=84)\n    for subject in (',
         ),
         [TEST],
@@ -1597,8 +1597,8 @@ MUTATIONS = [
         # stage still claiming the number.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G29 | ",
-            "| G299 | ",
+            "| G31 | ",
+            "| G319 | ",
         ),
         ["docs/TESTING.md"],
         [],
@@ -2230,19 +2230,19 @@ MUTATIONS = [
             '        "ops/sql/cancel_coordination_state.sql == "\n'
             '        "ops/sql/release_deploy_coordination.sql",\n'
             '        gap="G17",\n'
-            "        owner=162,\n"
+            "        owner=180,\n"
             "    ),",
             "    Waiver(\n"
             '        "ops/sql/cancel_coordination_state.sql == "\n'
             '        "ops/sql/release_deploy_coordination.sql",\n'
             '        gap="G17",\n'
-            "        owner=162,\n"
+            "        owner=180,\n"
             "    ),\n"
             "    Waiver(\n"
             '        "ops/sql/cancel_coordination_state.sql == "\n'
             '        "ops/sql/release_deploy_coordination.sql",\n'
             '        gap="G17",\n'
-            "        owner=162,\n"
+            "        owner=180,\n"
             "    ),",
         ),
         ["tests/rules/test_testing_contract.py"],
@@ -2404,7 +2404,7 @@ MUTATIONS = [
         lambda: _edit(
             "tests/rules/test_planning_docs.py",
             "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
-            "    SectionWaiver(162),\n"
+            "    SectionWaiver(180),\n"
             "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
         ),
         ["tests/rules/test_planning_docs.py"],
@@ -2701,7 +2701,7 @@ MUTATIONS = [
         "146 Stage 5's mutation C",
         lambda: _edit(
             "docs/PLANS.md",
-            "| 8 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+            "| 7 | [168](plans/plan_168_generated_knowledge_substrate.md)",
             "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
         ),
         ["docs/PLANS.md"],
@@ -2717,7 +2717,7 @@ MUTATIONS = [
         "check nor coverage can see",
         lambda: _edit(
             "docs/PLANS.md",
-            "| 9 | [179](plans/plan_179_derived_service_call_graph.md)",
+            "| 8 | [179](plans/plan_179_derived_service_call_graph.md)",
             "| 9 | [179](plans/plan_178_role_grant_scoping.md)",
         ),
         ["docs/PLANS.md"],
@@ -2772,7 +2772,7 @@ MUTATIONS = [
         "what made it checkable",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 124 rows, newest first",
+            "— 125 rows, newest first",
             "— every finished plan, newest first",
         ),
         ["docs/PLANS.md"],
@@ -2786,7 +2786,7 @@ MUTATIONS = [
         "second, a number in a sentence nothing read",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 124 rows, newest first",
+            "— 125 rows, newest first",
             "— 123 rows, newest first",
         ),
         ["docs/PLANS.md"],
