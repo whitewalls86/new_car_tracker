@@ -300,14 +300,12 @@ GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     "tests/rules/test_testing_contract.py: len(matched) > 2",
     "tests/rules/test_testing_contract.py: len(entries) >= 50",
     "tests/rules/test_testing_contract.py: len(anchored) >= 40",
-    "tests/rules/test_testing_contract.py: len(found) >= 100",
     "tests/rules/test_testing_contract.py: len(statements) >= 30",
     "tests/rules/test_testing_contract.py: len(resolved) >= 20",
     "tests/rules/test_testing_contract.py: len(types_found) >= 4",
     "tests/rules/test_testing_contract.py: len(handlers) >= 80",
     "tests/rules/test_testing_contract.py: pairs >= 150",
     "tests/rules/test_testing_contract.py: len(covered) >= 75",
-    "tests/rules/test_testing_contract.py: len(ambiguous) <= 8",
     "tests/rules/test_testing_contract.py: len(requests) >= 100",
     "tests/rules/test_testing_contract.py: len(found) >= 4",
     # Added 2026-09-10, Stage AK, when this reader learned to resolve a name.
@@ -321,8 +319,6 @@ GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     # literal loop table unpacks into a variable that then reads as derived
     # (`ceiling`, from `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` and
     # `MAX_THE_CHECKS_WAIVERS`).
-    "tests/rules/test_testing_contract.py: len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING",
-    "tests/rules/test_testing_contract.py: len(corpus) > _SQL_CORPUS_FLOOR",
     "tests/rules/test_testing_contract.py: len(owners) >= _DB_VOCABULARY_FLOOR",
 )
 
