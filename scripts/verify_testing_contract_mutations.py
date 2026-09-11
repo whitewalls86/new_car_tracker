@@ -2352,11 +2352,11 @@ MUTATIONS = [
         "a plan inside the published build-order window loses the section the "
         "public page renders, and no waiver may cover that window",
         lambda: _edit(
-            "docs/plans/plan_134_archiver_endpoint_failure_contract.md",
+            "docs/plans/plan_180_seam_program.md",
             "## What this plan is for",
             "## What this plan was for",
         ),
-        ["docs/plans/plan_134_archiver_endpoint_failure_contract.md"],
+        ["docs/plans/plan_180_seam_program.md"],
         [],
     ),
     (
