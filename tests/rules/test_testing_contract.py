@@ -3077,6 +3077,55 @@ def test_every_job_that_runs_pytest_has_its_record_read_by_the_gate():
     )
 
 
+#: The one job that must stay cold, and why. Plan 162 Stage R added caching to
+#: the two jobs on the critical path and this is the boundary of that work: a
+#: cache here would not merely be unwanted, it would silently falsify the
+#: number the job publishes.
+COLD_BUILD_JOB = "docker-build"
+
+
+def test_the_cold_build_job_declares_no_cache():
+    """``docker-build`` measures a cold build, so a cache makes it lie.
+
+    The job's own comment states the property this protects: *"a GitHub runner
+    starts with no images at all, so this delta includes pulling every base
+    image"*. It is published as a **ceiling** for the production host's disk
+    headroom, and over-estimating is the safe direction. A warm layer cache
+    moves the number down, which is the unsafe direction, and it does so
+    without failing anything -- the build still succeeds and the footprint is
+    simply smaller than the fleet's.
+
+    **Written because the constraint was stated and nothing held it.** Stage R
+    is the stage that adds caching, so it is the stage that owes the boundary:
+    the next person shortening CI sees four jobs with `cache: pip` and one
+    without, and nothing in the file says the omission is deliberate. That is
+    the shape of every declaration this plan has had to add.
+
+    Three ways in, because there are three, and naming one would leave the
+    others: a cached setup action, ``actions/cache`` itself, and BuildKit's own
+    layer cache flags on the build command.
+    """
+    job = yaml.safe_load(_read(WORKFLOW))["jobs"][COLD_BUILD_JOB]
+    offenders = []
+    for step in job.get("steps", []) or []:
+        name = _step_name(step)
+        if "actions/cache" in str(step.get("uses", "")):
+            offenders.append(f"`{name}` uses actions/cache")
+        for key in (step.get("with", {}) or {}):
+            if "cache" in key:
+                offenders.append(f"`{name}` passes `{key}:` to {step.get('uses')}")
+        for flag in ("--cache-from", "--cache-to", "BUILDKIT_INLINE_CACHE"):
+            if flag in str(step.get("run", "")):
+                offenders.append(f"`{name}` runs a build with {flag}")
+    assert not offenders, (
+        f"{COLD_BUILD_JOB} declares a cache:\n  " + "\n  ".join(offenders) + "\n"
+        "That job exists to measure a cold build, and its footprint is "
+        "published as a ceiling for the production host. A warm cache lowers "
+        "the number without failing anything, which is the one direction a "
+        "ceiling must never move. Cache a job on the critical path instead."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule 6 -- the layer numbers in the code are this document's.
 # ---------------------------------------------------------------------------

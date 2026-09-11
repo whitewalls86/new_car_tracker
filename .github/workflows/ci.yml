@@ -381,6 +381,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          # Plan 162 Stage R, and **being measured rather than adopted**. This
+          # caches `~/.cache/pip` -- the downloads, not the installed tree --
+          # so it takes a bite out of this step rather than removing it. The
+          # 2026-09-11 census reads this install at 42-46s across five runs.
+          #
+          # `constraints.txt` is in the key because PIP_CONSTRAINT decides
+          # which versions resolve; a cache keyed only on the requirement files
+          # would serve wheels for versions the constraint no longer permits.
+          cache: pip
+          cache-dependency-path: |
+            constraints.txt
+            requirements-dev.txt
+            scraper/requirements.txt
+            archiver/requirements.txt
+            processing/requirements.txt
+            ops/requirements.txt
+            dashboard/requirements.txt
+            dbt_runner/requirements.txt
       - name: Install dependencies
         # No airflow/requirements.txt here: Airflow is a separate service image
         # in prod (airflow/Dockerfile) and no non-integration test imports it —
@@ -561,6 +579,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          # Plan 162 Stage R, being measured rather than adopted -- see the
+          # note on the same line in `unit-tests`. This job is the current
+          # ceiling at ~200s, and its install steps are the noisiest number in
+          # the census: "Install dependencies" reads 18, 19, 21, 30 and 40
+          # seconds across five uncached runs, which is why a single
+          # before/after comparison here would mean nothing.
+          #
+          # `Install dbt` pins its versions inline rather than in a file, so
+          # nothing here keys on it -- but it draws from the same
+          # `~/.cache/pip`, so a warm cache serves it too.
+          cache: pip
+          cache-dependency-path: |
+            constraints.txt
+            requirements-dev.txt
+            archiver/requirements.txt
 
       - name: Install dependencies
         # Plan 162 Stage E: this job installs requirements-dev.txt plus only

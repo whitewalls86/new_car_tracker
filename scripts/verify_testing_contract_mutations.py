@@ -986,6 +986,18 @@ MUTATIONS = [
         [],
     ),
     (
+        "test_the_cold_build_job_declares_no_cache",
+        "the cold-build job gains a layer cache, and its published ceiling "
+        "quietly stops describing a cold build",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "      - run: docker compose build\n",
+            "      - run: docker compose build --build-arg BUILDKIT_INLINE_CACHE=1\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
         "test_every_unmarked_declaration_names_a_file_that_exists",
         "a declaration goes on exempting a path after its file moved away",
         lambda: _edit(
