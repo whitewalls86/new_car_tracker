@@ -3579,6 +3579,13 @@ is Stage P's.
 Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
 question cannot close from inside a CI job.
 
+## Public summary
+
+**Testing census and CI restructure** — Audited what the automated tests
+actually check and found whole suites that had never run at all. Fixed those,
+then built the checks that make the silence impossible: work that skips a test,
+or quietly stops running one, now fails the build instead of passing it.
+
 ## Record
 
 One entry per closed stage, oldest first. **Legacy** names the stage's old
