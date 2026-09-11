@@ -200,7 +200,9 @@ applied in production**.
 
 ### Stage J: a fixture cannot fabricate a forbidden row *(ex-162 Stage AD)*
 
-**Issue:** CAR-124 · **State:** `—`
+**Issue:** CAR-124 · **State:** `canceled`
+
+**Superseded 2026-09-11 by [Plan 182](plan_182_what_a_unit_owes_itself.md) Stage G (CAR-131).** A fixture that fabricates a forbidden row is a within-party obligation, not a seam; it sat here only because it fell out of Plan 162's tail while that plan was being split.
 
 **Exit** (AD's, carried): a unit fixture cannot carry a value the owning
 column forbids; `FABRICATED_ROW_WAIVERS` seeded at its measured count and
@@ -219,7 +221,9 @@ container what it loaded. Demonstrated by an inline default failing.
 
 ### Stage L: the parsers nobody ran *(ex-162 Stage AJ)*
 
-**Issue:** CAR-124 · **State:** `—`
+**Issue:** CAR-124 · **State:** `canceled`
+
+**Superseded 2026-09-11 by [Plan 182](plan_182_what_a_unit_owes_itself.md) Stage H (CAR-131).** A parser no test executes is the first within-party drain target, and the plan that holds the frame is where its ledger belongs.
 
 **Exit** (AJ's, carried): every production function that parses a response
 from a system this repository does not own is exercised by a test or
