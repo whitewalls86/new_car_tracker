@@ -985,6 +985,19 @@ MUTATIONS = [
         ["tests/plugins/invocation_recorder.py"],
         [],
     ),
+    (
+        "test_every_unmarked_declaration_names_a_file_that_exists",
+        "a declaration goes on exempting a path after its file moved away",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            '        "tests/integration/dbt/test_analytics_connection_guard.py",\n'
+            "        reason=(",
+            '        "tests/integration/dbt/test_analytics_connection_guard_moved.py",\n'
+            "        reason=(",
+        ),
+        ["tests/rules/test_testing_contract.py"],
+        [],
+    ),
     # ----------------------------------------------------------------------
     # Plan 162 Stage S. Four rules guard the carved-out CI gates and the
     # source lists they read; each is mutated in the direction it exists to

@@ -455,6 +455,78 @@ DORMANT_SUITES = (
 )
 
 
+@dataclass(frozen=True)
+class Unmarked:
+    """One file inside an integration suite that is deliberately a unit test.
+
+    **A third category, and it exists because the first CI run of Plan 162
+    Stage R's invocation gate found one.** :class:`Dormant` says a suite runs
+    *nowhere*; this says a file does not run *here*, and the difference is the
+    whole point -- a declaration in this tuple is exempt from the step that
+    names its directory and is still held to running somewhere, by the gate's
+    second check. So it cannot be used to hide a file that runs nowhere at
+    all, which is the failure ``Dormant`` covers and this must not reopen.
+
+    **Why declaring beat moving**, since Stage F's precedent points the other
+    way and was considered. That stage found ``test_scrape_listings.py``
+    deselected to nothing, tried the marker, and concluded the directory was
+    wrong -- *"the root cause of both wrong answers is one bad default: the
+    directory was treated as ground truth and the file adjusted to match it"*.
+    The answer differs here because the file's subject is its neighbour:
+    ``test_analytics_connection_guard.py`` imports ``.real_build`` and asserts
+    the guard that module installs. Moving it to a unit tree would separate a
+    test from the module it tests in order to satisfy a rule about paths, and
+    ``docs/TESTING.md`` already settles the governing principle it would
+    violate -- *a file's location does not decide whether it runs here, the
+    marker does*. Forcing the move makes location decide.
+
+    ``reason`` carries what a reader needs; there is no ``gap`` field, for the
+    reason :class:`Dormant` gives.
+    """
+
+    subject: str
+    reason: str
+    since: date = MEASURED
+
+
+UNMARKED_BY_DESIGN = (
+    Unmarked(
+        "tests/integration/dbt/test_analytics_connection_guard.py",
+        reason=(
+            "it needs no MinIO, no Postgres and no dbt -- it builds an "
+            "in-memory DuckDB and wraps it in `real_build.ReadOnlyConnection` "
+            "-- so it is deliberately unmarked and runs in the unit job, where "
+            "the property it protects is known before a 118-second job starts. "
+            "It lives here rather than in a unit tree because `real_build.py`, "
+            "the module whose guard it asserts, is its neighbour."
+        ),
+        since=date(2026, 9, 11),
+    ),
+)
+
+
+def test_every_unmarked_declaration_names_a_file_that_exists():
+    """A declaration whose file has moved exempts a path nothing runs.
+
+    The floor every registry in this plan carries, for the reason Stage U's
+    equivalent gives: the entry is a literal naming somebody else's file, and
+    a rename leaves it pointing at nothing. That failure is not dangerous --
+    the moved file loses its exemption and the gate goes loudly red for it --
+    but the stale entry stays behind claiming a decision about a file that no
+    longer exists, which is the drift every declaration here is against.
+    """
+    missing = sorted(
+        f"{entry.subject} (declared {entry.since}: {entry.reason})"
+        for entry in UNMARKED_BY_DESIGN
+        if not (REPO_ROOT / entry.subject).is_file()
+    )
+    assert not missing, (
+        "these UNMARKED_BY_DESIGN entries name a file that is not on disk. "
+        "The file moved or was deleted; delete the entry, or repoint it:\n  "
+        + "\n  ".join(missing)
+    )
+
+
 def test_every_integration_suite_is_invoked_by_a_ci_step():
     """G1 is the reason this file exists at all.
 

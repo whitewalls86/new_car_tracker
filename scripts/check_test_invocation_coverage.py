@@ -70,6 +70,7 @@ sys.path.insert(0, str(REPO_ROOT))
 # `production_sql_files()`, for the same reason.
 from tests.rules.test_testing_contract import (  # noqa: E402
     DORMANT_SUITES,
+    UNMARKED_BY_DESIGN,
     pytest_invocations,
 )
 
@@ -130,7 +131,14 @@ def _describe(record: dict) -> str:
 
 
 def _unasked(records: list[dict]) -> list[str]:
-    """Check one: a file under a named integration path that was not selected."""
+    """Check one: a file under a named integration path that was not selected.
+
+    ``UNMARKED_BY_DESIGN`` is exempt here and **only** here. Such a file is
+    declared as not this step's to run; it is still held to running somewhere
+    by :func:`_unrun`, so the declaration cannot be used to hide a file that
+    runs nowhere at all.
+    """
+    excused = {entry.subject for entry in UNMARKED_BY_DESIGN}
     failures = []
     for record in records:
         named, ignored = _named_paths(record["argv"])
@@ -139,7 +147,7 @@ def _unasked(records: list[dict]) -> list[str]:
         for path in named:
             if not path.startswith(_SCOPED_PREFIX):
                 continue
-            for candidate in sorted(_files_under(path) - ignored):
+            for candidate in sorted(_files_under(path) - ignored - excused):
                 if candidate in selected:
                     continue
                 how = (
@@ -150,6 +158,30 @@ def _unasked(records: list[dict]) -> list[str]:
                 failures.append(
                     f"{candidate}\n      {how} by `{_describe(record)}`"
                 )
+    return failures
+
+
+def _contradicted(records: list[dict]) -> list[str]:
+    """Check four: a declared file that the step naming its directory did run.
+
+    The other direction, without which the declaration is an unread comment --
+    the same pair ``test_no_dormant_suite_is_quietly_running`` holds one level
+    up. A file that gains the marker, or a step that drops its ``-m``, has made
+    the declaration's reason stop being true, and a reason that has stopped
+    being true is a reason nobody is reading.
+    """
+    declared = {entry.subject: entry for entry in UNMARKED_BY_DESIGN}
+    failures = []
+    for record in records:
+        named, _ = _named_paths(record["argv"])
+        if not any(path.startswith(_SCOPED_PREFIX) for path in named):
+            continue
+        for candidate in sorted(set(record["selected"]) & declared.keys()):
+            entry = declared[candidate]
+            failures.append(
+                f"{candidate}\n      declared {entry.since}: {entry.reason}"
+                f"\n      selected anyway by `{_describe(record)}`"
+            )
     return failures
 
 
@@ -190,6 +222,7 @@ def main() -> int:
     unasked = _unasked(records)
     unrun = _unrun(records)
     silent = _silent_steps(records)
+    contradicted = _contradicted(records)
 
     if unasked:
         print(
@@ -215,10 +248,21 @@ def main() -> int:
         for line in silent:
             print(f"    {line}")
 
-    if not (unasked or unrun or silent):
+    if contradicted:
+        print(
+            f"\n{len(contradicted)} file(s) declared UNMARKED_BY_DESIGN were "
+            f"selected by the step that names their directory. The reason has "
+            f"stopped being true; delete the entry:"
+        )
+        for line in contradicted:
+            print(f"    {line}")
+
+    if not (unasked or unrun or silent or contradicted):
+        declared = len(UNMARKED_BY_DESIGN)
         print(
             f"every one of {len(_test_files())} test file(s) was selected by "
-            f"the step that names it."
+            f"the step that names it, with {declared} declared "
+            f"UNMARKED_BY_DESIGN and running elsewhere."
         )
         return 0
     return 1
