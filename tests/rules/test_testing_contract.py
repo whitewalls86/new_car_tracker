@@ -3921,12 +3921,22 @@ def test_the_mutation_harness_corpus_is_not_empty():
     called by name, or an entry shape that stops unpacking would empty the
     corpus and retire that rule silently -- which is the failure it exists to
     prevent, arriving one level up.
+
+    Stage AK: the `>= 50` that stood here is gone. Measured by replacing
+    ``_harness_mutations`` with an empty return --
+    ``test_every_asserted_rule_is_proved_by_a_mutation`` goes red on its own,
+    because every rule the contract names then has no mutation proving it. The
+    bound was a weaker second statement of that.
+
+    ``len(anchored)`` below is **not** redundant and keeps its assertion: it
+    has a failure mode of its own, where entries parse perfectly and the
+    ``_edit`` name resolution stops matching. Measured separately by renaming
+    that resolution, and this test is the only thing that goes red.
     """
     entries = _harness_mutations()
-    assert len(entries) >= 50, (
-        f"only {len(entries)} mutations parsed out of {MUTATION_HARNESS}; the "
-        f"rule below is checking almost nothing. Check the MUTATIONS entry "
-        f"shape before trusting a green run."
+    assert entries, (
+        f"no mutations parsed out of {MUTATION_HARNESS}; the rule below is "
+        f"checking nothing. Check the MUTATIONS entry shape."
     )
     anchored = [
         call for _, _, calls in entries for call in calls if call.func.id == "_edit"
@@ -6016,12 +6026,6 @@ _CHECK_IN = re.compile(
 )
 _SQL_STRING = re.compile(r"'([^']*)'")
 
-#: A floor under the derived owner corpus, far below the 18 it finds. A rule
-#: whose population comes from a regex fails open when the regex stops
-#: matching -- a set difference over an empty corpus is empty -- and this is
-#: the same guard `test_the_production_sql_corpus_is_not_empty` puts under the
-#: SQL rules for the same reason.
-_DB_VOCABULARY_FLOOR = 10
 
 
 def _without_sql_comments(text: str) -> str:
@@ -6059,13 +6063,19 @@ def test_the_check_constraint_corpus_is_not_empty():
     stops matching -- a migration written with a different `CHECK` spelling,
     a directory that moved -- has to fail here rather than quietly disarm the
     two rules downstream.
+
+    Stage AK: the `>= _DB_VOCABULARY_FLOOR` that stood here is gone. Measured
+    by replacing ``check_constrained_columns`` with an empty return --
+    ``test_every_check_constrained_column_has_one_declared_vocabulary`` goes
+    red on its own, because each declared vocabulary then owns no column. The
+    bound was a weaker second statement of that, and weaker in the usual way:
+    a floor of 10 said nothing about the reader losing half the constraints.
     """
     owners = check_constrained_columns()
-    assert len(owners) >= _DB_VOCABULARY_FLOOR, (
-        f"only {len(owners)} CHECK-constrained column(s) found under "
-        f"db/migrations/, against a floor of {_DB_VOCABULARY_FLOOR}. Either the "
-        f"reader stopped matching or the constraints were dropped; both are "
-        f"failures, and the second is a much larger one."
+    assert owners, (
+        "no CHECK-constrained columns found under db/migrations/. Either the "
+        "reader stopped matching or the constraints were dropped; both are "
+        "failures, and the second is a much larger one."
     )
 
 

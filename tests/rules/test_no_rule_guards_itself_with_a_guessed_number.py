@@ -298,7 +298,6 @@ def _read_assert(
 GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     "tests/rules/test_testing_contract.py: len(found) > 250",
     "tests/rules/test_testing_contract.py: len(matched) > 2",
-    "tests/rules/test_testing_contract.py: len(entries) >= 50",
     "tests/rules/test_testing_contract.py: len(anchored) >= 40",
     "tests/rules/test_testing_contract.py: len(statements) >= 30",
     "tests/rules/test_testing_contract.py: len(resolved) >= 20",
@@ -319,7 +318,6 @@ GUESSED_BOUND_WAIVERS: tuple[str, ...] = (
     # literal loop table unpacks into a variable that then reads as derived
     # (`ceiling`, from `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` and
     # `MAX_THE_CHECKS_WAIVERS`).
-    "tests/rules/test_testing_contract.py: len(owners) >= _DB_VOCABULARY_FLOOR",
 )
 
 
