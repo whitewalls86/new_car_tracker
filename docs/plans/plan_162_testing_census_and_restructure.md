@@ -5724,3 +5724,80 @@ Verified by 278 rules tests, 54 planning-doc tests, ruff clean, and a full
 mutation-harness run at 248 entries exit 0 with no MISSED and no NO RUN; nine
 mutations added, all CAUGHT. Cost: estimate 2 → actual 2 (0). Public surfaces:
 no mechanism, name or quantity either surface states was changed by this work.
+
+### Stage R — the census re-taken, and what caching actually moved
+
+**Legacy:** Stage 10c · **Issue:** CAR-87 · **In progress**
+
+**The 2026-09-04 census had expired, and its central premise was the part that
+went.** That file's finding was that `schema-contracts` sets the wall clock at
+123s and every other heavy job finishes in its shadow. Re-measured 2026-09-11
+across three `master` runs — `34519120399`, `34529105907`, `34529611177` —
+`schema-contracts` had not moved and had been overtaken twice:
+
+| Job | 2026-09-04 | 2026-09-11 readings |
+|---|---:|---|
+| **dbt model tests (real build)** | 103 | **196, 198, 202** |
+| Unit tests (pytest) | 94 | 170, 175, 166 |
+| SQL + Airflow metadata contracts | 123 | 123, 125, 113 |
+| Docker build (all services) | 96 | 98, 91, 93 |
+
+The critical path is now `changes → lint → dbt-models` at roughly 218s against
+the census's 153s. **Its headline inverts too**: on 09-04 the ceiling job was
+80% installs and 5% tests; today it is ~18% installs and ~50% tests.
+
+**Recipe**, for both halves and identical to the 09-04 file's:
+`gh api repos/whitewalls86/new_car_tracker/actions/runs/<id>/jobs --paginate`,
+differencing each step's `started_at` and `completed_at`. Step level rather
+than job level, because the job number carries noise from everything else in it.
+
+**Caching round 1: `cache: pip` on `unit-tests` and `dbt-models`.** Five
+uncached runs (`34519120399`, `34529105907`, `34529611177`, `34621900419`,
+`34624077756`) against four warm ones (`34626290087`, `34626697295`,
+`34627131373`, `34627146719`, all `workflow_dispatch` on the branch after
+`df8831c`). The cache-populating run `34625870911` is excluded from the warm
+arm and read 25s / 10s / 45s on the three steps below — cold, as expected.
+
+| Step | Uncached | Warm | Mean Δ |
+|---|---|---|---:|
+| `dbt-models` · Install dependencies | 18, 40, 19, 21, 30 | 18, 15, 15, 15 | −9.9s |
+| `dbt-models` · Install dbt | 6, 10, 6, 7, 11 | 6, 5, 5, 5 | −2.8s |
+| `unit-tests` · Install dependencies | 42, 44, 42, 44, 46 | 39, 37, 39, 34 | −6.4s |
+
+**On wall clock it does not clear the bar, and that is the finding.** The
+ceiling job went 196–203 → 190, 192, 193, 197; the workflow ~218s → ~208s.
+Plan 139 Stage E requires "a benefit larger than runner variance", and ~7s
+against ±10–20s does not satisfy it. **The census projected ~70s from caching
+and the measured number is ~7s** — the projection assumed installs would be
+removed, and `cache: pip` caches downloads, which the 09-04 file had itself
+warned about in the sentence this measurement confirms.
+
+**What the mean hides is the result worth keeping.** `dbt-models`' install went
+from a 22-second spread (18–40) to a 3-second spread (15–18). The cache's
+principal effect is removing variance from the critical-path job rather than
+lowering its mean.
+
+**Adopted anyway, on a stated ground that is not wall clock.** It costs a few
+lines, and the stage's own scoping notes that unlike the selector *a cache miss
+costs time rather than correctness* — there is no evidence-suppression failure
+mode to weigh against it. Recording it as a 7s win would be dressing the number
+up; it is kept for the spread and for being free.
+
+**Not `schema-contracts`, whose 61s of installs is the largest single number in
+CI.** It finishes ~80s under the ceiling, so caching it buys zero wall clock —
+the census's own argument against the selector, applied to this stage's work.
+
+**The floor, which caps everything after this.** `dbt-models`' non-install time
+is ~153s: ~29s of runner, Compose and Flyway, ~24s of dbt setup builds
+(`run --empty` 7s, `build` 17s) and ~100s of tests. With `changes` and `lint`
+ahead of it, **no caching strategy can take this workflow below ~170s**, against
+~208s today. The whole remaining opportunity is ~38s and round 1 took ~7 of it.
+
+| Parked | Why | Revisit when |
+|---|---|---|
+| Caching the installed tree (a venv or `site-packages` restore) rather than the downloads | It is the only mechanism that reaches the ~24s left in `dbt-models` and ~37s in `unit-tests`, since those are resolution, unpacking and byte-compiling. Best case ~20s more on the ceiling, against a fragility `cache: pip` does not have — a tree restored under a mismatched Python patch version fails where a download cache merely misses | The ~38s between today and the ~170s floor is worth a measurement campaign on its own terms, **or** `dbt-models`' test time falls far enough that installs are again a large fraction of the ceiling |
+
+**Against the exit:** this closes the second clause — the caching candidates are
+measured both ways and only the winner adopted, with the loser's numbers
+recorded rather than its absence. The first, third and fourth clauses are
+untouched by this measurement.
