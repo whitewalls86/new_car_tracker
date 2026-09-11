@@ -1280,7 +1280,8 @@ MUTATIONS = [
             # put the new entry after the closing paren, and the module then
             # failed to import -- which the harness reported as CAUGHT, for
             # exactly the wrong reason.
-            "        since=date(2026, 9, 8),\n    ),\n)\n\n#: Ceilings, not counts",
+            "        since=date(2026, 9, 8),\n    ),\n)\n\n"
+            "#: The declared size of each ledger",
             "        since=date(2026, 9, 8),\n"
             "    ),\n"
             "    Undocumented(\n"
@@ -1289,7 +1290,7 @@ MUTATIONS = [
             '        reason="appended without moving the ceiling",\n'
             "        since=date(2026, 9, 9),\n"
             "    ),\n"
-            ")\n\n#: Ceilings, not counts",
+            ")\n\n#: The declared size of each ledger",
         ),
         ["tests/rules/test_env_example_wiring.py"],
         [],
@@ -1301,6 +1302,71 @@ MUTATIONS = [
             "tests/rules/test_env_example_wiring.py",
             'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
             'return sorted(_REPO_ROOT.glob("docker-compose*.yaml"))',
+        ),
+        ["tests/rules/test_env_example_wiring.py"],
+        [],
+    ),
+    # Plan 162 Stage AK. The mutation above collapses the corpus to nothing,
+    # which the `>= 2` that used to stand there caught. This one *erodes* it --
+    # nine Compose files become eight -- and `>= 2` passed that, which is the
+    # whole argument for the stage. It is the exit clause "a reader narrowed so
+    # it resolves less than the whole corpus", and it is asserted in the two
+    # files that read the corpus, because they now check each other.
+    (
+        "tests/rules/test_env_example_wiring.py::test_both_corpora_are_not_empty",
+        "the compose glob loses one file of nine and the rules go quiet over it",
+        lambda: _edit(
+            "tests/rules/test_env_example_wiring.py",
+            'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
+            "return [\n"
+            '        path for path in sorted(_REPO_ROOT.glob("docker-compose*.yml"))\n'
+            '        if path.name != "docker-compose.mlflow.yml"\n'
+            "    ]",
+        ),
+        ["tests/rules/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_image_keep_set.py"
+        "::TestTheDerivationHoldsItsShape"
+        "::test_every_compose_file_is_attributed_to_a_project",
+        "the keep-set's compose glob loses one file of nine and prunes its images",
+        lambda: _edit(
+            "tests/rules/test_image_keep_set.py",
+            'return sorted(_REPO_ROOT.glob("docker-compose*.yml"))',
+            "return [\n"
+            '        path for path in sorted(_REPO_ROOT.glob("docker-compose*.yml"))\n'
+            '        if path.name != "docker-compose.mlflow.yml"\n'
+            "    ]",
+        ),
+        ["tests/rules/test_image_keep_set.py"],
+        [],
+    ),
+    # The other half of Stage AK's exit: a floor loosened back to a bound. The
+    # rule that forbids the bound has to be the thing that notices, because
+    # `test_both_corpora_are_not_empty` passes perfectly well with `>= 2` in it
+    # -- that is what it did until this stage.
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_no_rule_guards_itself_with_a_guessed_number",
+        "an exact floor is loosened back to a number somebody chose",
+        lambda: _edit(
+            "tests/rules/test_env_example_wiring.py",
+            "assert {path.name for path in _compose_files()} == set(COMPOSE_PROJECTS), (",
+            "assert len(_compose_files()) >= 2, (",
+        ),
+        ["tests/rules/test_env_example_wiring.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_no_rule_guards_itself_with_a_guessed_number.py"
+        "::test_no_rule_guards_itself_with_a_guessed_number",
+        "a guessed bound is moved behind a name, where the reader used to lose it",
+        lambda: _edit(
+            "tests/rules/test_env_example_wiring.py",
+            "assert {path.name for path in _compose_files()} == set(COMPOSE_PROJECTS), (",
+            "_COMPOSE_FLOOR = 2\n"
+            "    assert len(_compose_files()) >= _COMPOSE_FLOOR, (",
         ),
         ["tests/rules/test_env_example_wiring.py"],
         [],
@@ -1453,6 +1519,35 @@ MUTATIONS = [
             "tests/rules/test_planning_docs.py",
             r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
             r'_GAP_CLAIM = re.compile(r"\*\*Gaps:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    # Plan 162 Stage AK. The entry above breaks the *label* half of the claim
+    # pattern, which empties the set and `>= 10` caught. These two break the
+    # halves a number could not see: the value half, where the field is still
+    # found and no longer read, and the gap table growing a column, where every
+    # row is still there and none of them parses.
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_the_gap_claim_corpus_is_not_empty",
+        "the gap-claim pattern still finds the field and stops reading its value",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:G\d+(?:,\s*)?)+)")',
+            r'_GAP_CLAIM = re.compile(r"\*\*Gap:\*\*\s*((?:H\d+(?:,\s*)?)+)")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestGapReferences::test_the_gap_claim_corpus_is_not_empty",
+        "the gap list gains a leading column and every definition stops parsing",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_GAP_ENTRY = re.compile(r"^\| (G\d+) \|", re.MULTILINE)',
+            r'_GAP_ENTRY = re.compile(r"^\| \| (G\d+) \|", re.MULTILINE)',
         ),
         ["tests/rules/test_planning_docs.py"],
         [],
@@ -1698,10 +1793,19 @@ MUTATIONS = [
         "tests/rules/test_maintenance_running_set.py"
         "::TestRegistryShape::test_every_entry_carries_a_reason",
         "an entry loses the written reason somebody has to re-evaluate at 2am",
+        # Stage AK narrowed this mutation, and the narrowing is the honest
+        # record of what the stage cost here. It used to thin the reason to
+        # "same as dbt." -- 12 characters, caught by `len(reason) > 40`. That
+        # floor was a guess (the shortest real reason is 51, so 40 was picked to
+        # sit under the corpus of the day) and it is gone, and with it the only
+        # mechanical objection to a reason too thin to act on. Nothing exact
+        # replaces it: no length is evidence that prose means something. So the
+        # mutation now removes the reason outright, which is what the rule still
+        # claims, rather than asserting a catch the rule no longer makes.
         lambda: _edit(
             "maintenance-running-set.txt",
             "dbt_test on-demand Profile-gated (`tools`) tools image, same as `dbt`.",
-            "dbt_test on-demand same as dbt.",
+            "dbt_test on-demand",
         ),
         ["maintenance-running-set.txt"],
         [],
@@ -2279,6 +2383,26 @@ MUTATIONS = [
         ["tests/rules/test_planning_docs.py"],
         [],
     ),
+    # Plan 162 Stage AK, and this is the half `<=` never held. A waiver is
+    # repaired, the entry goes, and the number stays where it was -- nothing
+    # was raised, no rule was bypassed, and the list now has room for one
+    # append that no diff has to argue for. `MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS`
+    # was sitting at 35 against 34 entries when this stage arrived, so the
+    # headroom was not hypothetical; it is 34 now, and this proves it stays
+    # honest.
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestPlanDocumentContract::test_neither_waiver_list_has_grown",
+        "a waiver is repaired and its ceiling is left above the ledger, which "
+        "is headroom for a silent append rather than a repair",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            "    SectionWaiver(149), SectionWaiver(160),\n)",
+            "    SectionWaiver(149),\n)",
+        ),
+        ["tests/rules/test_planning_docs.py"],
+        [],
+    ),
     (
         "tests/rules/test_planning_docs.py"
         "::TestPlanDocumentContract::test_every_live_plan_without_a_document_is_named",
@@ -2485,7 +2609,7 @@ MUTATIONS = [
         "146 Stage 5's mutation C",
         lambda: _edit(
             "docs/PLANS.md",
-            "| 6 | [168](plans/plan_168_generated_knowledge_substrate.md)",
+            "| 8 | [168](plans/plan_168_generated_knowledge_substrate.md)",
             "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
         ),
         ["docs/PLANS.md"],
@@ -2501,8 +2625,8 @@ MUTATIONS = [
         "check nor coverage can see",
         lambda: _edit(
             "docs/PLANS.md",
-            "| 7 | [179](plans/plan_179_derived_service_call_graph.md)",
-            "| 7 | [179](plans/plan_178_role_grant_scoping.md)",
+            "| 9 | [179](plans/plan_179_derived_service_call_graph.md)",
+            "| 9 | [179](plans/plan_178_role_grant_scoping.md)",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2514,6 +2638,25 @@ MUTATIONS = [
         "the six documentless index rows have",
         lambda: _delete("docs/planning/plan_state_reconciliation.md"),
         ["docs/planning/plan_state_reconciliation.md"],
+        [],
+    ),
+    # Plan 162 Stage AK. The entry above deletes the record outright, which the
+    # `len(found) > 50` floor caught. This one breaks a single census pattern:
+    # `_CENSUS_BOLD` stops matching, 15 rows go unresolved and the count falls
+    # from 67 to **54** -- still over the old floor, which is the erosion case
+    # the number could not see. Measured by breaking each of the three patterns
+    # in turn: TITLED gives 43 and LIST gives 38, both of which `> 50` caught,
+    # so BOLD is the one that makes the point.
+    (
+        "tests/rules/test_planning_docs.py"
+        "::TestNoRowVanishesSilently::test_the_census_reads_the_reconciliation_record",
+        "one census pattern stops matching and the reader quietly reads less",
+        lambda: _edit(
+            "tests/rules/test_planning_docs.py",
+            r'_CENSUS_BOLD = re.compile(r"^\*\*(\d+)\*\*$")',
+            r'_CENSUS_BOLD = re.compile(r"^\*\*(\d+)\*\*\*$")',
+        ),
+        ["tests/rules/test_planning_docs.py"],
         [],
     ),
     (
@@ -3038,6 +3181,28 @@ MUTATIONS = [
             '"statuses_observed": [\n    200,\n    302,\n    403,\n'
             '    500,\n    502,\n    503,\n    504\n  ],',
             '"statuses_observed": [],',
+        ),
+        ["tests/fixtures/external/cars_com_responses.json"],
+        [],
+    ),
+    # Plan 162 Stage AK, and the entry above wrote this one's justification two
+    # stages early: *"it dropped two statuses from a list of seven against a
+    # floor of two, so even correctly addressed it would not have tripped the
+    # rule."* That payload was abandoned as unusable. Against the equality that
+    # replaced the floor it is exactly the right payload, so here it is --
+    # `statuses_observed` loses one of its seven while `observations` keeps all
+    # ten rows, which is what a half-failed recording looks like and what
+    # `>= 2` was blind to.
+    (
+        "tests/rules/test_external_vocabularies.py"
+        "::test_the_cars_com_corpus_is_not_empty",
+        "the corpus summary loses a status its own observations still record",
+        lambda: _edit(
+            "tests/fixtures/external/cars_com_responses.json",
+            '"statuses_observed": [\n    200,\n    302,\n    403,\n'
+            '    500,\n    502,\n    503,\n    504\n  ],',
+            '"statuses_observed": [\n    200,\n    403,\n'
+            '    500,\n    502,\n    503,\n    504\n  ],',
         ),
         ["tests/fixtures/external/cars_com_responses.json"],
         [],

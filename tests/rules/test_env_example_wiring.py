@@ -48,6 +48,10 @@ from pathlib import Path
 
 import yaml
 
+# The one place in the repository that names every `docker-compose*.yml`, and
+# the reason this file's compose floor can be an equality rather than a number.
+from tests.rules.test_image_keep_set import COMPOSE_PROJECTS
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: ``$${VAR}`` -- Compose emits a literal ``${VAR}`` and interpolates nothing.
@@ -182,12 +186,18 @@ UNDOCUMENTED = (
     ),
 )
 
-#: Ceilings, not counts -- the ``--cov-fail-under`` idiom pointed the other way,
-#: borrowed from ``DECLARED_SKIP_CEILING``. They exist so that a new declaration
-#: cannot be a quiet tuple append: the number has to move in the same diff, and
-#: the number is what review argues about. Lower them when a stage wires or
-#: deletes a variable; never raise one to fit an entry that could have been
-#: fixed instead.
+#: The declared size of each ledger, borrowed from ``DECLARED_SKIP_CEILING``.
+#: They exist so that a new declaration cannot be a quiet tuple append: the
+#: number has to move in the same diff, and the number is what review argues
+#: about. Lower them when a stage wires or deletes a variable; never raise one
+#: to fit an entry that could have been fixed instead.
+#:
+#: Asserted with ``==`` since Stage AK, which is why the name reads worse than
+#: it behaves -- these are counts now, not ceilings. As ceilings they held only
+#: the growth side, so a repair that left the number where it was handed the
+#: next append the silence the ceiling was there to deny. Renaming them is a
+#: three-file sweep through ``docs/TESTING.md`` and the mutation harness, and
+#: it is not what this stage is for.
 UNDELIVERED_CEILING = 1
 UNDOCUMENTED_CEILING = 4
 
@@ -340,18 +350,27 @@ def test_neither_ledger_grows_without_the_ceiling_moving():
     """A new declaration is not a quiet tuple append.
 
     Both tiers opened small and examined -- one member and four. The value of
-    that is entirely in it staying argued over, and a ceiling is what makes the
-    diff say so.
+    that is entirely in it staying argued over, and a declared number is what
+    makes the diff say so.
+
+    Stage AK made both exact rather than bounded. ``<=`` holds the growth side
+    only, so the moment an entry is fixed and the ceiling is left where it was,
+    the ledger has headroom and the next append *is* the quiet one -- the
+    bypass this exists to refuse, arriving by the one route it did not watch.
+    ``==`` costs the same diff and closes it: the number moves down with a
+    repair and up with a declaration, and either way review sees it.
     """
-    assert len(UNDELIVERED) <= UNDELIVERED_CEILING, (
-        f"{len(UNDELIVERED)} undelivered keys against a ceiling of "
-        f"{UNDELIVERED_CEILING}; wire or delete the key, or move the ceiling "
-        "in this diff and say why in review"
+    assert len(UNDELIVERED) == UNDELIVERED_CEILING, (
+        f"{len(UNDELIVERED)} undelivered keys against a declared "
+        f"{UNDELIVERED_CEILING}; wire or delete the key, or move the number in "
+        "this diff and say why in review. Lower it when an entry goes -- a "
+        "ceiling left above the ledger is headroom for a silent append."
     )
-    assert len(UNDOCUMENTED) <= UNDOCUMENTED_CEILING, (
-        f"{len(UNDOCUMENTED)} undocumented variables against a ceiling of "
-        f"{UNDOCUMENTED_CEILING}; document the variable, or move the ceiling "
-        "in this diff and say why in review"
+    assert len(UNDOCUMENTED) == UNDOCUMENTED_CEILING, (
+        f"{len(UNDOCUMENTED)} undocumented variables against a declared "
+        f"{UNDOCUMENTED_CEILING}; document the variable, or move the number in "
+        "this diff and say why in review. Lower it when an entry goes -- a "
+        "ceiling left above the ledger is headroom for a silent append."
     )
 
 
@@ -361,7 +380,34 @@ def test_both_corpora_are_not_empty():
     A set difference over an empty corpus is empty, so a broken glob or a
     regex that stopped matching reads as 0 of 0 and passes green -- every rule
     in this file would go quiet at once, and nothing else here could notice.
+
+    Stage AK: the three floors were ``>= 2``, ``>= 20`` and ``>= 20``, chosen
+    against 9, 44 and 47. Each caught its reader dying and none of them caught
+    it shrinking, which is the failure that actually happens -- a glob or a
+    regex narrows, the corpus halves, and the rules above go quiet over the
+    half that fell out. Only the first has an exact answer available, and it is
+    worth more than the other two put together, because both other corpora are
+    read *through* it.
     """
-    assert len(_compose_files()) >= 2, "docker-compose*.yml glob found almost nothing"
-    assert len(documented_keys()) >= 20, ".env.example parsed to almost no keys"
-    assert len(interpolated_variables()) >= 20, "Compose parsed to almost no variables"
+    # Exact. Every Compose file this repository has is attributed to a project
+    # in `test_image_keep_set.COMPOSE_PROJECTS`, which is a set the repository
+    # can name, and that rule asserts the two agree. So the honest floor here
+    # is that this file's glob resolves the same corpus that one does -- not a
+    # size, and nothing to keep in step as compose files come and go.
+    assert {path.name for path in _compose_files()} == set(COMPOSE_PROJECTS), (
+        "this file's docker-compose*.yml glob and test_image_keep_set's have "
+        "stopped resolving the same corpus. Both rules read every Compose file "
+        "in the repository; if they disagree, one of them is deriving from a "
+        "subset and saying nothing about the rest."
+    )
+    # Non-empty, with the reason there is no exact form. `.env.example` is a
+    # hand-maintained template and Compose interpolates whatever the services
+    # happen to reference; neither count is derivable from anything else in the
+    # repository, and any number picked for them is a number picked today. What
+    # protects them instead is the equality above -- both are read out of the
+    # corpus it pins -- plus the two ledgers, which are asserted exactly: if
+    # `documented_keys()` or `interpolated_variables()` silently shrank, the set
+    # differences would grow and `test_neither_ledger_grows_without_the_ceiling
+    # _moving` fails on the count before this floor is reached.
+    assert documented_keys(), ".env.example parsed to no keys at all"
+    assert interpolated_variables(), "Compose parsed to no interpolated variables"

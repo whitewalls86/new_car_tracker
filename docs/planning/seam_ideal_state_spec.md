@@ -162,13 +162,41 @@ no field is missed); the rest are cheap signatures with declared residue
 (the four platform behaviours only a second platform can see). **Keep
 everything.** No mechanism work.
 
-## Seam 7 — config ↔ deployment. **Ideal-ish; declare the pattern.**
+## Seam 7 — config ↔ deployment. **Ideal-ish; declare the pattern, tightened.**
 
 The pair-shaped, both-directions rules per artifact are intrinsic to config
 having many files — the volume is not a smell. This seam owns the
 "one file, two readers, no parser" pattern the client seam's Airflow copy
-cites. **Keep everything**; no mechanism work beyond noting that any new
-config artifact arrives with its pair.
+cites. **Keep everything**; no mechanism work beyond declaring the pattern.
+
+**Tightened 2026-09-10, by Plan 162 Stage AK.** The pattern as first written
+says a config artifact arrives with its pair — two readers, both directions.
+It says nothing about what a *field* must look like for the pair to assert on
+it exactly, and that omission is where this seam's rules are actually weak.
+
+**A config artifact arrives with its pair, and every field its pair asserts
+on is structured enough for the assertion to be exact.** A freeform prose
+field admits exactly one exact claim: that it is present. Any stronger claim
+about it is a heuristic wearing a number. Where a field must carry more than
+presence, it carries **named parts**, and the readers assert on the parts.
+
+**Measured, and it is not one instance.** Three artifacts pass through one
+parser — `load_health_exemptions` reads `healthcheck-exemptions.txt`,
+`maintenance-running-set.txt` and `deploy-followers.txt` — and each asserts
+the same reason field differently: `len(reason) > 40` in the first two, the
+identical constant written twice in two files, and no reason check at all in
+the third. Across the wider suite the idiom appears **six times in five
+files with three different constants** (`> 40` four times, `>= 40`, `>= 60`),
+every one of them outside `tests/rules/` and therefore invisible to
+`test_no_rule_guards_itself_with_a_guessed_number`, whose ledger reads that
+directory alone.
+
+**`deploy-followers.txt` is the existence proof already in the tree.** It
+skips the length heuristic and asserts a required *part* instead —
+`"docker restart" in entry` — with the reason recorded on the assertion: *"a
+warning without a command is how this stayed unfixed for two days."* That is
+the right instinct, applied to one entry of one artifact and never declared
+for the seam. Declaring it is this seam's whole remaining job.
 
 ## Seam 8 — metrics and logs. **Grade 0 → 3 directly.**
 
@@ -220,7 +248,10 @@ without it they are prose, and this repository knows what happens to prose.
 4. **Convert and drain, per seam** — HTTP first (largest ledgers, mechanisms
    cheapest), metrics second (smallest build, worst blind spot already
    realised), object storage behind Stage AM's design. Retirements fire
-   automatically.
+   automatically. Seam 7 is the exception to the ordering rather than to the
+   sequence: its drain is six bounds across three artifacts, small enough to
+   land with the ideal rules and ahead of the skills, which have to be
+   written against a seam 7 whose pattern is already final.
 
 This supersedes the drain-tail of Stage AL's scope, absorbs Stage AM's
 exit shape, and reshapes Stage AH (skills against the ideal corpus, not

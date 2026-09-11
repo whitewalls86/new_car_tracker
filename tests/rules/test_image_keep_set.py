@@ -188,7 +188,20 @@ class TestTheDerivationHoldsItsShape:
             "services' images are therefore invisible to the keep-set, and a "
             "prune deletes them. Add it to COMPOSE_PROJECTS."
         )
-        assert len(_compose_files()) >= 2, "docker-compose*.yml glob found almost nothing"
+        # The floor, and it is the assertion above run backwards. `unattributed`
+        # is a set difference, so a glob that stopped matching passes it 0 of 0.
+        # `>= 2` was what stood here, and it would have caught the glob dying
+        # while missing it losing seven of nine. The exact answer is not a
+        # number at all: COMPOSE_PROJECTS names every file, so every name in it
+        # must be on disk. That also fails on the stale half nothing else asks
+        # about -- an entry left behind for a Compose file that was deleted.
+        missing = set(COMPOSE_PROJECTS) - {path.name for path in _compose_files()}
+        assert not missing, (
+            f"{sorted(missing)} is named by COMPOSE_PROJECTS and is not on "
+            "disk. Either docker-compose*.yml has stopped matching -- in which "
+            "case every rule in this file is deriving from nothing -- or the "
+            "file was deleted and its entry should go with it."
+        )
 
     def test_a_shared_image_is_joined_to_every_service_that_builds_it(self):
         """The hazard Stage A named: the Compose label records whichever service

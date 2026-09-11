@@ -132,11 +132,29 @@ class TestRegistryShape:
             )
 
     def test_every_entry_carries_a_reason(self):
+        """Non-empty, and Stage AK could find no exact form to replace it with.
+
+        The floor here was ``len(reason) > 40``, and the shortest reason in the
+        file is 51 characters -- a number picked to sit under the corpus of the
+        day, which is the shape this stage exists to remove. But there is no
+        derived answer waiting behind it either. "Is this prose a real reason"
+        is a judgement, and no length is evidence of it: 41 characters of
+        placeholder passes ``> 40`` and a genuinely sufficient reason could be
+        shorter than any number worth writing.
+
+        So this asserts the one thing the file's own format makes exact --
+        ``load_registry`` splits the class token off the front, so an entry with
+        nothing written after it parses to the empty string -- and leaves the
+        rest to review, which is where it already was. Raising the bar to a
+        sentence is a code review's job, and a number in this file only ever
+        made it look like the test was doing it.
+        """
         for key, (klass, reason) in load_registry().items():
-            assert len(reason) > 40, (
-                f"{key} ({klass}) has no written reason. This list decides "
-                "what stays down after a production reboot; an unexplained "
-                "entry is one nobody can safely re-evaluate at 2am."
+            assert reason, (
+                f"{key} ({klass}) has no written reason -- the line carries a "
+                "class and nothing after it. This list decides what stays down "
+                "after a production reboot; an unexplained entry is one nobody "
+                "can safely re-evaluate at 2am."
             )
 
     def test_every_entry_names_a_real_service(self):

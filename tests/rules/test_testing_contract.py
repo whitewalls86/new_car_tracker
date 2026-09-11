@@ -996,12 +996,6 @@ _SQL_EXEMPT_ROOTS = ("db/migrations/", "dbt/", "tests/")
 _NOT_THE_REPOSITORY = (".claude/", ".venv/", ".git/", "target/", "__pycache__/")
 
 
-#: The floor under the production corpus, and the number is deliberately far
-#: below the 161 it actually holds. A floor's job is to catch a corpus that
-#: collapsed -- a broken glob, an exemption that swallowed a service -- not to
-#: be a second count that has to be edited every time a statement lands.
-_SQL_CORPUS_FLOOR = 100
-
 _EXEMPT_ROOT_ROW = re.compile(r"^\| `([^`]+)` \| ", re.MULTILINE)
 
 
@@ -1067,15 +1061,28 @@ def test_the_production_sql_corpus_is_not_empty():
     ``test_there_is_something_to_check`` puts exactly this guard on the *test*
     corpus, for exactly this reason, and the production side never had one --
     so a broken glob or an exemption that swallowed a service would have the
-    execution gate print ``0 of 0`` and exit green. The floor is low on
-    purpose: it catches a collapse, not a statement.
+    execution gate print ``0 of 0`` and exit green.
+
+    **Stage AK: the `> _SQL_CORPUS_FLOOR` that stood here is gone, and nothing
+    took its place, because `PRODUCTION_SQL_MANIFEST` was already doing the
+    job.** That manifest names all 163 production ``.sql`` files by path, and
+    ``test_the_sql_corpus_shrinks_only_by_naming_the_model_that_absorbed_it``
+    asserts both directions against it: a file on disk and not in the manifest
+    fails, and a file in the manifest and not on disk fails unless
+    ``SQL_ABSORBED_BY_DBT`` names the model that took it.
+
+    So an emptied reader does not go quiet -- it makes all 163 look departed
+    and unexplained at once. Measured: with the bound removed and
+    ``production_sql_files()`` forced to return nothing, that rule is what goes
+    red. The floor was a weaker second statement of a check that already
+    existed, and weaker in the way that matters, since `> 100` against 163
+    tolerated the corpus losing a third of itself.
     """
     corpus = production_sql_files()
-    assert len(corpus) > _SQL_CORPUS_FLOOR, (
-        f"only {len(corpus)} production .sql files found, below the floor of "
-        f"{_SQL_CORPUS_FLOOR}. The tree moved, the glob broke, or an entry in "
-        f"_SQL_EXEMPT_ROOTS is swallowing a service -- and every coverage "
-        f"number in this contract is a fraction of this number."
+    assert corpus, (
+        "no production .sql files found. The tree moved, the glob broke, or an "
+        "entry in _SQL_EXEMPT_ROOTS is swallowing a service -- and every "
+        "coverage number in this contract is a fraction of this number."
     )
 
 
@@ -1095,10 +1102,12 @@ def production_sql_files() -> tuple[str, ...]:
 #: :func:`production_sql_files` and never hand-typed. 163 paths on
 #: 2026-09-06.
 #:
-#: ``_SQL_CORPUS_FLOOR`` is not this. The floor is deliberately loose and
-#: catches a corpus that *collapsed*; it says nothing when one file leaves.
-#: This constant is the other half: it names the population, so the diff a
-#: reviewer reads shows exactly which statement went away.
+#: This constant is what guards the corpus, in both directions, and since
+#: Stage AK it is the only thing that does. A ``_SQL_CORPUS_FLOOR = 100`` used
+#: to sit above it catching a corpus that *collapsed* and saying nothing when
+#: one file left; this names the population instead, so the diff a reviewer
+#: reads shows exactly which statement went away -- and an emptied reader
+#: fails here rather than passing a bound.
 PRODUCTION_SQL_MANIFEST: tuple[str, ...] = (
     "airflow/sql/delete_stale_emails.sql",
     "airflow/sql/deploy_intent_gate.sql",
@@ -1301,7 +1310,7 @@ def test_the_sql_corpus_shrinks_only_by_naming_the_model_that_absorbed_it():
     """G16's own rule, and the failure it prevents is a number improving.
 
     Every coverage figure this file reports about SQL is a fraction whose
-    denominator is ``production_sql_files()``. ``_SQL_CORPUS_FLOOR`` guards the
+    denominator is ``production_sql_files()``. A loose floor guarded that
     denominator against collapsing and nothing guarded it against *eroding*:
     delete one ``.sql`` file and the corpus is 162, every rule that iterates it
     passes, and no assertion anywhere in this suite is worse off. That is the
@@ -3628,11 +3637,11 @@ def test_the_declared_skip_registry_only_ratchets_down():
     ceiling left above the real count is a budget nobody spent and everybody
     may.
     """
-    assert len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING, (
-        f"{len(DECLARED_SKIPS)} declared skips against a ceiling of "
-        f"{DECLARED_SKIP_CEILING}. Fix the cause, or make the case for raising "
-        f"the ceiling in the same diff."
-    )
+    # Stage AK removed an `assert len(DECLARED_SKIPS) <= DECLARED_SKIP_CEILING`
+    # that stood here. The equality below implies it -- a count over the
+    # ceiling is also a count unequal to it -- so the bound decided nothing and
+    # only changed which message printed first. The docstring's "both
+    # directions" was always the equality's doing.
     assert len(DECLARED_SKIPS) == DECLARED_SKIP_CEILING, (
         f"DECLARED_SKIP_CEILING is {DECLARED_SKIP_CEILING} and there are "
         f"{len(DECLARED_SKIPS)} declared skips. A stage that removed one lowers "
@@ -3912,12 +3921,22 @@ def test_the_mutation_harness_corpus_is_not_empty():
     called by name, or an entry shape that stops unpacking would empty the
     corpus and retire that rule silently -- which is the failure it exists to
     prevent, arriving one level up.
+
+    Stage AK: the `>= 50` that stood here is gone. Measured by replacing
+    ``_harness_mutations`` with an empty return --
+    ``test_every_asserted_rule_is_proved_by_a_mutation`` goes red on its own,
+    because every rule the contract names then has no mutation proving it. The
+    bound was a weaker second statement of that.
+
+    ``len(anchored)`` below is **not** redundant and keeps its assertion: it
+    has a failure mode of its own, where entries parse perfectly and the
+    ``_edit`` name resolution stops matching. Measured separately by renaming
+    that resolution, and this test is the only thing that goes red.
     """
     entries = _harness_mutations()
-    assert len(entries) >= 50, (
-        f"only {len(entries)} mutations parsed out of {MUTATION_HARNESS}; the "
-        f"rule below is checking almost nothing. Check the MUTATIONS entry "
-        f"shape before trusting a green run."
+    assert entries, (
+        f"no mutations parsed out of {MUTATION_HARNESS}; the rule below is "
+        f"checking nothing. Check the MUTATIONS entry shape."
     )
     anchored = [
         call for _, _, calls in entries for call in calls if call.func.id == "_edit"
@@ -4092,12 +4111,24 @@ def test_the_rules_directory_is_not_empty():
     package that loses its modules would retire both of them silently -- which
     is G30 one level up from itself, and the exact shape the mutation-harness
     floor and the SQL-corpus floor exist to prevent.
+
+    **Stage AK: the `>= 100` that stood here is gone, and nothing replaced it,
+    because something already had.** Measured rather than argued: with the
+    bound removed and ``rules_directory_tests()`` forced to return nothing,
+    ``test_every_asserted_rule_lives_in_the_rules_directory`` goes red on its
+    own. That rule reads the same index and asks whether every rule the
+    contract names is in it, so an index that empties makes every named rule
+    look misplaced at once. The bound was a second, weaker statement of a
+    check that already existed -- and weaker in the way that matters, since it
+    tolerated the directory losing a third of itself.
+
+    What is left is the non-emptiness the name promises, which costs nothing
+    and says only what it can.
     """
     found = rules_directory_tests()
-    assert len(found) >= 100, (
-        f"only {len(found)} tests found under {_relative(RULES_DIR)}; the two "
-        f"rules below are comparing against almost nothing. It held 161 when "
-        f"Plan 162 Stage AG wrote this."
+    assert found, (
+        f"no tests found under {_relative(RULES_DIR)}; the two rules below are "
+        f"comparing against nothing."
     )
 
 
@@ -4264,10 +4295,18 @@ def query_constants() -> dict[str, str]:
     sees an assignment with no value. ``shared/queries.py`` is resolved first so
     the services that re-export from it resolve too.
     """
+    # ``_NOT_THE_REPOSITORY`` for the same reason :func:`production_sql_files`
+    # applies it: a worktree under ``.claude/worktrees/`` is a full second
+    # checkout, so a bare walk finds every service's ``queries.py`` once per
+    # open branch, and the later copies overwrite the real paths with
+    # worktree ones that no corpus contains. Measured 2026-09-11 with 19
+    # worktrees open: 132 modules found, 125 of them copies, and 80 of 84
+    # constants resolving outside the repository.
     modules = [
         path for path in REPO_ROOT.rglob("queries.py")
-        if "__pycache__" not in path.parts
-        and not path.relative_to(REPO_ROOT).as_posix().startswith("tests/")
+        if not path.relative_to(REPO_ROOT).as_posix().startswith(
+            ("tests/",) + _NOT_THE_REPOSITORY
+        )
     ]
     modules.sort(key=lambda p: p.parent.name != "shared")
 
@@ -5503,12 +5542,12 @@ def test_the_route_code_corpus_is_not_empty():
         f"only {len(covered)} handlers have any code credited to them, out of "
         f"{len(handlers)}. The path matcher has stopped matching."
     )
-    assert len(ambiguous) <= 8, (
-        f"{len(ambiguous)} handlers cannot be told apart by their decorator "
-        f"path, up from the four this rule was written against. Each one is a "
-        f"handler no request can be attributed to, so the rule silently stops "
-        f"asking about it."
-    )
+    # Stage AK removed an `assert len(ambiguous) <= 8` that stood here. The
+    # rule above already runs `_assert_exactly(ambiguous,
+    # AMBIGUOUS_ROUTE_WAIVERS, ...)`, and that ledger is empty -- so `ambiguous`
+    # is asserted to be empty, which the bound cannot add to. It was written
+    # when four handlers were ambiguous and a ledger did not yet exist; the
+    # ledger replaced it and nobody deleted it.
     requests = asserted_status_codes()
     assert len(requests) >= 100, (
         f"only {len(requests)} status assertions resolved to a path; "
@@ -5995,12 +6034,6 @@ _CHECK_IN = re.compile(
 )
 _SQL_STRING = re.compile(r"'([^']*)'")
 
-#: A floor under the derived owner corpus, far below the 18 it finds. A rule
-#: whose population comes from a regex fails open when the regex stops
-#: matching -- a set difference over an empty corpus is empty -- and this is
-#: the same guard `test_the_production_sql_corpus_is_not_empty` puts under the
-#: SQL rules for the same reason.
-_DB_VOCABULARY_FLOOR = 10
 
 
 def _without_sql_comments(text: str) -> str:
@@ -6038,13 +6071,19 @@ def test_the_check_constraint_corpus_is_not_empty():
     stops matching -- a migration written with a different `CHECK` spelling,
     a directory that moved -- has to fail here rather than quietly disarm the
     two rules downstream.
+
+    Stage AK: the `>= _DB_VOCABULARY_FLOOR` that stood here is gone. Measured
+    by replacing ``check_constrained_columns`` with an empty return --
+    ``test_every_check_constrained_column_has_one_declared_vocabulary`` goes
+    red on its own, because each declared vocabulary then owns no column. The
+    bound was a weaker second statement of that, and weaker in the usual way:
+    a floor of 10 said nothing about the reader losing half the constraints.
     """
     owners = check_constrained_columns()
-    assert len(owners) >= _DB_VOCABULARY_FLOOR, (
-        f"only {len(owners)} CHECK-constrained column(s) found under "
-        f"db/migrations/, against a floor of {_DB_VOCABULARY_FLOOR}. Either the "
-        f"reader stopped matching or the constraints were dropped; both are "
-        f"failures, and the second is a much larger one."
+    assert owners, (
+        "no CHECK-constrained columns found under db/migrations/. Either the "
+        "reader stopped matching or the constraints were dropped; both are "
+        "failures, and the second is a much larger one."
     )
 
 

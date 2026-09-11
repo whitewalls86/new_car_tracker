@@ -239,18 +239,34 @@ def test_the_cars_com_corpus_is_not_empty():
     ``test_the_check_constraint_corpus_is_not_empty`` and
     ``test_the_route_code_corpus_is_not_empty`` exist for the same reason: a
     reader that silently matched nothing would turn every rule keyed on it
-    green. The floor is 2 because 200 and 403 are the two statuses the suite
-    actually fabricates, so anything less cannot even cover what is written
-    today.
+    green.
+
+    **Stage AK: the floor was ``len(observed) >= 2`` and it guarded the side
+    that cannot fail quietly.** If ``statuses_observed`` collapsed, every
+    fabricated status would land outside it, ``invented`` would fill up and
+    ``test_no_test_fabricates_a_cars_com_status_production_has_never_seen``
+    would fail loudly on its own. The side that *can* go quiet is the
+    fabrication reader, and that one is already guarded inside the rule by
+    ``assert fabricated`` with its own message. So the number was standing
+    watch over the one direction that did not need it.
+
+    What it was actually reaching for is in its old failure text -- *"the
+    recording failed rather than the site changing"* -- and that has an exact
+    form the file supplies itself. ``statuses_observed`` is a summary of
+    ``observations``, and a recording that half-failed leaves the two
+    disagreeing. Nothing asserted they agree until now.
     """
     corpus = _corpus()
     observed = corpus["statuses_observed"]
-    assert len(observed) >= 2, (
-        f"{CORPUS} claims cars.com has returned only {observed}. That is fewer "
-        "than the suite fabricates, so the recording failed rather than the "
-        "site changing. Re-record it."
-    )
     assert corpus["observations"], f"{CORPUS} records no observations"
+    assert set(observed) == {row["status"] for row in corpus["observations"]}, (
+        f"{CORPUS} contradicts itself: statuses_observed is {sorted(observed)} "
+        f"and the observations record "
+        f"{sorted({row['status'] for row in corpus['observations']})}. One "
+        "summarises the other, so a disagreement means the recording "
+        "half-failed. Re-record it with "
+        "scripts/record_cars_com_status_corpus.py --record."
+    )
     for row in corpus["observations"]:
         assert row["instrument"] in {"loki", "prometheus"}, row
         assert row["count"] > 0, row

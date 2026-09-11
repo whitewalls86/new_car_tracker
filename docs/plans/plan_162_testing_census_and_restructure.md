@@ -392,15 +392,15 @@ moved it to the end without making it a different stage.
 | 25 | [**Z**](#stage-z-the-contract-is-generated-committed-and-gated) | — | The contract is generated, committed and gated | G22 | `done` | CAR-107 |
 | 26 | [**AA**](#stage-aa-a-test-may-not-invent-another-services-response) | — | A test may not invent another service's response | G23 | `done` | CAR-107 |
 | 27 | [**AG**](#stage-ag-rules-live-in-a-directory-and-an-unregistered-one-cannot-exist) | — | Rules live in a directory, and an unregistered one cannot exist | G30 | `done` | CAR-115 |
-| 28 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `next` | CAR-119 |
-| 29 | [**AK**](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between) | — | A floor may assert nothing, or everything, never a number between | — | `—` | CAR-118 |
-| 30 | [**AM**](#stage-am-the-object-store-is-a-seam-and-one-artifact-in-it-has-a-contract) | — | The object store is a seam, and one artifact in it has a contract | G34 | `—` | — |
-| 31 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `—` | CAR-117 |
-| 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `—` | CAR-116 |
-| 33 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `—` | CAR-105 |
-| 34 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `—` | CAR-108 |
-| 35 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `—` | CAR-109 |
-| 36 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `—` | CAR-87 |
+| 28 | [**AL**](#stage-al-the-services-agree-on-what-they-send-and-on-what-a-code-means) | — | The services agree on what they send, and on what a code means | — | `canceled` | CAR-119 |
+| 29 | [**AK**](#stage-ak-a-floor-may-assert-nothing-or-everything-never-a-number-between) | — | A floor may assert nothing, or everything, never a number between | — | `done` | CAR-118 |
+| 30 | [**AM**](#stage-am-the-object-store-is-a-seam-and-one-artifact-in-it-has-a-contract) | — | The object store is a seam, and one artifact in it has a contract | G34 | `canceled` | — |
+| 31 | [**AJ**](#stage-aj-a-parser-of-a-response-we-do-not-own-that-no-test-executes) | — | A parser of a response we do not own, that no test executes | — | `canceled` | CAR-117 |
+| 32 | [**AH**](#stage-ah-every-rule-has-a-skill-that-helps-an-agent-obey-it) | — | Every rule has a skill that helps an agent obey it | G31 | `canceled` | CAR-116 |
+| 33 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `canceled` | CAR-105 |
+| 34 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `canceled` | CAR-108 |
+| 35 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `canceled` | CAR-109 |
+| 36 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `next` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -3069,7 +3069,7 @@ demonstrated by a parser whose only exercising test is removed failing.
 
 ### Stage AK: a floor may assert nothing, or everything, never a number between
 
-**Issue:** CAR-118 · **State:** `next` · **Gap:** —
+**Issue:** CAR-118 · **State:** `done` · **Gap:** —
 
 **Every rule in `tests/rules/` is a set difference, and a set difference over
 an empty corpus is empty.** That is why each carries a floor — a second
@@ -5649,3 +5649,78 @@ ideal corpus — the sequencing this stage's own design note required. Cost:
 estimate 2 → actual 2 (0). Public surfaces: no mechanism, name or quantity
 either surface states was changed by this work — the README's only suite
 quantity is the rounded "more than 3,000 tests", still true at 4,072.
+
+### Stage AK — a floor may assert nothing, or everything
+
+**Seeded 24, extended to 30, drained to 11.** The extension came first and is
+the reason the number moved the wrong way: the rule read int *literals* only,
+so a chosen number survived it by being given a name. Resolving a `Name`
+through module scope, a repo-local import and a literal loop table found six
+more — `_SQL_CORPUS_FLOOR = 100`, `_DB_VOCABULARY_FLOOR = 10`,
+`UNDELIVERED_CEILING = 1`, `UNDOCUMENTED_CEILING = 4`, `DECLARED_SKIP_CEILING`
+across a module boundary, and `ceiling` unpacked from two `MAX_*` constants.
+An adversarial probe afterwards found five further evasions latent in the
+reader — a number on the left of the comparison, a float bound, a class
+attribute, a module tuple-unpack, and a walrus — of which the walrus was fixed
+and the rest do not occur in the tree today, measured.
+
+**Nine of nineteen drained were deletions, not conversions.** Each was
+established by experiment rather than by reading: replace the reader with an
+empty return, run the module, and see whether anything other than the bound's
+own floor goes red. `_SQL_CORPUS_FLOOR` → `PRODUCTION_SQL_MANIFEST` names all
+163 files and is asserted both ways; `len(found) >= 100` →
+`test_every_asserted_rule_lives_in_the_rules_directory`; `len(ambiguous) <= 8`
+→ an `_assert_exactly` twenty lines above; `DECLARED_SKIPS <= CEILING` → the
+`==` on the next line; `len(entries) >= 50` →
+`test_every_asserted_rule_is_proved_by_a_mutation`; `len(owners) >=
+_DB_VOCABULARY_FLOOR` → the check-constraint vocabulary rule. My first guess at
+which sibling covered the rules-directory floor was wrong — it named a rule
+reading `all_test_modules()`, a different reader — which is why the method
+became measurement.
+
+**The conversions found four defects a threshold had not.**
+`MAX_WHAT_THIS_PLAN_IS_FOR_WAIVERS` sat at 35 against a ledger of 34: live
+headroom for one silent append, in the ratchet whose own comment says never to
+raise it. `_MUTATING_VERB` matches the `FOR UPDATE` locking clause, so
+`ops/sql/select_legacy_search_config.sql` — a `SELECT` that writes nothing —
+carries Rule 10's obligation. The cars.com floor guarded `statuses_observed`,
+the side that fails loudly on its own, while the side that can go quiet was
+already guarded elsewhere. And `unread_gap_rows`, written during this stage,
+sliced at `header.end()` and read nothing at all — it returned empty for every
+input and passed the intact case for the wrong reason, caught only by testing
+the conversion against the erosion it claimed to catch.
+
+**One capability was traded away rather than tightened.** `len(reason) > 40` in
+the maintenance running-set had no exact form behind it, so it became `assert
+reason`. `dbt_test on-demand n/a` now passes CI where it did not. The mutation
+was narrowed to match what the rule still claims rather than assert a catch it
+no longer makes, and the exact answer — a structured reason field — is Plan 180
+Stage M (CAR-126), with §Seam 7 of `seam_ideal_state_spec.md` tightened to
+require that every field a config artifact's pair asserts on be structured
+enough for the assertion to be exact.
+
+**Measured beyond the ledger's reach:** the prose-length idiom is six instances
+across five files with three different constants, every one outside
+`tests/rules/` and so invisible to this rule; and 58 guessed bounds live
+outside that directory in total. Recipe: import `_constants_in_scope`,
+`_local_constants`, `_table_bound_names` and `_read_assert` from the rule
+module, walk `tests/**/*.py` excluding any path with `rules` in its parts, and
+apply `_read_assert` per scope innermost-first, as `_guessed_bounds` does.
+
+**The exit as written is deliberately not met.** Eleven entries remain: four in
+the route-code cluster, blocked on a router-prefix resolver the AST reader does
+not have (`contracts/*.json` holds 99 operations against `route_handlers()`'s
+99, but 41 paths differ on each side because one sees decorator paths and the
+other mounted ones); one restructure where the constant is markdown's two
+non-content rows rather than a corpus bound; one with no derivation available;
+and five whose conversions are real but which
+[Plan 181](plan_181_rule_readers_are_code.md) is expected to delete rather than
+convert. Draining this ledger is what exposed the cause: a floor is the only
+instrument available to code that lives where instruments do not go, and 4,138
+of `tests/rules/`'s lines — 43% of it — are analysis code the coverage source
+list cannot reach. Plan 181 was started from that finding.
+
+Verified by 278 rules tests, 54 planning-doc tests, ruff clean, and a full
+mutation-harness run at 248 entries exit 0 with no MISSED and no NO RUN; nine
+mutations added, all CAUGHT. Cost: estimate 2 → actual 2 (0). Public surfaces:
+no mechanism, name or quantity either surface states was changed by this work.
