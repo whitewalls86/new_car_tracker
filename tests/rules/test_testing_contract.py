@@ -321,23 +321,43 @@ _PYTEST_INVOCATION = re.compile(r"(?:^|[\s/])pytest\s+(?P<args>.+)$")
 
 
 @lru_cache(maxsize=None)
-def pytest_steps() -> tuple[tuple[str, str, str], ...]:
-    """``(job, step, argument string)`` for every step that runs pytest.
+def pytest_invocations() -> tuple[tuple[str, str, str, str], ...]:
+    """``(job key, job name, step, argument string)`` per pytest invocation.
 
     ``pip install pytest`` is not an invocation and must not be counted as one,
     which is why the pattern requires arguments that start with a path or a
     flag rather than matching the bare word.
+
+    **The job key is here because a record can only carry the key.** Plan 162
+    Stage R's invocation gate groups records by ``GITHUB_JOB``, which GitHub
+    sets to the key under ``jobs:`` and never to the ``name:``. Deriving that
+    mapping a second time in the gate is the shape this plan keeps deleting, so
+    the parse that already exists grew a column instead and
+    :func:`pytest_steps` became a projection of it.
     """
+    document = yaml.safe_load(_read(WORKFLOW))
     found = []
-    for job, step, lines in workflow_steps():
-        for line in lines:
-            match = _PYTEST_INVOCATION.search(line.strip())
-            if match and not line.strip().startswith(("pip ", "python -m pip")):
-                args = match.group("args")
-                if args.startswith(("tests", "-", "--")):
-                    found.append((job, step, args))
+    for key, job in document["jobs"].items():
+        name = job.get("name", "?")
+        for step in job.get("steps", []) or []:
+            if "run" not in step:
+                continue
+            for line in str(step["run"]).splitlines():
+                match = _PYTEST_INVOCATION.search(line.strip())
+                if match and not line.strip().startswith(("pip ", "python -m pip")):
+                    args = match.group("args")
+                    if args.startswith(("tests", "-", "--")):
+                        found.append((key, name, _step_name(step), args))
     assert found, f"no pytest invocations found in {WORKFLOW}"
     return tuple(found)
+
+
+@lru_cache(maxsize=None)
+def pytest_steps() -> tuple[tuple[str, str, str], ...]:
+    """``(job, step, argument string)`` for every step that runs pytest."""
+    return tuple(
+        (name, step, args) for _, name, step, args in pytest_invocations()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2894,10 +2914,17 @@ def test_the_recorder_instruments_every_client_production_reaches():
 #: alone because that is exactly how the record was lost the first time: the
 #: upload steps existed in some jobs and not others, the gate read what
 #: happened to arrive, and no test noticed.
-RECORD_ENV = "SQL_EXECUTION_RECORD"
+#:
+#: ``RECORD_ENV`` and ``_RECORD_ARTIFACT`` were ``SQL_EXECUTION_RECORD`` and
+#: ``sql-execution-`` until Plan 162 Stage R put a second recorder in the same
+#: directory. One variable and one artifact per job serve both, which is what
+#: keeps the derivation below working for a recorder nobody has written yet:
+#: the owing set is *jobs that run pytest*, and that does not change when the
+#: number of things they record does.
+RECORD_ENV = "CI_RUN_RECORDS"
 RECORDER_MODULE = "tests.plugins.sql_execution_recorder"
 COVERAGE_GATE_SCRIPT = "scripts/check_sql_execution_coverage.py"
-_RECORD_ARTIFACT = "sql-execution-"
+_RECORD_ARTIFACT = "ci-run-records-"
 
 
 def _sql_execution_wiring() -> tuple[set[str], set[str], dict]:

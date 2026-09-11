@@ -901,7 +901,7 @@ MUTATIONS = [
         "a job runs pytest and uploads no execution record",
         lambda: _edit(
             ".github/workflows/ci.yml",
-            "          name: sql-execution-unit-tests\n",
+            "          name: ci-run-records-unit-tests\n",
             "          name: coverage-unit-tests\n",
         ),
         [".github/workflows/ci.yml"],
@@ -916,6 +916,73 @@ MUTATIONS = [
             "run: python scripts/check_sql_execution_coverage.py --report",
         ),
         [".github/workflows/ci.yml"],
+        [],
+    ),
+    # ----------------------------------------------------------------------
+    # Plan 162 Stage R. The invocation recorder and its gate are two halves of
+    # one instrument, and each of these mutations breaks a half in the
+    # direction that is silent: a recorder nobody registers writes nothing and
+    # reads as every step having selected everything, and a gate that waits on
+    # five of six jobs reports a repository-wide number from a fraction.
+    # ----------------------------------------------------------------------
+    (
+        "tests/rules/test_invocation_recorder.py::test_the_invocation_recorder_is_registered_for_every_pytest_run",
+        "the recorder stops loading, so every step reads as having run everything",
+        lambda: _edit(
+            "pyproject.toml",
+            " -p tests.plugins.invocation_recorder",
+            "",
+        ),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_every_job_that_uploads_a_record_is_read_by_the_invocation_gate",
+        "the invocation gate stops waiting on a job that uploads a record",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "    needs: [changes, lint, docs-tests, unit-tests, dbt-models, "
+            "schema-contracts, service-integration, lake-integration]\n"
+            "    # Same gate expression, same `needs`",
+            "    needs: [changes, lint, unit-tests, dbt-models, "
+            "schema-contracts, service-integration, lake-integration]\n"
+            "    # Same gate expression, same `needs`",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_the_invocation_gate_is_not_merely_reporting",
+        "the invocation gate goes back to only reporting",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "run: python scripts/check_test_invocation_coverage.py",
+            "run: python scripts/check_test_invocation_coverage.py --report",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_a_record_carries_what_was_selected_and_what_was_dropped",
+        "a record stops carrying what the invocation collected and dropped",
+        lambda: _edit(
+            "tests/plugins/invocation_recorder.py",
+            '"deselected": sorted(_deselected),',
+            '"deselected": [],',
+        ),
+        ["tests/plugins/invocation_recorder.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_nothing_is_written_when_no_directory_is_named",
+        "the recorder writes even when no directory is named, and the harness "
+        "puts 176 one-node runs into the record",
+        lambda: _edit(
+            "tests/plugins/invocation_recorder.py",
+            "    if not destination:\n        return",
+            "    if not destination:\n        destination = 'ci-run-records'",
+        ),
+        ["tests/plugins/invocation_recorder.py"],
         [],
     ),
     # ----------------------------------------------------------------------

@@ -26,15 +26,26 @@ on:
 env:
   REQUIRE_DECLARED_SKIPS: "1"
   # Plan 162 Stage X, and workflow level for the same reason as the line above.
-  # `tests/plugins/sql_execution_recorder.py` records what text executed against
-  # which client; it writes an artifact only when this names somewhere to put
-  # it, and until this existed every job recorded faithfully and threw the
-  # record away at exit.
+  # Where a pytest process writes what it observed about its own run, so that a
+  # job downstream can read every process's observation together. Until this
+  # existed every job recorded faithfully and threw the record away at exit.
   #
   # A **directory**, not a file: `service-integration` runs pytest five times
   # and `schema-contracts` twice, so one filename would leave each job
   # reporting its last suite as its whole record.
-  SQL_EXECUTION_RECORD: sql-execution
+  #
+  # **One variable for every recorder, and that is the point of the name.** It
+  # was `SQL_EXECUTION_RECORD: sql-execution` until Plan 162 Stage R, when a
+  # second recorder needed the same directory and the SQL name stopped
+  # describing the contents. The rule that keeps this at workflow level --
+  # `test_every_job_that_runs_pytest_has_its_record_read_by_the_gate` -- is what
+  # makes one variable better than two: a job written next year inherits every
+  # recorder at once, where two variables is two things to remember and one to
+  # forget. Records are told apart by filename prefix, not by directory:
+  # `sql-*.json` from `tests/plugins/sql_execution_recorder.py`,
+  # `tests-*.json` from `tests/plugins/test_invocation_recorder.py`, and each
+  # gate reads only its own prefix.
+  CI_RUN_RECORDS: ci-run-records
   # Plan 162 Stage Z, and workflow level for the same reason as the two above.
   # `constraints.txt` holds the four versions that decide what `app.openapi()`
   # emits, and the committed contract artifacts are only diffable against a
@@ -195,8 +206,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sql-execution-docs-tests
-          path: sql-execution/
+          name: ci-run-records-docs-tests
+          path: ci-run-records/
           if-no-files-found: warn
 
   lint:
@@ -425,8 +436,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sql-execution-unit-tests
-          path: sql-execution/
+          name: ci-run-records-unit-tests
+          path: ci-run-records/
           if-no-files-found: warn
 
   docker-build:
@@ -788,8 +799,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sql-execution-dbt-models
-          path: sql-execution/
+          name: ci-run-records-dbt-models
+          path: ci-run-records/
           if-no-files-found: warn
 
   snapshot-dbt:
@@ -1210,8 +1221,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sql-execution-schema-contracts
-          path: sql-execution/
+          name: ci-run-records-schema-contracts
+          path: ci-run-records/
           if-no-files-found: warn
 
   service-integration:
@@ -1337,8 +1348,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sql-execution-service-integration
-          path: sql-execution/
+          name: ci-run-records-service-integration
+          path: ci-run-records/
           if-no-files-found: warn
 
   lake-integration:
@@ -1473,8 +1484,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sql-execution-lake-integration
-          path: sql-execution/
+          name: ci-run-records-lake-integration
+          path: ci-run-records/
           if-no-files-found: warn
 
   # Plan 162 Stage X. The half of the execution recorder no pytest job can be.
@@ -1501,10 +1512,44 @@ jobs:
       - run: pip install pytest pyyaml
       - uses: actions/download-artifact@v4
         with:
-          pattern: sql-execution-*
-          path: sql-execution-records
+          pattern: ci-run-records-*
+          path: ci-run-records
       # `--report` is gone: it existed for exactly the two landings it took to
       # get an honest reading, and the reading is 161 of 161 with an empty
       # ledger. From here a statement that executes nowhere fails this job.
       - name: Every production statement executed somewhere, or waived
         run: python scripts/check_sql_execution_coverage.py
+
+  test-invocation-coverage:
+    name: Test invocation coverage
+    runs-on: ubuntu-latest
+    needs: [changes, lint, docs-tests, unit-tests, dbt-models, schema-contracts, service-integration, lake-integration]
+    # Same gate expression, same `needs`, and a separate job rather than a
+    # second step in the one above. Two reasons, both about signal: a red
+    # `Test invocation coverage` says which question failed without anyone
+    # opening a log, and the SQL gate exiting non-zero would otherwise stop
+    # this one from ever running on the same broken record set.
+    #
+    # `sql-execution-coverage` keeps its name deliberately, having just landed.
+    # What was renamed for Stage R is the shared artifact, not the SQL gate.
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # `DORMANT_SUITES` and `pytest_invocations()` are read out of the contract
+      # test rather than derived a second time, exactly as the gate above reads
+      # `production_sql_files()`.
+      - run: pip install pytest pyyaml
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-run-records-*
+          path: ci-run-records
+      # No `--report` mode, and that is a decision rather than an omission. The
+      # Stage X gate needed one because it landed on master, where a red gate
+      # blocks work that has nothing to do with it. This lands on a draft PR
+      # with no consumer, so a red run is the finding and a green run with a
+      # documented hole would be worth less than nothing.
+      - name: Every test file was asked for tests by the step that names it
+        run: python scripts/check_test_invocation_coverage.py

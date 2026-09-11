@@ -30,3 +30,10 @@ graphify-out/
 .cache/
 .tmp/
 docs/.obsidian/
+
+# Plan 162 Stage R. Where CI_RUN_RECORDS puts a run record. CI writes it
+# into the workspace and uploads it; the documented local recipe names an
+# absolute path, but the mutation proving the recorder's env gate writes a
+# relative one, and it left this directory behind in the tree the first
+# time it ran.
+/ci-run-records/

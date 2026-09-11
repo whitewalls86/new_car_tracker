@@ -85,11 +85,16 @@ def _normalise(text: str) -> str:
 
 
 def _load(records: Path) -> list[dict]:
-    files = sorted(records.rglob("*.json"))
+    # `sql-*.json` and not `*.json`. Plan 162 Stage R put a second recorder in
+    # this directory, and a bare glob would hand its records to the line below,
+    # which indexes `["executions"]` on every file it reads. The prefix is the
+    # whole of what separates them -- one directory, one variable, one upload
+    # per job, and each gate reading only what it wrote.
+    files = sorted(records.rglob("sql-*.json"))
     if not files:
         raise SystemExit(
             f"no execution records under {records}. Every pytest job writes one "
-            f"into $SQL_EXECUTION_RECORD and uploads it; if none arrived, the "
+            f"into $CI_RUN_RECORDS and uploads it; if none arrived, the "
             f"recorder did not load and this gate is measuring nothing."
         )
     executions: list[dict] = []
@@ -101,7 +106,7 @@ def _load(records: Path) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--records", type=Path, default=REPO_ROOT / "sql-execution-records")
+    parser.add_argument("--records", type=Path, default=REPO_ROOT / "ci-run-records")
     parser.add_argument(
         "--report",
         action="store_true",

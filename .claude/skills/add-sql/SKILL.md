@@ -107,8 +107,8 @@ the only one that distinguishes "a test names the file" from "the file's text
 reached an engine":
 
 ```bash
-SQL_EXECUTION_RECORD=/tmp/rec python -m pytest <your test> -q -m integration
-python -c "import json,glob; print(sorted({o for f in glob.glob('/tmp/rec/*.json') \
+CI_RUN_RECORDS=/tmp/rec python -m pytest <your test> -q -m integration
+python -c "import json,glob; print(sorted({o for f in glob.glob('/tmp/rec/sql-*.json') \
   for e in json.load(open(f))['executions'] for o in e['origins']}))"
 ```
 
