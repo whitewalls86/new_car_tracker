@@ -4295,10 +4295,18 @@ def query_constants() -> dict[str, str]:
     sees an assignment with no value. ``shared/queries.py`` is resolved first so
     the services that re-export from it resolve too.
     """
+    # ``_NOT_THE_REPOSITORY`` for the same reason :func:`production_sql_files`
+    # applies it: a worktree under ``.claude/worktrees/`` is a full second
+    # checkout, so a bare walk finds every service's ``queries.py`` once per
+    # open branch, and the later copies overwrite the real paths with
+    # worktree ones that no corpus contains. Measured 2026-09-11 with 19
+    # worktrees open: 132 modules found, 125 of them copies, and 80 of 84
+    # constants resolving outside the repository.
     modules = [
         path for path in REPO_ROOT.rglob("queries.py")
-        if "__pycache__" not in path.parts
-        and not path.relative_to(REPO_ROOT).as_posix().startswith("tests/")
+        if not path.relative_to(REPO_ROOT).as_posix().startswith(
+            ("tests/",) + _NOT_THE_REPOSITORY
+        )
     ]
     modules.sort(key=lambda p: p.parent.name != "shared")
 
