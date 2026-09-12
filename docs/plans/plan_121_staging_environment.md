@@ -40,6 +40,13 @@ lower operational cost.
 
 ## Related: Shared Dependency Pinning (CI/project sanity)
 
+**Moved 2026-09-12 to [Plan 186](plan_186_image_refresh_cadence.md) Stage G.**
+That stage audits every service's `requirements.txt`, pins what is shared or on
+a request path in `constraints.txt` at the versions production runs, and
+refreshes those pins on the same monthly cadence as the images the project
+owns. The scope list and the two incidents below stay here as the argument that
+produced it; this plan no longer owns them.
+
 Per-service `requirements.txt` files currently duplicate shared third-party
 packages (e.g. `boto3`) with no version coordination — a package can be
 present in one service's image and silently missing or drifted in another

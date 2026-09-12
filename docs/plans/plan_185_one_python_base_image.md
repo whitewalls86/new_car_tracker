@@ -63,8 +63,9 @@ end state is two base images: `python:3.13-slim-trixie` and `apache/airflow`.
 drains the image ledger.** Plan 183 Stage D puts base images on that ledger, and
 each distinct base is one copy into ghcr to make and one digest to refresh from
 then on. Consolidating first means Stage K copies two base images, not five.
-Stage K's exit currently names only compose images, so whether base images
-drain there or here is a sequencing decision still to make.
+Since 2026-09-12 Stage K's exit names Dockerfile base images as well as
+compose images; this plan drains the base images, and Stage K is the backstop
+for any it has not.
 
 ## Design
 
