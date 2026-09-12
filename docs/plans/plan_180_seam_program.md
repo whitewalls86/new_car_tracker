@@ -212,12 +212,26 @@ drained to 0; demonstrated by a fabricated row failing at construction.
 
 **Issue:** CAR-124 · **State:** `—`
 
-**Exit** (AE's, carried): no production module reads an environment
-variable with an inline default; every variable read strictly is delivered
-by its service's Compose block; each of the 39 moved to Compose or reduced
-to a constant, reads made strict in the same change; the waiver tuple
-drained and deleted; the twelve that moved verified by asking a deployed
-container what it loaded. Demonstrated by an inline default failing.
+**Widened 2026-09-11 to images, from [Plan 183](plan_183_minio_image_self_hosted.md)
+Stage D.** A compose image reference is configuration too, and the
+`${TRAWL_IMAGE:-…}` form is this stage's inline-default defect one level up:
+compose names a default the VM's `.env` can override, so the file is not the
+whole truth about what runs. Plan 183 Stage D lands a rule that every
+external image is pulled from `ghcr.io/whitewalls86/*` by digest, with a
+shrink-only ledger keyed on the full image reference and seeded at 17. Any
+stage that changes an image drains that entry on the way through; this stage
+drains what nobody touched. The rule itself files under seam 7 in Stage G's
+restructure, beside the image keep-set rules the census already puts there.
+
+**Exit** (AE's, carried, plus the image clause): no production module reads
+an environment variable with an inline default; every variable read strictly
+is delivered by its service's Compose block; each of the 39 moved to Compose
+or reduced to a constant, reads made strict in the same change; the waiver
+tuple drained and deleted; the twelve that moved verified by asking a
+deployed container what it loaded. Demonstrated by an inline default
+failing. Plan 183 Stage D's image ledger drained and its tuple deleted,
+every compose image resolving to an owned digest, verified by asking each
+deployed container which image it runs.
 
 ### Stage L: the parsers nobody ran *(ex-162 Stage AJ)*
 
