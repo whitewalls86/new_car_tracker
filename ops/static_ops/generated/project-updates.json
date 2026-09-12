@@ -3,19 +3,9 @@
   "as_of": "2026-08-30",
   "planned": [
     {
-      "plan": "183",
-      "title": "The MinIO image, held where we control it",
-      "order": 1,
-      "priority": 95,
-      "effort": "S",
-      "state": "planned",
-      "summary": "Keeps this project's object store running after its vendor withdrew the public MinIO image: the exact build production already runs, copied into this repository's own container registry and pinned by digest, so production and CI pull an image nothing outside the project can remove.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_183_minio_image_self_hosted.md"
-    },
-    {
       "plan": "180",
       "title": "The seam program",
-      "order": 2,
+      "order": 1,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
@@ -25,7 +15,7 @@
     {
       "plan": "185",
       "title": "One Python base image",
-      "order": 3,
+      "order": 2,
       "priority": 80,
       "effort": "M",
       "state": "planned",
@@ -35,15 +25,33 @@
     {
       "plan": "181",
       "title": "The rule readers are code",
-      "order": 4,
+      "order": 3,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
       "summary": "Moves eleven thousand lines of non-test code out of this repository's test tree and into a package coverage can measure, so the helpers, readers and analysers every test depends on are themselves unit tested.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_181_rule_readers_are_code.md"
+    },
+    {
+      "plan": "182",
+      "title": "What a unit owes itself",
+      "order": 4,
+      "priority": 85,
+      "effort": "XL",
+      "state": "planned",
+      "summary": "Gives every unit of code a stated obligation to itself: its branches are exercised, the outcomes it declares are the ones it produces, and the analysers that check everything else are measured code. The second frame beside Plan 180's seams, for what no boundary can see.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_182_what_a_unit_owes_itself.md"
     }
   ],
   "completed": [
+    {
+      "plan": "183",
+      "title": "The MinIO image, held where we control it",
+      "date": "2026-09-12",
+      "state": "completed",
+      "summary": "Kept the project's object store running after its vendor withdrew the public image: the exact build production runs now lives in the project's own registry, pinned by digest, and CI fails on any image it pulls that the project neither owns nor lists as a known exception.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_183_minio_image_self_hosted.md"
+    },
     {
       "plan": "162",
       "title": "Testing census and CI restructure",
@@ -67,14 +75,6 @@
       "state": "completed",
       "summary": "Moved the API keys that automated callers use from a configuration file into the database, where each one can expire, be switched off instantly, and show when it was last used — so a credential can be retired without guessing what still depends on it.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_173_machine_credential_lifecycle.md"
-    },
-    {
-      "plan": "175",
-      "title": "Commit gate bundling hole",
-      "date": "2026-09-04",
-      "state": "completed",
-      "summary": "A check that stops this project's public pages changing unread could be sidestepped by a common way of writing a commit, and reported success when it was. Moved the check inside the commit itself, so it now reads what is actually being committed and the shortcut no longer passes.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_175_commit_gate_bundling.md"
     }
   ]
 }

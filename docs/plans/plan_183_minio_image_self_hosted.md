@@ -135,9 +135,9 @@ rule is independent of the emergency.
 
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
-| 1 | [**A**](#stage-a-ghcr-holds-productions-exact-minio-build) | ghcr holds production's exact MinIO build | `next` | CAR-134 |
-| 2 | [**B**](#stage-b-every-reference-pinned-to-it) | Every reference pinned to it | `—` | CAR-134 |
-| 3 | [**C**](#stage-c-production-runs-it-from-ghcr) | Production runs it from ghcr | `—` | CAR-134 |
+| 1 | [**A**](#stage-a-ghcr-holds-productions-exact-minio-build) | ghcr holds production's exact MinIO build | `done` | CAR-134 |
+| 2 | [**B**](#stage-b-every-reference-pinned-to-it) | Every reference pinned to it | `done` | CAR-134 |
+| 3 | [**C**](#stage-c-production-runs-it-from-ghcr) | Production runs it from ghcr | `done` | CAR-134 |
 | 4 | [**D**](#stage-d-every-external-image-comes-from-a-registry-we-own) | Every external image comes from a registry we own | `done` | CAR-135 |
 
 ### Stage A: ghcr holds production's exact MinIO build
@@ -188,6 +188,13 @@ that is neither built here, owned, nor ledgered. No CI step or script names an
 image compose does not define. The Stage A workflow copies any named image with
 the digest check. Each rule is shown failing by a mutation entry in
 `scripts/verify_testing_contract_mutations.py`.
+
+## Public summary
+
+**The MinIO image, held where we control it** — Kept the project's object store
+running after its vendor withdrew the public image: the exact build production
+runs now lives in the project's own registry, pinned by digest, and CI fails on
+any image it pulls that the project neither owns nor lists as a known exception.
 
 ## Record
 
