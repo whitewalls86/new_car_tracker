@@ -63,6 +63,27 @@ from __future__ import annotations
 import sys
 
 DOCS_PREFIXES = (b"docs/", b"ops/static_ops/generated/")
+
+#: Prose that does not live under ``docs/``, as ``(prefix, suffix)`` pairs.
+#:
+#: **A prefix alone would be wrong here, and that is why this exists at all.**
+#: Plan 162 Stage R's CI cost census found merges of ``.claude/skills/*.md`` --
+#: prose, 12 and 14 files at a time -- pulling the entire heavy workflow, three
+#: dbt builds included, because ``.claude/`` is in no zone. Adding the
+#: directory as a prefix would take everything else in it with it, and the
+#: census named the case that must not travel: one of those merges paired
+#: ``.claude/settings.json`` with ``tests/scripts/test_build_public_roadmap.py``,
+#: and **hooks can change what runs**. A ``.py`` beside a ``SKILL.md`` is the
+#: same problem one directory down.
+#:
+#: **Safe because nothing reads this prose as data**, which was measured rather
+#: than assumed: ``.claude/`` is excluded from the repository corpus by
+#: ``_NOT_THE_REPOSITORY`` in ``tests/rules/test_testing_contract.py`` and by
+#: that module's walk-skip list, and every other mention of a skill file in
+#: ``tests/`` or ``scripts/`` is prose inside a docstring or an error string.
+#: No test opens one, so no test can be invalidated by editing one.
+DOCS_GLOBS = ((b".claude/skills/", b".md"),)
+
 ONEOFF_PREFIXES = (b"scripts/oneoff/", b"tests/scripts/oneoff/")
 
 # Paths that can change what `dbt build` does against a pinned snapshot. Wider
@@ -114,6 +135,22 @@ def _paths(data: bytes) -> list[bytes]:
     return paths
 
 
+def _is_docs(path: bytes) -> bool:
+    """Whether *path* is prose, by prefix or by prefix-and-suffix.
+
+    Both halves of a :data:`DOCS_GLOBS` pair must match. A path satisfying only
+    the prefix -- ``.claude/settings.json``, ``.claude/skills/x/helper.py`` --
+    is not prose and falls through to the full workflow, which is the
+    direction this classifier is safe in.
+    """
+    if path.startswith(DOCS_PREFIXES):
+        return True
+    return any(
+        path.startswith(prefix) and path.endswith(suffix)
+        for prefix, suffix in DOCS_GLOBS
+    )
+
+
 def classify_from_nul(data: bytes) -> dict[str, bool]:
     """Map a changeset to the job groups it needs.
 
@@ -132,7 +169,7 @@ def classify_from_nul(data: bytes) -> dict[str, bool]:
     # every changeset, classified or not.
     snapshot_dbt = any(path.startswith(SNAPSHOT_DBT_TRIGGERS) for path in paths)
 
-    docs = sum(path.startswith(DOCS_PREFIXES) for path in paths)
+    docs = sum(_is_docs(path) for path in paths)
     oneoff = sum(path.startswith(ONEOFF_PREFIXES) for path in paths)
     if docs + oneoff != len(paths):
         return {**FULL, "snapshot_dbt": snapshot_dbt}

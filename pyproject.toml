@@ -36,9 +36,11 @@ pythonpath = ["."]
 # it wraps each database client at its entry point, so it has to be installed
 # before any connection is opened -- and a job that forgot to name it would
 # record nothing while looking exactly like a job in which nothing executed.
-# Plan 162 Stage X. It writes an artifact only when SQL_EXECUTION_RECORD names
-# one, so an ordinary local run pays a wrapper and nothing else.
-addopts = "-p tests.plugins.declared_skips -p tests.plugins.sql_execution_recorder -p tests.plugins.response_model_fidelity"
+# Plan 162 Stage X. It writes an artifact only when CI_RUN_RECORDS names a
+# directory, so an ordinary local run pays a wrapper and nothing else -- which
+# is also what keeps the mutation harness out of the record: it runs 176 pytest
+# subprocesses against a deliberately mutated tree and sets no such variable.
+addopts = "-p tests.plugins.declared_skips -p tests.plugins.sql_execution_recorder -p tests.plugins.response_model_fidelity -p tests.plugins.invocation_recorder"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

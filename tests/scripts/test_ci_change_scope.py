@@ -96,6 +96,36 @@ def _nul(paths):
             ["dashboard/queries.py"],
             {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
         ),
+        # Plan 162 Stage R. The census found merges of 12 and 14 skill files
+        # pulling the whole heavy workflow, three dbt builds included, because
+        # `.claude/` was in no zone. These four are the whole of the rule: the
+        # prose joins the prose zone, and everything else in that directory
+        # keeps the full workflow.
+        (
+            "skill prose is prose, and joins the zone that behaves like it",
+            [".claude/skills/add-sql/SKILL.md", ".claude/skills/plan-start/SKILL.md"],
+            {"docs_tests": True, "unit": False, "heavy": False, "snapshot_dbt": False},
+        ),
+        (
+            "settings are not prose: hooks can change what runs",
+            [".claude/settings.json"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
+        ),
+        (
+            "a script beside a skill is the settings case one directory down",
+            [".claude/skills/public-surface-check/check.py"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
+        ),
+        (
+            "the suffix is not enough either: markdown elsewhere under .claude",
+            [".claude/notes.md"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
+        ),
+        (
+            "skill prose with one production path is still a full run",
+            [".claude/skills/add-sql/SKILL.md", "ops/routers/deploy.py"],
+            {"docs_tests": False, "unit": True, "heavy": True, "snapshot_dbt": False},
+        ),
     ],
 )
 def test_classify_from_nul(label, paths, expected):
@@ -143,6 +173,7 @@ def test_paths_in_neither_zone_can_never_narrow_the_run():
         ["docs/PLANS.md"],
         ["scripts/oneoff/reconcile_april_detail.py"],
         ["docs/PLANS.md", "tests/scripts/oneoff/test_reconcile_april_detail.py"],
+        [".claude/skills/add-sql/SKILL.md"],
     ):
         classified = classify_from_nul(_nul([*companions, unclassified]))
         assert {
@@ -184,6 +215,27 @@ def test_every_snapshot_trigger_is_a_path_that_exists():
         if not (repo_root / trigger.decode().rstrip("/")).exists()
     ]
     assert not missing, f"snapshot_dbt triggers name paths that do not exist: {missing}"
+
+
+def test_every_docs_glob_names_a_directory_that_exists():
+    """The same floor as the trigger tuple above, for the same failure.
+
+    A glob whose prefix has moved does not fail: it simply stops matching, the
+    zone silently empties, and prose goes back to pulling the full heavy
+    workflow -- which is the cost Plan 162 Stage R measured and removed. Unlike
+    a stale trigger this one fails safe, so nothing would ever notice it.
+    """
+    from pathlib import Path
+
+    from scripts.ci_change_scope import DOCS_GLOBS
+
+    repo_root = Path(__file__).resolve().parents[2]
+    missing = [
+        prefix.decode()
+        for prefix, _ in DOCS_GLOBS
+        if not (repo_root / prefix.decode().rstrip("/")).is_dir()
+    ]
+    assert not missing, f"docs globs name directories that do not exist: {missing}"
 
 
 def test_docs_only_supports_spaces_in_paths():

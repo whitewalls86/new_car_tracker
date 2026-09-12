@@ -176,3 +176,87 @@ shrink-only ledger seeded at the measured count and keyed on the full image
 reference, so changing a reference removes its entry; the Stage A workflow copies
 any named image with the digest check; the rule is shown failing on an
 unowned image by a mutation entry in `scripts/verify_testing_contract_mutations.py`.
+
+## Record
+
+### Stage A — ghcr holds production's exact MinIO build
+
+**Issue:** CAR-134 · **Still owed:** the linked workflow run
+
+Copied by hand on 2026-09-12 at 02:23 UTC, from the maintainer's laptop with
+crane 0.22.1, signed in to ghcr with the maintainer's `gh` token (`write:packages`
+added for the purpose):
+
+    crane copy \
+      quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+      ghcr.io/whitewalls86/minio:RELEASE.2025-09-07T16-13-09Z
+
+It pushed the index, 969 bytes at `sha256:14cea493…d8936e`, and the three
+platform manifests it lists: `linux/arm64` `sha256:9966a92a734f…`, `linux/amd64`
+`sha256:a1a8bd4ac40a…` and `linux/ppc64le` `sha256:4a9aa577940a…`, which nothing
+here runs. A first attempt was refused (`DENIED`) before any upload, because
+the login had been saved under a mistyped host. Nothing was written.
+
+The package was then made public, and `new_car_tracker` was given Write access
+to it under Actions access, so the Stage A workflow's `GITHUB_TOKEN` can push
+later. The API cannot read that setting back, so it stays unverified until the
+workflow first runs.
+
+Checked with no login, after `crane auth logout ghcr.io`, at 02:26 UTC:
+
+| Command | Result |
+|---|---|
+| `crane digest ghcr.io/whitewalls86/minio:RELEASE.2025-09-07T16-13-09Z` | `sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e` |
+| `crane digest --platform linux/amd64 ghcr.io/whitewalls86/minio@sha256:14cea493…` | `sha256:a1a8bd4a…`, resolves |
+| `crane digest --platform linux/arm64 ghcr.io/whitewalls86/minio@sha256:14cea493…` | `sha256:9966a92a…`, resolves |
+| `crane digest quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z` | `sha256:14cea493…d8936e`, equal |
+
+Every clause of the exit is met except the last. The copy was made by hand to
+unblock CI, not by the `workflow_dispatch` workflow the design names, so there
+is no workflow run to link. That workflow is still to be built. Its first run
+copies the same bytes again, which changes nothing in the registry, and that
+run is the one this entry will link.
+
+### Stage B — every reference pinned to it
+
+**Issue:** CAR-134 · **Commit:** `fef9737`
+
+`fef9737` pins all three live references to
+`ghcr.io/whitewalls86/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493…`:
+`docker-compose.yml`, `docker-compose.lakehouse.ci.yml` and
+`docker-compose.lakehouse.local.yml`. No `image: minio/minio` line remains in
+any compose file. The `minio/minio` mentions left are history comments in
+`ci.yml`, `docker-compose.ci.yml` and `tests/rules/test_ci_compose_parity.py`.
+
+All six jobs the exit names passed together on `3c71943`, the merge of #419
+into Plan 162 Stage R's #417, in the manually started run
+[`34668714434`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34668714434)
+(02:49–02:53 UTC): dbt model tests, dbt build against a production snapshot,
+SQL + Airflow metadata contracts, Lake integration tests (MinIO), SQL execution
+coverage and Test invocation coverage. No job failed. The pull-request run on
+the same commit,
+[`34668716359`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34668716359),
+also passed.
+
+**The six could not pass on #419 by itself.** `Test invocation coverage` is
+defined only on #417's branch. And `scripts/ci_change_scope.py` does not select
+`dbt build against a production snapshot` for a change that touches only compose
+files, because its `SNAPSHOT_DBT_TRIGGERS` lists none of them, so #419's
+pull-request run skipped it. That job ran only in the manually started runs,
+which are not path-filtered and run every job. Changing MinIO's image does not,
+by itself, trigger the one job that builds dbt against production's lake.
+
+**#419's first full run failed on something else.**
+[`34667850192`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34667850192),
+on `fef9737`, passed every job that uses MinIO and failed only `Unit tests (pytest)`. #418 had
+inserted Plans 183 and 184 into the build order, so two of Plan 146's mutation
+anchors no longer matched anything. Master had not shown it, because its run
+after #418 was docs-only and skipped the unit tests. `ef85cf4` re-anchored both on
+the order number alone, and the runs on `ef85cf4`,
+[`34668304834`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34668304834)
+and
+[`34668307139`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34668307139),
+passed.
+
+The exit is met on #417, which carries #419's commits, rather than on #419's
+own pull request.

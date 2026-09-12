@@ -400,7 +400,7 @@ moved it to the end without making it a different stage.
 | 33 | [**AC**](#stage-ac-the-database-makes-a-stale-read-loud) | — | The database makes a stale read loud | G25 | `canceled` | CAR-105 |
 | 34 | [**AD**](#stage-ad-a-fixture-cannot-fabricate-a-row-the-database-would-reject) | — | A fixture cannot fabricate a row the database would reject | G26 | `canceled` | CAR-108 |
 | 35 | [**AE**](#stage-ae-configuration-is-what-compose-delivers-and-everything-else-is-a-constant) | — | Configuration is what Compose delivers, and everything else is a constant | — | `canceled` | CAR-109 |
-| 36 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `next` | CAR-87 |
+| 36 | [**R**](#stage-r-ci-selection-and-the-instrument-that-has-to-precede-it) | 10c | CI selection, and the instrument that has to precede it | Plan 139 Stage E | `done` | CAR-87 |
 
 `State` takes the five values [the plan-document
 contract](../PLAN_DOCUMENT.md#stages-and-order) defines — `—`, `next`,
@@ -1294,7 +1294,7 @@ were chosen for — and whether the unset variables arrive through a committed
 
 ### Stage R: CI selection, and the instrument that has to precede it
 
-**Legacy:** Stage 10c · **Issue:** CAR-87 · **State:** `—`
+**Legacy:** Stage 10c · **Issue:** CAR-87 · **State:** `done`
 
 **Rescoped 2026-09-04, and moved to run after Stage X.** The selector this
 stage was built around is cut. [The CI cost
@@ -2337,7 +2337,7 @@ work. It can. The stages below use it.
 
 ### Stage Y grew: its rule passes a route that reports work it did not do
 
-**Issue:** CAR-104 · **State:** `done` · **Gap:** G21, G27, G28
+**Issue:** CAR-104 · **State:** `done` · **Gap:** G21
 
 **Re-measured 2026-09-08 against `d6e3a6d`: 100 routes across the six importable
 services, 46 of which produce a status code they never declare.** The census
@@ -2461,7 +2461,7 @@ archives and take the reason with it.
 
 ### Stage AF: the harness that proves the rules is proved by nothing
 
-**Issue:** CAR-114 · **State:** `done` · **Gap:** G29
+**Issue:** CAR-114 · **State:** `done` · **Gap:** —
 
 **Every "demonstrated by X failing" exit in this plan rests on
 `scripts/verify_testing_contract_mutations.py`, and nothing guards it.** Its own
@@ -2524,7 +2524,7 @@ the other does not; demonstrated by a stale anchor failing.
 
 ### Stage Z: the contract is generated, committed and gated
 
-**Issue:** CAR-107 · **State:** `done` · **Gap:** G22
+**Issue:** CAR-107 · **State:** `done` · **Gap:** —
 
 **A contract nobody generates is a document, and this plan exists because
 `ARCHITECTURE.md:179` was accurate in April 2026 and quietly false by August.**
@@ -2555,7 +2555,7 @@ what it drops and why; demonstrated by an unreflected route change failing.
 
 ### Stage AA: a test may not invent another service's response
 
-**Issue:** CAR-107 · **State:** `done` · **Gap:** G23, G27
+**Issue:** CAR-107 · **State:** `done` · **Gap:** —
 
 **37 fabricated HTTP status codes across 6 test modules** — `{200: 26, 403: 9,
 400: 1, 500: 1}` — and the seams they replace are `ops.coordination_drain.
@@ -2629,7 +2629,7 @@ serve failing.
 
 ### Stage AB: what we do not own is recorded and replayed
 
-**Issue:** CAR-106 · **State:** `done` · **Gap:** G24
+**Issue:** CAR-106 · **State:** `done` · **Gap:** —
 
 **9 fabricated `cars.com` responses**, mostly the 403 in
 `tests/scraper/processors/test_scrape_detail.py`. There is no code in this
@@ -2854,7 +2854,7 @@ Demonstrated by an inline default failing, not asserted.
 
 ### Stage AG: rules live in a directory, and an unregistered one cannot exist
 
-**Issue:** CAR-115 · **State:** `done` · **Gap:** G30
+**Issue:** CAR-115 · **State:** `done` · **Gap:** —
 
 **Found by Stage Q, in the shape this plan keeps finding things.** That stage
 wrote four rules, ran the suite, and reported **3,899 passed** — with all four
@@ -3578,6 +3578,13 @@ is Stage P's.
 
 Owns the deployed-stack rehearsal that Stage P's greenfield-versus-populated
 question cannot close from inside a CI job.
+
+## Public summary
+
+**Testing census and CI restructure** — Audited what the automated tests
+actually check and found whole suites that had never run at all. Fixed those,
+then built the checks that make the silence impossible: work that skips a test,
+or quietly stops running one, now fails the build instead of passing it.
 
 ## Record
 
@@ -5724,3 +5731,172 @@ Verified by 278 rules tests, 54 planning-doc tests, ruff clean, and a full
 mutation-harness run at 248 entries exit 0 with no MISSED and no NO RUN; nine
 mutations added, all CAUGHT. Cost: estimate 2 → actual 2 (0). Public surfaces:
 no mechanism, name or quantity either surface states was changed by this work.
+
+### Stage R — the census re-taken, and what caching actually moved
+
+**Legacy:** Stage 10c · **Issue:** CAR-87 · **Closed:** 2026-09-11
+
+**The 2026-09-04 census had expired, and its central premise was the part that
+went.** That file's finding was that `schema-contracts` sets the wall clock at
+123s and every other heavy job finishes in its shadow. Re-measured 2026-09-11
+across three `master` runs — `34519120399`, `34529105907`, `34529611177` —
+`schema-contracts` had not moved and had been overtaken twice:
+
+| Job | 2026-09-04 | 2026-09-11 readings |
+|---|---:|---|
+| **dbt model tests (real build)** | 103 | **196, 198, 202** |
+| Unit tests (pytest) | 94 | 170, 175, 166 |
+| SQL + Airflow metadata contracts | 123 | 123, 125, 113 |
+| Docker build (all services) | 96 | 98, 91, 93 |
+
+The critical path is now `changes → lint → dbt-models` at roughly 218s against
+the census's 153s. **Its headline inverts too**: on 09-04 the ceiling job was
+80% installs and 5% tests; today it is ~18% installs and ~50% tests.
+
+**Recipe**, for both halves and identical to the 09-04 file's:
+`gh api repos/whitewalls86/new_car_tracker/actions/runs/<id>/jobs --paginate`,
+differencing each step's `started_at` and `completed_at`. Step level rather
+than job level, because the job number carries noise from everything else in it.
+
+**Caching round 1: `cache: pip` on `unit-tests` and `dbt-models`.** Five
+uncached runs (`34519120399`, `34529105907`, `34529611177`, `34621900419`,
+`34624077756`) against four warm ones (`34626290087`, `34626697295`,
+`34627131373`, `34627146719`, all `workflow_dispatch` on the branch after
+`df8831c`). The cache-populating run `34625870911` is excluded from the warm
+arm and read 25s / 10s / 45s on the three steps below — cold, as expected.
+
+| Step | Uncached | Warm | Mean Δ |
+|---|---|---|---:|
+| `dbt-models` · Install dependencies | 18, 40, 19, 21, 30 | 18, 15, 15, 15 | −9.9s |
+| `dbt-models` · Install dbt | 6, 10, 6, 7, 11 | 6, 5, 5, 5 | −2.8s |
+| `unit-tests` · Install dependencies | 42, 44, 42, 44, 46 | 39, 37, 39, 34 | −6.4s |
+
+**On wall clock it does not clear the bar, and that is the finding.** The
+ceiling job went 196–203 → 190, 192, 193, 197; the workflow ~218s → ~208s.
+Plan 139 Stage E requires "a benefit larger than runner variance", and ~7s
+against ±10–20s does not satisfy it. **The census projected ~70s from caching
+and the measured number is ~7s** — the projection assumed installs would be
+removed, and `cache: pip` caches downloads, which the 09-04 file had itself
+warned about in the sentence this measurement confirms.
+
+**What the mean hides is the result worth keeping.** `dbt-models`' install went
+from a 22-second spread (18–40) to a 3-second spread (15–18). The cache's
+principal effect is removing variance from the critical-path job rather than
+lowering its mean.
+
+**Adopted anyway, on a stated ground that is not wall clock.** It costs a few
+lines, and the stage's own scoping notes that unlike the selector *a cache miss
+costs time rather than correctness* — there is no evidence-suppression failure
+mode to weigh against it. Recording it as a 7s win would be dressing the number
+up; it is kept for the spread and for being free.
+
+**Not `schema-contracts`, whose 61s of installs is the largest single number in
+CI.** It finishes ~80s under the ceiling, so caching it buys zero wall clock —
+the census's own argument against the selector, applied to this stage's work.
+
+**The floor, which caps everything after this.** `dbt-models`' non-install time
+is ~153s: ~29s of runner, Compose and Flyway, ~24s of dbt setup builds
+(`run --empty` 7s, `build` 17s) and ~100s of tests. With `changes` and `lint`
+ahead of it, **no caching strategy can take this workflow below ~170s**, against
+~208s today. The whole remaining opportunity is ~38s and round 1 took ~7 of it.
+
+| Parked | Why | Revisit when |
+|---|---|---|
+| Caching the installed tree (a venv or `site-packages` restore) rather than the downloads | It is the only mechanism that reaches the ~24s left in `dbt-models` and ~37s in `unit-tests`, since those are resolution, unpacking and byte-compiling. Best case ~20s more on the ceiling, against a fragility `cache: pip` does not have — a tree restored under a mismatched Python patch version fails where a download cache merely misses | The ~38s between today and the ~170s floor is worth a measurement campaign on its own terms, **or** `dbt-models`' test time falls far enough that installs are again a large fraction of the ceiling |
+
+**Against the exit:** this closes the second clause — the caching candidates are
+measured both ways and only the winner adopted, with the loser's numbers
+recorded rather than its absence. The first, third and fourth clauses are
+untouched by this measurement.
+
+**What landed.** `tests/plugins/invocation_recorder.py` records what each pytest
+process selected and what it collected and dropped;
+`scripts/check_test_invocation_coverage.py` reads every job's records together.
+Three checks: a file under a named `tests/integration/` path was selected by
+that invocation, every test file was selected somewhere or is declared, and a
+job that reported did so for all of its pytest steps. **215 test files, 14
+invocation records from 14 expected steps** — 16 in `ci.yml` less the two in
+skipped `docs-tests`.
+
+**It landed able to fail, with no `--report` mode**, which is where it differs
+from the Stage X gate it otherwise mirrors. That gate needed one because it
+landed on `master`, where a red gate blocks unrelated work; this one had no
+consumer, so a red first run was the finding and a green one with a documented
+hole would have been worth less than nothing.
+
+**The rename was not cosmetic.** `SQL_EXECUTION_RECORD`/`sql-execution` became
+`CI_RUN_RECORDS`/`ci-run-records` with kind-prefixed filenames, because
+`check_sql_execution_coverage.py` globbed `*.json` and indexed `["executions"]`
+on every file it found — the new records would have crashed the Stage X gate on
+their first run. One variable rather than two keeps the owing set derived from
+*jobs that run pytest*, which does not change when the number of recorders does.
+
+**Three findings, and only the first was the expected one.**
+
+*The first CI run found a file and it was not the Stage F defect.*
+`tests/integration/dbt/test_analytics_connection_guard.py` is collected and
+deselected entirely by the `dbt-models` step **on purpose**, and its docstring
+said so. So the gate needed a third category rather than a repair: `Dormant`
+says a suite runs *nowhere*, `UNMARKED_BY_DESIGN` says a file does not run
+*here*. It is exempt from the first check and still held by the second —
+measured, not asserted: the run-somewhere count went 207 → 208 with the
+declaration in place, so it cannot hide a file that runs nowhere. Declaring beat
+moving because the file's subject is its neighbour, and `docs/TESTING.md`
+already settles that a file's location does not decide whether it runs.
+
+*The harness found a defect in this stage's own test.*
+`test_nothing_is_written_when_no_directory_is_named` asserted `tmp_path` stayed
+empty, but a recorder falling back to a *relative* default writes beside the
+working directory and leaves `tmp_path` untouched — so the test passed while the
+plugin wrote a record. `monkeypatch.chdir(tmp_path)` is now the assertion rather
+than the setup.
+
+*And a mutation had gone stale because the window moved, not the text.* The
+published-build-order mutation named `plan_134`, which has fallen to row 5 while
+`MAX_ITEMS` publishes four, so it edited a real file and matched a real anchor
+while asserting nothing. `test_every_mutation_anchor_still_matches_its_file`
+could not see it — the anchor still matched. **A derived target was tried and
+reverted**: resolving row 1 at mutation time cannot go stale, but the anchor rule
+then refuses the entry, and that refusal is correct — it reads `MUTATIONS` from
+source rather than importing lambdas, and fails an unreadable anchor rather than
+skipping one, so the harness cannot hold anchors the rule cannot see. The literal
+stands and **the drift class stays open**; closing it needs a rule that a
+published-window mutation targets a plan inside the window.
+
+**One boundary was written because this is the stage that adds caching.**
+`test_the_cold_build_job_declares_no_cache` fences `docker-build` through all
+three ways in — a cached setup action, `actions/cache`, and BuildKit's own
+flags. That job publishes the fleet's cold build footprint as a **ceiling** for
+the production host, and a warm cache lowers the number without failing
+anything, which is the one direction a ceiling must never move. After this stage
+four jobs carry a cache and that one does not; without the rule nothing says the
+omission is deliberate.
+
+**The four dropped selection items, with their conditions restated against the
+re-taken census.** A flat no ossifies; these expire on checkable events. Two of
+the four were written against the 2026-09-04 ceiling and **had stopped tracking
+what they were trying to capture** — recorded here as restatements rather than
+transcriptions, because copying them forward unchanged would have carried two
+false conditions into the archive.
+
+| Dropped | Why, as measured 2026-09-11 | Revisit when |
+|---|---|---|
+| The advisory impact selector | **The arithmetic changed and the argument did not.** The 09-04 reason was "0s available under the `max()` ceiling". That is no longer true: the ceiling rose to ~193s and *separated* from the pack, so skipping the ceiling job would now recover roughly 30s. What survives untouched is the second reason — narrowing an existing job suppresses evidence, and a false positive there costs coverage that exists today | **The original condition was phrased on the wrong variable and is replaced.** It said "the ceiling *falls* far enough"; what a selector actually recovers is the **gap between the ceiling job and the next one**, and the ceiling rising is what opened that gap. Revisit when that gap exceeds runner variance **and** the job sitting at the ceiling can be skipped without removing coverage that exists — the second clause is the one doing the work, and caching did not move it |
+| A trigger set for `dbt-models` | 57% of heavy runs would skip it, on the 196-merge walk. **The "saving 0s" half of the 09-04 reason is now false** — it would save the same ~30s as the row above. The evidence-suppression reason is unchanged and is why this stays dropped: `dbt-models` has history, so a missing trigger silently removes coverage, which is not the `snapshot-dbt` asymmetry | **One conjunct has fired, by a route the condition did not anticipate.** It read "caching has promoted it to the critical path **and** Plan 125 Gate E has retired the dual-run". `dbt-models` is at the ceiling today — but **growth put it there, not caching**, so the condition was satisfied by something it was not watching for. Restated: revisit when Plan 125 Gate E has retired the dual-run and its surface is stable. Plan 125 is at Gate C with Gate D next, so this holds the row closed on its own |
+| Incremental-diff classification | The plan's own four conditions — a verified rather than merely green reference, a base that may have moved, rebases failing closed, and selection logic needing its own tests. **The 09-04 number was wrong in the safe direction and is corrected**: it read "~2 minutes that the census shows is nearer zero", against PR #325's 127s. A redundant full re-run now costs ~208s, so the prize roughly doubled | **Not on current evidence, and the reason is unchanged by the number.** The four conditions are about soundness, not size, and a false positive here is green, fast, and not verifying the tree being merged. Two things would have to change rather than one: the conditions answered, *and* a saving that survives them. Note that the docs zone has already absorbed part of the motivating case — a prose commit pushed onto a live PR no longer pulls the heavy workflow at all |
+| Content-addressed `docker-build` skipping | Called "the cheaper first win" on 09-04 and measured at 0s. **Still 0s, and its revival condition has now been measured false**: it read "caching promotes `docker-build` to the critical path — which piece 2 above would do". Piece 2 moved the ceiling ~7s. `docker-build` is ~93s against a ~193s ceiling and is not close | **It acquired a second reason to exist that it did not have when it was dropped.** Plan 170 Stage B publishes the fleet's cold build footprint from this job, as a ceiling for the production host's disk headroom, and `test_the_cold_build_job_declares_no_cache` now fences it. Skipping the job does not falsify that number the way a warm cache would, but it does mean **not taking the reading** on the runs it skips. So revisit when `docker-build` is within runner variance of the ceiling **and** the footprint has a home that a skipped run does not silently empty |
+
+**What the whole table now says, which the 09-04 version could not.** Three of
+the four turn on the same fact: `dbt-models`' non-install time is ~153s, so the
+workflow floors at ~170s against ~208s today, and **every remaining selection
+idea is competing for ~38s**. The one item whose prize grew — incremental-diff
+classification, now ~208s — is the one rejected on soundness rather than size,
+which is why the growth changes nothing about it.
+
+Verified by 285 rules tests, 4,075 unit tests with 720 deselected, ruff clean, a
+full mutation-harness run at **255 entries exit 0 with no MISSED and no NO RUN**
+(248 at Stage AK; seven added here and one retargeted, all CAUGHT), and PR #417
+green — including the deliberate red run `34621900419`, which failed on exactly
+one job and reported exactly one file. Cost: estimate 1 → actual 1 (0). Public
+surfaces: no mechanism, name or quantity either surface states was changed by
+this work.

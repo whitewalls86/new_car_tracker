@@ -83,7 +83,13 @@ _RECORDED: list[dict[str, object]] = []
 #: reading as "nothing executed".
 _WRAPPED: set[str] = set()
 
-_ARTIFACT_ENV = "SQL_EXECUTION_RECORD"
+#: Where this process writes its slice of the record. Renamed from
+#: ``SQL_EXECUTION_RECORD`` by Plan 162 Stage R, which put a second recorder in
+#: the same directory: the variable names *where run records go*, not what any
+#: one of them is about. Records are told apart by filename prefix, and this one
+#: owns ``sql-``.
+_ARTIFACT_ENV = "CI_RUN_RECORDS"
+_FILENAME_PREFIX = "sql"
 
 
 def _origins_of(statement: object) -> list[str]:
@@ -367,8 +373,13 @@ def pytest_unconfigure(config) -> None:  # noqa: ARG001 - pytest hook signature
         # filename they would overwrite each other and the job would report its
         # last suite as its whole record. A file path is still honoured, which
         # is what the Stage X baseline recipe uses.
+        #
+        # The `sql-` prefix arrived with Plan 162 Stage R, which put a second
+        # recorder in this directory. `check_sql_execution_coverage.py` globs
+        # this prefix rather than `*.json`, so a record of another kind is not
+        # fed to a reader that would index `["executions"]` on it.
         path.mkdir(parents=True, exist_ok=True)
-        path = path / f"record-{os.getpid()}-{len(_RECORDED)}.json"
+        path = path / f"{_FILENAME_PREFIX}-{os.getpid()}-{len(_RECORDED)}.json"
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

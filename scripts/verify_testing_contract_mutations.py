@@ -569,7 +569,7 @@ MUTATIONS = [
             TEST,
             "CI_INVOCATION_WAIVERS = ()",
             'CI_INVOCATION_WAIVERS = (\n'
-            '    Waiver("tests/integration/ops", gap="G6", owner=162),\n'
+            '    Waiver("tests/integration/ops", gap="G6", owner=180),\n'
             ')',
         ),
         [TEST],
@@ -596,9 +596,9 @@ MUTATIONS = [
         # because no gap will ever have that letter.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G14 | ~~**56 of 76 production `.sql` files",
-            "| G14 | **PLACEHOLDER** | -- | Plan 84 |\n"
-            "| G99 | ~~**56 of 76 production `.sql` files",
+            "| G17 | **One statement filed twice.**",
+            "| G17 | **PLACEHOLDER** | -- | Plan 84 |\n"
+            "| G99 | **One statement filed twice.**",
         ),
         ["docs/TESTING.md"],
         [],
@@ -615,7 +615,7 @@ MUTATIONS = [
         # rather than by intent. Found by Stage AF's anchor rule.
         lambda: _edit(
             TEST,
-            'Waiver(subject, gap="G5", owner=162)\n    for subject in (',
+            'Waiver(subject, gap="G5", owner=180)\n    for subject in (',
             'Waiver(subject, gap="G5", owner=84)\n    for subject in (',
         ),
         [TEST],
@@ -901,7 +901,7 @@ MUTATIONS = [
         "a job runs pytest and uploads no execution record",
         lambda: _edit(
             ".github/workflows/ci.yml",
-            "          name: sql-execution-unit-tests\n",
+            "          name: ci-run-records-unit-tests\n",
             "          name: coverage-unit-tests\n",
         ),
         [".github/workflows/ci.yml"],
@@ -916,6 +916,98 @@ MUTATIONS = [
             "run: python scripts/check_sql_execution_coverage.py --report",
         ),
         [".github/workflows/ci.yml"],
+        [],
+    ),
+    # ----------------------------------------------------------------------
+    # Plan 162 Stage R. The invocation recorder and its gate are two halves of
+    # one instrument, and each of these mutations breaks a half in the
+    # direction that is silent: a recorder nobody registers writes nothing and
+    # reads as every step having selected everything, and a gate that waits on
+    # five of six jobs reports a repository-wide number from a fraction.
+    # ----------------------------------------------------------------------
+    (
+        "tests/rules/test_invocation_recorder.py::test_the_invocation_recorder_is_registered_for_every_pytest_run",
+        "the recorder stops loading, so every step reads as having run everything",
+        lambda: _edit(
+            "pyproject.toml",
+            " -p tests.plugins.invocation_recorder",
+            "",
+        ),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_every_job_that_uploads_a_record_is_read_by_the_invocation_gate",
+        "the invocation gate stops waiting on a job that uploads a record",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "    needs: [changes, lint, docs-tests, unit-tests, dbt-models, "
+            "schema-contracts, service-integration, lake-integration]\n"
+            "    # Same gate expression, same `needs`",
+            "    needs: [changes, lint, unit-tests, dbt-models, "
+            "schema-contracts, service-integration, lake-integration]\n"
+            "    # Same gate expression, same `needs`",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_the_invocation_gate_is_not_merely_reporting",
+        "the invocation gate goes back to only reporting",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "run: python scripts/check_test_invocation_coverage.py",
+            "run: python scripts/check_test_invocation_coverage.py --report",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_a_record_carries_what_was_selected_and_what_was_dropped",
+        "a record stops carrying what the invocation collected and dropped",
+        lambda: _edit(
+            "tests/plugins/invocation_recorder.py",
+            '"deselected": sorted(_deselected),',
+            '"deselected": [],',
+        ),
+        ["tests/plugins/invocation_recorder.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_invocation_recorder.py::test_nothing_is_written_when_no_directory_is_named",
+        "the recorder writes even when no directory is named, and the harness "
+        "puts 176 one-node runs into the record",
+        lambda: _edit(
+            "tests/plugins/invocation_recorder.py",
+            "    if not destination:\n        return",
+            "    if not destination:\n        destination = 'ci-run-records'",
+        ),
+        ["tests/plugins/invocation_recorder.py"],
+        [],
+    ),
+    (
+        "test_the_cold_build_job_declares_no_cache",
+        "the cold-build job gains a layer cache, and its published ceiling "
+        "quietly stops describing a cold build",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "      - run: docker compose build\n",
+            "      - run: docker compose build --build-arg BUILDKIT_INLINE_CACHE=1\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_every_unmarked_declaration_names_a_file_that_exists",
+        "a declaration goes on exempting a path after its file moved away",
+        lambda: _edit(
+            "tests/rules/test_testing_contract.py",
+            '        "tests/integration/dbt/test_analytics_connection_guard.py",\n'
+            "        reason=(",
+            '        "tests/integration/dbt/test_analytics_connection_guard_moved.py",\n'
+            "        reason=(",
+        ),
+        ["tests/rules/test_testing_contract.py"],
         [],
     ),
     # ----------------------------------------------------------------------
@@ -1505,8 +1597,8 @@ MUTATIONS = [
         # stage still claiming the number.
         lambda: _edit(
             "docs/TESTING.md",
-            "| G29 | ",
-            "| G299 | ",
+            "| G31 | ",
+            "| G319 | ",
         ),
         ["docs/TESTING.md"],
         [],
@@ -2138,19 +2230,19 @@ MUTATIONS = [
             '        "ops/sql/cancel_coordination_state.sql == "\n'
             '        "ops/sql/release_deploy_coordination.sql",\n'
             '        gap="G17",\n'
-            "        owner=162,\n"
+            "        owner=180,\n"
             "    ),",
             "    Waiver(\n"
             '        "ops/sql/cancel_coordination_state.sql == "\n'
             '        "ops/sql/release_deploy_coordination.sql",\n'
             '        gap="G17",\n'
-            "        owner=162,\n"
+            "        owner=180,\n"
             "    ),\n"
             "    Waiver(\n"
             '        "ops/sql/cancel_coordination_state.sql == "\n'
             '        "ops/sql/release_deploy_coordination.sql",\n'
             '        gap="G17",\n'
-            "        owner=162,\n"
+            "        owner=180,\n"
             "    ),",
         ),
         ["tests/rules/test_testing_contract.py"],
@@ -2285,11 +2377,11 @@ MUTATIONS = [
         "a plan inside the published build-order window loses the section the "
         "public page renders, and no waiver may cover that window",
         lambda: _edit(
-            "docs/plans/plan_134_archiver_endpoint_failure_contract.md",
+            "docs/plans/plan_180_seam_program.md",
             "## What this plan is for",
             "## What this plan was for",
         ),
-        ["docs/plans/plan_134_archiver_endpoint_failure_contract.md"],
+        ["docs/plans/plan_180_seam_program.md"],
         [],
     ),
     (
@@ -2312,7 +2404,7 @@ MUTATIONS = [
         lambda: _edit(
             "tests/rules/test_planning_docs.py",
             "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
-            "    SectionWaiver(162),\n"
+            "    SectionWaiver(180),\n"
             "    SectionWaiver(64), SectionWaiver(66), SectionWaiver(69), SectionWaiver(70),",
         ),
         ["tests/rules/test_planning_docs.py"],
@@ -2607,11 +2699,11 @@ MUTATIONS = [
         "::TestBuildOrderNumbering::test_the_build_order_is_numbered_one_to_n_without_gaps",
         "the Order column jumps, which reads as a row somebody deleted -- Plan "
         "146 Stage 5's mutation C",
-        lambda: _edit(
-            "docs/PLANS.md",
-            "| 8 | [168](plans/plan_168_generated_knowledge_substrate.md)",
-            "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
-        ),
+        # Anchored on the order number alone: a row 2 exists however the build
+        # order is re-ranked, where a plan's row number moves with every insert.
+        # The build order is the only table with an Order column, so `| 2 | [`
+        # cannot land in the backlog, closeout or superseded tables.
+        lambda: _edit("docs/PLANS.md", "| 2 | [", "| 99 | ["),
         ["docs/PLANS.md"],
         [],
     ),
@@ -2619,15 +2711,13 @@ MUTATIONS = [
         "tests/rules/test_planning_docs.py"
         "::TestPlanLinksNameTheirOwnPlan"
         "::test_every_linked_plan_cell_points_at_that_plans_document",
-        "a Plan cell's link text and target disagree: well-formed markdown, a "
-        "real file, parses as the right plan, and sends the reader to another "
-        "one. Plan 146 Stage 5's mutation E, which neither the dangling-link "
-        "check nor coverage can see",
-        lambda: _edit(
-            "docs/PLANS.md",
-            "| 9 | [179](plans/plan_179_derived_service_call_graph.md)",
-            "| 9 | [179](plans/plan_178_role_grant_scoping.md)",
-        ),
+        "a Plan cell's link text and target disagree: the row shows one number "
+        "and links to another plan's real document, so nothing dangles for the "
+        "dangling-link check to see. Plan 146 Stage 5's mutation E",
+        # Anchored on the order number alone, like mutation C: whichever plan
+        # holds row 2, a leading 1 makes its link text name another number
+        # while the target stays that plan's real document.
+        lambda: _edit("docs/PLANS.md", "| 2 | [", "| 2 | [1"),
         ["docs/PLANS.md"],
         [],
     ),
@@ -2680,7 +2770,7 @@ MUTATIONS = [
         "what made it checkable",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 124 rows, newest first",
+            "— 125 rows, newest first",
             "— every finished plan, newest first",
         ),
         ["docs/PLANS.md"],
@@ -2694,7 +2784,7 @@ MUTATIONS = [
         "second, a number in a sentence nothing read",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 124 rows, newest first",
+            "— 125 rows, newest first",
             "— 123 rows, newest first",
         ),
         ["docs/PLANS.md"],

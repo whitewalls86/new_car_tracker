@@ -321,23 +321,43 @@ _PYTEST_INVOCATION = re.compile(r"(?:^|[\s/])pytest\s+(?P<args>.+)$")
 
 
 @lru_cache(maxsize=None)
-def pytest_steps() -> tuple[tuple[str, str, str], ...]:
-    """``(job, step, argument string)`` for every step that runs pytest.
+def pytest_invocations() -> tuple[tuple[str, str, str, str], ...]:
+    """``(job key, job name, step, argument string)`` per pytest invocation.
 
     ``pip install pytest`` is not an invocation and must not be counted as one,
     which is why the pattern requires arguments that start with a path or a
     flag rather than matching the bare word.
+
+    **The job key is here because a record can only carry the key.** Plan 162
+    Stage R's invocation gate groups records by ``GITHUB_JOB``, which GitHub
+    sets to the key under ``jobs:`` and never to the ``name:``. Deriving that
+    mapping a second time in the gate is the shape this plan keeps deleting, so
+    the parse that already exists grew a column instead and
+    :func:`pytest_steps` became a projection of it.
     """
+    document = yaml.safe_load(_read(WORKFLOW))
     found = []
-    for job, step, lines in workflow_steps():
-        for line in lines:
-            match = _PYTEST_INVOCATION.search(line.strip())
-            if match and not line.strip().startswith(("pip ", "python -m pip")):
-                args = match.group("args")
-                if args.startswith(("tests", "-", "--")):
-                    found.append((job, step, args))
+    for key, job in document["jobs"].items():
+        name = job.get("name", "?")
+        for step in job.get("steps", []) or []:
+            if "run" not in step:
+                continue
+            for line in str(step["run"]).splitlines():
+                match = _PYTEST_INVOCATION.search(line.strip())
+                if match and not line.strip().startswith(("pip ", "python -m pip")):
+                    args = match.group("args")
+                    if args.startswith(("tests", "-", "--")):
+                        found.append((key, name, _step_name(step), args))
     assert found, f"no pytest invocations found in {WORKFLOW}"
     return tuple(found)
+
+
+@lru_cache(maxsize=None)
+def pytest_steps() -> tuple[tuple[str, str, str], ...]:
+    """``(job, step, argument string)`` for every step that runs pytest."""
+    return tuple(
+        (name, step, args) for _, name, step, args in pytest_invocations()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +453,78 @@ DORMANT_SUITES = (
         ),
     ),
 )
+
+
+@dataclass(frozen=True)
+class Unmarked:
+    """One file inside an integration suite that is deliberately a unit test.
+
+    **A third category, and it exists because the first CI run of Plan 162
+    Stage R's invocation gate found one.** :class:`Dormant` says a suite runs
+    *nowhere*; this says a file does not run *here*, and the difference is the
+    whole point -- a declaration in this tuple is exempt from the step that
+    names its directory and is still held to running somewhere, by the gate's
+    second check. So it cannot be used to hide a file that runs nowhere at
+    all, which is the failure ``Dormant`` covers and this must not reopen.
+
+    **Why declaring beat moving**, since Stage F's precedent points the other
+    way and was considered. That stage found ``test_scrape_listings.py``
+    deselected to nothing, tried the marker, and concluded the directory was
+    wrong -- *"the root cause of both wrong answers is one bad default: the
+    directory was treated as ground truth and the file adjusted to match it"*.
+    The answer differs here because the file's subject is its neighbour:
+    ``test_analytics_connection_guard.py`` imports ``.real_build`` and asserts
+    the guard that module installs. Moving it to a unit tree would separate a
+    test from the module it tests in order to satisfy a rule about paths, and
+    ``docs/TESTING.md`` already settles the governing principle it would
+    violate -- *a file's location does not decide whether it runs here, the
+    marker does*. Forcing the move makes location decide.
+
+    ``reason`` carries what a reader needs; there is no ``gap`` field, for the
+    reason :class:`Dormant` gives.
+    """
+
+    subject: str
+    reason: str
+    since: date = MEASURED
+
+
+UNMARKED_BY_DESIGN = (
+    Unmarked(
+        "tests/integration/dbt/test_analytics_connection_guard.py",
+        reason=(
+            "it needs no MinIO, no Postgres and no dbt -- it builds an "
+            "in-memory DuckDB and wraps it in `real_build.ReadOnlyConnection` "
+            "-- so it is deliberately unmarked and runs in the unit job, where "
+            "the property it protects is known before a 118-second job starts. "
+            "It lives here rather than in a unit tree because `real_build.py`, "
+            "the module whose guard it asserts, is its neighbour."
+        ),
+        since=date(2026, 9, 11),
+    ),
+)
+
+
+def test_every_unmarked_declaration_names_a_file_that_exists():
+    """A declaration whose file has moved exempts a path nothing runs.
+
+    The floor every registry in this plan carries, for the reason Stage U's
+    equivalent gives: the entry is a literal naming somebody else's file, and
+    a rename leaves it pointing at nothing. That failure is not dangerous --
+    the moved file loses its exemption and the gate goes loudly red for it --
+    but the stale entry stays behind claiming a decision about a file that no
+    longer exists, which is the drift every declaration here is against.
+    """
+    missing = sorted(
+        f"{entry.subject} (declared {entry.since}: {entry.reason})"
+        for entry in UNMARKED_BY_DESIGN
+        if not (REPO_ROOT / entry.subject).is_file()
+    )
+    assert not missing, (
+        "these UNMARKED_BY_DESIGN entries name a file that is not on disk. "
+        "The file moved or was deleted; delete the entry, or repoint it:\n  "
+        + "\n  ".join(missing)
+    )
 
 
 def test_every_integration_suite_is_invoked_by_a_ci_step():
@@ -1686,7 +1778,7 @@ DUPLICATE_SQL_WAIVERS: tuple[Waiver, ...] = (
         "ops/sql/cancel_coordination_state.sql == "
         "ops/sql/release_deploy_coordination.sql",
         gap="G17",
-        owner=162,
+        owner=180,
     ),
 )
 
@@ -1747,7 +1839,7 @@ def test_no_two_production_sql_files_hold_the_same_statement():
 # 125's Iceberg and Spark tooling, which Gates C and D productionize. They
 # were never fixed and never waived; they were out of frame.
 INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G5", owner=162)
+    Waiver(subject, gap="G5", owner=180)
     for subject in (
         "scripts/audit_adaptive_refresh_features.py:123",
         "scripts/audit_adaptive_refresh_features.py:148",
@@ -1819,7 +1911,7 @@ _EXEMPT_VERBS = _SESSION_SETUP_VERBS | _DDL_VERBS
 # Rule 5c -- no production module keeps a SQL statement in a Python literal.
 # ---------------------------------------------------------------------------
 SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G15", owner=162)
+    Waiver(subject, gap="G15", owner=180)
     for subject in (
         "archiver/processors/delete_packed_source_html.py:304",
         "archiver/processors/pack_bronze_html.py:440",
@@ -2234,7 +2326,7 @@ _ENGINE_DIRECTORIES = frozenset({"duckdb", "airflow"})
 # clothes. They are ``now() - (%s || ' hours')::interval`` now, and they
 # PREPARE.
 TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
-    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 5))
+    Waiver(subject, gap="G19", owner=180, since=date(2026, 9, 5))
     for subject in (
         "tests/sql/integration/sql/test_ops_views/insert_ops_price_observations.sql",
     )
@@ -2253,7 +2345,7 @@ TEST_SQL_TEMPLATE_WAIVERS: tuple[Waiver, ...] = tuple(
     # ``test_no_mutant_failed_to_execute`` exists to catch -- so the schema
     # check ``PREPARE`` would give them is done by execution instead, on every
     # one of the 216.
-    Waiver(subject, gap="G19", owner=162, since=date(2026, 9, 7))
+    Waiver(subject, gap="G19", owner=180, since=date(2026, 9, 7))
     for subject in (
         "tests/sql/integration/dbt/test_constraint_mutation/count_failing_rows.sql",
         "tests/sql/integration/dbt/test_constraint_mutation/count_relation_rows.sql",
@@ -2894,10 +2986,17 @@ def test_the_recorder_instruments_every_client_production_reaches():
 #: alone because that is exactly how the record was lost the first time: the
 #: upload steps existed in some jobs and not others, the gate read what
 #: happened to arrive, and no test noticed.
-RECORD_ENV = "SQL_EXECUTION_RECORD"
+#:
+#: ``RECORD_ENV`` and ``_RECORD_ARTIFACT`` were ``SQL_EXECUTION_RECORD`` and
+#: ``sql-execution-`` until Plan 162 Stage R put a second recorder in the same
+#: directory. One variable and one artifact per job serve both, which is what
+#: keeps the derivation below working for a recorder nobody has written yet:
+#: the owing set is *jobs that run pytest*, and that does not change when the
+#: number of things they record does.
+RECORD_ENV = "CI_RUN_RECORDS"
 RECORDER_MODULE = "tests.plugins.sql_execution_recorder"
 COVERAGE_GATE_SCRIPT = "scripts/check_sql_execution_coverage.py"
-_RECORD_ARTIFACT = "sql-execution-"
+_RECORD_ARTIFACT = "ci-run-records-"
 
 
 def _sql_execution_wiring() -> tuple[set[str], set[str], dict]:
@@ -2975,6 +3074,55 @@ def test_every_job_that_runs_pytest_has_its_record_read_by_the_gate():
     assert f"-p {RECORDER_MODULE}" in config.get("addopts", ""), (
         f"pyproject.toml no longer registers {RECORDER_MODULE} through "
         f"addopts, so every job sets {RECORD_ENV} and none of them records."
+    )
+
+
+#: The one job that must stay cold, and why. Plan 162 Stage R added caching to
+#: the two jobs on the critical path and this is the boundary of that work: a
+#: cache here would not merely be unwanted, it would silently falsify the
+#: number the job publishes.
+COLD_BUILD_JOB = "docker-build"
+
+
+def test_the_cold_build_job_declares_no_cache():
+    """``docker-build`` measures a cold build, so a cache makes it lie.
+
+    The job's own comment states the property this protects: *"a GitHub runner
+    starts with no images at all, so this delta includes pulling every base
+    image"*. It is published as a **ceiling** for the production host's disk
+    headroom, and over-estimating is the safe direction. A warm layer cache
+    moves the number down, which is the unsafe direction, and it does so
+    without failing anything -- the build still succeeds and the footprint is
+    simply smaller than the fleet's.
+
+    **Written because the constraint was stated and nothing held it.** Stage R
+    is the stage that adds caching, so it is the stage that owes the boundary:
+    the next person shortening CI sees four jobs with `cache: pip` and one
+    without, and nothing in the file says the omission is deliberate. That is
+    the shape of every declaration this plan has had to add.
+
+    Three ways in, because there are three, and naming one would leave the
+    others: a cached setup action, ``actions/cache`` itself, and BuildKit's own
+    layer cache flags on the build command.
+    """
+    job = yaml.safe_load(_read(WORKFLOW))["jobs"][COLD_BUILD_JOB]
+    offenders = []
+    for step in job.get("steps", []) or []:
+        name = _step_name(step)
+        if "actions/cache" in str(step.get("uses", "")):
+            offenders.append(f"`{name}` uses actions/cache")
+        for key in (step.get("with", {}) or {}):
+            if "cache" in key:
+                offenders.append(f"`{name}` passes `{key}:` to {step.get('uses')}")
+        for flag in ("--cache-from", "--cache-to", "BUILDKIT_INLINE_CACHE"):
+            if flag in str(step.get("run", "")):
+                offenders.append(f"`{name}` runs a build with {flag}")
+    assert not offenders, (
+        f"{COLD_BUILD_JOB} declares a cache:\n  " + "\n  ".join(offenders) + "\n"
+        "That job exists to measure a cold build, and its footprint is "
+        "published as a ceiling for the production host. A warm cache lowers "
+        "the number without failing anything, which is the one direction a "
+        "ceiling must never move. Cache a job on the critical path instead."
     )
 
 
@@ -5719,15 +5867,31 @@ PERMANENT_PHANTOM_422 = (
 )
 
 PHANTOM_422_WAIVERS: tuple[Waiver, ...] = (
-    # All six take an unconstrained string and nothing else. Four are the dead
-    # admin routes Stage AA resolves; the other two guard their parameter in the
-    # handler the way `/recaps/{slug}` does, and follow whatever that stage
-    # decides for the panel around them.
-    Waiver("GET /admin/searches/{search_key}/edit", "G21", 162, date(2026, 9, 8)),
-    Waiver("POST /admin/searches/{search_key}/toggle", "G21", 162, date(2026, 9, 8)),
-    Waiver("POST /admin/searches/{search_key}/delete", "G21", 162, date(2026, 9, 8)),
-    Waiver("POST /scrape_results/jobs/{job_id}/fetched", "G21", 162, date(2026, 9, 8)),
-    Waiver("GET /project-status/{project}", "G21", 162, date(2026, 9, 8)),
+    # All five take an unconstrained string and nothing else.
+    #
+    # **This comment used to say six, four of them dead admin routes Stage AA
+    # resolves, and all three claims were wrong.** There are five entries, not
+    # six; three are admin routes, not four; and they are live rather than dead
+    # -- `ops/templates/admin/list.html` posts to `edit`, `toggle` and `delete`
+    # from a working panel, and Stage AA edited those very handlers (it set
+    # their 303 default) without removing the phantom 422. So the stated
+    # resolution path completed without resolving them, which is the stale
+    # reason this repository's declaration machinery exists against, sitting
+    # inside the waiver list of the plan that built it. Found 2026-09-11 while
+    # re-homing these waivers, because archiving Plan 162 forced someone to
+    # read them.
+    #
+    # Owner is Plan 180: the declared 422 is a claim about what crosses the
+    # HTTP seam, which is that plan's subject. The alternative considered and
+    # rejected was `PERMANENT_PHANTOM_422` above -- these are not permanent,
+    # because constraining an admin `search_key` and answering 422 for a
+    # malformed one is a defensible end state, unlike `/recaps/{slug}` where
+    # 404 is the right answer for a crawler.
+    Waiver("GET /admin/searches/{search_key}/edit", "G21", 180, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/toggle", "G21", 180, date(2026, 9, 8)),
+    Waiver("POST /admin/searches/{search_key}/delete", "G21", 180, date(2026, 9, 8)),
+    Waiver("POST /scrape_results/jobs/{job_id}/fetched", "G21", 180, date(2026, 9, 8)),
+    Waiver("GET /project-status/{project}", "G21", 180, date(2026, 9, 8)),
 )
 
 
