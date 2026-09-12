@@ -1,0 +1,115 @@
+name: Vendor an image into ghcr
+
+# Plan 183 Stage A. Copies one externally published image into
+# ghcr.io/whitewalls86/, registry to registry, and fails unless the copy's
+# digest equals the source's. Docker Hub withdrew minio/minio on 2026-09-11, and
+# a digest pin into a repository that no longer exists fails exactly as
+# `:latest` did. Only a copy this project owns cannot be withdrawn or retagged
+# by anyone else.
+#
+# Dispatch it against master -- GitHub offers a workflow_dispatch workflow only
+# once it is on the default branch:
+#
+#   gh workflow run vendor-image.yml \
+#     -f source=quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+#     -f destination=ghcr.io/whitewalls86/minio:RELEASE.2025-09-07T16-13-09Z
+#
+# **The source must be named by digest.** A tag can move between the copy and
+# the check, and the check would then compare the copy against a different
+# image than the one copied.
+#
+# **A new package starts private, and a hand-made one refuses this token.** The
+# first copy into a new name succeeds and then fails the no-login check below
+# until the package is made public in its settings. A package created by hand
+# -- MinIO's was, on 2026-09-12 -- also needs this repository granted Write
+# under the package's "Manage Actions access" before GITHUB_TOKEN can push to it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Image to copy, by digest (registry/repository@sha256:...)
+        required: true
+      destination:
+        description: Where it lands, with a tag (ghcr.io/whitewalls86/<name>:<tag>)
+        required: true
+
+permissions:
+  packages: write
+
+jobs:
+  copy:
+    name: Copy, then prove the digest held
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Inputs reach the shell through the environment and are never
+      # interpolated into a script, so an input cannot become a command.
+      SOURCE: ${{ inputs.source }}
+      DESTINATION: ${{ inputs.destination }}
+      # The version that made the first copy by hand, so the record compares
+      # like with like. The checksum is the release's own checksums.txt entry.
+      CRANE_VERSION: v0.22.1
+      CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+    steps:
+      # The source's registry must be named, with a dot in its host: without
+      # one, `minio/minio@sha256:...` reads as Docker Hub by default, and an
+      # implicit Docker Hub is the dependency this workflow exists to remove.
+      - name: Refuse a floating source or a destination we do not own
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE" =~ ^[a-z0-9-]+(\.[a-z0-9-]+)+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::source must be registry.host/repository@sha256:<64 hex>, got: $SOURCE"
+            exit 1
+          fi
+          if [[ ! "$DESTINATION" =~ ^ghcr\.io/whitewalls86/[a-z0-9._/-]+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "::error::destination must be ghcr.io/whitewalls86/<name>:<tag>, got: $DESTINATION"
+            exit 1
+          fi
+
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          curl -fsSL -o crane.tar.gz \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256}  crane.tar.gz" | sha256sum --check
+          tar -xzf crane.tar.gz crane
+          sudo install crane /usr/local/bin/crane
+          crane version
+
+      - name: Log in to ghcr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | crane auth login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # `crane copy` moves a multi-platform index whole and pushes its bytes
+      # unchanged. `docker pull` then `docker push` would not: it fetches one
+      # platform and can rewrite the manifest, and the digest moves with it.
+      - name: Copy every platform
+        run: crane copy "$SOURCE" "$DESTINATION"
+
+      # Logged out first, because that is how CI and the VM pull it. A package
+      # still private fails here even though the copy above succeeded.
+      - name: Fail unless the digest held, read with no login
+        run: |
+          set -euo pipefail
+          crane auth logout ghcr.io
+          expected="${SOURCE##*@}"
+          actual="$(crane digest "$DESTINATION")"
+          platforms="$(crane manifest "$DESTINATION" \
+            | jq -r '[.manifests[]?.platform | "\(.os)/\(.architecture)"] | join(", ")')"
+          echo "source       $expected"
+          echo "destination  $actual"
+          echo "platforms    ${platforms:-single-platform image}"
+          {
+            echo "| Reference | Digest |"
+            echo "|---|---|"
+            echo "| \`$SOURCE\` | \`$expected\` |"
+            echo "| \`$DESTINATION\` | \`$actual\` |"
+            echo
+            echo "Platforms: ${platforms:-single-platform image}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::the copy's digest is not the source's"
+            exit 1
+          fi
