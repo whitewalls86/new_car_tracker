@@ -2,10 +2,10 @@
 
 ## What this plan is for
 
-Three steps of the routine that closes a work cycle — recording how the cycle
-actually went, rolling unfinished work forward, and tidying the branches left
-behind — have no owner today, and each is only ever correct at the close. This
-plan gives all three a home.
+Closing a work cycle means recording how it went, rolling unfinished work
+forward and tidying the branches left behind — each correct only at the close.
+This plan gives each step an owner and a fixed order, and makes the record of
+how a cycle went trustworthy.
 
 ## Status
 
