@@ -138,7 +138,7 @@ rule is independent of the emergency.
 | 1 | [**A**](#stage-a-ghcr-holds-productions-exact-minio-build) | ghcr holds production's exact MinIO build | `next` | CAR-134 |
 | 2 | [**B**](#stage-b-every-reference-pinned-to-it) | Every reference pinned to it | `—` | CAR-134 |
 | 3 | [**C**](#stage-c-production-runs-it-from-ghcr) | Production runs it from ghcr | `—` | CAR-134 |
-| 4 | [**D**](#stage-d-every-external-image-comes-from-a-registry-we-own) | Every external image comes from a registry we own | `—` | CAR-135 |
+| 4 | [**D**](#stage-d-every-external-image-comes-from-a-registry-we-own) | Every external image comes from a registry we own | `done` | CAR-135 |
 
 ### Stage A: ghcr holds production's exact MinIO build
 
@@ -391,3 +391,51 @@ runner, and the gate fails on any image that is neither built here, owned, nor
 ledgered. It also shows, on a real run, that no CI step pulled an image compose
 does not define. It says nothing about the other clauses: the ledger rule, the
 Stage A workflow copying a named image, and the mutation entries.
+
+**The gate's first two runs failed, and that is why it takes a baseline.** The
+pull-request run [`34676153902`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34676153902)
+at `7e7be7c`, and the run started by hand,
+[`34676201481`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34676201481),
+failed Image provenance and nothing else. Both read 16 records and flagged the
+same six images on every runner: GitHub's preloads, listed above. They flagged
+no image a job had pulled. Until `1b32d50` the gate judged everything a runner
+held; now each job takes a baseline straight after checkout, and the gate judges
+only what appeared after it. A ledger of GitHub's images was the alternative.
+It was rejected because every change GitHub made to its runner would turn every
+PR red.
+
+**The rules, shown failing.** Each of the six mutation entries this stage added
+exits 1 against its target test. Each was run through the entry's own lambda on
+the maintainer's laptop, with its file restored afterwards:
+- an extra busybox service in `docker-compose.lakehouse.ci.yml`;
+- `services:` renamed in `docker-compose.lakehouse.local.yml`;
+- an extra busybox stage in `scraper/Dockerfile`;
+- a `FROM` there split across two lines;
+- `lint`'s end record removed from `ci.yml`;
+- `changes`' baseline removed from `ci.yml`.
+
+The harness itself was not run, because it needs a Docker engine.
+
+**The Stage A workflow, on a second image.**
+[`34701942877`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34701942877),
+started from master at `971e9a9` on 2026-09-12, 15:20:40–15:21:03 UTC, with
+source `docker.io/library/redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf`
+(what `redis:7-alpine` resolved to at 15:20 UTC, read with crane 0.22.1) and
+destination `ghcr.io/whitewalls86/redis:7-alpine`. Unlike Stage A's run, this
+one wrote: 80 blobs and the index, 10,213 bytes at `sha256:ff02b58f…eadf`,
+covering `linux/amd64`, `arm/v6`, `arm/v7`, `arm64/v8`, `386`, `ppc64le`,
+`riscv64` and `s390x`. That is the repository's own token pushing to a new
+package for the first time, which Stage A's record left untested. The no-login
+check read `sha256:ff02b58f…` for both source and destination. The package
+pulled with no login on its first run, although the workflow's comment says a
+new package starts private; nothing here changed its visibility. Re-checked from
+the maintainer's laptop with an empty Docker config: index `sha256:ff02b58f…`,
+`linux/amd64` `sha256:1db42ccef148…`, `linux/arm64` `sha256:f8d15882ba10…`.
+Copied only: no reference was converted, so `redis:7-alpine` stays in the ledger
+and production is unchanged.
+
+Every clause of the exit is met. The mutation entries were shown failing by
+hand, through each entry's own lambda, rather than by running the harness.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.
