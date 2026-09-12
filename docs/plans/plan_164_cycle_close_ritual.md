@@ -2,10 +2,10 @@
 
 ## What this plan is for
 
-Three steps of the routine that closes a work cycle — recording how the cycle
-actually went, rolling unfinished work forward, and tidying the branches left
-behind — have no owner today, and each is only ever correct at the close. This
-plan gives all three a home.
+Closing a work cycle means recording how it went, rolling unfinished work
+forward and tidying the branches left behind — each correct only at the close.
+This plan gives each step an owner and a fixed order, and makes the record of
+how a cycle went trustworthy.
 
 ## Status
 
@@ -152,6 +152,51 @@ that reports what *would* roll and changes nothing.
 ### Stage 3 — Git ref and worktree hygiene
 
 The one that needs the most care, because its mistakes are unrecoverable.
+
+### Stage 4 — Mark the seed when it is made, and count it by the mark
+
+Added 2026-09-12, from Cycle 2's reading. **Stage 1's `seeded issues` rule
+cannot work on any ordinary cycle.** It counts an issue as seeded when its
+`createdAt` precedes the cycle's `startsAt`, and `startsAt` is Monday 05:00Z —
+midnight Central. The close order puts `fill-cycle` at step 7, after
+`roll-cycle`, which may not run before the boundary, so a seed is created
+*after* `startsAt` by construction. Cycle 2's seed (CAR-33…CAR-41) was created
+ten hours after it and the rule read zero. Cycle 1 validated only because its
+seed was created during the bootstrap, the day before its cycle began — the one
+cycle that could never recur.
+
+No timestamp can recover the seed. The Linear read available here returns an
+issue's status history but not when it joined a cycle, and a roll-in was also
+created before the start. So the seed is marked by the operation that makes it:
+
+1. **`fill-cycle`, in seed mode, marks every issue it creates twice** — the label
+   `seeded`, and the footer `Seeded YYYY-MM-DD into Cycle N.`, in the shape
+   `ticket-now` already writes (`Added mid-cycle YYYY-MM-DD to Cycle N.`). The
+   label is the exact filter: `list_issues` matches labels precisely, where its
+   description search is fuzzy — a search for a `ticket-now` footer, measured
+   2026-09-12, returned twenty issues across three cycles. The footer carries
+   the cycle number, which a single label cannot. A top-up carries neither
+   mark: work added after the start is added after the start, which is how
+   Cycle 1's column counted it.
+2. **`cycle-measures` derives `seeded issues` from the marks, not from
+   `createdAt`**: issues labelled `seeded` whose footer names this cycle, found
+   by label rather than by membership, so a seeded issue that has since rolled
+   out is still counted where it was seeded. Roll-ins are the previous column's
+   recorded rollover, by identifier; `added after start` is total less seeded
+   less roll-ins.
+3. **An unmarked cycle falls back to reading the seed batch by hand**, as
+   Cycle 2's column did, and the cell says so. That covers every cycle before
+   this stage and Cycle 3 in particular, whose seed (CAR-91…CAR-95, 2026-09-07
+   18:57Z) predates it.
+4. **The `seeded` label is created in the Cartracker team** as part of this
+   stage, once, and named in the report.
+
+**Exit:** `fill-cycle`'s seed mode writes both marks and its top-up mode writes
+neither; `cycle-measures` derives `seeded issues` from the marks, falls back by
+hand on an unmarked cycle and says so in the cell, and reproduces Cycle 2's
+recorded 9 issues / 18 points through that fallback; and Cycle 4's seed on
+2026-09-14 carries both marks, with a provisional read the same day counting
+exactly that set.
 
 ## What the 2026-08-31 cleanup proved Stage 3 must encode
 
@@ -393,6 +438,34 @@ is this skill's first authoritative write.
 
 Public surfaces: no mechanism, name or quantity either surface states was
 changed by this work.
+
+**Check 1 came back 2026-09-12: Cycle 2's measures are recorded, and the reading
+falsified this stage's `seeded issues` rule.** `cycle-measures` ran in final
+mode five days after `endsAt` (2026-09-07T05:00Z) rather than at it, and wrote
+Plan 149's Cycle 2 column from the last entries of the cycle's four history
+arrays: 45 issues / 80 points, 43 / 76 completed, 2 / 4 rolled (CAR-31,
+CAR-79), with *State corrections* and *Duplicate edits* marked partial.
+`seeded issues` came out **wrong, not partial** — the outcome `## The checks`
+named as falsifying. The rule read zero, because the `fill-cycle` batch
+(CAR-33…CAR-41, 9 issues / 18 points) was created 2026-08-31
+15:09:49–15:11:04Z, ten hours after `startsAt`. The recorded figure was
+identified by hand from those timestamps, which fall minutes after commits
+`a30cdb0` and `7412a25` corrected `fill-cycle`; the roll-ins CAR-17 and CAR-31
+were subtracted by identifier from Cycle 1's recorded column. The rolled pair is
+the Cycle 3 members that appear in Stage 2's 2026-09-04 would-roll list, and
+their estimates sum to the 4 rolled points. The read also found CAR-114 filed
+into Cycle 2 on 2026-09-09, after its close — invisible to the arrays, and an
+off-by-one on any membership read.
+
+Recipe: Linear `list_cycles` for team `ee63b26b-de49-4fa5-8617-bbaed7c1227d`
+(Cycle 2 is `9b076307-b601-47a3-8bf5-c9d92465b973`); `list_issues` for Cycles 2
+and 3 with `estimate`, `status`, `createdAt`, `completedAt` and `canceledAt`;
+`get_issue` on CAR-32, CAR-90 and CAR-114. Read from this machine 2026-09-12,
+~17:00Z.
+
+For success criterion 2: the measures are recorded from a closed cycle with
+partials marked, but only because the seed was corrected by hand. Stage 4
+replaces the rule.
 
 ### Stage 2 — 2026-09-04
 
