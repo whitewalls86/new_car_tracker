@@ -181,7 +181,7 @@ unowned image by a mutation entry in `scripts/verify_testing_contract_mutations.
 
 ### Stage A — ghcr holds production's exact MinIO build
 
-**Issue:** CAR-134 · **Still owed:** the linked workflow run
+**Issue:** CAR-134 · **Workflow run:** [`34669846795`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34669846795)
 
 Copied by hand on 2026-09-12 at 02:23 UTC, from the maintainer's laptop with
 crane 0.22.1, signed in to ghcr with the maintainer's `gh` token (`write:packages`
@@ -216,6 +216,22 @@ unblock CI, not by the `workflow_dispatch` workflow the design names, so there
 is no workflow run to link. That workflow is still to be built. Its first run
 copies the same bytes again, which changes nothing in the registry, and that
 run is the one this entry will link.
+
+**The workflow run.**
+[`34669846795`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34669846795),
+started from master at `971e9a9` on 2026-09-12, 03:14:54–03:15:04 UTC, with the
+source and destination above. crane 0.22.1 installed and matched its release
+checksum (`crane.tar.gz: OK`). `crane copy` reported `existing manifest:
+RELEASE.2025-09-07T16-13-09Z@sha256:14cea493…` and pushed nothing, because the
+hand copy had already put those bytes at that tag. Logged out, the check read
+`sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e` for
+both source and destination, platforms `linux/arm64, linux/amd64, linux/ppc64le`.
+
+So this run re-checks the copy rather than producing it: the copy it links was
+made by hand, and the run shows the workflow reaches the same digest from the
+same source. Because nothing was written, the Write access granted under the
+package's Actions access is still untested. The first copy of a new image, in
+Stage D, will be the first real test of the push path.
 
 ### Stage B — every reference pinned to it
 
