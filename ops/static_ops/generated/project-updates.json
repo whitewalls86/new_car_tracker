@@ -3,9 +3,19 @@
   "as_of": "2026-08-30",
   "planned": [
     {
+      "plan": "183",
+      "title": "The MinIO image, held where we control it",
+      "order": 1,
+      "priority": 95,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Keeps this project's object store running after its vendor withdrew the public MinIO image: the exact build production already runs, copied into this repository's own container registry and pinned by digest, so production and CI pull an image nothing outside the project can remove.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_183_minio_image_self_hosted.md"
+    },
+    {
       "plan": "180",
       "title": "The seam program",
-      "order": 1,
+      "order": 2,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
@@ -15,7 +25,7 @@
     {
       "plan": "181",
       "title": "The rule readers are code",
-      "order": 2,
+      "order": 3,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
@@ -25,22 +35,12 @@
     {
       "plan": "182",
       "title": "What a unit owes itself",
-      "order": 3,
+      "order": 4,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
       "summary": "Gives every unit of code a stated obligation to itself: its branches are exercised, the outcomes it declares are the ones it produces, and the analysers that check everything else are measured code. The second frame beside Plan 180's seams, for what no boundary can see.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_182_what_a_unit_owes_itself.md"
-    },
-    {
-      "plan": "134",
-      "title": "Archiver endpoint failure contract",
-      "order": 4,
-      "priority": 88,
-      "effort": "S",
-      "state": "planned",
-      "summary": "The archiver's HTTP endpoints return a summary object instead of raising, so a partially failed job still answers success and pages nobody. Converts each endpoint to a real failure signal, one endpoint per deploy, in ascending order of impact.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_134_archiver_endpoint_failure_contract.md"
     }
   ],
   "completed": [
