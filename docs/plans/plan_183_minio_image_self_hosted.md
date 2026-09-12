@@ -347,3 +347,47 @@ unfit in the long term: the community image is frozen at 2025-09-07 and gets no
 security fixes. That is [Plan 184](plan_184_replace_minio_with_garage.md)'s case.
 
 The exit is met.
+
+### Stage D — every external image comes from a registry we own
+
+**Issue:** CAR-135 · **Commits:** `7e7be7c`, `1b32d50` · **Workflow run:** [`34700848629`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34700848629)
+
+**The image provenance gate's first green run.** The pull-request run on #422 at
+`1b32d50`, 2026-09-12, 14:59:01–15:03:38 UTC. Every job passed. Documentation
+tests was skipped by the path filter, so it owed no record. The gate read 16
+records, one for every other job, and printed `ok: 16 record(s), every pulled
+image is one this repository names`.
+
+What each runner held, as the gate printed it:
+
+| Job | Held | There before the job | Built here | Pulled |
+|---|---:|---:|---:|---|
+| `changes`, `lint`, `git-ref-hygiene`, `service-contracts`, `unit-tests`, `sql-execution-coverage`, `test-invocation-coverage` | 6 each | 6 | 0 | none |
+| `docker-build` | 14 | 6 | 8 | none |
+| `promtail-config` | 7 | 6 | 0 | `grafana/promtail:3.5.8` |
+| `flaresolverr-contract` | 7 | 6 | 0 | `ghcr.io/flaresolverr/flaresolverr:v3.4.6` |
+| `container-health-contract` | 8 | 6 | 0 | `tecnativa/docker-socket-proxy:0.3.0`, `redis:7-alpine` |
+| `service-integration` | 8 | 6 | 0 | `postgres:16`, `flyway/flyway:10-alpine` |
+| `dbt-models`, `schema-contracts`, `snapshot-dbt`, `lake-integration` | 9 each | 6 | 0 | `ghcr.io/whitewalls86/minio@sha256:14cea493…`, `postgres:16`, `flyway/flyway:10-alpine` |
+
+The six images already on every runner are GitHub's own, preloaded on
+`ubuntu-24.04` 20260907.300.1: `ghcr.io/github/github-mcp-server`,
+`ghcr.io/github/gh-aw-mcpg`, `ghcr.io/github/gh-aw-firewall/{agent,api-proxy,squid}`
+and `ghcr.io/dependabot/dependabot-updater-core`, all `:latest`. They were
+reported and not judged. Every image a job pulled is one compose defines. The
+MinIO pulls are the owned, digest-pinned copy; the other seven references are
+ledgered. Base images pulled during `docker compose build` did not appear on the
+runner at all. The rule covers them; this gate does not see them.
+
+Read with:
+
+    gh run view 34700848629 --job <Image provenance job id> --log
+
+The per-job lines are the gate's own output, from
+`scripts/check_ci_image_provenance.py`.
+
+This meets the exit's runtime clause: every CI job records the images on its
+runner, and the gate fails on any image that is neither built here, owned, nor
+ledgered. It also shows, on a real run, that no CI step pulled an image compose
+does not define. It says nothing about the other clauses: the ledger rule, the
+Stage A workflow copying a named image, and the mutation entries.
