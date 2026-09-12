@@ -170,8 +170,12 @@ Added mid-cycle YYYY-MM-DD to Cycle N.
 ```
 
 The trailing line is the stamp. Use it **only** for a genuine mid-cycle
-insertion; for pre-cycle seeding write `Seeded YYYY-MM-DD before Cycle N
-opened.` and for no cycle omit it entirely.
+insertion, and for no cycle omit it entirely.
+
+**Never stamp a seed.** The seed has its own marks — the `seeded` label and
+`Seeded YYYY-MM-DD into Cycle N.` — and only `fill-cycle`'s seed mode writes
+them, because `cycle-measures` counts the seed by those marks. An issue this
+skill files is added work, whenever it is filed, and carries neither.
 
 Do not paste the plan's problem statement, architecture, rejected alternatives,
 runbook or evidence into the issue. Plan 149 is explicit: if the issue needs

@@ -320,9 +320,10 @@ the next reader does not have to check.
 
 ## The checks
 
-Both outstanding success criteria need one real cycle close, and Cycle 2 is the
-first that can supply one. Nothing here owes code: all four stages closed
-2026-09-04 with their `## Record` entries and CAR-41 is `Done`.
+Nothing here owes code. Stages 0–3 closed 2026-09-04 with their `## Record`
+entries and CAR-41 is `Done`; Stage 4's skill changes landed under CAR-150.
+Checks 1 and 2 were set when the plan first entered closeout; check 3 is the one
+that removes the row.
 
 **1 — Cycle 2's measures, recorded from a closed cycle.** Success criterion 2.
 
@@ -352,6 +353,24 @@ first that can supply one. Nothing here owes code: all four stages closed
 - **What would falsify it:** a step turning out to be in the wrong place. The
   order was derived from two rules rather than from having run it, and the first
   real close is the only thing that tests that derivation.
+
+**3 — Cycle 4's seed carries the marks, and is counted by them.** Stage 4's
+exit.
+
+- **Deployed:** `fill-cycle` marks its seed, `cycle-measures` counts the seed by
+  the marks, and `ticket-now` no longer writes a seed stamp, all under CAR-150;
+  the `seeded` label, created in the Cartracker team 2026-09-12.
+- **Watched:** `list_issues(team: "Cartracker", label: "seeded")` after
+  `fill-cycle` seeds Cycle 4 — every issue that run created, and no other,
+  carries the label and `Seeded 2026-09-14 into Cycle 4.` — and `cycle-measures`
+  in provisional mode the same day, whose `seeded issues` counts exactly that
+  set.
+- **Due:** 2026-09-14, the day Cycle 4 is seeded.
+- **Receives the result:** `### Stage 4` in `## Record`, written when the stage
+  closes.
+- **What would falsify it:** a seeded issue missing either mark, a top-up or
+  `ticket-now` issue carrying one, or the provisional count differing from the
+  seed run's own list.
 
 This plan's check 1 also feeds [Plan 149](plan_149_linear_execution_layer.md)'s
 own 2026-09-15 gate, which requires the Cycle measures table to hold real
