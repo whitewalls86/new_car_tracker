@@ -2535,8 +2535,10 @@ MUTATIONS = [
         "longer a day",
         lambda: _edit(
             "docs/PLANS.md",
-            "[142](plans/plan_142_planned_host_maintenance.md) | **2026-09-30**",
-            "[142](plans/plan_142_planned_host_maintenance.md) | **end of September**",
+            # Anchored on the table's header, which no plan moving changes.
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n",
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n"
+            "| **0** | **end of September** | a row whose day does not parse |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2561,9 +2563,10 @@ MUTATIONS = [
         "a backlog row names no trigger, and a row with no trigger is a wish",
         lambda: _edit(
             "docs/PLANS.md",
-            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
-            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M | -- |\n"
-            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
+            # Anchored on the table's header, which no plan moving changes.
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n",
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n"
+            "| **0** | A row with no trigger | 1 | S | -- |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2575,8 +2578,11 @@ MUTATIONS = [
         "tell when the row becomes workable",
         lambda: _edit(
             "docs/PLANS.md",
-            "| **N** | Plan 125 Gate D | 76 | L |",
-            "| **N** | once the dust settles | 76 | L |",
+            # Anchored on the table's header, which no plan moving changes.
+            "|---:|---|---|---|---|---|---|---|---|\n",
+            "|---:|---|---|---|---|---|---|---|---|\n"
+            "| 0 | **0** | A vague wait | Nothing yet | **N** | once the dust settles "
+            "| 1 | S | -- |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2587,8 +2593,11 @@ MUTATIONS = [
         "a typo'd plan number reads as a real dependency and blocks a row forever",
         lambda: _edit(
             "docs/PLANS.md",
-            "| **N** | Plan 112 | 74 | M |",
-            "| **N** | Plan 912 | 74 | M |",
+            # Anchored on the table's header, which no plan moving changes.
+            "|---:|---|---|---|---|---|---|---|---|\n",
+            "|---:|---|---|---|---|---|---|---|---|\n"
+            "| 0 | **0** | A typo'd blocker | Nothing yet | **N** | Plan 912 "
+            "| 1 | S | -- |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2625,8 +2634,10 @@ MUTATIONS = [
         "a link under docs/ stops resolving, which is how Plan 146 started",
         lambda: _edit(
             "docs/PLANS.md",
-            "(plans/plan_66_sql_injection.md)",
-            "(plans/plan_66_sql_injection_audit.md)",
+            # A row in the superseded table, which only grows -- never a
+            # live row, whose link leaves when its plan moves.
+            "(plans/plan_73_scraper_refactor.md)",
+            "(plans/plan_73_scraper_refactor_moved.md)",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2790,8 +2801,10 @@ MUTATIONS = [
         "what made it checkable",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 125 rows, newest first",
-            "— every finished plan, newest first",
+            # The count's own digits are never part of the anchor: archiving
+            # changes them, and an anchor on them broke on 2026-09-12.
+            " rows, newest first",
+            " finished plans, newest first",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2804,8 +2817,10 @@ MUTATIONS = [
         "second, a number in a sentence nothing read",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 125 rows, newest first",
-            "— 123 rows, newest first",
+            # A digit appended to whatever the count is, so the stated number
+            # is wrong without this entry having to know what it was.
+            " rows, newest first",
+            "0 rows, newest first",
         ),
         ["docs/PLANS.md"],
         [],
@@ -3673,6 +3688,24 @@ MUTATIONS = [
         "ownership rule",
         lambda: _edit("scraper/Dockerfile", "FROM ", "FROM \\\n    "),
         ["scraper/Dockerfile"],
+        [],
+    ),
+    (
+        "tests/rules/test_testing_contract.py"
+        "::test_no_mutation_anchors_on_a_live_planning_row",
+        "a mutation anchors on the archive's row count again, so the next "
+        "archive breaks it -- the 2026-09-12 failure",
+        # Edits this file: the count entry's anchor gains a digit. `6 rows,
+        # newest first` still matches the index once, inside `126 rows`, so
+        # the anchor rule stays green and only the guard can see it.
+        lambda: _edit(
+            "scripts/verify_testing_contract_mutations.py",
+            '            " rows, newest first",\n'
+            '            " finished plans, newest first",',
+            '            "6 rows, newest first",\n'
+            '            " finished plans, newest first",',
+        ),
+        ["scripts/verify_testing_contract_mutations.py"],
         [],
     ),
     (
