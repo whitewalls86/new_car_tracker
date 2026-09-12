@@ -2607,11 +2607,11 @@ MUTATIONS = [
         "::TestBuildOrderNumbering::test_the_build_order_is_numbered_one_to_n_without_gaps",
         "the Order column jumps, which reads as a row somebody deleted -- Plan "
         "146 Stage 5's mutation C",
-        lambda: _edit(
-            "docs/PLANS.md",
-            "| 8 | [168](plans/plan_168_generated_knowledge_substrate.md)",
-            "| 99 | [168](plans/plan_168_generated_knowledge_substrate.md)",
-        ),
+        # Anchored on the order number alone: a row 2 exists however the build
+        # order is re-ranked, where a plan's row number moves with every insert.
+        # The build order is the only table with an Order column, so `| 2 | [`
+        # cannot land in the backlog, closeout or superseded tables.
+        lambda: _edit("docs/PLANS.md", "| 2 | [", "| 99 | ["),
         ["docs/PLANS.md"],
         [],
     ),
@@ -2619,15 +2619,13 @@ MUTATIONS = [
         "tests/rules/test_planning_docs.py"
         "::TestPlanLinksNameTheirOwnPlan"
         "::test_every_linked_plan_cell_points_at_that_plans_document",
-        "a Plan cell's link text and target disagree: well-formed markdown, a "
-        "real file, parses as the right plan, and sends the reader to another "
-        "one. Plan 146 Stage 5's mutation E, which neither the dangling-link "
-        "check nor coverage can see",
-        lambda: _edit(
-            "docs/PLANS.md",
-            "| 9 | [179](plans/plan_179_derived_service_call_graph.md)",
-            "| 9 | [179](plans/plan_178_role_grant_scoping.md)",
-        ),
+        "a Plan cell's link text and target disagree: the row shows one number "
+        "and links to another plan's real document, so nothing dangles for the "
+        "dangling-link check to see. Plan 146 Stage 5's mutation E",
+        # Anchored on the order number alone, like mutation C: whichever plan
+        # holds row 2, a leading 1 makes its link text name another number
+        # while the target stays that plan's real document.
+        lambda: _edit("docs/PLANS.md", "| 2 | [", "| 2 | [1"),
         ["docs/PLANS.md"],
         [],
     ),
