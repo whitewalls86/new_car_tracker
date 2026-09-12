@@ -240,18 +240,10 @@ class TestFlushSilverRunEndpoint:
         resp = mock_archiver_client.post("/flush/silver/run")
         assert resp.json()["flushed"] == 0
 
-    def test_error_propagated_in_response(self, mock_archiver_client, mocker):
-        mocker.patch(
-            "archiver.app._flush_silver_observations",
-            return_value=produced_by(
-                "_flush_silver_observations",
-                flushed=0,
-                error='minio unreachable',
-            ),
-        )
-        resp = mock_archiver_client.post("/flush/silver/run")
-        assert resp.status_code == 200
-        assert resp.json()["error"] == "minio unreachable"
+    # A run that sets `error` is no longer a 200 with the error in the body:
+    # Plan 134 Stage C deploy 3 made it a 500 whose detail carries the summary.
+    # That case is TestFlushSilverSignalsFailure's, so it is not duplicated
+    # here asserting the status it used to have.
 
 
 # ---------------------------------------------------------------------------
@@ -1384,71 +1376,13 @@ class TestCompactFailureReason:
         assert reason and "connection refused" in reason
 
 
-class TestTheUnflippedEndpointsAreStillWarningOnly:
-    """``/flush/silver/run`` still returns 200. Stage C in progress, not an oversight.
-
-    Stage C flips one endpoint per deploy, 48 hours apart. Each deploy moves
-    one case out of this class and into ``TestCompactSignalsFailure`` and its
-    successors — deliberately, one at a time. Compaction went on deploy 1 and
-    the staging flush on deploy 2; the silver flush is the last one here, and
-    the ``would fail`` window is now read out of it alone.
-    """
-
-    def test_a_failed_silver_flush_warns_and_returns_200(
-        self, mock_archiver_client, mocker, caplog
-    ):
-        fake = {"flushed": 0, "error": "XMinioStorageFull"}
-        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
-
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            resp = mock_archiver_client.post("/flush/silver/run")
-
-        assert resp.status_code == 200
-        assert resp.json() == fake
-        assert "flush_silver: would fail" in caplog.text
-        assert "XMinioStorageFull" in caplog.text
-
-    def test_every_stage_1_warning_carries_the_window_query_string(
-        self, mock_archiver_client, mocker, caplog
-    ):
-        """The seven-day gate is read from
-
-            {service="archiver", level="WARNING"} |~ "would fail"
-
-        so the literal is part of the contract, not a phrasing choice.
-        """
-        mocker.patch(
-            "archiver.app._flush_silver_observations",
-            return_value=produced_by("_flush_silver_observations", flushed=0, error='boom'),
-        )
-
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            mock_archiver_client.post("/flush/silver/run")
-
-        assert [r for r in caplog.records if "would fail" in r.getMessage()]
-
-    def test_a_clean_run_warns_about_nothing(
-        self, mock_archiver_client, mocker, caplog
-    ):
-        # A quiet hour must be silent, or the window's own signal is noise.
-        mocker.patch(
-            "archiver.app._flush_silver_observations",
-            return_value=produced_by("_flush_silver_observations", flushed=0, error=None),
-        )
-
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            resp = mock_archiver_client.post("/flush/silver/run")
-
-        assert resp.status_code == 200
-        assert "would fail" not in caplog.text
-
-
 class TestCompactSignalsFailure:
     """Plan 134 Stage C, deploy 1 of 3: ``/compact/silver/run`` raises.
 
     The mirror of ``TestPackEndpointsSignalFailure`` for the first of the three
     endpoints Stage C flips. The staging flush followed on deploy 2, in
-    ``TestFlushStagingSignalsFailure``; the silver flush arrives on deploy 3.
+    ``TestFlushStagingSignalsFailure``, and the silver flush on deploy 3, in
+    ``TestFlushSilverSignalsFailure``.
     """
 
     def test_failed_partitions_return_500_carrying_the_summary(
@@ -1517,34 +1451,6 @@ class TestCompactSignalsFailure:
 
         assert resp.status_code == 200
         assert resp.json() == fake
-
-    def test_compaction_no_longer_emits_the_window_warning(
-        self, mock_archiver_client, mocker, caplog
-    ):
-        """This endpoint has left ``|~ "would fail"``. The flushes have not.
-
-        The observation query is still live for the two unflipped endpoints,
-        so a stray ``would fail`` from compaction would put a flipped endpoint
-        back into a window that is meant to be reading only the others.
-        """
-        mocker.patch(
-            "archiver.app._compact_silver",
-            return_value=produced_by(
-                "_compact_silver",
-                scanned=1,
-                compacted=0,
-                incremental=0,
-                skipped=0,
-                failed=1,
-                error=None,
-                partitions=[],
-            ),
-        )
-
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            mock_archiver_client.post("/compact/silver/run")
-
-        assert "would fail" not in caplog.text
 
 
 class TestFlushStagingSignalsFailure:
@@ -1640,26 +1546,57 @@ class TestFlushStagingSignalsFailure:
         assert resp.status_code == 200
         assert resp.json() == fake
 
-    def test_the_staging_flush_no_longer_emits_the_window_warning(
+
+class TestFlushSilverSignalsFailure:
+    """Plan 134 Stage C, deploy 3 of 3: ``/flush/silver/run`` raises.
+
+    The last of the three. ``error`` is the whole predicate here, so the case
+    that matters is the one Stage A's Incident 1 was: PutObject refused with
+    XMinioStorageFull, nothing landed, and the DAG went green every hour for
+    five days while dbt built on stale silver.
+    """
+
+    def test_a_failed_flush_returns_500_carrying_the_summary(
         self, mock_archiver_client, mocker, caplog
     ):
-        """This endpoint has left ``|~ "would fail"``. The silver flush has not.
-
-        Deploy 3 is still read out of that window, and it is now the only
-        endpoint left in it -- so a stray ``would fail`` from here would not
-        merely add noise, it would be the whole signal.
-        """
-        mocker.patch(
-            "archiver.app._flush_staging_events",
-            return_value=produced_by(
-                "_flush_staging_events",
-                total_flushed=0,
-                tables=[],
-                error='db down',
-            ),
+        # Incident 1's shape. A 200 until this deploy.
+        storage_full = (
+            "[Errno 5] An error occurred (XMinioStorageFull) when calling the "
+            "PutObject operation"
         )
+        fake = produced_by(
+            "_flush_silver_observations", flushed=0, error=storage_full
+        )
+        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
 
-        with caplog.at_level(logging.WARNING, logger="archiver"):
-            mock_archiver_client.post("/flush/staging/run")
+        with caplog.at_level(logging.ERROR, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/silver/run")
 
-        assert "would fail" not in caplog.text
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        # The whole summary survives, so the page can quote the cause.
+        assert detail["flushed"] == 0
+        assert detail["error"] == storage_full
+        assert "XMinioStorageFull" in detail["failure_reason"]
+        assert "flush_silver: run failed" in caplog.text
+
+    def test_a_clean_run_is_unchanged(self, mock_archiver_client, mocker):
+        fake = produced_by("_flush_silver_observations", flushed=4210, error=None)
+        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
+
+        resp = mock_archiver_client.post("/flush/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "failure_reason" not in resp.json()
+
+    def test_a_quiet_hour_is_not_a_failure(self, mock_archiver_client, mocker):
+        # Nothing staged. Hourly, and upstream of the dbt build, so failing on
+        # this would skip every quiet hour's build and page all night.
+        fake = produced_by("_flush_silver_observations", flushed=0, error=None)
+        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
+
+        resp = mock_archiver_client.post("/flush/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
