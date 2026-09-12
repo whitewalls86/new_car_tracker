@@ -61,7 +61,9 @@ Stage 1's points budget and two skills before anyone caught it.
    `endsAt` to now and state which mode you are in before anything else.**
 2. **Its issues.** `list_issues` with that cycle, requesting at least `estimate`,
    `status`, `statusType`, `createdAt`, `completedAt`, `canceledAt`.
-3. **The table as it stands**, in Plan 149's `## Cycle measures`, so a proposal
+3. **The seed.** `list_issues` with `label: "seeded"` and **no** cycle filter,
+   requesting `description` and `estimate` — see *Counting the seed*.
+4. **The table as it stands**, in Plan 149's `## Cycle measures`, so a proposal
    lands in the right column and does not overwrite a neighbour.
 
 ## The derivations, and what each is worth
@@ -89,21 +91,9 @@ snapshot is stale. Neither source is right in both modes.
 | completed points | `completedScopeHistory[-1]` | 44 ✔ |
 | rollover issues | `issueCountHistory[-1] − completedIssueCountHistory[-1]` | 2 ✔ |
 | rollover points | `scopeHistory[-1] − completedScopeHistory[-1]` | 4 ✔ |
-| seeded issues | issues whose `createdAt` < the cycle's `startsAt`, **less the previous cycle's rollover** | 8 ✔ |
-| added after start | total − seeded | 17 ✔ |
-
-**`seeded issues` is exact only for the first cycle, and Cycle 1 is the first
-cycle** — which is why it validated cleanly and why that validation proves less
-than it looks. A cycle's `startsAt` is the previous cycle's `endsAt`, so an
-issue rolled *in* was also created before this cycle started and `createdAt`
-cannot tell it from a seed. Cycle 2 carries two: CAR-17 and CAR-31, both created
-during Cycle 1 and moved by the platform.
-
-So subtract the previous cycle's recorded rollover, which `roll-cycle` reports
-and the previous column of this very table records. **If that figure was never
-recorded, mark `seeded issues` partial** rather than counting roll-ins as
-seeds — the error inflates seeding and deflates "added after start", which is
-the measure that turned the eight-issue cap into a points budget.
+| seeded issues | issues labelled `seeded` whose footer names this cycle — *Counting the seed*, below; an unmarked cycle falls back to the seed batch, by hand | 8 ✔ by hand |
+| rolled in | the previous column's recorded rollover, by identifier | 0 |
+| added after start | total − seeded − rolled in | 17 ✔ |
 
 **Eight of nine reproduce exactly. The ninth is instructive and is not a bug.**
 Seeded *points* derives 16 against the 17 recorded, because CAR-6 carries no
@@ -111,6 +101,73 @@ estimate at all: it was created 2026-08-24 and Fibonacci estimation was not
 enabled on the team until 2026-08-25. An unestimated issue in the denominator is
 worth surfacing by name rather than rounding away — say which issue and why,
 exactly as this paragraph does.
+
+### Counting the seed
+
+**The seed is found by the mark `fill-cycle` leaves, not by a timestamp.** In
+seed mode `fill-cycle` labels every issue it creates `seeded` and ends its
+description with `Seeded YYYY-MM-DD into Cycle N.`; a top-up and `ticket-now`
+write neither. So:
+
+```
+list_issues(team: "Cartracker", label: "seeded")    -> no cycle filter
+  keep the issues whose footer reads "into Cycle N."
+  seeded issues = their count; seeded points = the sum of their estimates
+```
+
+**No cycle filter, on purpose.** A seeded issue that has since rolled out
+answers as the next cycle's, and it was still seeded into this one: the footer
+says where it was seeded, `cycleId` only where it is now. An issue carrying the
+label without the footer, or the footer without the label, is an anomaly —
+report it by identifier rather than deciding which mark to believe.
+
+**Why not a timestamp.** The rule this replaced counted an issue as seeded when
+its `createdAt` preceded the cycle's `startsAt`, and that cannot work on any
+ordinary cycle. `startsAt` is Monday 05:00Z, and `fill-cycle` is step 7 of the
+close order, after `roll-cycle`, which may not run before the boundary — so a
+seed is created *after* `startsAt` by construction. Cycle 2's was created ten
+hours after it and the rule read zero. Cycle 1 validated only because its seed
+was made during the bootstrap, the day before its cycle began. No other
+timestamp recovers it: the Linear read available here returns an issue's status
+history, not when it joined a cycle.
+
+**Roll-ins are counted apart from the seed**, as the previous column's recorded
+rollover, by identifier — Cycle 2 carries two, CAR-17 and CAR-31. **If that
+figure was never recorded, mark `added after start` partial** rather than
+counting roll-ins as added work: that is the measure that turned the eight-issue
+cap into a points budget, and the error would inflate it.
+
+**An unmarked cycle falls back to the seed batch, identified by hand, and the
+cell says so.** Every cycle before Plan 164 Stage 4 is unmarked — Cycle 3
+included, whose seed, CAR-91…CAR-95, was created 2026-09-07 18:57Z, before the
+marks existed. Read `createdAt` and `project` across this cycle's membership
+*and the next cycle's*, where a rolled seed now answers, and find the batch.
+
+**A tight batch is not enough, because `fill-cycle` is not the only skill that
+makes one.** `plan-start` creates a plan's whole issue set in a single run, and
+Cycle 2 holds three batches from its first afternoon:
+
+| Batch | Created 2026-08-31 | Projects | What it is |
+|---|---|---|---|
+| CAR-33…CAR-41 | 15:09:49–15:11:04Z | six — Plans 138, 139, 142, 161, 162, 164 | the seed |
+| CAR-45…CAR-54 | 20:39:58–20:41:45Z | one — Plan 162 | `plan-start` |
+| CAR-56…CAR-59 | 03:52:29–03:53:17Z, 09-01 | one — Plan 138 | `plan-start` |
+
+The seed is the batch that **spans the build order**: several plans, because
+`fill-cycle` composes from five categories across the top of `PLANS.md`. A
+batch confined to one project is a plan being started, which is added work. Name
+the seed's identifiers, window and project count in the cell, and write that it
+was identified by hand because the cycle predates the seed marks. If no batch
+spans several plans, or two do, the cell opens `**Partial —**`: a guessed seed
+is a total that is not one.
+
+**The fallback reproduces Cycle 2's recorded column**, read 2026-09-12: the
+seed batch is 9 issues whose estimates sum to 18; rolled in 2, CAR-17 and CAR-31
+from Cycle 1's column; added after start 45 − 9 − 2 = 34 — all three as Plan
+149 records them.
+
+Never label an old issue `seeded` to bring its cycle under the rule. That
+rewrites the record the measure reads.
 
 ### The measures that decay after the close, and why you run this at the close
 
@@ -120,15 +177,16 @@ CAR-31 are in Cycle 2 now and answer as Cycle 2's.
 
 So on a **closed** cycle any measure computed from current membership is
 reading a set the platform has since edited. The history arrays are immune,
-which is why final mode reads them. `seeded issues` cannot be — it needs each
-issue's `createdAt`, which only membership carries — and that is the measure
-that degrades the longer you wait.
+which is why final mode reads them. So is a marked seed — it is found by label
+and footer, never by membership. What decays is the **fallback**: on an
+unmarked cycle the seed batch is read from membership, and it degrades the
+longer you wait.
 
 The consequences, stated rather than worked around:
 
 - Run this **at the close**. The order exists for this reason.
-- Run it late and `seeded issues` and everything derived from it are **partial**
-  — they cannot see an issue that has since left. Say so in the cell.
+- Run it late on an unmarked cycle and the fallback can miss a seed that has
+  left for a cycle you did not read. Say so in the cell.
 - Never reconcile a history number against a membership count and "fix" the
   history. The history is what the cycle was; membership is what it is now.
 

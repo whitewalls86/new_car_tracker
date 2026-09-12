@@ -47,14 +47,19 @@ The issue count now falls out of the budget rather than driving it.
 
 | Mode | When | Target |
 |---|---|---|
-| **seed** | the cycle is empty or nearly so | compose up to the budget |
-| **top-up** | the cycle is running and has room | fill only the measured headroom |
+| **seed** | the cycle has not been seeded — it holds nothing, or only rolled-in work | compose up to the budget |
+| **top-up** | the cycle has been seeded and has room | fill only the measured headroom |
 
-Both read the build order fresh. Both propose before writing. The only
-difference is how many points you are filling.
+Both read the build order fresh. Both propose before writing. They differ in
+how many points you are filling, and in one write: **a seed is marked, and a
+top-up is not** — see *Marking the seed*.
 
-If the user does not say which, sum the target cycle's estimates and pick: an
-empty cycle is a seed, a partly-full one is a top-up. Say which you chose.
+If the user does not say which, find out whether the cycle has been seeded:
+`list_issues(team: "Cartracker", label: "seeded")`, and look for a footer naming
+the target cycle. None is a seed; any is a top-up, because a cycle is seeded
+once. Do not decide it from the point total: the close order runs `roll-cycle`
+before this skill, so a seed routinely lands in a cycle already holding the
+previous cycle's rollover. Say which you chose.
 
 ## The budget is not a velocity promise
 
@@ -236,7 +241,7 @@ the cycle is visible — five rows all reading "next unblocked slice" is a cycle
 with no soak-aware sequencing, and the user should be able to see that before
 agreeing.
 
-State the target cycle, the current point total, the headroom, **any projects
+State the mode, the target cycle, the current point total, the headroom, **any projects
 that do not yet exist and would be created**, and what you are leaving out and
 why. Then wait.
 
@@ -298,11 +303,47 @@ rule in both places: **a plan that gets an issue gets a project.** Neither skill
 creates one for a plan it is not filing against, and neither creates one the
 user has not seen first.
 
+## Marking the seed
+
+**In seed mode, every issue you create carries two marks.** Both, on every
+issue, or the seed is miscounted:
+
+- the label **`seeded`**, which exists in the Cartracker team;
+- the description's last line, after a `---` rule, **`Seeded YYYY-MM-DD into
+  Cycle N.`** — the date of the seed run and the target cycle's number. It sits
+  where `ticket-now` puts `Added mid-cycle YYYY-MM-DD to Cycle N.`
+
+```markdown
+## Evidence destination
+
+The plan section that receives deploy and soak facts.
+
+---
+Seeded 2026-09-14 into Cycle 4.
+```
+
+**In top-up mode, write neither.** Work added after the cycle starts is added
+after the start, whichever skill adds it, and that is where `cycle-measures`
+counts a top-up issue.
+
+The marks exist because `cycle-measures` counts the seed by them, and nothing
+else can. It used to count an issue as seeded when its `createdAt` preceded the
+cycle's `startsAt`; but this skill is step 7 of the close order, after
+`roll-cycle`, which may not run before the boundary, so a seed is created after
+`startsAt` by construction. Cycle 2's was created ten hours after it and the
+rule read zero. The label is the exact filter — `list_issues` matches labels
+precisely, where its description search is fuzzy: a search for a `ticket-now`
+footer, measured 2026-09-12, returned twenty issues across three cycles. The
+footer carries the cycle number, which one label cannot, so a seeded issue that
+later rolls out is still counted in the cycle it was seeded into.
+
 ## After writing
 
 Report:
 
 - each issue created, with identifier and URL;
+- in seed mode, that every issue came back carrying the `seeded` label and its
+  footer; in top-up mode, that none did;
 - the cycle's point total before and after, against the budget, and the issue
   count as a consequence of it rather than as the target;
 - the category mix, so an all-category-2 cycle is visible;
@@ -329,6 +370,10 @@ whole of your part in fixing it.
   so late in it that the slice cannot begin.
 - **create a project** for a plan you are not seeding this run, or create one
   that was not named in the approved proposal.
+- **leave a seed unmarked, or mark anything that is not one.** A seed-mode issue
+  missing either mark is invisible to `cycle-measures`; a top-up issue carrying
+  them is counted as seed. Never add or remove `seeded` on an issue this run did
+  not create — relabelling an old issue rewrites the record the measure reads.
 - **move an existing issue between cycles** or change another issue's status.
   Rollover is the user's decision and one of Plan 149's six measures.
 - **choose a build-order position or a priority.** Those live in `PLANS.md` and
