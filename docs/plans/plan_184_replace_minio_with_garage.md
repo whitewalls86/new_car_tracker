@@ -17,6 +17,29 @@ deciding the free edition was over. The replacement has to be chosen with that
 failure in mind. This plan came out of the same 2026-09-11 discussion that
 produced Plan 183 ([CAR-134](https://linear.app/cartracker/issue/CAR-134)).
 
+**The frozen build is also an open door, measured 2026-09-12.** GitHub's
+advisory database lists eight vulnerabilities whose affected range includes
+`RELEASE.2025-09-07`, and no community image carries a fix for any of them:
+MinIO archived `minio/minio` on 2026-04-25, and the fixes ship only in its
+commercial AIStor releases. Six apply to this deployment. Two let a caller
+write any object into any bucket with an access key and no secret
+(CVE-2026-40344, CVE-2026-41145). One lets whoever holds the OIDC client secret
+impersonate any user up to `consoleAdmin` (CVE-2026-33322), which matters here
+because the console signs in through Google OIDC. One escalates privilege
+through session policies (CVE-2025-62506, fixed upstream on 2025-10-15 but
+never released as an image). The last two are a denial of service through S3
+Select CSV parsing (CVE-2026-39414) and encryption-metadata injection through
+replication headers (CVE-2026-34204). The other two do not apply: an LDAP
+brute force (CVE-2026-33419), and no LDAP is configured; and a path traversal
+in the inter-node storage endpoint (CVE-2026-42600), which a single-node server
+likely does not expose. None of the six is reachable from the internet today.
+Ports 9000 and 9001 refused a connection from an outside address on 2026-09-12,
+so each needs a foothold on the VM or its Docker network first, and the console
+sits behind oauth2-proxy and an admin check. That makes the wait behind Plans
+180–182 tolerable, not free. The list only grows, every new advisory lands on a
+build that cannot be patched, and it makes this plan a security case as well as
+a supportability one.
+
 **Two constraints are fixed, set 2026-09-11: the store stays local, and it is
 free.** Managed object storage is out at any price. That constraint costs less
 than it looks, because CI needs a local S3 server whatever production runs, so
