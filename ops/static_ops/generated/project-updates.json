@@ -3,9 +3,19 @@
   "as_of": "2026-08-30",
   "planned": [
     {
+      "plan": "183",
+      "title": "The MinIO image, held where we control it",
+      "order": 1,
+      "priority": 95,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Keeps this project's object store running after its vendor withdrew the public MinIO image: the exact build production already runs, copied into this repository's own container registry and pinned by digest, so production and CI pull an image nothing outside the project can remove.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_183_minio_image_self_hosted.md"
+    },
+    {
       "plan": "180",
       "title": "The seam program",
-      "order": 1,
+      "order": 2,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
@@ -15,7 +25,7 @@
     {
       "plan": "181",
       "title": "The rule readers are code",
-      "order": 2,
+      "order": 3,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
@@ -25,22 +35,12 @@
     {
       "plan": "182",
       "title": "What a unit owes itself",
-      "order": 3,
+      "order": 4,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
       "summary": "Gives every unit of code a stated obligation to itself: its branches are exercised, the outcomes it declares are the ones it produces, and the analysers that check everything else are measured code. The second frame beside Plan 180's seams, for what no boundary can see.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_182_what_a_unit_owes_itself.md"
-    },
-    {
-      "plan": "162",
-      "title": "Testing census and CI restructure",
-      "order": 4,
-      "priority": 75,
-      "effort": "L",
-      "state": "planned",
-      "summary": "Runs a census of the whole automated test suite for coverage, dead assertions, and drift between what CI checks and what the code does, then closes the gaps it finds and restructures CI around what the census showed actually mattered.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_162_testing_census_and_restructure.md"
     }
   ],
   "completed": [
