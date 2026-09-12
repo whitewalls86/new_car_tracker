@@ -40,6 +40,7 @@ from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronz
 from archiver.processors.verify_pack_read_path import (
     verify_pack_read_path as _verify_pack_read_path,
 )
+from shared.api_envelope import ServiceFailure
 from shared.api_models import (
     ErrorResponse,
     HealthResponse,
@@ -103,32 +104,18 @@ _ALLOW_PACK_JOBS = (
 # warnings over 376 evaluations — so Stage C is flipping them to a 500, one
 # endpoint per deploy and 48 hours apart, in ascending order of blast radius.
 #
-# **Where that has got to: /compact/silver/run and /flush/staging/run raise;
-# /flush/silver/run still warns.** Read each endpoint's own docstring rather
-# than this block, which will be stale between deploys by design.
+# **All three now raise** — /compact/silver/run, /flush/staging/run and
+# /flush/silver/run, in that order. With the last one flipped nothing on this
+# service warns and carries on, so the Stage B helper that emitted the
+# ``would fail`` warning is gone. Nothing can emit that line any more, so a
+# zero from its Loki query is not evidence of anything; read the ERROR-level
+# ``<job>: run failed`` lines instead.
 #
 # The shape is _pack_failure_reason's, below: a pure function on the summary
 # dict, mirroring that job's own CLI exit code, unit-tested directly against
 # summary dicts, whose docstring records *why* each carried condition is
 # carried — a predicate without that reasoning is how an hourly job gets
 # failed over a quiet hour.
-
-
-def _warn_would_fail(job: str, reason: Optional[str]) -> None:
-    """Log the warning for a run Stage C will fail, and carry on.
-
-    The greppable half of the observation window. Every warning emitted here
-    carries the literal ``would fail``, so the gate is one query:
-
-        {service="archiver", level="WARNING"} |~ "would fail"
-
-    rather than a text-matching exercise across three job vocabularies. Keep
-    the phrase intact: each endpoint leaves this query on its own Stage C
-    deploy, when its call site here is replaced by the raise, and the ones
-    still calling it are still being read out of it.
-    """
-    if reason:
-        logger.warning("%s: would fail — %s", job, reason)
 
 
 def _flush_silver_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
@@ -235,19 +222,36 @@ def trigger_cleanup_queue() -> Dict[str, Any]:
         return _run_cleanup_queue()
 
 
-@app.post("/flush/silver/run", response_model=FlushSilverResponse)
+@app.post(
+    "/flush/silver/run",
+    response_model=FlushSilverResponse,
+    responses={
+        500: {
+            "description": "The flush failed; the summary is the detail.",
+            "model": ErrorResponse,
+        },
+    },
+)
 def trigger_flush_silver() -> Dict[str, Any]:
     """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).
 
-    **Still warning-only.** A run failing ``_flush_silver_failure_reason``
-    logs a ``would fail`` warning and returns 200. Stage C deploy 3 of 3 turns
-    that into a 500 carrying the summary and a ``failure_reason`` — last of
-    the three, deliberately, because a 500 here skips the dbt build for that
-    hour.
+    **Enforced.** A run failing ``_flush_silver_failure_reason`` returns 500
+    with the summary and a ``failure_reason`` as ``detail``; both callers go
+    through ``sensors.post_json``, which raises ``JsonPostError`` carrying that
+    body, so the task goes red and ``hourly_analytics_refresh``'s ``notify``
+    can quote the reason.
+
+    Plan 134 Stage C, deploy 3 of 3 — last, deliberately. A red task here skips
+    the hour's dbt build, as a red staging flush does, but this is the build
+    that would otherwise have run on stale silver: Stage A's Incident 1 was five
+    days of exactly that, green every hour.
     """
     with active_job():
         result = _flush_silver_observations()
-        _warn_would_fail("flush_silver", _flush_silver_failure_reason(result))
+        reason = _flush_silver_failure_reason(result)
+        if reason:
+            logger.error("flush_silver: run failed — %s", reason)
+            raise ServiceFailure(detail=dict(result, failure_reason=reason))
         return result
 
 
@@ -271,17 +275,14 @@ def trigger_compact_silver() -> Dict[str, Any]:
     Plan 134 Stage C, deploy 1 of 3. First deliberately: this runs daily and
     nothing downstream depends on it, which makes it both the smallest blast
     radius and the cheapest place for the repaired pager to be wrong. The two
-    flushes are still warning-only and leave the observation window on their
-    own deploys, 48 hours apart.
+    flushes followed on their own deploys, 48 hours apart.
     """
     with active_job():
         result = _compact_silver()
         reason = _compact_failure_reason(result)
         if reason:
             logger.error("compact_silver: run failed — %s", reason)
-            raise HTTPException(
-                status_code=500, detail=dict(result, failure_reason=reason)
-            )
+            raise ServiceFailure(detail=dict(result, failure_reason=reason))
         return result
 
 
@@ -621,18 +622,16 @@ def trigger_flush_staging() -> Dict[str, Any]:
     staging events, so the hour dbt skips here is an hour it would have built
     from unchanged inputs anyway — which is *not* the same as the build being
     unaffected: ``flush_staging_events`` sits upstream of ``dbt_build`` in the
-    DAG, so a red task here skips it. ``/flush/silver/run`` is last because
-    there the skipped build would also have been building on stale data. It is
-    still warning-only and leaves the observation window on deploy 3.
+    DAG, so a red task here skips it. ``/flush/silver/run`` went last, on
+    deploy 3, because there the skipped build would also have been building on
+    stale data.
     """
     with active_job():
         result = _flush_staging_events()
         reason = _flush_staging_failure_reason(result)
         if reason:
             logger.error("flush_staging: run failed — %s", reason)
-            raise HTTPException(
-                status_code=500, detail=dict(result, failure_reason=reason)
-            )
+            raise ServiceFailure(detail=dict(result, failure_reason=reason))
         return result
 
 
