@@ -1004,3 +1004,84 @@ curl -sG http://localhost:3100/loki/api/v1/query \
 # same anchor for: sum by (level) (count_over_time({service="archiver"}[166737s]))
 # and: sum(count_over_time({service="archiver", level="WARNING"} |~ "would fail" [166737s]))
 ```
+
+**Deploy 3 of 3 — `/flush/silver/run`.** Built 2026-09-12, **not yet live** —
+this paragraph records the build, not a gate. The endpoint logs
+`flush_silver: run failed` at ERROR and raises a 500 whose `detail` is the
+summary plus `failure_reason`, on `_flush_silver_failure_reason`, rather than
+warning and returning 200. It may go live a little short of 48 hours after
+deploy 2 (2026-09-12 19:16Z), at the maintainer's call, on deploy 2's gate
+having read clean early. Checks on this machine against the branch:
+`python -m pytest -q -m "not integration" -p no:randomly` → **4102 passed, 2
+failed, 720 deselected** — the two failures are
+`tests/rules/test_ci_compose_parity.py`, which fail identically on master here
+because this machine's `docker compose` rejects `-p`; `python -m ruff check .`
+clean; `python scripts/generate_service_contracts.py --check` exit 0.
+
+**All three endpoints raise the envelope's member, not a retyped 500.** Deploys
+1 and 2 raised `HTTPException(status_code=500, ...)`, and deploy 2's needed a
+`RETYPED_STATUS_LEDGER` entry to pass
+`test_no_call_site_retypes_a_status_the_envelope_declares`. This deploy raises
+`shared.api_envelope.ServiceFailure` on all three, so the silver flush never
+enters the ledger and the compact and staging entries leave it. The response is
+the same 500 with the same body. This is [Plan 180](plan_180_seam_program.md)
+Stage D's drain (CAR-121), done early for three endpoints: the spec's handler
+form is "refusals are raised as members"
+([`seam_ideal_state_spec.md`](../planning/seam_ideal_state_spec.md) M1), so
+Stage D does not revisit these call sites. What it still owes them is the
+declaration side — each decorator's hand-written `responses={500: ...}` becomes
+`refusals(ServiceFailure)` once Stage A builds that helper.
+
+**The `would fail` window is closed, not just empty.** The silver flush was the
+last caller of Stage B's `_warn_would_fail`, so the helper is deleted, along
+with the three tests asserting each flipped endpoint no longer emitted it.
+`{service="archiver", level="WARNING"} |~ "would fail"` can no longer return
+anything, so deploy 3's gate does not read it: a zero there is no longer
+evidence.
+
+**`FlushSilverResponse` does not gain `failure_reason`,** despite its old
+docstring saying it would on this deploy. As with deploy 2's model, the key
+only ever rides the 500, inside `ErrorResponse.detail`; a 200 is a clean run
+and never carries it. The docstring now says so.
+
+**Its gate** runs 48 hours from the container's `StartedAt` and is read with
+deploy 2's recipes, anchored at the gate's end, with `flush_staging` swapped
+for `flush_silver` and the `would fail` query dropped. As with deploy 2, this
+deploy can page: `flush_silver_observations` fans into `notify` on
+`one_failed`. The Stage C exit still owes a production page from
+`hourly_analytics_refresh` naming a failed task and quoting its
+`failure_reason`, and a clean 48 hours will not supply it.
+
+**Deploy 3 went live 2026-09-12 18:35:33Z**, 47h19m after deploy 2, at the
+maintainer's call. Merged as `c1b9eab` at 18:34:05Z
+([PR #424](https://github.com/whitewalls86/new_car_tracker/pull/424)), pulled
+to `/opt/cartracker`, and deployed with `bash scripts/redeploy.sh archiver` in
+a tmux session: the drain authorized after 0 s, the archiver was healthy after
+6 s, and the script exited 0 with deploy intent released. The live time is the
+container's own:
+
+```bash
+docker inspect cartracker-archiver --format '{{.State.StartedAt}}'
+# 2026-09-12T18:35:33.155194609Z
+```
+
+**The running container was asked what it loaded.** All three endpoints raise
+the envelope member, the warning helper is gone, and each route declares its
+500:
+
+```bash
+docker exec cartracker-archiver grep -n -E "run failed|raise ServiceFailure|_warn_would_fail" /app/archiver/app.py
+# 253: logger.error("flush_silver: run failed — %s", reason)
+# 254: raise ServiceFailure(detail=dict(result, failure_reason=reason))
+# ... the same pair at 284-285 (compact_silver) and 633-634 (flush_staging); no _warn_would_fail
+
+docker exec cartracker-archiver python -c "import json,urllib.request; \
+d=json.load(urllib.request.urlopen('http://localhost:8001/openapi.json')); \
+print(sorted(d['paths']['/flush/silver/run']['post']['responses'].keys()))"
+# ['200', '500']  -- likewise /flush/staging/run and /compact/silver/run
+```
+
+**The 48-hour gate runs 2026-09-12 18:35:33Z → 2026-09-14 18:35:33Z.** It is
+read with deploy 2's recipes anchored at `time=2026-09-14T18:35:33Z`, with
+`flush_silver: run failed` in place of `flush_staging` and no `would fail`
+query.

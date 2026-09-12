@@ -79,11 +79,10 @@ class CleanupResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class FlushSilverResponse(BaseModel):
-    """``POST /flush/silver/run`` -- still warning-only, so a bad run is a 200.
+    """``POST /flush/silver/run`` -- enforced, so a failing run is a 500.
 
-    Plan 134 Stage C deploy 3 of 3 turns that warning into a 500 carrying a
-    ``failure_reason``. When that lands this model gains the field; declaring
-    it today would be declaring a key nothing emits.
+    ``failure_reason`` is not a field here: it only ever rides the 500, inside
+    ``ErrorResponse.detail``. A 200 is a clean run and never carries it.
     """
 
     flushed: int

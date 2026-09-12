@@ -361,7 +361,7 @@
         "type": "object"
       },
       "FlushSilverResponse": {
-        "description": "``POST /flush/silver/run`` -- still warning-only, so a bad run is a 200.\n\nPlan 134 Stage C deploy 3 of 3 turns that warning into a 500 carrying a\n``failure_reason``. When that lands this model gains the field; declaring\nit today would be declaring a key nothing emits.",
+        "description": "``POST /flush/silver/run`` -- enforced, so a failing run is a 500.\n\n``failure_reason`` is not a field here: it only ever rides the 500, inside\n``ErrorResponse.detail``. A 200 is a clean run and never carries it.",
         "properties": {
           "error": {
             "anyOf": [
@@ -1517,7 +1517,7 @@
     },
     "/compact/silver/run": {
       "post": {
-        "description": "Compact silver_normalized/observations partitions (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_compact_failure_reason`` returns 500 with\nthe summary and a ``failure_reason`` as ``detail``; ``compact_silver``\ncalls ``raise_for_status()``, so the DAG goes red and pages.\n\nPlan 134 Stage C, deploy 1 of 3. First deliberately: this runs daily and\nnothing downstream depends on it, which makes it both the smallest blast\nradius and the cheapest place for the repaired pager to be wrong. The two\nflushes are still warning-only and leave the observation window on their\nown deploys, 48 hours apart.",
+        "description": "Compact silver_normalized/observations partitions (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_compact_failure_reason`` returns 500 with\nthe summary and a ``failure_reason`` as ``detail``; ``compact_silver``\ncalls ``raise_for_status()``, so the DAG goes red and pages.\n\nPlan 134 Stage C, deploy 1 of 3. First deliberately: this runs daily and\nnothing downstream depends on it, which makes it both the smallest blast\nradius and the cheapest place for the repaired pager to be wrong. The two\nflushes followed on their own deploys, 48 hours apart.",
         "operationId": "trigger_compact_silver_compact_silver_run_post",
         "responses": {
           "200": {
@@ -1607,7 +1607,7 @@
     },
     "/flush/silver/run": {
       "post": {
-        "description": "Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).\n\n**Still warning-only.** A run failing ``_flush_silver_failure_reason``\nlogs a ``would fail`` warning and returns 200. Stage C deploy 3 of 3 turns\nthat into a 500 carrying the summary and a ``failure_reason`` — last of\nthe three, deliberately, because a 500 here skips the dbt build for that\nhour.",
+        "description": "Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_flush_silver_failure_reason`` returns 500\nwith the summary and a ``failure_reason`` as ``detail``; both callers go\nthrough ``sensors.post_json``, which raises ``JsonPostError`` carrying that\nbody, so the task goes red and ``hourly_analytics_refresh``'s ``notify``\ncan quote the reason.\n\nPlan 134 Stage C, deploy 3 of 3 — last, deliberately. A red task here skips\nthe hour's dbt build, as a red staging flush does, but this is the build\nthat would otherwise have run on stale silver: Stage A's Incident 1 was five\ndays of exactly that, green every hour.",
         "operationId": "trigger_flush_silver_flush_silver_run_post",
         "responses": {
           "200": {
@@ -1619,6 +1619,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The flush failed; the summary is the detail."
           }
         },
         "summary": "Trigger Flush Silver"
@@ -1626,7 +1636,7 @@
     },
     "/flush/staging/run": {
       "post": {
-        "description": "Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_flush_staging_failure_reason`` returns 500\nwith the summary and a ``failure_reason`` as ``detail`` naming the tables\nthat did not land; both callers go through ``sensors.post_json``, which\nraises ``JsonPostError`` carrying that body, so the task goes red and\n``hourly_analytics_refresh``'s ``notify`` can quote the reason.\n\nPlan 134 Stage C, deploy 2 of 3. Second because the dbt build does not read\nstaging events, so the hour dbt skips here is an hour it would have built\nfrom unchanged inputs anyway — which is *not* the same as the build being\nunaffected: ``flush_staging_events`` sits upstream of ``dbt_build`` in the\nDAG, so a red task here skips it. ``/flush/silver/run`` is last because\nthere the skipped build would also have been building on stale data. It is\nstill warning-only and leaves the observation window on deploy 3.",
+        "description": "Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).\n\n**Enforced.** A run failing ``_flush_staging_failure_reason`` returns 500\nwith the summary and a ``failure_reason`` as ``detail`` naming the tables\nthat did not land; both callers go through ``sensors.post_json``, which\nraises ``JsonPostError`` carrying that body, so the task goes red and\n``hourly_analytics_refresh``'s ``notify`` can quote the reason.\n\nPlan 134 Stage C, deploy 2 of 3. Second because the dbt build does not read\nstaging events, so the hour dbt skips here is an hour it would have built\nfrom unchanged inputs anyway — which is *not* the same as the build being\nunaffected: ``flush_staging_events`` sits upstream of ``dbt_build`` in the\nDAG, so a red task here skips it. ``/flush/silver/run`` went last, on\ndeploy 3, because there the skipped build would also have been building on\nstale data.",
         "operationId": "trigger_flush_staging_flush_staging_run_post",
         "responses": {
           "200": {
