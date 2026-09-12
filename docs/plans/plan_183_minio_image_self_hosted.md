@@ -170,12 +170,24 @@ with the reason recorded; the record states the fitness answer above.
 
 **State:** `—` · **Production-gated exit:** no
 
-**Exit:** a rule fails any compose image not built from this repository unless
-it is referenced from `ghcr.io/whitewalls86/*` by digest or sits in a
-shrink-only ledger seeded at the measured count and keyed on the full image
-reference, so changing a reference removes its entry; the Stage A workflow copies
-any named image with the digest check; the rule is shown failing on an
-unowned image by a mutation entry in `scripts/verify_testing_contract_mutations.py`.
+**Widened 2026-09-12 from compose images alone.** Dockerfile base images join
+the ledger, because a base image pulled on every build is an external
+dependency like any other. A runtime gate checks what CI actually pulls,
+because a script can pull an image no compose file names: the container-health
+contract pulled an untagged `alpine` from Docker Hub. Compose is where every
+image is defined, so a new image dependency is a deliberate edit to compose,
+never a line in a script.
+
+**Exit:** a rule fails any compose image or Dockerfile base image not built
+from this repository unless it is referenced from `ghcr.io/whitewalls86/*` by
+digest or sits in a shrink-only ledger, seeded at the measured count (17
+compose references and 5 base images, 2026-09-12) and keyed on the full image
+reference, so changing a reference removes its entry. Every CI job that uses
+Docker records the images on its runner, and a gate fails the run on any image
+that is neither built here, owned, nor ledgered. No CI step or script names an
+image compose does not define. The Stage A workflow copies any named image with
+the digest check. Each rule is shown failing by a mutation entry in
+`scripts/verify_testing_contract_mutations.py`.
 
 ## Record
 

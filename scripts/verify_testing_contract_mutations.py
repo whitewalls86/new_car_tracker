@@ -42,12 +42,15 @@ stays a deliberate run.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST = "tests/rules/test_testing_contract.py"
@@ -81,8 +84,25 @@ ENGINE_BOUND = (
     "::test_every_test_statement_plans_against_the_migrated_schema",
 )
 
-_PG_IMAGE = "postgres:16"
-_FLYWAY_IMAGE = "flyway/flyway:10-alpine"
+_INTERPOLATED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-(?P<default>[^}]*)\}$")
+
+
+def _compose_image(service: str) -> str:
+    """The image a Compose service runs, read rather than restated here.
+
+    Plan 183 Stage D: Compose is the one place an image is defined, so the
+    throwaway engine is the image production runs, and moves when it moves. A
+    ``${X:-default}`` reference is read at its default. Read at import, before
+    any mutation can edit docker-compose.yml underneath it.
+    """
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    reference = compose["services"][service]["image"]
+    interpolated = _INTERPOLATED.match(reference)
+    return interpolated.group("default") if interpolated else reference
+
+
+_PG_IMAGE = _compose_image("postgres")
+_FLYWAY_IMAGE = _compose_image("flyway")
 _PG_CONTAINER = "cartracker-mutation-harness-postgres"
 #: Not 5432. A developer running this almost certainly has the real stack up on
 #: the default port, and a throwaway database that quietly shadowed it would be
@@ -3597,6 +3617,89 @@ MUTATIONS = [
             "      - targets: []",
         ),
         ["prometheus/prometheus.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_external_image_comes_from_a_registry_we_own",
+        "a service starts pulling an image from a registry this repository "
+        "does not own -- the minio/minio shape, one deletion away from every "
+        "job that starts it dying at pull",
+        # Anchored on `services:`, which every compose file carries whatever
+        # its images are, so converting an image cannot strand this anchor.
+        lambda: _edit(
+            "docker-compose.lakehouse.ci.yml",
+            "\nservices:\n",
+            "\nservices:\n  intruder:\n    image: docker.io/library/busybox:1.36\n",
+        ),
+        ["docker-compose.lakehouse.ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_the_external_image_reader_is_not_blind",
+        "a compose file's services move where the reader does not look, so "
+        "its images drop out of the ownership rule while their image: lines "
+        "stay in the file",
+        lambda: _edit(
+            "docker-compose.lakehouse.local.yml",
+            "\nservices:\n",
+            "\nx-services:\n",
+        ),
+        ["docker-compose.lakehouse.local.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_external_image_comes_from_a_registry_we_own",
+        "a Dockerfile gains a build stage on a base image from a registry this "
+        "repository does not own -- every build of the service one deletion "
+        "away from failing at pull",
+        # Anchored on `FROM `, which occurs once in this file whatever its base
+        # image is, so converting the base image cannot strand this anchor.
+        lambda: _edit(
+            "scraper/Dockerfile",
+            "FROM ",
+            "FROM docker.io/library/busybox:1.36 AS intruder\n\nFROM ",
+        ),
+        ["scraper/Dockerfile"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_the_base_image_reader_is_not_blind",
+        "a FROM is split across lines, so the line reader sees a backslash "
+        "where the base image should be and the image drops out of the "
+        "ownership rule",
+        lambda: _edit("scraper/Dockerfile", "FROM ", "FROM \\\n    "),
+        ["scraper/Dockerfile"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_job_leaves_an_image_record_the_gate_reads",
+        "a job stops recording the images on its runner, so whatever it pulled "
+        "reaches the provenance gate as nothing at all",
+        # The recording step is identical in every job, so the anchor runs on
+        # into the upload that names its job -- the job key the rule is keyed
+        # on, and nothing an image conversion or a plan edit would touch.
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "      - name: Record the images on this runner\n"
+            "        if: always()\n"
+            "        run: python3 scripts/record_ci_images.py\n"
+            "      - name: Upload this job's image record\n"
+            "        if: always()\n"
+            "        uses: actions/upload-artifact@v4\n"
+            "        with:\n"
+            "          name: ci-image-records-lint\n",
+            "      - name: Upload this job's image record\n"
+            "        if: always()\n"
+            "        uses: actions/upload-artifact@v4\n"
+            "        with:\n"
+            "          name: ci-image-records-lint\n",
+        ),
+        [".github/workflows/ci.yml"],
         [],
     ),
     (
