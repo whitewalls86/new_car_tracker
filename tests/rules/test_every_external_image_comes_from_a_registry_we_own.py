@@ -267,8 +267,14 @@ def test_every_job_leaves_an_image_record_the_gate_reads():
     reasoning that makes ``test_every_job_that_runs_pytest_has_its_record_read_
     by_the_gate`` derive its set rather than list it.
 
-    Both steps are ``if: always()``, because a failed job is the one most worth
-    reading: it may have failed at a pull. The gate ``needs`` exactly the owing
+    **A baseline straight after checkout**, with nothing but checkout before
+    it. GitHub's runner image carries images of its own, and the gate's first
+    run failed every job on them; the baseline is how the gate judges only
+    what the job added. A step ahead of it could pull an image that would then
+    read as GitHub's.
+
+    Both end steps are ``if: always()``, because a failed job is the one most
+    worth reading: it may have failed at a pull. The gate ``needs`` exactly the owing
     set, so it cannot start before a record is written and cannot wait on a job
     that is not there; it runs on ``always()`` so a red job does not skip it;
     and it is handed ``toJSON(needs)``, which is how it tells a job that ran
@@ -291,13 +297,25 @@ def test_every_job_leaves_an_image_record_the_gate_reads():
     owing = sorted(set(jobs) - {gate_key})
     assert owing, f"{_WORKFLOW.name} has no job but the gate"
 
+    unbaselined = []
     unrecorded = []
     for key in owing:
         steps = jobs[key].get("steps") or []
+        baselined = [
+            index
+            for index, step in enumerate(steps)
+            if f"{_RECORDER} --baseline" in str(step.get("run", ""))
+        ]
+        if not baselined or not all(
+            "actions/checkout" in str(step.get("uses", "")) for step in steps[: baselined[0]]
+        ):
+            unbaselined.append(key)
         recorded = [
             index
             for index, step in enumerate(steps)
-            if _RECORDER in str(step.get("run", "")) and step.get("if") == "always()"
+            if _RECORDER in str(step.get("run", ""))
+            and "--baseline" not in str(step.get("run", ""))
+            and step.get("if") == "always()"
         ]
         uploaded = [
             index
@@ -308,6 +326,12 @@ def test_every_job_leaves_an_image_record_the_gate_reads():
         ]
         if not (recorded and uploaded and recorded[0] < uploaded[-1]):
             unrecorded.append(key)
+    assert not unbaselined, (
+        f"these jobs do not record a baseline before anything else runs: {unbaselined}. "
+        f"Each job runs `{_RECORDER} --baseline` with only checkout ahead of it, so "
+        "the gate can tell the images GitHub preloads on the runner from what the "
+        "job pulled."
+    )
     assert not unrecorded, (
         f"these jobs do not leave an image record for {gate_key}: {unrecorded}. "
         f"Each job ends with an `if: always()` step running {_RECORDER}, then an "

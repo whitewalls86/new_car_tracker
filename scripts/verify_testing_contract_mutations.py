@@ -3703,6 +3703,24 @@ MUTATIONS = [
         [],
     ),
     (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_job_leaves_an_image_record_the_gate_reads",
+        "a job stops recording what its runner held before it began, so the "
+        "images GitHub preloads read as pulls and the only fix left is a "
+        "ledger of GitHub's images",
+        # The baseline step is identical in every job, so the anchor runs on
+        # into the step after it -- `changes`' own, named once in the file.
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "      - name: Record the images on the runner before the job\n"
+            "        run: python3 scripts/record_ci_images.py --baseline\n"
+            "      - name: Select the CI scope\n",
+            "      - name: Select the CI scope\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
         "tests/rules/test_no_test_fabricates_a_response_objects_behaviour.py"
         "::test_no_test_fabricates_a_response_objects_behaviour",
         "the 503-as-busy test rebuilds its bare mock under a fresh name -- a "

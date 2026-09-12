@@ -17,6 +17,7 @@ import pytest
 from scripts import check_ci_image_provenance as gate
 from scripts import record_ci_images as recorder
 from scripts.check_ci_image_provenance import (
+    added_during_job,
     load_records,
     missing_records,
     normalise,
@@ -37,8 +38,21 @@ DEFINED = {
 }
 
 
-def _image(tags=(), digests=()):
-    return {"Id": "sha256:" + "0" * 64, "RepoTags": list(tags), "RepoDigests": list(digests)}
+def _image(tags=(), digests=(), identity="0"):
+    return {
+        "Id": "sha256:" + identity * 64,
+        "RepoTags": list(tags),
+        "RepoDigests": list(digests),
+    }
+
+
+# What GitHub's runner image carried before any job began, in the shape a
+# preload arrives: pulled, tagged `latest`, and defined nowhere here.
+PRELOADED = _image(
+    ["ghcr.io/github/github-mcp-server:latest"],
+    ["ghcr.io/github/github-mcp-server@sha256:" + "e" * 64],
+    identity="e",
+)
 
 
 @pytest.mark.parametrize(
@@ -89,6 +103,18 @@ class TestMissingRecords:
         assert missing_records({"docker-build": {"result": "skipped"}}, set()) == []
 
 
+class TestAddedDuringJob:
+    def test_an_image_the_runner_held_before_the_job_is_not_judged(self):
+        pulled = _image(["postgres:16"], ["postgres@sha256:" + "b" * 64], identity="b")
+        record = {"baseline": [PRELOADED["Id"]], "images": [PRELOADED, pulled]}
+        assert added_during_job(record) == [pulled]
+
+    def test_a_preloaded_tag_pulled_again_arrives_under_a_new_id_and_is_judged(self):
+        repulled = dict(PRELOADED, Id="sha256:" + "f" * 64)
+        record = {"baseline": [PRELOADED["Id"]], "images": [repulled]}
+        assert added_during_job(record) == [repulled]
+
+
 def test_every_ledgered_image_is_one_the_gate_accepts():
     """The gate and the rule read the same references: an image the rule lets
     through by its ledger is one the gate lets through by name."""
@@ -96,38 +122,50 @@ def test_every_ledgered_image_is_one_the_gate_accepts():
     assert {normalise(entry) for entry in UNOWNED_IMAGE_LEDGER} <= defined
 
 
-def test_what_the_recorder_writes_is_what_the_gate_reads(tmp_path, monkeypatch, mocker):
-    identity = "sha256:" + "1" * 64
-    inspected = [
-        {
-            "Id": identity,
-            "RepoTags": ["postgres:16"],
-            "RepoDigests": ["postgres@sha256:" + "b" * 64],
-            "Size": 1,
+class TestRecorder:
+    """What the recorder writes is what the gate reads."""
+
+    @pytest.fixture
+    def runner(self, tmp_path, monkeypatch, mocker):
+        """A fake daemon whose image list the test sets, one inspect per id."""
+        held: list[dict] = []
+        calls: list[tuple] = []
+
+        def docker(*args):
+            calls.append(args)
+            if args[:2] == ("image", "ls"):
+                # `ls --all` lists an image once per tag, so the recorder must dedupe.
+                return "".join(f"{image['Id']}\n{image['Id']}\n" for image in held)
+            return json.dumps([dict(image, Size=1) for image in held])
+
+        mocker.patch.object(recorder, "_docker", docker)
+        monkeypatch.setenv("GITHUB_JOB", "docker-build")
+        monkeypatch.setenv("CI_IMAGE_RECORDS", str(tmp_path / "ci-image-records-docker-build"))
+        return held, calls
+
+    def test_the_end_record_carries_the_baseline_taken_before_the_job(self, tmp_path, runner):
+        held, calls = runner
+        held.append(PRELOADED)
+        assert recorder.main(["--baseline"]) == 0
+
+        pulled = _image(["postgres:16"], ["postgres@sha256:" + "b" * 64], identity="b")
+        held.append(pulled)
+        assert recorder.main([]) == 0
+
+        assert calls[-1] == ("image", "inspect", *sorted([PRELOADED["Id"], pulled["Id"]]))
+        record = load_records(tmp_path)["docker-build"]
+        assert record == {
+            "job": "docker-build",
+            "baseline": [PRELOADED["Id"]],
+            "images": [PRELOADED, pulled],
         }
-    ]
-    calls = []
+        assert added_during_job(record) == [pulled]
 
-    def docker(*args):
-        calls.append(args)
-        # `ls --all` lists an image once per tag, so the recorder must dedupe.
-        return f"{identity}\n{identity}\n" if args[:2] == ("image", "ls") else json.dumps(inspected)
-
-    mocker.patch.object(recorder, "_docker", docker)
-    monkeypatch.setenv("GITHUB_JOB", "docker-build")
-    monkeypatch.setenv("CI_IMAGE_RECORDS", str(tmp_path / "ci-image-records-docker-build"))
-
-    assert recorder.main() == 0
-    assert calls[-1] == ("image", "inspect", identity)
-    assert load_records(tmp_path) == {
-        "docker-build": [
-            {
-                "Id": identity,
-                "RepoTags": ["postgres:16"],
-                "RepoDigests": inspected[0]["RepoDigests"],
-            }
-        ]
-    }
+    def test_an_end_record_with_no_baseline_says_so(self, tmp_path, runner):
+        held, _ = runner
+        held.append(PRELOADED)
+        assert recorder.main([]) == 0
+        assert load_records(tmp_path)["docker-build"]["baseline"] is None
 
 
 class TestMain:
@@ -135,12 +173,26 @@ class TestMain:
     def _defined(self, mocker):
         mocker.patch.object(gate, "defined_references", return_value=DEFINED)
 
-    def _record(self, root, job, images):
+    def _record(self, root, job, images, baseline=()):
         directory = root / f"ci-image-records-{job}"
         directory.mkdir()
-        (directory / f"images-{job}.json").write_text(
-            json.dumps({"job": job, "images": images}), encoding="utf-8"
-        )
+        record = {
+            "job": job,
+            "baseline": None if baseline is None else list(baseline),
+            "images": images,
+        }
+        (directory / f"images-{job}.json").write_text(json.dumps(record), encoding="utf-8")
+
+    def test_an_image_preloaded_on_the_runner_is_not_judged(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NEEDS", json.dumps({"lint": {"result": "success"}}))
+        self._record(tmp_path, "lint", [PRELOADED], baseline=[PRELOADED["Id"]])
+        assert gate.main(["--records", str(tmp_path)]) == 0
+
+    def test_fails_on_a_record_with_no_baseline(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("NEEDS", json.dumps({"lint": {"result": "success"}}))
+        self._record(tmp_path, "lint", [], baseline=None)
+        assert gate.main(["--records", str(tmp_path)]) == 1
+        assert "no baseline" in capsys.readouterr().out
 
     def test_passes_when_every_job_that_ran_recorded_only_accounted_images(
         self, tmp_path, monkeypatch

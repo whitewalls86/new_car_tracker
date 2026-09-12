@@ -27,9 +27,20 @@ answers both halves of the stage's exit. Matched after normalising both sides:
 ``docker.io/library/`` and ``:latest`` made explicit, and a tag dropped where a
 digest is present, because Docker pulls by the digest and ignores the tag.
 
-**Every job that ran owes a record.** Which ran comes from ``toJSON(needs)``,
-so a job skipped by the path filter owes nothing and a job that ran and left
-no record fails here, rather than reading as a runner that pulled nothing.
+**Only what appeared during the job is judged.** GitHub's runner image carries
+images of its own -- six on ``ubuntu-24.04`` 20260907.300.1, under
+``ghcr.io/github`` and ``ghcr.io/dependabot`` -- and this gate's first run
+(34676153902) failed every job on them. So each record carries the ids the
+runner held before the job began, taken straight after checkout, and an image
+with one of those ids is reported but not judged. A preloaded tag the job
+pulls again arrives under a new id and is judged like any other pull.
+
+**Every job that ran owes a record, and a baseline in it.** Which ran comes
+from ``toJSON(needs)``, so a job skipped by the path filter owes nothing and a
+job that ran and left no record fails here, rather than reading as a runner
+that pulled nothing. A record without a baseline fails too: read without one,
+every image on the runner would be judged, and the fix would be a ledger of
+GitHub's images.
 """
 
 from __future__ import annotations
@@ -92,14 +103,21 @@ def missing_records(needs: dict, recorded: set[str]) -> list[str]:
     )
 
 
-def load_records(directory: Path) -> dict[str, list[dict]]:
-    """``{job: images}``. ``download-artifact`` puts each artifact in its own
-    subdirectory, so the files are found wherever they landed."""
-    records: dict[str, list[dict]] = {}
+def load_records(directory: Path) -> dict[str, dict]:
+    """``{job: record}``. ``download-artifact`` puts each artifact in its own
+    subdirectory, so the files are found wherever they landed. Only the end
+    records: a ``baseline-*.json`` is folded into its end record already."""
+    records: dict[str, dict] = {}
     for path in sorted(directory.rglob("images-*.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
-        records[record["job"]] = record["images"]
+        records[record["job"]] = record
     return records
+
+
+def added_during_job(record: dict) -> list[dict]:
+    """The images the runner did not hold when the job began."""
+    before = set(record.get("baseline") or ())
+    return [image for image in record["images"] if image["Id"] not in before]
 
 
 def _label(image: dict) -> str:
@@ -124,13 +142,24 @@ def main(argv: list[str] | None = None) -> int:
     defined = defined_references()
 
     failed = False
+    preloaded: set[str] = set()
     for job in sorted(records):
-        images = records[job]
-        built = sum(1 for image in images if not image.get("RepoDigests"))
-        print(f"{job}: {len(images)} image(s), {built} built here, {len(images) - built} pulled")
-        for image in images:
+        record = records[job]
+        added = added_during_job(record)
+        before = len(record["images"]) - len(added)
+        preloaded.update(_label(image) for image in record["images"] if image not in added)
+        built = sum(1 for image in added if not image.get("RepoDigests"))
+        print(
+            f"{job}: {len(record['images'])} image(s): {before} there before the job, "
+            f"{built} built here, {len(added) - built} pulled"
+        )
+        for image in added:
             if image.get("RepoDigests"):
                 print(f"    pulled  {_label(image)}")
+    if preloaded:
+        print("\non a runner before its job began, and not judged:")
+        for label in sorted(preloaded):
+            print(f"    {label}")
 
     missing = missing_records(needs, set(records))
     if missing:
@@ -142,8 +171,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         failed = True
 
+    unbaselined = sorted(job for job, record in records.items() if record.get("baseline") is None)
+    if unbaselined:
+        print(
+            f"\nFAIL: {len(unbaselined)} record(s) carry no baseline: "
+            f"{', '.join(unbaselined)}. Each job runs `record_ci_images.py --baseline` "
+            "straight after checkout; without it the images GitHub preloads on the "
+            "runner cannot be told apart from what the job pulled."
+        )
+        failed = True
+
     for job in sorted(records):
-        stray = unaccounted(records[job], defined)
+        stray = unaccounted(added_during_job(records[job]), defined)
         if stray:
             print(
                 f"\nFAIL: {job} held image(s) pulled from a registry under no "
@@ -152,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             for image in stray:
                 print(f"    {_label(image)}")
             failed = True
-    if failed and any(unaccounted(images, defined) for images in records.values()):
+    if any(unaccounted(added_during_job(record), defined) for record in records.values()):
         print(
             "\nCompose is the one place an image is defined. Read the image from its "
             "Compose service rather than naming it in a script or a workflow step, "

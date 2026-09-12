@@ -1,20 +1,34 @@
-"""Record every image on this CI runner, for the image provenance gate.
+"""Record the images on this CI runner, for the image provenance gate.
 
-Plan 183 Stage D. Every job in ``.github/workflows/ci.yml`` runs this as an
-``if: always()`` step, whether or not it touched Docker, and uploads the result
-as ``ci-image-records-<job>``; ``scripts/check_ci_image_provenance.py`` reads
-them all. Every job rather than the ones that "use Docker" is deliberate: three
-of them reach Docker only from inside a Python script, so any reading of the
-workflow file that decided which jobs owe a record would be blind to those. A
-job that never touched Docker records an empty list, which costs a second.
+Plan 183 Stage D. Every job in ``.github/workflows/ci.yml`` runs this twice:
+with ``--baseline`` straight after checkout, before anything can touch Docker,
+and without it as an ``if: always()`` step at the end, which is uploaded as
+``ci-image-records-<job>``. ``scripts/check_ci_image_provenance.py`` reads them
+all.
 
-    python3 scripts/record_ci_images.py   # $CI_IMAGE_RECORDS/images-$GITHUB_JOB.json
+**Why a baseline.** GitHub's runner image carries images of its own -- six on
+``ubuntu-24.04`` 20260907.300.1, under ``ghcr.io/github`` and
+``ghcr.io/dependabot`` -- and the gate's first run failed every job on them.
+They are GitHub's, not this repository's dependencies, and they change when
+GitHub says so. So the end record carries the ids of the images the runner
+held before the job began, and the gate judges only what appeared since. An
+end record with no baseline carries ``"baseline": null``, which the gate fails
+rather than reading every image as new.
+
+**Every job rather than the ones that "use Docker".** Three of them reach
+Docker only from inside a Python script, so any reading of the workflow file
+that decided which jobs owe a record would be blind to those. A job that never
+touched Docker records only what was already there, which costs a second.
+
+    python3 scripts/record_ci_images.py --baseline   # $CI_IMAGE_RECORDS/baseline-$GITHUB_JOB.json
+    python3 scripts/record_ci_images.py              # $CI_IMAGE_RECORDS/images-$GITHUB_JOB.json
 
 Standard library only, because it runs in jobs that install nothing.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -47,14 +61,38 @@ def runner_images() -> list[dict]:
     ]
 
 
-def main() -> int:
+def _write(path: Path, record: dict) -> None:
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="record what the runner held before the job began",
+    )
+    arguments = parser.parse_args(argv)
+
     job = os.environ["GITHUB_JOB"]
     directory = Path(os.environ.get("CI_IMAGE_RECORDS", "ci-image-records"))
     directory.mkdir(parents=True, exist_ok=True)
     images = runner_images()
-    path = directory / f"images-{job}.json"
-    path.write_text(json.dumps({"job": job, "images": images}, indent=2) + "\n", encoding="utf-8")
-    print(f"record_ci_images: {len(images)} image(s) on this runner -> {path}")
+    baseline_path = directory / f"baseline-{job}.json"
+
+    if arguments.baseline:
+        _write(baseline_path, {"job": job, "images": images})
+        print(f"record_ci_images: {len(images)} image(s) before the job -> {baseline_path}")
+    else:
+        baseline = None
+        if baseline_path.exists():
+            before = json.loads(baseline_path.read_text(encoding="utf-8"))["images"]
+            baseline = [image["Id"] for image in before]
+        path = directory / f"images-{job}.json"
+        _write(path, {"job": job, "baseline": baseline, "images": images})
+        print(f"record_ci_images: {len(images)} image(s) on this runner -> {path}")
+        if baseline is None:
+            print("record_ci_images: no baseline was recorded; the gate will fail this job")
     for image in images:
         print(f"  {', '.join(image['RepoTags'] or image['RepoDigests']) or image['Id']}")
     return 0
