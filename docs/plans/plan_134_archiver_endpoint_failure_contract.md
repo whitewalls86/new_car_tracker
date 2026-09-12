@@ -957,3 +957,50 @@ from it yet. When it closes, its reading appends here using deploy 1's recipes
 with `time=2026-09-12T19:16:00Z` — anchored, for the reason deploy 1's entry
 records — and with `compact_silver` swapped for `hourly_analytics_refresh` in
 the DAG-run read, since that is the DAG carrying this endpoint.
+
+**Deploy 2's gate was read at 2026-09-12 17:34:57Z, 1h41m before it closes, at
+the maintainer's call — "I'm fine doing this two hours early if nothing has
+turned up" — and it is clean.**
+
+- **The deploy under test ran throughout.** `cartracker-archiver` started
+  2026-09-10T19:16:00.626Z with 0 restarts.
+- **Every hourly run succeeded: 46 of 46**, `scheduled__2026-09-10T20:00`
+  through `scheduled__2026-09-12T17:00`. `flush_staging_events` is upstream of
+  `dbt_build`, so a 500 turns the run red. Forty-six green runs mean the
+  endpoint answered 200 forty-six times and `_flush_staging_failure_reason`
+  returned `None` each time. As with deploy 1, the green runs are the evidence
+  and the Loki reads corroborate them.
+- **Archiver emitted 614 records over the window, all INFO.**
+  `{service="archiver", level="ERROR"} |~ "flush_staging: run failed"` returned
+  **0**, and `{service="archiver", level="WARNING"} |~ "would fail"` returned
+  **0**, so the observation stream deploy 3 is read from is still
+  uncontaminated.
+- **Not covered:** the 18:00Z and 19:00Z runs, which fall inside the gate after
+  this read.
+
+**What this window did not prove.** No run met the predicate, so the 500 path is
+still verified by `tests/archiver/test_app.py` alone. `notify` has a
+`one_failed` trigger and no task failed, so it did not fire. That is inferred
+from the run states, not read from task instances. The notifier's live proof is
+still owed, and deploy 3 is now the last deploy that can supply it.
+
+**For the exit:** two of three endpoints have held their 48 hours. Deploy 3
+(`/flush/silver/run`) is still owed, as is a production page from
+`hourly_analytics_refresh` naming a failed task and quoting its
+`failure_reason`.
+
+**Recipes.** Read from production 2026-09-12. This read was taken early, so it
+differs from deploy 1's: each Loki query is anchored at the read time
+(`time=2026-09-12T17:34:57Z`) with a range of the seconds since the deploy
+(`[166737s]`), rather than `[48h]` anchored at the gate's end.
+
+```bash
+docker inspect cartracker-archiver --format '{{.State.StartedAt}} {{.State.Status}} restarts={{.RestartCount}}'
+docker exec cartracker-airflow-scheduler airflow dags list-runs hourly_analytics_refresh -s 2026-09-10T19:16:00+00:00 -o plain
+
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum(count_over_time({service="archiver", level="ERROR"} |~ "flush_staging: run failed" [166737s]))' \
+  --data-urlencode 'time=2026-09-12T17:34:57Z'
+# same anchor for: sum by (level) (count_over_time({service="archiver"}[166737s]))
+# and: sum(count_over_time({service="archiver", level="WARNING"} |~ "would fail" [166737s]))
+```
