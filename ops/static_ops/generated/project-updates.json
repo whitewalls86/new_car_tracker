@@ -23,24 +23,24 @@
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_180_seam_program.md"
     },
     {
+      "plan": "185",
+      "title": "One Python base image",
+      "order": 3,
+      "priority": 80,
+      "effort": "M",
+      "state": "planned",
+      "summary": "Moves every image this repository builds from a python: base onto one, python:3.13-slim-trixie, so the Python version CI tests is the one production runs, and the project owns and refreshes one Python base image instead of four.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_185_one_python_base_image.md"
+    },
+    {
       "plan": "181",
       "title": "The rule readers are code",
-      "order": 3,
+      "order": 4,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
       "summary": "Moves eleven thousand lines of non-test code out of this repository's test tree and into a package coverage can measure, so the helpers, readers and analysers every test depends on are themselves unit tested.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_181_rule_readers_are_code.md"
-    },
-    {
-      "plan": "182",
-      "title": "What a unit owes itself",
-      "order": 4,
-      "priority": 85,
-      "effort": "XL",
-      "state": "planned",
-      "summary": "Gives every unit of code a stated obligation to itself: its branches are exercised, the outcomes it declares are the ones it produces, and the analysers that check everything else are measured code. The second frame beside Plan 180's seams, for what no boundary can see.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_182_what_a_unit_owes_itself.md"
     }
   ],
   "completed": [
