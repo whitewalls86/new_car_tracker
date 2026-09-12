@@ -355,9 +355,22 @@ Three hard limits:
 
 ```bash
 LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest tests/rules/test_planning_docs.py -q
+LOG_PATH=/tmp/ct.log .venv/bin/python -m pytest -q \
+  "tests/rules/test_testing_contract.py::test_every_mutation_anchor_still_matches_its_file" \
+  "tests/rules/test_testing_contract.py::test_no_mutation_anchors_on_a_live_planning_row"
 python scripts/build_public_roadmap.py --check
 git diff
 ```
+
+**The second command is the mutation harness's anchors into these files.**
+`scripts/verify_testing_contract_mutations.py` anchors mutations on literal text
+in `docs/PLANS.md`, and the rule that catches a stale anchor lives in
+`test_testing_contract.py`, not in the file this skill already runs — so on
+2026-09-12 archiving Plan 183 changed the archive count two anchors quoted, and
+the break surfaced in CI on the pull request instead of here. The guard beside
+it holds anchors off live rows and counts, so an operation here should never
+fail it; if one does, the harness entry is what gets re-anchored, never the
+index.
 
 **Both of this skill's files are generator input, and the test above cannot
 see it.** Plan 138 Stage 1d publishes `docs/PLANS.md`'s build order and

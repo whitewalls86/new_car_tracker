@@ -7,7 +7,7 @@ worth what it was recorded from: nothing in that suite can notice the day
 Docker or the proxy changes a response shape underneath it. The unit and
 Layer 4 suites only ever ask the recording.
 
-This asks the real thing. It stands up `tecnativa/docker-socket-proxy` against
+This asks the real thing. It stands up Compose's `docker-socket-proxy` against
 a throwaway labelled fleet, issues **the same requests the corpus records**
 through the production `DockerApi`, and asserts the live responses still carry
 what `collector.py` reads out of them. Needs a Docker daemon, so it is a CI
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -43,6 +44,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -55,9 +58,29 @@ from container_health.collector import (  # noqa: E402
 from container_health.docker_api import API_VERSION, DockerApi  # noqa: E402
 
 CORPUS = REPO_ROOT / "tests" / "fixtures" / "container_health" / "docker_api_contract.json"
+COMPOSE = REPO_ROOT / "docker-compose.yml"
 
-PROXY_IMAGE = "tecnativa/docker-socket-proxy:0.3.0"
-FLEET_IMAGE = "alpine"
+_INTERPOLATED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-(?P<default>[^}]*)\}$")
+
+
+def _compose_image(service: str) -> str:
+    """The image a Compose service runs, read rather than restated here.
+
+    Plan 183 Stage D: Compose is the one place an image is defined, so this
+    script pulls nothing Compose does not name. A ``${X:-default}`` reference
+    is read at its default, which is what every host runs.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    reference = compose["services"][service]["image"]
+    interpolated = _INTERPOLATED.match(reference)
+    return interpolated.group("default") if interpolated else reference
+
+
+PROXY_IMAGE = _compose_image("docker-socket-proxy")
+# The fleet only runs `sleep`, so any image with a shell will do. It borrows
+# redis-trawl's image because that is the smallest one Compose already defines.
+# It used to be an untagged `alpine`, which Compose did not define at all.
+FLEET_IMAGE = _compose_image("redis-trawl")
 NAME_PREFIX = "ch-contract"
 PROXY_PORT = 12375
 PROJECT = "cartracker"

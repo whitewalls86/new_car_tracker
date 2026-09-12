@@ -4162,6 +4162,68 @@ def test_every_mutation_anchor_still_matches_its_file():
     )
 
 
+#: The index's live tables. Their rows move, renumber, change their dates and
+#: leave; the superseded table and the archive only grow, so a row already in
+#: them is as fixed as a line of history and is a fair anchor.
+_PLANS_INDEX = "docs/PLANS.md"
+_LIVE_PLANNING_SECTIONS = ("Current closeout", "Default build order", "Backlog")
+_NAMES_A_PLAN_OR_A_DATE = re.compile(
+    r"\[\d{1,4}\]\(|\*\*\d{1,4}\*\*|\bPlans? \d{1,4}\b|\b20\d\d-\d\d-\d\d\b"
+)
+_A_ROW_COUNT = re.compile(r"\d+ rows\b")
+
+
+def test_no_mutation_anchors_on_a_live_planning_row():
+    """An anchor that quotes a live planning row breaks when that plan moves.
+
+    **Archiving Plan 183 broke two anchors on 2026-09-12.** They matched
+    ``— 125 rows, newest first``, and archiving is exactly what changes that
+    number. Plan 183 Stage B's record had already watched a build-order insert
+    break two more. Both are one mistake: an anchor quoting what the planning
+    workflow exists to change. The rule above catches the break only after it
+    happens, on whichever branch next edits the index, which is the branch
+    least interested in the harness.
+
+    So an anchor into ``docs/PLANS.md`` carries no row count anywhere, and
+    inside the closeout, build-order and backlog tables it names no plan -- a
+    link, a bold number, "Plan NNN" -- and no date. Anchor on structure
+    instead: a table's header and separator, or a row in the superseded table.
+    What a mutation *writes* may name anything; only what it must find is held
+    here, because only that has to survive the plans moving.
+    """
+    index = (REPO_ROOT / _PLANS_INDEX).read_text(encoding="utf-8")
+    headings = [(m.start(), m.group(1)) for m in re.finditer(r"^## (.+?)\s*$", index, re.M)]
+    offending = []
+    for _, description, calls in _harness_mutations():
+        for call in calls:
+            if call.func.id == "_delete" or _harness_string(call.args[0]) != _PLANS_INDEX:
+                continue
+            anchor = _harness_string(call.args[1])
+            if anchor is None:
+                continue  # the anchor rule above already fails an unreadable anchor
+            quoted = anchor.splitlines()[0][:60] if anchor.strip() else anchor
+            if _A_ROW_COUNT.search(anchor):
+                offending.append(f"{description}: quotes a row count -- {quoted!r}")
+                continue
+            at = index.find(anchor)
+            section = next((name for start, name in reversed(headings) if start <= at), "")
+            if at >= 0 and section.startswith(_LIVE_PLANNING_SECTIONS) and (
+                _NAMES_A_PLAN_OR_A_DATE.search(anchor)
+            ):
+                offending.append(
+                    f"{description}: quotes a row of the {section!r} table -- {quoted!r}"
+                )
+
+    assert not offending, (
+        f"{MUTATION_HARNESS} anchors into {_PLANS_INDEX} on text the planning "
+        f"workflow changes, so the next archive, insert or date change breaks "
+        f"them:\n  " + "\n  ".join(offending) +
+        "\n\nAnchor on structure instead: a table's header and separator, or a "
+        "row in the superseded table, which only grows. The mutation may still "
+        "write a plan-shaped row; it may not need one to exist."
+    )
+
+
 def test_every_asserted_rule_is_proved_by_a_mutation():
     """The `Asserted by` column's second duty: a rule nobody has watched fail.
 

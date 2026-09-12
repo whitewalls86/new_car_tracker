@@ -42,12 +42,15 @@ stays a deliberate run.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST = "tests/rules/test_testing_contract.py"
@@ -81,8 +84,25 @@ ENGINE_BOUND = (
     "::test_every_test_statement_plans_against_the_migrated_schema",
 )
 
-_PG_IMAGE = "postgres:16"
-_FLYWAY_IMAGE = "flyway/flyway:10-alpine"
+_INTERPOLATED = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-(?P<default>[^}]*)\}$")
+
+
+def _compose_image(service: str) -> str:
+    """The image a Compose service runs, read rather than restated here.
+
+    Plan 183 Stage D: Compose is the one place an image is defined, so the
+    throwaway engine is the image production runs, and moves when it moves. A
+    ``${X:-default}`` reference is read at its default. Read at import, before
+    any mutation can edit docker-compose.yml underneath it.
+    """
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    reference = compose["services"][service]["image"]
+    interpolated = _INTERPOLATED.match(reference)
+    return interpolated.group("default") if interpolated else reference
+
+
+_PG_IMAGE = _compose_image("postgres")
+_FLYWAY_IMAGE = _compose_image("flyway")
 _PG_CONTAINER = "cartracker-mutation-harness-postgres"
 #: Not 5432. A developer running this almost certainly has the real stack up on
 #: the default port, and a throwaway database that quietly shadowed it would be
@@ -2515,8 +2535,10 @@ MUTATIONS = [
         "longer a day",
         lambda: _edit(
             "docs/PLANS.md",
-            "[142](plans/plan_142_planned_host_maintenance.md) | **2026-09-30**",
-            "[142](plans/plan_142_planned_host_maintenance.md) | **end of September**",
+            # Anchored on the table's header, which no plan moving changes.
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n",
+            "| Plan | Lands | Gate — what removes this row |\n|---|---|---|\n"
+            "| **0** | **end of September** | a row whose day does not parse |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2541,9 +2563,10 @@ MUTATIONS = [
         "a backlog row names no trigger, and a row with no trigger is a wish",
         lambda: _edit(
             "docs/PLANS.md",
-            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
-            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M | -- |\n"
-            "| [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M |",
+            # Anchored on the table's header, which no plan moving changes.
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n",
+            "| Plan | Title | Priority | Effort | Trigger |\n|---|---|---:|---|---|\n"
+            "| **0** | A row with no trigger | 1 | S | -- |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2555,8 +2578,11 @@ MUTATIONS = [
         "tell when the row becomes workable",
         lambda: _edit(
             "docs/PLANS.md",
-            "| **N** | Plan 125 Gate D | 76 | L |",
-            "| **N** | once the dust settles | 76 | L |",
+            # Anchored on the table's header, which no plan moving changes.
+            "|---:|---|---|---|---|---|---|---|---|\n",
+            "|---:|---|---|---|---|---|---|---|---|\n"
+            "| 0 | **0** | A vague wait | Nothing yet | **N** | once the dust settles "
+            "| 1 | S | -- |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2567,8 +2593,11 @@ MUTATIONS = [
         "a typo'd plan number reads as a real dependency and blocks a row forever",
         lambda: _edit(
             "docs/PLANS.md",
-            "| **N** | Plan 112 | 74 | M |",
-            "| **N** | Plan 912 | 74 | M |",
+            # Anchored on the table's header, which no plan moving changes.
+            "|---:|---|---|---|---|---|---|---|---|\n",
+            "|---:|---|---|---|---|---|---|---|---|\n"
+            "| 0 | **0** | A typo'd blocker | Nothing yet | **N** | Plan 912 "
+            "| 1 | S | -- |\n",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2605,8 +2634,10 @@ MUTATIONS = [
         "a link under docs/ stops resolving, which is how Plan 146 started",
         lambda: _edit(
             "docs/PLANS.md",
-            "(plans/plan_66_sql_injection.md)",
-            "(plans/plan_66_sql_injection_audit.md)",
+            # A row in the superseded table, which only grows -- never a
+            # live row, whose link leaves when its plan moves.
+            "(plans/plan_73_scraper_refactor.md)",
+            "(plans/plan_73_scraper_refactor_moved.md)",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2770,8 +2801,10 @@ MUTATIONS = [
         "what made it checkable",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 125 rows, newest first",
-            "— every finished plan, newest first",
+            # The count's own digits are never part of the anchor: archiving
+            # changes them, and an anchor on them broke on 2026-09-12.
+            " rows, newest first",
+            " finished plans, newest first",
         ),
         ["docs/PLANS.md"],
         [],
@@ -2784,8 +2817,10 @@ MUTATIONS = [
         "second, a number in a sentence nothing read",
         lambda: _edit(
             "docs/PLANS.md",
-            "— 125 rows, newest first",
-            "— 123 rows, newest first",
+            # A digit appended to whatever the count is, so the stated number
+            # is wrong without this entry having to know what it was.
+            " rows, newest first",
+            "0 rows, newest first",
         ),
         ["docs/PLANS.md"],
         [],
@@ -3597,6 +3632,125 @@ MUTATIONS = [
             "      - targets: []",
         ),
         ["prometheus/prometheus.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_external_image_comes_from_a_registry_we_own",
+        "a service starts pulling an image from a registry this repository "
+        "does not own -- the minio/minio shape, one deletion away from every "
+        "job that starts it dying at pull",
+        # Anchored on `services:`, which every compose file carries whatever
+        # its images are, so converting an image cannot strand this anchor.
+        lambda: _edit(
+            "docker-compose.lakehouse.ci.yml",
+            "\nservices:\n",
+            "\nservices:\n  intruder:\n    image: docker.io/library/busybox:1.36\n",
+        ),
+        ["docker-compose.lakehouse.ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_the_external_image_reader_is_not_blind",
+        "a compose file's services move where the reader does not look, so "
+        "its images drop out of the ownership rule while their image: lines "
+        "stay in the file",
+        lambda: _edit(
+            "docker-compose.lakehouse.local.yml",
+            "\nservices:\n",
+            "\nx-services:\n",
+        ),
+        ["docker-compose.lakehouse.local.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_external_image_comes_from_a_registry_we_own",
+        "a Dockerfile gains a build stage on a base image from a registry this "
+        "repository does not own -- every build of the service one deletion "
+        "away from failing at pull",
+        # Anchored on `FROM `, which occurs once in this file whatever its base
+        # image is, so converting the base image cannot strand this anchor.
+        lambda: _edit(
+            "scraper/Dockerfile",
+            "FROM ",
+            "FROM docker.io/library/busybox:1.36 AS intruder\n\nFROM ",
+        ),
+        ["scraper/Dockerfile"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_the_base_image_reader_is_not_blind",
+        "a FROM is split across lines, so the line reader sees a backslash "
+        "where the base image should be and the image drops out of the "
+        "ownership rule",
+        lambda: _edit("scraper/Dockerfile", "FROM ", "FROM \\\n    "),
+        ["scraper/Dockerfile"],
+        [],
+    ),
+    (
+        "tests/rules/test_testing_contract.py"
+        "::test_no_mutation_anchors_on_a_live_planning_row",
+        "a mutation anchors on the archive's row count again, so the next "
+        "archive breaks it -- the 2026-09-12 failure",
+        # Edits this file: the count entry's anchor gains a digit. `6 rows,
+        # newest first` still matches the index once, inside `126 rows`, so
+        # the anchor rule stays green and only the guard can see it.
+        lambda: _edit(
+            "scripts/verify_testing_contract_mutations.py",
+            '            " rows, newest first",\n'
+            '            " finished plans, newest first",',
+            '            "6 rows, newest first",\n'
+            '            " finished plans, newest first",',
+        ),
+        ["scripts/verify_testing_contract_mutations.py"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_job_leaves_an_image_record_the_gate_reads",
+        "a job stops recording the images on its runner, so whatever it pulled "
+        "reaches the provenance gate as nothing at all",
+        # The recording step is identical in every job, so the anchor runs on
+        # into the upload that names its job -- the job key the rule is keyed
+        # on, and nothing an image conversion or a plan edit would touch.
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "      - name: Record the images on this runner\n"
+            "        if: always()\n"
+            "        run: python3 scripts/record_ci_images.py\n"
+            "      - name: Upload this job's image record\n"
+            "        if: always()\n"
+            "        uses: actions/upload-artifact@v4\n"
+            "        with:\n"
+            "          name: ci-image-records-lint\n",
+            "      - name: Upload this job's image record\n"
+            "        if: always()\n"
+            "        uses: actions/upload-artifact@v4\n"
+            "        with:\n"
+            "          name: ci-image-records-lint\n",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "tests/rules/test_every_external_image_comes_from_a_registry_we_own.py"
+        "::test_every_job_leaves_an_image_record_the_gate_reads",
+        "a job stops recording what its runner held before it began, so the "
+        "images GitHub preloads read as pulls and the only fix left is a "
+        "ledger of GitHub's images",
+        # The baseline step is identical in every job, so the anchor runs on
+        # into the step after it -- `changes`' own, named once in the file.
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "      - name: Record the images on the runner before the job\n"
+            "        run: python3 scripts/record_ci_images.py --baseline\n"
+            "      - name: Select the CI scope\n",
+            "      - name: Select the CI scope\n",
+        ),
+        [".github/workflows/ci.yml"],
         [],
     ),
     (

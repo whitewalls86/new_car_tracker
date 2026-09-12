@@ -135,10 +135,10 @@ rule is independent of the emergency.
 
 | Order | Stage | What it delivers | State | Issue |
 |---:|:---:|---|---|---|
-| 1 | [**A**](#stage-a-ghcr-holds-productions-exact-minio-build) | ghcr holds production's exact MinIO build | `next` | CAR-134 |
-| 2 | [**B**](#stage-b-every-reference-pinned-to-it) | Every reference pinned to it | `—` | CAR-134 |
-| 3 | [**C**](#stage-c-production-runs-it-from-ghcr) | Production runs it from ghcr | `—` | CAR-134 |
-| 4 | [**D**](#stage-d-every-external-image-comes-from-a-registry-we-own) | Every external image comes from a registry we own | `—` | CAR-135 |
+| 1 | [**A**](#stage-a-ghcr-holds-productions-exact-minio-build) | ghcr holds production's exact MinIO build | `done` | CAR-134 |
+| 2 | [**B**](#stage-b-every-reference-pinned-to-it) | Every reference pinned to it | `done` | CAR-134 |
+| 3 | [**C**](#stage-c-production-runs-it-from-ghcr) | Production runs it from ghcr | `done` | CAR-134 |
+| 4 | [**D**](#stage-d-every-external-image-comes-from-a-registry-we-own) | Every external image comes from a registry we own | `done` | CAR-135 |
 
 ### Stage A: ghcr holds production's exact MinIO build
 
@@ -170,18 +170,37 @@ with the reason recorded; the record states the fitness answer above.
 
 **State:** `—` · **Production-gated exit:** no
 
-**Exit:** a rule fails any compose image not built from this repository unless
-it is referenced from `ghcr.io/whitewalls86/*` by digest or sits in a
-shrink-only ledger seeded at the measured count and keyed on the full image
-reference, so changing a reference removes its entry; the Stage A workflow copies
-any named image with the digest check; the rule is shown failing on an
-unowned image by a mutation entry in `scripts/verify_testing_contract_mutations.py`.
+**Widened 2026-09-12 from compose images alone.** Dockerfile base images join
+the ledger, because a base image pulled on every build is an external
+dependency like any other. A runtime gate checks what CI actually pulls,
+because a script can pull an image no compose file names: the container-health
+contract pulled an untagged `alpine` from Docker Hub. Compose is where every
+image is defined, so a new image dependency is a deliberate edit to compose,
+never a line in a script.
+
+**Exit:** a rule fails any compose image or Dockerfile base image not built
+from this repository unless it is referenced from `ghcr.io/whitewalls86/*` by
+digest or sits in a shrink-only ledger, seeded at the measured count (17
+compose references and 5 base images, 2026-09-12) and keyed on the full image
+reference, so changing a reference removes its entry. Every CI job that uses
+Docker records the images on its runner, and a gate fails the run on any image
+that is neither built here, owned, nor ledgered. No CI step or script names an
+image compose does not define. The Stage A workflow copies any named image with
+the digest check. Each rule is shown failing by a mutation entry in
+`scripts/verify_testing_contract_mutations.py`.
+
+## Public summary
+
+**The MinIO image, held where we control it** — Kept the project's object store
+running after its vendor withdrew the public image: the exact build production
+runs now lives in the project's own registry, pinned by digest, and CI fails on
+any image it pulls that the project neither owns nor lists as a known exception.
 
 ## Record
 
 ### Stage A — ghcr holds production's exact MinIO build
 
-**Issue:** CAR-134 · **Still owed:** the linked workflow run
+**Issue:** CAR-134 · **Workflow run:** [`34669846795`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34669846795)
 
 Copied by hand on 2026-09-12 at 02:23 UTC, from the maintainer's laptop with
 crane 0.22.1, signed in to ghcr with the maintainer's `gh` token (`write:packages`
@@ -216,6 +235,22 @@ unblock CI, not by the `workflow_dispatch` workflow the design names, so there
 is no workflow run to link. That workflow is still to be built. Its first run
 copies the same bytes again, which changes nothing in the registry, and that
 run is the one this entry will link.
+
+**The workflow run.**
+[`34669846795`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34669846795),
+started from master at `971e9a9` on 2026-09-12, 03:14:54–03:15:04 UTC, with the
+source and destination above. crane 0.22.1 installed and matched its release
+checksum (`crane.tar.gz: OK`). `crane copy` reported `existing manifest:
+RELEASE.2025-09-07T16-13-09Z@sha256:14cea493…` and pushed nothing, because the
+hand copy had already put those bytes at that tag. Logged out, the check read
+`sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e` for
+both source and destination, platforms `linux/arm64, linux/amd64, linux/ppc64le`.
+
+So this run re-checks the copy rather than producing it: the copy it links was
+made by hand, and the run shows the workflow reaches the same digest from the
+same source. Because nothing was written, the Write access granted under the
+package's Actions access is still untested. The first copy of a new image, in
+Stage D, will be the first real test of the push path.
 
 ### Stage B — every reference pinned to it
 
@@ -260,3 +295,154 @@ passed.
 
 The exit is met on #417, which carries #419's commits, rather than on #419's
 own pull request.
+
+### Stage C — production runs it from ghcr
+
+**Issue:** CAR-134 · **Deployed:** 2026-09-12, 03:25 UTC
+
+Run on the VM in tmux session `plan183-stage-c`. Each step went through
+`~/plan183/run.sh`, which logs to `~/plan183/stage-c.log` with start and end
+markers and each step's exit code. All four steps exited 0.
+
+**Before.** `cartracker-minio` was running image
+`sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`
+(`linux/arm64`, 57,548,825 bytes) under `minio/minio:latest`, up since
+2026-08-31 18:17 UTC. That is the digest the ghcr copy carries, and it was
+checked before anything changed.
+
+**Rollback kept, 03:24 UTC.** The running image ID was given the local name
+`cartracker-rollback/minio:pre-plan-183` and saved with
+`docker image save --platform linux/arm64` to
+`/mnt/data/backups/minio-pre-plan-183-arm64.tar`: 57,562,112 bytes, sha256
+`500b55e3565a4a7f9a0695fcaf08a52754f66e0e7759dea620037520db88ace6`, holding
+config `8f08aee6…` and 9 layers. Nothing on the VM prunes images, so both stay
+until someone removes them. To roll back, recreate MinIO from that name with a
+temporary override, leaving the checkout alone:
+
+    printf 'services:\n  minio:\n    image: cartracker-rollback/minio:pre-plan-183\n' > /tmp/minio-rollback.yml
+    docker compose -f docker-compose.yml -f /tmp/minio-rollback.yml up -d --no-deps minio
+
+If the name is missing, `docker image load -i` on the file restores it first.
+
+**Checkout.** `git pull --ff-only` in `/opt/cartracker` moved `6bcd3ac` to
+`971e9a9`: 59 commits, 51 files. Of those, only
+`ops/static_ops/generated/project-updates.json`, the public roadmap's data,
+sits under a path a running container reads directly.
+
+**Deploy, 03:25:39–03:25:52 UTC.** `bash scripts/redeploy.sh minio`. The drain
+was confirmed after 0 s. Compose reported `minio Pulled`; the image was already
+on the host under that digest. The container was recreated, `46c9f7106ed5…` to
+`ebdea7263ead…`, reported healthy after 11 s, and deploy intent was released.
+
+**After, 03:26–03:27 UTC.**
+
+| Check | Result |
+|---|---|
+| image ID | `sha256:14cea493…`, unchanged |
+| image reference | `ghcr.io/whitewalls86/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493…` |
+| state | running, healthy; `/minio/health/live` returns HTTP 200 |
+| `up{job=~"minio\|minio_bucket"}` | 1, 1 |
+| `min_over_time(up{…}[15m])` at 03:27:33 | 1, 1: no scrape saw MinIO down |
+| Prometheus alerts | none |
+
+Service Down is a Grafana rule on `up` with `for: 2m`. With `up` never at 0 in
+that window it could not fire. Grafana's own alert state was not read.
+
+**Fitness.** The build is fit for production in the short term: it is,
+byte for byte, the build production had been running since 2026-08-31. It is
+unfit in the long term: the community image is frozen at 2025-09-07 and gets no
+security fixes. That is [Plan 184](plan_184_replace_minio_with_garage.md)'s case.
+
+The exit is met.
+
+### Stage D — every external image comes from a registry we own
+
+**Issue:** CAR-135 · **Commits:** `7e7be7c`, `1b32d50` · **Workflow run:** [`34700848629`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34700848629)
+
+**The image provenance gate's first green run.** The pull-request run on #422 at
+`1b32d50`, 2026-09-12, 14:59:01–15:03:38 UTC. Every job passed. Documentation
+tests was skipped by the path filter, so it owed no record. The gate read 16
+records, one for every other job, and printed `ok: 16 record(s), every pulled
+image is one this repository names`.
+
+What each runner held, as the gate printed it:
+
+| Job | Held | There before the job | Built here | Pulled |
+|---|---:|---:|---:|---|
+| `changes`, `lint`, `git-ref-hygiene`, `service-contracts`, `unit-tests`, `sql-execution-coverage`, `test-invocation-coverage` | 6 each | 6 | 0 | none |
+| `docker-build` | 14 | 6 | 8 | none |
+| `promtail-config` | 7 | 6 | 0 | `grafana/promtail:3.5.8` |
+| `flaresolverr-contract` | 7 | 6 | 0 | `ghcr.io/flaresolverr/flaresolverr:v3.4.6` |
+| `container-health-contract` | 8 | 6 | 0 | `tecnativa/docker-socket-proxy:0.3.0`, `redis:7-alpine` |
+| `service-integration` | 8 | 6 | 0 | `postgres:16`, `flyway/flyway:10-alpine` |
+| `dbt-models`, `schema-contracts`, `snapshot-dbt`, `lake-integration` | 9 each | 6 | 0 | `ghcr.io/whitewalls86/minio@sha256:14cea493…`, `postgres:16`, `flyway/flyway:10-alpine` |
+
+The six images already on every runner are GitHub's own, preloaded on
+`ubuntu-24.04` 20260907.300.1: `ghcr.io/github/github-mcp-server`,
+`ghcr.io/github/gh-aw-mcpg`, `ghcr.io/github/gh-aw-firewall/{agent,api-proxy,squid}`
+and `ghcr.io/dependabot/dependabot-updater-core`, all `:latest`. They were
+reported and not judged. Every image a job pulled is one compose defines. The
+MinIO pulls are the owned, digest-pinned copy; the other seven references are
+ledgered. Base images pulled during `docker compose build` did not appear on the
+runner at all. The rule covers them; this gate does not see them.
+
+Read with:
+
+    gh run view 34700848629 --job <Image provenance job id> --log
+
+The per-job lines are the gate's own output, from
+`scripts/check_ci_image_provenance.py`.
+
+This meets the exit's runtime clause: every CI job records the images on its
+runner, and the gate fails on any image that is neither built here, owned, nor
+ledgered. It also shows, on a real run, that no CI step pulled an image compose
+does not define. It says nothing about the other clauses: the ledger rule, the
+Stage A workflow copying a named image, and the mutation entries.
+
+**The gate's first two runs failed, and that is why it takes a baseline.** The
+pull-request run [`34676153902`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34676153902)
+at `7e7be7c`, and the run started by hand,
+[`34676201481`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34676201481),
+failed Image provenance and nothing else. Both read 16 records and flagged the
+same six images on every runner: GitHub's preloads, listed above. They flagged
+no image a job had pulled. Until `1b32d50` the gate judged everything a runner
+held; now each job takes a baseline straight after checkout, and the gate judges
+only what appeared after it. A ledger of GitHub's images was the alternative.
+It was rejected because every change GitHub made to its runner would turn every
+PR red.
+
+**The rules, shown failing.** Each of the six mutation entries this stage added
+exits 1 against its target test. Each was run through the entry's own lambda on
+the maintainer's laptop, with its file restored afterwards:
+- an extra busybox service in `docker-compose.lakehouse.ci.yml`;
+- `services:` renamed in `docker-compose.lakehouse.local.yml`;
+- an extra busybox stage in `scraper/Dockerfile`;
+- a `FROM` there split across two lines;
+- `lint`'s end record removed from `ci.yml`;
+- `changes`' baseline removed from `ci.yml`.
+
+The harness itself was not run, because it needs a Docker engine.
+
+**The Stage A workflow, on a second image.**
+[`34701942877`](https://github.com/whitewalls86/new_car_tracker/actions/runs/34701942877),
+started from master at `971e9a9` on 2026-09-12, 15:20:40–15:21:03 UTC, with
+source `docker.io/library/redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf`
+(what `redis:7-alpine` resolved to at 15:20 UTC, read with crane 0.22.1) and
+destination `ghcr.io/whitewalls86/redis:7-alpine`. Unlike Stage A's run, this
+one wrote: 80 blobs and the index, 10,213 bytes at `sha256:ff02b58f…eadf`,
+covering `linux/amd64`, `arm/v6`, `arm/v7`, `arm64/v8`, `386`, `ppc64le`,
+`riscv64` and `s390x`. That is the repository's own token pushing to a new
+package for the first time, which Stage A's record left untested. The no-login
+check read `sha256:ff02b58f…` for both source and destination. The package
+pulled with no login on its first run, although the workflow's comment says a
+new package starts private; nothing here changed its visibility. Re-checked from
+the maintainer's laptop with an empty Docker config: index `sha256:ff02b58f…`,
+`linux/amd64` `sha256:1db42ccef148…`, `linux/arm64` `sha256:f8d15882ba10…`.
+Copied only: no reference was converted, so `redis:7-alpine` stays in the ledger
+and production is unchanged.
+
+Every clause of the exit is met. The mutation entries were shown failing by
+hand, through each entry's own lambda, rather than by running the harness.
+
+Public surfaces: no mechanism, name or quantity either surface states was
+changed by this work.

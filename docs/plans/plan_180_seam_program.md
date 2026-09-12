@@ -223,6 +223,12 @@ stage that changes an image drains that entry on the way through; this stage
 drains what nobody touched. The rule itself files under seam 7 in Stage G's
 restructure, beside the image keep-set rules the census already puts there.
 
+**Widened again 2026-09-12 to base images.** Plan 183 Stage D's rule reads
+Dockerfile `FROM` lines as well as compose, so the base images join its ledger.
+[Plan 185](plan_185_one_python_base_image.md) drains them on the way to two
+owned bases, `python:3.13-slim-trixie` and `apache/airflow`; this stage is the
+backstop for any it has not.
+
 **Exit** (AE's, carried, plus the image clause): no production module reads
 an environment variable with an inline default; every variable read strictly
 is delivered by its service's Compose block; each of the 39 moved to Compose
@@ -230,8 +236,8 @@ or reduced to a constant, reads made strict in the same change; the waiver
 tuple drained and deleted; the twelve that moved verified by asking a
 deployed container what it loaded. Demonstrated by an inline default
 failing. Plan 183 Stage D's image ledger drained and its tuple deleted,
-every compose image resolving to an owned digest, verified by asking each
-deployed container which image it runs.
+every compose image and every Dockerfile base image resolving to an owned
+digest, verified by asking each deployed container which image it runs.
 
 ### Stage L: the parsers nobody ran *(ex-162 Stage AJ)*
 

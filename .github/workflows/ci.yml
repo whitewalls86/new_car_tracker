@@ -46,6 +46,12 @@ env:
   # `tests-*.json` from `tests/plugins/test_invocation_recorder.py`, and each
   # gate reads only its own prefix.
   CI_RUN_RECORDS: ci-run-records
+  # Plan 183 Stage D. Every job's runner images, for the `image-provenance`
+  # gate. Its own directory and its own `ci-image-records-*` artifacts rather
+  # than a third prefix under `ci-run-records`: every job records one, and the
+  # two gates above `needs` every job that uploads a run record, so sharing the
+  # artifact would make them wait on jobs that record nothing they read.
+  CI_IMAGE_RECORDS: ci-image-records
   # Plan 162 Stage Z, and workflow level for the same reason as the two above.
   # `constraints.txt` holds the four versions that decide what `app.openapi()`
   # emits, and the committed contract artifacts are only diffable against a
@@ -74,6 +80,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - name: Select the CI scope
         id: scope
         shell: bash
@@ -130,6 +138,16 @@ jobs:
           echo "unit=$unit" >> "$GITHUB_OUTPUT"
           echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
           echo "snapshot_dbt=$snapshot_dbt" >> "$GITHUB_OUTPUT"
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-changes
+          path: ci-image-records/
+          if-no-files-found: error
 
   docs-tests:
     name: Documentation tests
@@ -138,6 +156,8 @@ jobs:
     if: needs.changes.outputs.docs_tests == 'true'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -209,6 +229,16 @@ jobs:
           name: ci-run-records-docs-tests
           path: ci-run-records/
           if-no-files-found: warn
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-docs-tests
+          path: ci-image-records/
+          if-no-files-found: error
 
   lint:
     name: Lint (ruff)
@@ -217,11 +247,23 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.unit == 'true')
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - run: pip install ruff
       - run: ruff check .
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-lint
+          path: ci-image-records/
+          if-no-files-found: error
 
   promtail-config:
     name: Promtail config (real image)
@@ -230,12 +272,18 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.docker-build.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
+      # Plan 183 Stage D. Run through Compose's own promtail service rather than
+      # `docker run` with its image restated here: Compose is the one place an
+      # image is defined, and the service already mounts the config it reads.
+      # `--no-deps` leaves loki down; a syntax check never talks to it.
       - name: Validate with the production Promtail image
         run: >-
-          docker run --rm
-          -v "$GITHUB_WORKSPACE/promtail/promtail.yml:/etc/promtail/config.yml:ro"
-          grafana/promtail:3.5.8
-          -config.file=/etc/promtail/config.yml
+          docker compose -p cartracker -f docker-compose.yml -f docker-compose.ci.yml
+          --env-file .env.ci
+          run --rm --no-deps promtail
+          -config.file=/etc/promtail/promtail.yml
           -check-syntax
       - uses: actions/setup-python@v5
         with:
@@ -247,6 +295,16 @@ jobs:
       # catches the model drifting away from what production actually does.
       - name: Replay the log contract fixtures through the real pipeline
         run: python scripts/verify_promtail_contract.py
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-promtail-config
+          path: ci-image-records/
+          if-no-files-found: error
 
   container-health-contract:
     name: container_health Docker contract (real proxy)
@@ -255,6 +313,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -264,16 +324,27 @@ jobs:
       # rather than pinned again here: one source for the version, and fastapi
       # and uvicorn ride along for a couple of seconds. This step is the only
       # place container_health is imported outside its own image, which is why
-      # its dependency set is declared rather than inherited.
-      - run: pip install -r container_health/requirements.txt
+      # its dependency set is declared rather than inherited. pyyaml is for the
+      # verifier itself, which reads its images out of docker-compose.yml.
+      - run: pip install -r container_health/requirements.txt pyyaml
       # The Layer 4 suite serves a recording, so nothing in it can notice the
       # day Docker or the proxy changes a response shape. This is the only step
-      # that asks the real thing: it stands up tecnativa/docker-socket-proxy
-      # against a throwaway labelled fleet and asserts the live responses still
+      # that asks the real thing: it stands up Compose's docker-socket-proxy
+      # service's image against a throwaway labelled fleet and asserts the live responses still
       # carry every field collector.py reads. Same split Plan 141 uses for
       # Promtail, and the corpus is the only thing the two share.
       - name: Verify the recorded Docker API contract against the real proxy
         run: python scripts/verify_container_health_docker_contract.py
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-container-health-contract
+          path: ci-image-records/
+          if-no-files-found: error
 
   flaresolverr-contract:
     name: FlareSolverr solve envelope (real image)
@@ -282,6 +353,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -297,6 +370,16 @@ jobs:
       # CI starts FlareSolverr, and the unit tests replace it with a MagicMock.
       - name: Verify the solve envelope against the pinned image
         run: python scripts/verify_flaresolverr_contract.py
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-flaresolverr-contract
+          path: ci-image-records/
+          if-no-files-found: error
 
   service-contracts:
     name: Service OpenAPI contracts (generated and diffed)
@@ -305,6 +388,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -341,6 +426,16 @@ jobs:
       # document again.
       - name: Regenerate the snapshot manifest record and diff it
         run: python scripts/generate_lake_snapshot_manifest_contract.py --check
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-service-contracts
+          path: ci-image-records/
+          if-no-files-found: error
 
   git-ref-hygiene:
     name: Git ref hygiene contract (real remote)
@@ -358,6 +453,8 @@ jobs:
           # verifier fails closed rather than counting zero, so getting this
           # wrong is loud rather than a false green.
           fetch-depth: 0
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -370,6 +467,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/verify_git_ref_hygiene_contract.py
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-git-ref-hygiene
+          path: ci-image-records/
+          if-no-files-found: error
 
   unit-tests:
     name: Unit tests (pytest)
@@ -378,6 +485,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.unit == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -457,6 +566,16 @@ jobs:
           name: ci-run-records-unit-tests
           path: ci-run-records/
           if-no-files-found: warn
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-unit-tests
+          path: ci-image-records/
+          if-no-files-found: error
 
   docker-build:
     name: Docker build (all services)
@@ -465,6 +584,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       # Plan 170 Stage B. The fleet's cold build footprint, measured where a
       # full build already happens rather than by running one against the VM.
       #
@@ -522,6 +643,16 @@ jobs:
           echo "cold build footprint: $used_gib GiB (ceiling)"
           echo "free before: $before_gib GiB, free after: $after_gib GiB"
           docker system df 2>&1 || true
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-docker-build
+          path: ci-image-records/
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Plan 162 Stage E (Plan 139 Stages B and C) replaced one `dbt build + test`
@@ -562,6 +693,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
 
       - name: Start the services production defines
         # Plan 162 Stage Q. This job used to declare its own `postgres:16`
@@ -835,6 +968,16 @@ jobs:
           name: ci-run-records-dbt-models
           path: ci-run-records/
           if-no-files-found: warn
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-dbt-models
+          path: ci-image-records/
+          if-no-files-found: error
 
   snapshot-dbt:
     name: dbt build against a production snapshot
@@ -870,6 +1013,8 @@ jobs:
     #     production is green, only because production has not run yet.
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
 
       - name: Start the services production defines
         # Plan 162 Stage Q. This job used to declare its own `postgres:16`
@@ -995,6 +1140,16 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-snapshot-dbt
+          path: ci-image-records/
+          if-no-files-found: error
 
   schema-contracts:
     name: SQL + Airflow metadata contracts
@@ -1014,6 +1169,8 @@ jobs:
     # "the pinned Airflow venv" and let the install step below be the pin.
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
 
       - name: Start the services production defines
         # Plan 162 Stage Q. This job used to declare its own `postgres:16`
@@ -1257,6 +1414,16 @@ jobs:
           name: ci-run-records-schema-contracts
           path: ci-run-records/
           if-no-files-found: warn
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-schema-contracts
+          path: ci-image-records/
+          if-no-files-found: error
 
   service-integration:
     name: Service integration tests (Postgres)
@@ -1268,6 +1435,8 @@ jobs:
     # before the split every one of them waited on all three.
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
 
       - name: Start the services production defines
         # Plan 162 Stage Q. This job used to declare its own `postgres:16`
@@ -1384,6 +1553,16 @@ jobs:
           name: ci-run-records-service-integration
           path: ci-run-records/
           if-no-files-found: warn
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-service-integration
+          path: ci-image-records/
+          if-no-files-found: error
 
   lake-integration:
     name: Lake integration tests (MinIO)
@@ -1395,6 +1574,8 @@ jobs:
     # and no Airflow, because neither suite has ever needed them.
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
 
       - name: Start the services production defines
         # Plan 162 Stage Q. This job used to declare its own `postgres:16`
@@ -1520,6 +1701,16 @@ jobs:
           name: ci-run-records-lake-integration
           path: ci-run-records/
           if-no-files-found: warn
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-lake-integration
+          path: ci-image-records/
+          if-no-files-found: error
 
   # Plan 162 Stage X. The half of the execution recorder no pytest job can be.
   # A statement may execute in any of the jobs above, so no single job's record
@@ -1536,6 +1727,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -1552,6 +1745,16 @@ jobs:
       # ledger. From here a statement that executes nowhere fails this job.
       - name: Every production statement executed somewhere, or waived
         run: python scripts/check_sql_execution_coverage.py
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-sql-execution-coverage
+          path: ci-image-records/
+          if-no-files-found: error
 
   test-invocation-coverage:
     name: Test invocation coverage
@@ -1568,6 +1771,8 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
+      - name: Record the images on the runner before the job
+        run: python3 scripts/record_ci_images.py --baseline
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -1586,3 +1791,44 @@ jobs:
       # documented hole would be worth less than nothing.
       - name: Every test file was asked for tests by the step that names it
         run: python scripts/check_test_invocation_coverage.py
+      - name: Record the images on this runner
+        if: always()
+        run: python3 scripts/record_ci_images.py
+      - name: Upload this job's image record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-records-test-invocation-coverage
+          path: ci-image-records/
+          if-no-files-found: error
+
+  # Plan 183 Stage D. Every image a runner held was built here or is one this
+  # repository names. `test_every_external_image_comes_from_a_registry_we_own`
+  # reads what Compose and the Dockerfiles say; this reads what the runners
+  # actually pulled, because a script can pull an image no compose file names --
+  # the container_health contract pulled an untagged `alpine` until this stage.
+  #
+  # `needs` every other job and runs on every run, light or heavy, because
+  # whichever jobs ran pulled whatever they pulled. `toJSON(needs)` is how the
+  # script tells a job that ran and recorded nothing from one that was skipped.
+  image-provenance:
+    name: Image provenance
+    runs-on: ubuntu-latest
+    needs: [changes, docs-tests, lint, promtail-config, container-health-contract, flaresolverr-contract, service-contracts, git-ref-hygiene, unit-tests, docker-build, dbt-models, snapshot-dbt, schema-contracts, service-integration, lake-integration, sql-execution-coverage, test-invocation-coverage]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The gate reads the rule's own readers rather than parsing Compose a
+      # second time, exactly as the SQL gate reads `production_sql_files()`.
+      - run: pip install pytest pyyaml
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-image-records-*
+          path: ci-image-records
+      - name: Every image a runner held was built here or is one this repository names
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python scripts/check_ci_image_provenance.py
