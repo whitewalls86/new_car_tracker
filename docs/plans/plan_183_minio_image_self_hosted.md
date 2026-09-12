@@ -276,3 +276,62 @@ passed.
 
 The exit is met on #417, which carries #419's commits, rather than on #419's
 own pull request.
+
+### Stage C — production runs it from ghcr
+
+**Issue:** CAR-134 · **Deployed:** 2026-09-12, 03:25 UTC
+
+Run on the VM in tmux session `plan183-stage-c`. Each step went through
+`~/plan183/run.sh`, which logs to `~/plan183/stage-c.log` with start and end
+markers and each step's exit code. All four steps exited 0.
+
+**Before.** `cartracker-minio` was running image
+`sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`
+(`linux/arm64`, 57,548,825 bytes) under `minio/minio:latest`, up since
+2026-08-31 18:17 UTC. That is the digest the ghcr copy carries, and it was
+checked before anything changed.
+
+**Rollback kept, 03:24 UTC.** The running image ID was given the local name
+`cartracker-rollback/minio:pre-plan-183` and saved with
+`docker image save --platform linux/arm64` to
+`/mnt/data/backups/minio-pre-plan-183-arm64.tar`: 57,562,112 bytes, sha256
+`500b55e3565a4a7f9a0695fcaf08a52754f66e0e7759dea620037520db88ace6`, holding
+config `8f08aee6…` and 9 layers. Nothing on the VM prunes images, so both stay
+until someone removes them. To roll back, recreate MinIO from that name with a
+temporary override, leaving the checkout alone:
+
+    printf 'services:\n  minio:\n    image: cartracker-rollback/minio:pre-plan-183\n' > /tmp/minio-rollback.yml
+    docker compose -f docker-compose.yml -f /tmp/minio-rollback.yml up -d --no-deps minio
+
+If the name is missing, `docker image load -i` on the file restores it first.
+
+**Checkout.** `git pull --ff-only` in `/opt/cartracker` moved `6bcd3ac` to
+`971e9a9`: 59 commits, 51 files. Of those, only
+`ops/static_ops/generated/project-updates.json`, the public roadmap's data,
+sits under a path a running container reads directly.
+
+**Deploy, 03:25:39–03:25:52 UTC.** `bash scripts/redeploy.sh minio`. The drain
+was confirmed after 0 s. Compose reported `minio Pulled`; the image was already
+on the host under that digest. The container was recreated, `46c9f7106ed5…` to
+`ebdea7263ead…`, reported healthy after 11 s, and deploy intent was released.
+
+**After, 03:26–03:27 UTC.**
+
+| Check | Result |
+|---|---|
+| image ID | `sha256:14cea493…`, unchanged |
+| image reference | `ghcr.io/whitewalls86/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493…` |
+| state | running, healthy; `/minio/health/live` returns HTTP 200 |
+| `up{job=~"minio\|minio_bucket"}` | 1, 1 |
+| `min_over_time(up{…}[15m])` at 03:27:33 | 1, 1: no scrape saw MinIO down |
+| Prometheus alerts | none |
+
+Service Down is a Grafana rule on `up` with `for: 2m`. With `up` never at 0 in
+that window it could not fire. Grafana's own alert state was not read.
+
+**Fitness.** The build is fit for production in the short term: it is,
+byte for byte, the build production had been running since 2026-08-31. It is
+unfit in the long term: the community image is frozen at 2025-09-07 and gets no
+security fixes. That is [Plan 184](plan_184_replace_minio_with_garage.md)'s case.
+
+The exit is met.
