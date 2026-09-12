@@ -1051,3 +1051,37 @@ deploy can page: `flush_silver_observations` fans into `notify` on
 `one_failed`. The Stage C exit still owes a production page from
 `hourly_analytics_refresh` naming a failed task and quoting its
 `failure_reason`, and a clean 48 hours will not supply it.
+
+**Deploy 3 went live 2026-09-12 18:35:33Z**, 47h19m after deploy 2, at the
+maintainer's call. Merged as `c1b9eab` at 18:34:05Z
+([PR #424](https://github.com/whitewalls86/new_car_tracker/pull/424)), pulled
+to `/opt/cartracker`, and deployed with `bash scripts/redeploy.sh archiver` in
+a tmux session: the drain authorized after 0 s, the archiver was healthy after
+6 s, and the script exited 0 with deploy intent released. The live time is the
+container's own:
+
+```bash
+docker inspect cartracker-archiver --format '{{.State.StartedAt}}'
+# 2026-09-12T18:35:33.155194609Z
+```
+
+**The running container was asked what it loaded.** All three endpoints raise
+the envelope member, the warning helper is gone, and each route declares its
+500:
+
+```bash
+docker exec cartracker-archiver grep -n -E "run failed|raise ServiceFailure|_warn_would_fail" /app/archiver/app.py
+# 253: logger.error("flush_silver: run failed — %s", reason)
+# 254: raise ServiceFailure(detail=dict(result, failure_reason=reason))
+# ... the same pair at 284-285 (compact_silver) and 633-634 (flush_staging); no _warn_would_fail
+
+docker exec cartracker-archiver python -c "import json,urllib.request; \
+d=json.load(urllib.request.urlopen('http://localhost:8001/openapi.json')); \
+print(sorted(d['paths']['/flush/silver/run']['post']['responses'].keys()))"
+# ['200', '500']  -- likewise /flush/staging/run and /compact/silver/run
+```
+
+**The 48-hour gate runs 2026-09-12 18:35:33Z → 2026-09-14 18:35:33Z.** It is
+read with deploy 2's recipes anchored at `time=2026-09-14T18:35:33Z`, with
+`flush_silver: run failed` in place of `flush_staging` and no `would fail`
+query.
