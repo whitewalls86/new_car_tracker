@@ -3,9 +3,19 @@
   "as_of": "2026-08-30",
   "planned": [
     {
+      "plan": "164",
+      "title": "Cycle-close ritual",
+      "order": 1,
+      "priority": 70,
+      "effort": "S",
+      "state": "planned",
+      "summary": "Three steps of the routine that closes a work cycle — recording how the cycle actually went, rolling unfinished work forward, and tidying the branches left behind — have no owner today, and each is only ever correct at the close. This plan gives all three a home.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_164_cycle_close_ritual.md"
+    },
+    {
       "plan": "180",
       "title": "The seam program",
-      "order": 1,
+      "order": 2,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
@@ -15,7 +25,7 @@
     {
       "plan": "185",
       "title": "One Python base image",
-      "order": 2,
+      "order": 3,
       "priority": 80,
       "effort": "M",
       "state": "planned",
@@ -25,22 +35,12 @@
     {
       "plan": "181",
       "title": "The rule readers are code",
-      "order": 3,
+      "order": 4,
       "priority": 85,
       "effort": "XL",
       "state": "planned",
       "summary": "Moves eleven thousand lines of non-test code out of this repository's test tree and into a package coverage can measure, so the helpers, readers and analysers every test depends on are themselves unit tested.",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_181_rule_readers_are_code.md"
-    },
-    {
-      "plan": "182",
-      "title": "What a unit owes itself",
-      "order": 4,
-      "priority": 85,
-      "effort": "XL",
-      "state": "planned",
-      "summary": "Gives every unit of code a stated obligation to itself: its branches are exercised, the outcomes it declares are the ones it produces, and the analysers that check everything else are measured code. The second frame beside Plan 180's seams, for what no boundary can see.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_182_what_a_unit_owes_itself.md"
     }
   ],
   "completed": [
